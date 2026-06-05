@@ -2,8 +2,8 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,20 +11,22 @@ from sqlalchemy import select
 
 from .database import get_db, User
 
-pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer(auto_error=False)
 
 SECRET  = os.environ.get("VP_JWT_SECRET", secrets.token_hex(32))
 ALG     = "HS256"
-EXPIRES = int(os.environ.get("VP_SESSION_HOURS", "168"))  # 7 days default
+EXPIRES = int(os.environ.get("VP_SESSION_HOURS", "168"))
 
 
 def hash_password(plain: str) -> str:
-    return pwd.hash(plain)
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt(rounds=12)).decode()
 
 
 def check_password(plain: str, hashed: str) -> bool:
-    return pwd.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
+        return False
 
 
 def make_token(user_id: str, username: str, role: str) -> str:
@@ -48,8 +50,6 @@ async def current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     token = None
-
-    # check header first, then cookie
     if creds:
         token = creds.credentials
     else:
