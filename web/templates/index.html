@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="blue">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VortexPanel</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+<script src="/static/js/app.js"></script>
+<style>
+/* toast notifications */
+#toasts { position:fixed; bottom:20px; right:20px; z-index:999; display:flex; flex-direction:column; gap:8px; }
+.toast {
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transform: translateX(20px);
+    transition: all 0.25s ease;
+    max-width: 320px;
+}
+.toast.show { opacity: 1; transform: translateX(0); }
+.toast-ok     { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); color: #22c55e; }
+.toast-danger { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
+.toast-warn   { background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.3); color: #f59e0b; }
+</style>
+</head>
+<body>
+
+<div id="toasts"></div>
+
+<div x-data="shell" x-cloak>
+
+  <!-- Sidebar -->
+  <div class="app-shell">
+    <nav class="sidebar">
+      <div class="sidebar-logo">
+        <div class="logo-icon">VP</div>
+        <div>
+          <div class="logo-text">VortexPanel</div>
+          <div class="logo-ver">v1.0</div>
+        </div>
+      </div>
+
+      <div class="sidebar-nav">
+        <template x-for="group in nav" :key="group.group">
+          <div>
+            <div class="nav-group" x-text="group.group"></div>
+            <template x-for="item in group.items" :key="item.id">
+              <a class="nav-item" :class="{ active: page === item.id }"
+                 href="#" @click.prevent="navigate(item.id)">
+                <span class="icon" x-text="item.icon"></span>
+                <span x-text="item.label"></span>
+              </a>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- Sidebar user -->
+      <div style="padding:12px 16px; border-top:1px solid var(--border); display:flex; align-items:center; gap:10px;">
+        <div class="avatar" x-text="(user?.username?.[0] || 'A').toUpperCase()"></div>
+        <div style="min-width:0; flex:1">
+          <div style="font-size:12px; font-weight:600; color:var(--t1)" x-text="user?.username"></div>
+          <div style="font-size:10px; color:var(--t4)" x-text="user?.role"></div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <div class="main">
+      <!-- Topbar -->
+      <div class="topbar">
+        <span class="topbar-breadcrumb">VortexPanel</span>
+        <span class="topbar-sep">›</span>
+        <span class="topbar-title" x-text="page_title"></span>
+        <div class="topbar-spacer"></div>
+
+        <!-- Search -->
+        <div class="topbar-search">
+          <span>🔍</span>
+          <span>Search…</span>
+          <span style="margin-left:auto; font-size:10px; background:var(--bg3); padding:1px 6px; border-radius:4px; border:1px solid var(--border);">⌘K</span>
+        </div>
+
+        <!-- Theme switcher -->
+        <div style="display:flex; gap:4px; padding:4px; background:var(--bg2); border:1px solid var(--border); border-radius:8px;">
+          <button @click="setTheme('blue')"    :style="theme==='blue'    ? 'background:var(--accent);' : ''"
+            style="width:16px;height:16px;border-radius:50%;background:#0EA5E9;border:2px solid transparent;cursor:pointer;"
+            title="Blue"></button>
+          <button @click="setTheme('purple')"  :style="theme==='purple'  ? 'outline:2px solid #8B5CF6;' : ''"
+            style="width:16px;height:16px;border-radius:50%;background:#8B5CF6;border:none;cursor:pointer;"
+            title="Purple"></button>
+          <button @click="setTheme('emerald')" :style="theme==='emerald' ? 'outline:2px solid #10B981;' : ''"
+            style="width:16px;height:16px;border-radius:50%;background:#10B981;border:none;cursor:pointer;"
+            title="Emerald"></button>
+        </div>
+
+        <!-- User menu -->
+        <div style="position:relative;">
+          <div class="topbar-user" :class="{ open: menu_open }" @click="menu_open = !menu_open">
+            <div class="avatar" x-text="(user?.username?.[0] || 'A').toUpperCase()"></div>
+            <span style="font-size:12px; font-weight:600; color:var(--t1)" x-text="user?.username"></span>
+            <span style="font-size:10px; color:var(--t4)">▾</span>
+          </div>
+          <div class="dropdown" x-show="menu_open" @click.outside="menu_open = false">
+            <div style="padding:8px 12px 6px; border-bottom:1px solid var(--border);">
+              <div style="font-size:12px; font-weight:600; color:var(--t1)" x-text="user?.username"></div>
+              <div style="font-size:10px; color:var(--t4)" x-text="user?.email"></div>
+            </div>
+            <button class="dropdown-item" @click="navigate('settings'); menu_open=false">
+              ⚙ Settings
+            </button>
+            <div class="dropdown-sep"></div>
+            <button class="dropdown-item" style="color:var(--danger)" @click="logout">
+              🚪 Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pages -->
+      <div class="page">
+
+        <!-- Dashboard -->
+        <div x-show="page === 'dashboard'" x-data="dashboard">
+          <div class="page-header">
+            <div>
+              <div class="page-title">Dashboard</div>
+              <div class="page-sub" x-text="sysinfo ? `${sysinfo.hostname} · ${sysinfo.os.split(' ').slice(0,3).join(' ')}` : 'Loading…'"></div>
+            </div>
+            <button class="btn btn-ghost btn-sm" @click="refresh">↻ Refresh</button>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">CPU Load</div>
+              <div class="stat-value" x-text="loading ? '…' : cpu.toFixed(1) + '%'"></div>
+              <div class="stat-sub" x-text="sysinfo ? sysinfo.load?.map(l=>l.toFixed(2)).join(' · ') : ''"></div>
+              <div class="stat-bar"><div class="stat-bar-fill" :style="`width:${cpu}%`"></div></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Memory</div>
+              <div class="stat-value" x-text="loading ? '…' : ram.toFixed(1) + '%'"></div>
+              <div class="stat-sub" x-text="`${ram_used} / ${ram_total}`"></div>
+              <div class="stat-bar"><div class="stat-bar-fill" :style="`width:${ram}%; background:${ram>85?'var(--danger)':ram>70?'var(--warn)':'var(--ok)'}`"></div></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Disk</div>
+              <div class="stat-value" x-text="loading ? '…' : disk.toFixed(1) + '%'"></div>
+              <div class="stat-sub" x-text="`${disk_used} / ${disk_total}`"></div>
+              <div class="stat-bar"><div class="stat-bar-fill" :style="`width:${disk}%; background:${disk>90?'var(--danger)':disk>75?'var(--warn)':'var(--accent)'}`"></div></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Uptime</div>
+              <div class="stat-value" x-text="loading ? '…' : uptime"></div>
+              <div class="stat-sub" x-text="`${running_count()} services running`"></div>
+              <div class="stat-bar"><div class="stat-bar-fill" style="width:100%; background:var(--ok)"></div></div>
+            </div>
+          </div>
+
+          <!-- Services list on dashboard -->
+          <div class="card mt-3">
+            <div class="card-head">
+              <span class="card-title">Services</span>
+              <span class="ml-auto" style="font-size:11px; color:var(--t4)" x-text="`${running_count()} / ${services.length} running`"></span>
+            </div>
+            <table>
+              <thead><tr>
+                <th>Service</th><th>Status</th><th>Port</th><th>PID</th>
+              </tr></thead>
+              <tbody>
+                <template x-for="s in services" :key="s.name">
+                  <tr>
+                    <td style="font-weight:600; color:var(--t1)" x-text="s.label"></td>
+                    <td>
+                      <span class="badge" :class="s.active ? 'badge-ok' : 'badge-muted'">
+                        <span class="dot"></span>
+                        <span x-text="s.active ? 'running' : 'stopped'"></span>
+                      </span>
+                    </td>
+                    <td class="mono muted" x-text="s.port || '—'"></td>
+                    <td class="mono muted" x-text="s.pid || '—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Services page -->
+        <div x-show="page === 'services'" x-data="services">
+          <div class="page-header">
+            <div>
+              <div class="page-title">Services</div>
+              <div class="page-sub">Manage system services</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" @click="load">↻ Refresh</button>
+          </div>
+          <div class="card">
+            <table>
+              <thead><tr>
+                <th>Service</th><th>Status</th><th>Port</th><th>PID</th><th>Actions</th>
+              </tr></thead>
+              <tbody>
+                <template x-for="s in list" :key="s.name">
+                  <tr>
+                    <td style="font-weight:600; color:var(--t1)" x-text="s.label"></td>
+                    <td>
+                      <span class="badge" :class="s.active ? 'badge-ok' : 'badge-muted'">
+                        <span class="dot"></span>
+                        <span x-text="s.active ? 'running' : 'stopped'"></span>
+                      </span>
+                    </td>
+                    <td class="mono muted" x-text="s.port || '—'"></td>
+                    <td class="mono muted" x-text="s.pid || '—'"></td>
+                    <td>
+                      <div style="display:flex; gap:4px;">
+                        <button class="btn btn-ghost btn-sm" @click="action(s.name, 'restart')"
+                          :disabled="acting === s.name+'restart'">↺ Restart</button>
+                        <button x-show="!s.active" class="btn btn-primary btn-sm"
+                          @click="action(s.name, 'start')">▶ Start</button>
+                        <button x-show="s.active" class="btn btn-danger btn-sm"
+                          @click="action(s.name, 'stop')">■ Stop</button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Placeholder for other pages -->
+        <template x-if="!['dashboard','services'].includes(page)">
+          <div>
+            <div class="page-header">
+              <div>
+                <div class="page-title" x-text="page_title"></div>
+                <div class="page-sub">Coming soon</div>
+              </div>
+            </div>
+            <div class="card" style="padding:60px; text-align:center;">
+              <div style="font-size:36px; margin-bottom:12px; opacity:0.3">🚧</div>
+              <div style="font-size:15px; font-weight:700; color:var(--t2)" x-text="page_title + ' module'"></div>
+              <div style="font-size:13px; color:var(--t4); margin-top:6px;">This section is under active development.</div>
+            </div>
+          </div>
+        </template>
+
+      </div><!-- /page -->
+    </div><!-- /main -->
+  </div><!-- /app-shell -->
+
+</div><!-- /shell -->
+
+<script>
+// Apply saved theme before Alpine loads to prevent flash
+const t = localStorage.getItem('vp_theme') || 'blue';
+document.documentElement.setAttribute('data-theme', t);
+</script>
+
+</body>
+</html>
