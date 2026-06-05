@@ -201,10 +201,14 @@ function websitesPage() {
 // ── DATABASES ────────────────────────────────────────────────────────────────
 function databasesPage() {
   return {
-    tab: 'databases', databases: [], dbUsers: [], showAdd: false,
+    tab: 'databases', databases: [], dbUsers: [], showAdd: false, dbError: '',
     form: { name:'', user:'', password:'' },
     async init() { await this.loadDbs(); },
-    async loadDbs() { const r = await get('/api/databases'); if (r.ok) this.databases = r.databases; },
+    async loadDbs() {
+      const r = await get('/api/databases');
+      if (r.ok) { this.databases = r.databases; this.dbError = r.databases.length===0 ? 'No databases yet' : ''; }
+      else { this.dbError = r.error || 'Cannot connect to MySQL/MariaDB'; }
+    },
     async loadUsers() { const r = await get('/api/databases/users'); if (r.ok) this.dbUsers = r.users; },
     async createDb() {
       const r = await post('/api/databases', this.form);
@@ -622,25 +626,63 @@ function monitoringPage() {
 // ── MODULES ──────────────────────────────────────────────────────────────────
 function modulesPage() {
   return {
-    modules: [], cat: '', outModal: { show:false, title:'', content:'' },
+    modules: [], cat: '',
+    outModal: { show:false, title:'', content:'' },
+    verModal: { show:false, mod:null, selVer:'' },
+
     async init() { await this.load(); },
-    async load() { const r = await get('/api/modules'); if (r.ok) this.modules = r.modules; },
+    async load() {
+      const r = await get('/api/modules');
+      if (r.ok) this.modules = r.modules.map(m=>({...m,loading:false}));
+    },
     categories() { return [...new Set(this.modules.map(m=>m.category))].sort(); },
     filtered() { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
+
     async install(m) {
-      m.loading = true;
-      toast('Installing '+m.name+'…', 'info');
-      const r = await post('/api/modules/'+m.id+'/install');
-      m.loading = false;
-      m.installed = r.installed;
-      this.outModal = {show:true, title:'Install: '+m.name, content:r.output||'Done'};
-      toast(r.installed?m.name+' installed!':'Install failed', r.installed?'success':'error');
+      // PHP needs version selection
+      if (m.id === 'php' && m.versions && m.versions.length) {
+        this.verModal = { show:true, mod:m, selVer: m.versions[2] || m.versions[0] };
+        return;
+      }
+      await this._doInstall(m, '');
     },
+
+    async installWithVer() {
+      const m = this.verModal.mod;
+      const ver = this.verModal.selVer;
+      this.verModal.show = false;
+      await this._doInstall(m, ver);
+    },
+
+    async _doInstall(m, ver) {
+      m.loading = true;
+      toast('Installing ' + m.name + (ver?' '+ver:'') + '…', 'info');
+      const r = await post('/api/modules/'+m.id+'/install', {version:ver});
+      m.loading = false;
+      if (r.ok) {
+        m.installed = r.installed;
+        this.outModal = {show:true, title:'Install: '+m.name+(ver?' '+ver:''), content:r.output||'Done'};
+        toast(r.installed ? m.name+' installed!' : 'Install may have failed — check output', r.installed?'success':'warn');
+      } else {
+        toast(r.error||'Failed', 'error');
+      }
+    },
+
     async uninstall(m) {
-      if (!confirm('Uninstall '+m.name+'?')) return;
+      if (!confirm('Uninstall '+m.name+'? This will remove the software.')) return;
+      m.loading = true;
       const r = await post('/api/modules/'+m.id+'/uninstall');
-      m.installed = r.installed;
+      m.loading = false;
+      m.installed = r.installed || false;
       toast(m.name+' uninstalled', 'success');
+    },
+
+    async control(m, action) {
+      await post('/api/modules/'+m.id+'/control', {action});
+      toast(action+' '+m.name, 'success');
+      // Refresh status
+      const sr = await get('/api/modules/'+m.id+'/status');
+      if (sr.ok) m.svcStatus = sr.status;
     }
   };
 }

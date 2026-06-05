@@ -1047,37 +1047,84 @@
 
       <!-- MODULES -->
       <div x-show="page==='modules'" x-data="modulesPage()">
-        <div class="page-header"><div><div class="page-title">Modules</div><div class="page-sub">Install server software</div></div></div>
+        <div class="page-header"><div><div class="page-title">Modules</div><div class="page-sub">Install and manage server software</div></div></div>
+
         <!-- Category filter -->
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
           <button class="btn btn-sm" :class="cat===''?'btn-primary':'btn-ghost'" @click="cat=''">All</button>
-          <template x-for="c in categories()" :key="c">
-            <button class="btn btn-sm" :class="cat===c?'btn-primary':'btn-ghost'" @click="cat=c" x-text="c"></button>
+          <template x-for="cc in categories()" :key="cc">
+            <button class="btn btn-sm" :class="cat===cc?'btn-primary':'btn-ghost'" @click="cat=cc" x-text="cc"></button>
           </template>
         </div>
+
         <div class="grid-4">
           <template x-for="m in filtered()" :key="m.id">
-            <div class="mod-card" :class="{installed:m.installed}">
-              <div style="display:flex;align-items:center;justify-content:space-between">
-                <span class="mod-icon" x-text="m.icon"></span>
-                <span :class="'badge badge-'+(m.installed?'green':'gray')" x-text="m.installed?'Installed':'Not Installed'"></span>
+            <div class="mod-card" :class="{installed:m.installed}"
+                 :style="m.installed?'border-color:rgba(16,185,129,.3)':' '">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <span style="font-size:26px" x-text="m.icon"></span>
+                <span :class="'badge badge-'+(m.installed?'green':'gray')"
+                      x-text="m.installed?'Installed':'Not Installed'"></span>
               </div>
-              <div class="mod-name" x-text="m.name"></div>
-              <div class="mod-desc" x-text="m.desc"></div>
-              <div class="mod-cat" x-text="m.category"></div>
-              <div style="display:flex;gap:6px;margin-top:4px">
-                <button class="btn btn-primary btn-xs" x-show="!m.installed" @click="install(m)" :disabled="m.loading" style="flex:1;justify-content:center">
+              <div style="font-size:13px;font-weight:700;color:var(--text-primary)" x-text="m.name"></div>
+              <div style="font-size:11px;color:var(--text-muted);margin:4px 0 6px" x-text="m.desc"></div>
+              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:8px" x-text="m.category"></div>
+
+              <!-- Installed: show control buttons -->
+              <div x-show="m.installed" style="display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;gap:5px" x-show="m.manage">
+                  <button class="btn btn-success btn-xs" style="flex:1;justify-content:center" @click="control(m,'start')">Start</button>
+                  <button class="btn btn-ghost btn-xs" style="flex:1;justify-content:center" @click="control(m,'restart')">Restart</button>
+                  <button class="btn btn-danger btn-xs" style="flex:1;justify-content:center" @click="control(m,'stop')">Stop</button>
+                </div>
+                <button class="btn btn-danger btn-xs" style="width:100%;justify-content:center" @click="uninstall(m)" :disabled="m.loading">
+                  <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
+                  <span x-text="m.loading?'Removing…':'Uninstall'"></span>
+                </button>
+              </div>
+
+              <!-- Not installed: show install button -->
+              <div x-show="!m.installed">
+                <button class="btn btn-primary btn-xs" style="width:100%;justify-content:center" @click="install(m)" :disabled="m.loading">
                   <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
                   <span x-text="m.loading?'Installing…':'Install'"></span>
                 </button>
-                <button class="btn btn-danger btn-xs" x-show="m.installed" @click="uninstall(m)" style="flex:1;justify-content:center">Uninstall</button>
               </div>
             </div>
           </template>
         </div>
+
+        <!-- PHP version picker modal -->
+        <div class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
+          <div class="modal" style="max-width:420px">
+            <div class="modal-hd">
+              <div class="modal-title">Install PHP</div>
+              <button class="modal-close" @click="verModal.show=false">×</button>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Select PHP Version</label>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
+                <template x-for="v in (verModal.mod?.versions||[])" :key="v">
+                  <div style="padding:10px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid transparent;font-weight:600;font-size:13px;transition:.12s"
+                       :style="verModal.selVer===v?'border-color:var(--accent);background:var(--bg-hover);color:var(--accent)':'border-color:var(--border);background:var(--bg-raised);color:var(--text-secondary)'"
+                       @click="verModal.selVer=v"
+                       x-text="'PHP '+v"></div>
+                </template>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+              This will install PHP <span x-text="verModal.selVer"></span>-FPM with common extensions (mysql, gd, curl, mbstring, xml, zip, bcmath, intl, soap).
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="verModal.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="installWithVer()">Install PHP <span x-text="verModal.selVer"></span></button>
+            </div>
+          </div>
+        </div>
+
         <!-- Output modal -->
         <div class="modal-overlay" x-show="outModal.show" @click.self="outModal.show=false">
-          <div class="modal" style="max-width:700px">
+          <div class="modal" style="max-width:760px">
             <div class="modal-hd"><div class="modal-title" x-text="outModal.title"></div><button class="modal-close" @click="outModal.show=false">×</button></div>
             <div class="terminal-out" x-text="outModal.content"></div>
             <div class="modal-ft"><button class="btn btn-primary" @click="outModal.show=false">Close</button></div>
