@@ -1,44 +1,51 @@
 #!/usr/bin/env python3
 """
-Run once on install — creates admin account and default settings.
-Usage: python init.py --username admin --password <pass> --email admin@localhost
+Run on install — creates or updates admin account.
+Usage: python init.py --username admin --password <pass> --email <email>
 """
 import asyncio
 import argparse
-import secrets
-import sys
 import os
+import sys
+import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 async def seed(username, password, email):
-    from panel.database import init_db, SessionLocal, User, Setting
+    from panel.database import init_db, SessionLocal, User
     from panel.auth import hash_password
-    from sqlalchemy import select, insert
-    import uuid
+    from sqlalchemy import select, update
 
     await init_db()
 
     async with SessionLocal() as db:
-        # check if any user exists
-        existing = await db.execute(select(User).limit(1))
-        if existing.scalar_one_or_none():
-            print("Admin account already exists — skipping.")
-            return
-
-        uid = uuid.uuid4().hex
-        user = User(
-            id=uid,
-            username=username,
-            email=email,
-            password=hash_password(password),
-            role="super_admin",
+        result = await db.execute(
+            select(User).where(User.username == username)
         )
-        db.add(user)
-        await db.commit()
+        existing = result.scalar_one_or_none()
 
-    print(f"Admin created: {username} / {email}")
+        hashed = hash_password(password)
+
+        if existing:
+            # update password on reinstall
+            await db.execute(
+                update(User).where(User.username == username)
+                .values(password=hashed, email=email)
+            )
+            await db.commit()
+            print(f"Admin updated: {username}")
+        else:
+            user = User(
+                id=uuid.uuid4().hex,
+                username=username,
+                email=email,
+                password=hashed,
+                role="super_admin",
+            )
+            db.add(user)
+            await db.commit()
+            print(f"Admin created: {username}")
 
 
 if __name__ == "__main__":

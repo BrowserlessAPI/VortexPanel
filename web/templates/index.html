@@ -235,45 +235,226 @@
         <!-- Websites -->
         <div x-show="page==='websites'" x-data="websites">
           <div class="page-header">
-            <div><div class="page-title">Websites</div><div class="page-sub">Manage web hosting</div></div>
-            <button class="btn btn-primary" @click="show_add=true">+ Add Website</button>
+            <div>
+              <div class="page-title">Websites</div>
+              <div class="page-sub" x-text="`${list.length} site${list.length!==1?'s':''} total`"></div>
+            </div>
+            <button class="btn btn-primary" @click="show_add=true">+ Add Site</button>
           </div>
+
+          <!-- Site list -->
           <div class="card">
             <div x-show="loading" style="padding:40px;text-align:center;color:var(--t4)">Loading…</div>
             <div x-show="!loading && list.length===0" style="padding:60px;text-align:center;">
-              <div style="font-size:32px;opacity:0.2;margin-bottom:10px">🌐</div>
-              <div style="color:var(--t3);font-size:13px">No websites yet. Add your first one.</div>
+              <div style="font-size:40px;opacity:0.15;margin-bottom:12px">🌐</div>
+              <div style="font-size:14px;font-weight:700;color:var(--t2)">No websites yet</div>
+              <div style="font-size:12px;color:var(--t4);margin-top:4px">Click "Add Site" to create your first website</div>
             </div>
             <table x-show="!loading && list.length>0">
-              <thead><tr><th>Domain</th><th>PHP</th><th>SSL</th><th>Status</th><th>Actions</th></tr></thead>
+              <thead><tr>
+                <th>Domain</th><th>Path</th><th>PHP</th>
+                <th>SSL</th><th>Status</th><th>Actions</th>
+              </tr></thead>
               <tbody>
                 <template x-for="s in list" :key="s.id">
                   <tr>
-                    <td style="font-weight:600;color:var(--t1)" x-text="s.domain"></td>
-                    <td class="mono" x-text="s.php_version||'—'"></td>
-                    <td><span class="badge" :class="s.ssl?'badge-ok':'badge-muted'" x-text="s.ssl?'Active':'Off'"></span></td>
-                    <td><span class="badge badge-ok"><span class="dot"></span> Running</span></td>
-                    <td><button class="btn btn-danger btn-sm" @click="remove(s.id)">Delete</button></td>
+                    <td>
+                      <div style="font-weight:700;color:var(--t1)" x-text="s.domain"></div>
+                      <div style="font-size:10px;color:var(--t4);margin-top:1px" x-text="s.path"></div>
+                    </td>
+                    <td class="mono muted" style="font-size:11px" x-text="s.path?.split('/').pop()"></td>
+                    <td>
+                      <span class="badge badge-info" x-text="'PHP '+s.php"></span>
+                    </td>
+                    <td>
+                      <span x-show="s.ssl" class="badge badge-ok" x-text="`SSL · ${s.ssl_days}d`"></span>
+                      <span x-show="!s.ssl" class="badge badge-muted">No SSL</span>
+                    </td>
+                    <td>
+                      <span class="badge" :class="s.active?'badge-ok':'badge-muted'">
+                        <span class="dot"></span>
+                        <span x-text="s.active?'Running':'Stopped'"></span>
+                      </span>
+                    </td>
+                    <td>
+                      <div style="display:flex;gap:4px;">
+                        <button class="btn btn-ghost btn-sm" @click="open_site(s)">Manage</button>
+                        <button class="btn btn-ghost btn-sm" @click="toggle(s.domain)"
+                          x-text="s.active?'Stop':'Start'"></button>
+                        <button class="btn btn-danger btn-sm" @click="remove(s.domain)">✕</button>
+                      </div>
+                    </td>
                   </tr>
                 </template>
               </tbody>
             </table>
           </div>
+
+          <!-- Add site modal -->
           <div class="modal-overlay" x-show="show_add" @click.self="show_add=false">
-            <div class="modal">
-              <div class="modal-title">Add Website</div>
-              <div class="form-group"><label>Domain</label><input x-model="form.domain" placeholder="example.com"></div>
-              <div class="grid-2">
-                <div class="form-group"><label>PHP Version</label>
-                  <select x-model="form.php"><template x-for="v in php_versions"><option :value="v" x-text="'PHP '+v"></option></template></select>
+            <div class="modal" style="max-width:520px;">
+              <div class="modal-title">Add Site</div>
+              <!-- tabs -->
+              <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:18px;">
+                <template x-for="t in ['Create site','One-click Deploy','Batch create']">
+                  <button @click="add_tab=t"
+                    style="padding:8px 16px;font-size:12px;background:none;border:none;cursor:pointer;border-bottom:2px solid transparent;"
+                    :style="add_tab===t?'color:var(--accent);border-bottom-color:var(--accent)':'color:var(--t4)'"
+                    x-text="t"></button>
+                </template>
+              </div>
+
+              <div x-show="add_tab==='Create site'">
+                <div class="form-group">
+                  <label>Domain Name</label>
+                  <input x-model="form.domain" placeholder="example.com — one domain per line">
+                  <div style="font-size:11px;color:var(--t4);margin-top:4px">Wildcard: *.example.com · Custom port: domain.com:8080</div>
                 </div>
-                <div class="form-group"><label>Type</label>
-                  <select x-model="form.type"><option value="static">Static</option><option value="php">PHP</option><option value="proxy">Reverse Proxy</option></select>
+                <div class="form-group">
+                  <label>Website Path</label>
+                  <input x-model="form.path" :placeholder="'/www/wwwroot/' + (form.domain||'domain.com')">
+                </div>
+                <div class="grid-2">
+                  <div class="form-group">
+                    <label>PHP Version</label>
+                    <select x-model="form.php">
+                      <template x-for="v in php_versions"><option :value="v" x-text="'PHP '+v"></option></template>
+                      <option value="none">Static (No PHP)</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Site Type</label>
+                    <select x-model="form.type">
+                      <option value="php">PHP</option>
+                      <option value="static">Static HTML</option>
+                      <option value="proxy">Reverse Proxy</option>
+                      <option value="nodejs">Node.js</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="grid-2">
+                  <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">
+                    <input type="checkbox" x-model="form.create_db" style="width:auto">
+                    <div>
+                      <div style="font-size:12px;font-weight:600;color:var(--t1)">Create Database</div>
+                      <div style="font-size:10px;color:var(--t4)">MySQL / PostgreSQL</div>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">
+                    <input type="checkbox" x-model="form.create_ftp" style="width:auto">
+                    <div>
+                      <div style="font-size:12px;font-weight:600;color:var(--t1)">Create FTP</div>
+                      <div style="font-size:10px;color:var(--t4)">FTP/SFTP access</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div style="display:flex;gap:8px;margin-top:4px;">
+
+              <div x-show="add_tab==='Batch create'" style="color:var(--t3);font-size:13px;padding:20px 0">
+                Enter one domain per line to create multiple sites at once.
+                <textarea x-model="form.batch_domains" rows="5" style="margin-top:10px"
+                  placeholder="site1.com&#10;site2.com&#10;site3.com"></textarea>
+              </div>
+
+              <div style="display:flex;gap:8px;margin-top:16px;">
                 <button class="btn btn-ghost w-full" @click="show_add=false">Cancel</button>
-                <button class="btn btn-primary w-full" @click="add">Create</button>
+                <button class="btn btn-primary w-full" @click="add" :disabled="adding">
+                  <span x-text="adding?'Creating…':'Confirm'"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Site management panel (drawer) -->
+          <div x-show="active_site" style="position:fixed;inset:0;z-index:40;display:flex;">
+            <div style="flex:1;background:rgba(0,0,0,0.5)" @click="active_site=null"></div>
+            <div style="width:680px;background:var(--bg1);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;">
+              <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+                <div>
+                  <div style="font-size:15px;font-weight:800;color:var(--t1)" x-text="active_site?.domain"></div>
+                  <div style="font-size:11px;color:var(--t4)" x-text="active_site?.path"></div>
+                </div>
+                <button @click="active_site=null" style="margin-left:auto;background:none;border:none;color:var(--t4);font-size:20px;cursor:pointer;">✕</button>
+              </div>
+              <div style="display:flex;flex:1;overflow:hidden;">
+                <!-- Sidebar nav -->
+                <div style="width:180px;border-right:1px solid var(--border);padding:8px 0;overflow-y:auto;">
+                  <template x-for="tab in site_tabs" :key="tab.id">
+                    <button @click="site_tab=tab.id"
+                      style="width:100%;display:flex;align-items:center;gap:8px;padding:9px 16px;background:none;border:none;cursor:pointer;text-align:left;font-size:13px;border-left:2px solid transparent;"
+                      :style="site_tab===tab.id?'color:var(--accent);border-left-color:var(--accent);background:var(--accent-bg)':'color:var(--t3)'">
+                      <span x-text="tab.icon"></span>
+                      <span x-text="tab.label"></span>
+                    </button>
+                  </template>
+                </div>
+                <!-- Tab content -->
+                <div style="flex:1;padding:20px;overflow-y:auto;">
+                  <!-- Domain Manager -->
+                  <div x-show="site_tab==='domain'">
+                    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:12px">Domain Manager</div>
+                    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;">
+                      <div style="font-size:12px;color:var(--t3);margin-bottom:6px">Primary Domain</div>
+                      <div style="font-size:14px;font-weight:700;color:var(--accent)" x-text="active_site?.domain"></div>
+                    </div>
+                    <div class="form-group"><label>Add Alias Domain</label>
+                      <div style="display:flex;gap:8px;">
+                        <input placeholder="alias.example.com" style="flex:1">
+                        <button class="btn btn-primary btn-sm">Add</button>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- SSL -->
+                  <div x-show="site_tab==='ssl'">
+                    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:12px">SSL Certificate</div>
+                    <div x-show="!active_site?.ssl" style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:14px;margin-bottom:16px;">
+                      <div style="font-size:12px;font-weight:600;color:#f59e0b">⚠ No SSL certificate</div>
+                      <div style="font-size:11px;color:var(--t4);margin-top:4px">Your site is running on HTTP only.</div>
+                    </div>
+                    <button class="btn btn-primary w-full" style="margin-bottom:10px">🔒 Apply Free SSL (Let's Encrypt)</button>
+                    <button class="btn btn-ghost w-full">📤 Upload Custom Certificate</button>
+                  </div>
+                  <!-- Config -->
+                  <div x-show="site_tab==='config'">
+                    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:12px">Nginx Config</div>
+                    <textarea x-model="site_config" rows="18" class="mono"
+                      style="width:100%;background:var(--bg0);border:1px solid var(--border);border-radius:8px;padding:12px;color:#22c55e;font-size:11px;resize:vertical"></textarea>
+                    <button class="btn btn-primary" style="margin-top:10px" @click="save_config">Save & Reload</button>
+                  </div>
+                  <!-- Directory -->
+                  <div x-show="site_tab==='dir'">
+                    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:12px">Directory</div>
+                    <div class="form-group"><label>Site Root</label>
+                      <div style="display:flex;gap:8px;">
+                        <input :value="active_site?.path" style="flex:1">
+                        <button class="btn btn-primary btn-sm">Save</button>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- URL Rewrite -->
+                  <div x-show="site_tab==='rewrite'">
+                    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:12px">URL Rewrite</div>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                      <template x-for="rule in ['WordPress','Laravel','ThinkPHP','Discuz','Default']">
+                        <button class="btn btn-ghost" style="text-align:left;justify-content:flex-start" x-text="rule+' rewrite rules'"></button>
+                      </template>
+                    </div>
+                  </div>
+                  <!-- Redirect -->
+                  <div x-show="site_tab==='redirect'">
+                    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:12px">Redirects</div>
+                    <button class="btn btn-primary">+ Add Redirect</button>
+                    <div style="margin-top:16px;color:var(--t4);font-size:12px">No redirects configured.</div>
+                  </div>
+                  <!-- Reverse Proxy -->
+                  <div x-show="site_tab==='proxy'">
+                    <div style="font-size:13px;font-weight:700;color:var(--t1);margin-bottom:12px">Reverse Proxy</div>
+                    <div class="form-group"><label>Proxy Target</label>
+                      <input placeholder="http://127.0.0.1:3000">
+                    </div>
+                    <button class="btn btn-primary">Enable Proxy</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

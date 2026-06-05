@@ -267,28 +267,66 @@ document.addEventListener('alpine:init', () => {
 document.addEventListener('alpine:init', () => {
 
 Alpine.data('websites', () => ({
-    list: [], loading: true, show_add: false,
-    form: { domain: '', php: '8.3', ssl: false, type: 'static' },
-    php_versions: ['8.3','8.2','8.1','7.4'],
+    list: [], loading: true, show_add: false, adding: false,
+    add_tab: 'Create site',
+    form: { domain: '', path: '', php: '8.3', type: 'php', create_db: false, create_ftp: false, batch_domains: '' },
+    php_versions: ['8.3','8.2','8.1','8.0','7.4'],
+    active_site: null,
+    site_tab: 'domain',
+    site_config: '',
+    site_tabs: [
+        { id: 'domain',   icon: '🌐', label: 'Domain Manager' },
+        { id: 'dir',      icon: '📁', label: 'Directory'      },
+        { id: 'ssl',      icon: '🔒', label: 'SSL'            },
+        { id: 'config',   icon: '⚙', label: 'Config'         },
+        { id: 'rewrite',  icon: '↩', label: 'URL Rewrite'    },
+        { id: 'redirect', icon: '↗', label: 'Redirect'       },
+        { id: 'proxy',    icon: '🔀', label: 'Reverse Proxy'  },
+    ],
 
     async init() { await this.load(); },
+
     async load() {
         this.loading = true;
         this.list = await api.get('/api/websites').catch(() => []);
         this.loading = false;
     },
+
     async add() {
+        if (!this.form.domain && !this.form.batch_domains) return;
+        this.adding = true;
         try {
             await api.post('/api/websites', this.form);
             toast('Website created', 'ok');
             this.show_add = false;
-            this.form = { domain: '', php: '8.3', ssl: false, type: 'static' };
+            this.form = { domain: '', path: '', php: '8.3', type: 'php', create_db: false, create_ftp: false };
             await this.load();
         } catch(e) { toast(e.message, 'danger'); }
+        this.adding = false;
     },
-    async remove(id) {
-        if (!confirm('Delete this website?')) return;
-        await api.delete(`/api/websites/${id}`).catch(e => toast(e.message,'danger'));
+
+    async open_site(s) {
+        this.active_site = s;
+        this.site_tab = 'domain';
+        const r = await api.get(`/api/websites/${s.domain}/config`).catch(() => ({ content: '' }));
+        this.site_config = r.content;
+    },
+
+    async save_config() {
+        try {
+            await api.put(`/api/websites/${this.active_site.domain}/config`, { content: this.site_config });
+            toast('Config saved & Nginx reloaded', 'ok');
+        } catch(e) { toast(e.message, 'danger'); }
+    },
+
+    async toggle(domain) {
+        await api.post(`/api/websites/${domain}/toggle`).catch(e => toast(e.message,'danger'));
+        await this.load();
+    },
+
+    async remove(domain) {
+        if (!confirm(`Delete ${domain}? This will remove the Nginx config.`)) return;
+        await api.delete(`/api/websites/${domain}`).catch(e => toast(e.message,'danger'));
         await this.load();
     }
 }));
