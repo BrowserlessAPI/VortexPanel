@@ -196,12 +196,13 @@
               <div>
                 <div class="form-group">
                   <label class="form-label">Domain Name</label>
-                  <input class="form-input" x-model="form.domain" placeholder="example.com — one domain">
+                  <input class="form-input" x-model="form.domain" placeholder="example.com — one domain"
+                    @input="if(form.domain && !form.path_edited) form.path = (webroot||'/www/wwwroot') + '/' + form.domain.split(':')[0].replace(/^\*\./, '')">
                   <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Wildcard: *.example.com · Custom port: domain.com:8080</div>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Website Path</label>
-                  <input class="form-input" x-model="form.path" placeholder="/www/wwwroot/domain.com">
+                  <input class="form-input" x-model="form.path" placeholder="/www/wwwroot/domain.com" @input="form.path_edited=true">
                 </div>
                 <div class="form-row form-row-2">
                   <div class="form-group">
@@ -396,42 +397,135 @@
 
       <!-- PHP -->
       <div x-show="page==='php'" x-data="phpPage()">
-        <div class="page-header"><div><div class="page-title">PHP Extensions</div><div class="page-sub">Manage PHP versions and extensions</div></div></div>
-        <div class="grid-2" style="margin-bottom:16px">
-          <div class="card">
-            <div class="card-hd"><div class="card-title">PHP Versions</div></div>
+        <div class="page-header"><div><div class="page-title">PHP</div><div class="page-sub">Manage PHP versions, extensions and configuration</div></div></div>
+
+        <template x-if="versions.length===0">
+          <div class="card"><div class="empty-state"><div class="empty-icon">🐘</div><div class="empty-text">No PHP versions detected. Install PHP via Modules.</div></div></div>
+        </template>
+
+        <div class="grid-2" x-show="versions.length>0">
+          <!-- Left: version list -->
+          <div style="display:flex;flex-direction:column;gap:8px">
             <template x-for="v in versions" :key="v.version">
-              <div class="svc-row">
-                <span class="svc-icon">🐘</span>
-                <div class="svc-name">PHP <span x-text="v.version"></span>-FPM</div>
-                <span :class="'badge badge-'+(v.active?'green':'gray')" x-text="v.active?'Running':'Stopped'"></span>
-                <div class="svc-btns">
-                  <button class="btn btn-ghost btn-xs" @click="fpmAction(v.version,'restart')">Restart</button>
-                  <button class="btn btn-ghost btn-xs" @click="editIni(v.version)">php.ini</button>
+              <div class="card" style="cursor:pointer;transition:.15s"
+                   :style="selVer===v.version?'border-color:var(--accent);background:var(--bg-hover)':''"
+                   @click="selectVer(v.version)">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <div style="font-size:28px">🐘</div>
+                  <div style="flex:1">
+                    <div style="font-weight:700;font-size:15px">PHP-<span x-text="v.version"></span></div>
+                    <div style="font-size:11px;color:var(--text-muted)" x-text="v.binary"></div>
+                  </div>
+                  <span :class="'badge badge-'+(v.status==='active'?'green':'red')" x-text="v.status"></span>
+                </div>
+                <!-- Action buttons shown when selected -->
+                <div x-show="selVer===v.version" style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap">
+                  <button class="btn btn-success btn-xs" @click.stop="fpmAction('start')" x-show="v.status!=='active'">Start</button>
+                  <button class="btn btn-danger btn-xs" @click.stop="fpmAction('stop')" x-show="v.status==='active'">Stop</button>
+                  <button class="btn btn-ghost btn-xs" @click.stop="fpmAction('restart')">Restart</button>
+                  <button class="btn btn-ghost btn-xs" @click.stop="fpmAction('reload')">Reload</button>
+                  <button class="btn btn-ghost btn-xs" @click.stop="openIni()">php.ini</button>
                 </div>
               </div>
             </template>
           </div>
-          <div class="card">
-            <div class="card-hd"><div class="card-title">Extensions <span style="font-size:11px;color:var(--text-muted)" x-show="selVer">— PHP <span x-text="selVer"></span></span></div></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:260px;overflow-y:auto">
-              <template x-for="ext in extensions" :key="ext.name">
-                <div style="display:flex;align-items:center;gap:8px;padding:5px 0">
-                  <span :class="'dot dot-'+(ext.installed?'green':'gray')"></span>
-                  <span style="font-size:12px;color:var(--text-secondary)" x-text="ext.name"></span>
-                </div>
+
+          <!-- Right: tabs panel -->
+          <div x-show="selVer" class="card" style="padding:0;overflow:hidden">
+            <!-- Tab nav - like aaPanel sidebar -->
+            <div style="display:flex;border-bottom:1px solid var(--border);background:var(--bg-raised)">
+              <template x-for="t in [{id:'extensions',label:'Extensions'},{id:'config',label:'Configuration'},{id:'fpm',label:'FPM Profile'},{id:'logs',label:'Logs'},{id:'phpinfo',label:'phpinfo'}]" :key="t.id">
+                <div style="padding:10px 14px;font-size:12px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;transition:.12s;white-space:nowrap"
+                     :style="selTab===t.id?'border-bottom-color:var(--accent);color:var(--accent);background:var(--bg-card)':'color:var(--text-muted)'"
+                     @click="selTab=t.id;loadTab()"
+                     x-text="t.label"></div>
               </template>
+            </div>
+
+            <div style="padding:16px;max-height:600px;overflow-y:auto">
+
+              <!-- EXTENSIONS -->
+              <div x-show="selTab==='extensions'">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">PHP <span x-text="selVer"></span> Extensions — click Install/Uninstall to manage</div>
+                <table class="data-table">
+                  <thead><tr><th>Name</th><th>Type</th><th>Description</th><th>Status</th><th>Action</th></tr></thead>
+                  <tbody>
+                    <template x-for="ext in extensions" :key="ext.name">
+                      <tr>
+                        <td style="font-family:var(--font-mono);font-size:12px" x-text="ext.name"></td>
+                        <td><span class="badge badge-gray" style="font-size:10px" x-text="ext.type"></span></td>
+                        <td style="font-size:11px;color:var(--text-muted)" x-text="ext.desc"></td>
+                        <td>
+                          <span x-show="ext.installed" style="color:var(--green);font-size:12px">✓ Installed</span>
+                          <span x-show="!ext.installed" style="color:var(--text-muted);font-size:12px">✗ Not Installed</span>
+                        </td>
+                        <td>
+                          <button class="btn btn-primary btn-xs" x-show="!ext.installed" @click="installExt(ext)" :disabled="ext.loading">
+                            <span x-show="ext.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
+                            <span x-text="ext.loading?'…':'Install'"></span>
+                          </button>
+                          <button class="btn btn-danger btn-xs" x-show="ext.installed" @click="uninstallExt(ext)">Uninstall</button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- CONFIGURATION -->
+              <div x-show="selTab==='config'">
+                <div style="display:grid;gap:12px">
+                  <template x-for="[key,val] in Object.entries(config)" :key="key">
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div style="width:220px;font-size:12px;color:var(--text-secondary);font-family:var(--font-mono)" x-text="key"></div>
+                      <input class="form-input" style="flex:1" x-model="config[key]" :placeholder="key">
+                    </div>
+                  </template>
+                </div>
+                <div style="margin-top:16px;display:flex;gap:8px">
+                  <button class="btn btn-primary" @click="saveConfig()">Save & Reload FPM</button>
+                  <button class="btn btn-ghost" @click="openIni()">Edit Raw php.ini</button>
+                </div>
+                <div style="margin-top:12px;font-size:11px;color:var(--text-muted)">⚠ Do NOT install unnecessary extensions — they affect PHP performance and may cause exceptions. Install Opcache/xcache/apcu only ONE at a time.</div>
+              </div>
+
+              <!-- FPM PROFILE -->
+              <div x-show="selTab==='fpm'">
+                <div style="display:grid;gap:12px">
+                  <template x-for="[key,val] in Object.entries(fpmProfile)" :key="key">
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div style="width:220px;font-size:12px;color:var(--text-secondary);font-family:var(--font-mono)" x-text="key"></div>
+                      <input class="form-input" style="flex:1" x-model="fpmProfile[key]">
+                    </div>
+                  </template>
+                </div>
+                <div style="margin-top:16px">
+                  <button class="btn btn-primary" @click="fpmAction('reload')">Save & Reload FPM</button>
+                </div>
+              </div>
+
+              <!-- LOGS -->
+              <div x-show="selTab==='logs'">
+                <div class="terminal-out" x-text="logContent||'No log content found'"></div>
+              </div>
+
+              <!-- PHPINFO -->
+              <div x-show="selTab==='phpinfo'">
+                <div class="code-block" style="max-height:500px;overflow-y:auto" x-text="phpinfo||'Loading…'"></div>
+              </div>
+
             </div>
           </div>
         </div>
-        <!-- INI editor -->
+
+        <!-- php.ini editor modal -->
         <div class="modal-overlay" x-show="iniModal.show" @click.self="iniModal.show=false">
-          <div class="modal" style="max-width:700px">
+          <div class="modal" style="max-width:800px">
             <div class="modal-hd"><div class="modal-title" x-text="'php.ini — PHP '+iniModal.version"></div><button class="modal-close" @click="iniModal.show=false">×</button></div>
-            <textarea class="form-input" style="min-height:340px;font-family:var(--font-mono);font-size:12px" x-model="iniModal.content"></textarea>
+            <textarea class="form-input" style="min-height:400px;font-family:var(--font-mono);font-size:12px" x-model="iniModal.content"></textarea>
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="iniModal.show=false">Cancel</button>
-              <button class="btn btn-primary" @click="saveIni()">Save & Reload</button>
+              <button class="btn btn-primary" @click="saveIni()">Save & Reload FPM</button>
             </div>
           </div>
         </div>

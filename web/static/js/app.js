@@ -147,6 +147,7 @@ function websitesPage() {
     form: { domain:'', path:'', php:'8.3', type:'PHP', createDb:false, createFtp:false, deploy:'' },
     confModal: { show:false, domain:'', content:'', path:'' },
     batchDomains: '',
+    webroot: '/www/wwwroot',
     oneClickApps: [
       {name:'WordPress', icon:'📝', desc:'PHP CMS platform'},
       {name:'Nextcloud', icon:'☁', desc:'Self-hosted cloud'},
@@ -155,7 +156,16 @@ function websitesPage() {
       {name:'Discourse', icon:'💬', desc:'Community forum'},
       {name:'Mautic',    icon:'📈', desc:'Marketing automation'},
     ],
-    async init() { await this.load(); },
+    async init() {
+      // detect webroot for path auto-fill
+      const s = await get('/api/settings').catch(()=>({}));
+      if (s.ok && s.system) {
+        // use /www/wwwroot if exists, else /var/www/html
+        this.webroot = '/www/wwwroot';
+      }
+      this.form.path = '';
+      await this.load();
+    },
     async load() {
       const r = await get('/api/websites'); if (r.ok) this.sites = r.sites;
     },
@@ -273,32 +283,78 @@ function filesPage() {
 // ── PHP ───────────────────────────────────────────────────────────────────────
 function phpPage() {
   return {
-    versions: [], extensions: [], selVer: '',
+    versions: [], selVer: '', selTab: 'extensions',
+    extensions: [], config: {}, fpmProfile: {},
     iniModal: { show:false, version:'', content:'', path:'' },
+    fpmModal: { show:false, version:'', content:'', path:'' },
+    logContent: '', phpinfo: '',
+
     async init() {
       const r = await get('/api/php/versions');
-      if (r.ok) {
+      if (r.ok && r.versions.length) {
         this.versions = r.versions;
-        if (r.versions.length) { this.selVer = r.versions[0].version; this.loadExt(this.selVer); }
+        await this.selectVer(r.versions[0].version);
       }
     },
-    async loadExt(v) {
+
+    async selectVer(v) {
       this.selVer = v;
-      const r = await get('/api/php/'+v+'/extensions');
-      if (r.ok) this.extensions = r.extensions;
+      this.selTab = 'extensions';
+      await this.loadTab();
     },
-    async editIni(v) {
-      const r = await get('/api/php/'+v+'/ini');
-      if (r.ok) this.iniModal = {show:true, version:v, content:r.content, path:r.path};
+
+    async loadTab() {
+      if (!this.selVer) return;
+      if (this.selTab === 'extensions') {
+        const r = await get('/api/php/'+this.selVer+'/extensions');
+        if (r.ok) this.extensions = r.extensions;
+      } else if (this.selTab === 'config') {
+        const r = await get('/api/php/'+this.selVer+'/config');
+        if (r.ok) this.config = r.config;
+      } else if (this.selTab === 'fpm') {
+        const r = await get('/api/php/'+this.selVer+'/fpmprofile');
+        if (r.ok) this.fpmProfile = r.config;
+      } else if (this.selTab === 'logs') {
+        const r = await get('/api/php/'+this.selVer+'/logs');
+        this.logContent = r.ok ? r.content : (r.error || 'Log not found');
+      } else if (this.selTab === 'phpinfo') {
+        const r = await get('/api/php/'+this.selVer+'/phpinfo');
+        if (r.ok) this.phpinfo = r.content;
+      }
+    },
+
+    async installExt(ext) {
+      ext.loading = true;
+      const r = await post('/api/php/'+this.selVer+'/extensions/'+ext.name+'/install');
+      ext.loading = false;
+      if (r.ok) { ext.installed = r.installed; toast((r.installed?'Installed: ':'Failed: ')+ext.name, r.installed?'success':'error'); }
+    },
+
+    async uninstallExt(ext) {
+      if (!confirm('Uninstall '+ext.name+'?')) return;
+      const r = await post('/api/php/'+this.selVer+'/extensions/'+ext.name+'/uninstall');
+      if (r.ok) { ext.installed = false; toast('Uninstalled: '+ext.name, 'success'); }
+    },
+
+    async saveConfig() {
+      const r = await put('/api/php/'+this.selVer+'/config', {config:this.config});
+      toast(r.ok?'Config saved & FPM reloaded':'Failed', r.ok?'success':'error');
+    },
+
+    async openIni() {
+      const r = await get('/api/php/'+this.selVer+'/ini');
+      if (r.ok) this.iniModal = {show:true, version:this.selVer, content:r.content, path:r.path};
       else toast(r.error||'php.ini not found', 'error');
     },
+
     async saveIni() {
-      const r = await put('/api/php/'+this.iniModal.version+'/ini', {path:this.iniModal.path, content:this.iniModal.content});
+      const r = await put('/api/php/'+this.selVer+'/ini', {path:this.iniModal.path, content:this.iniModal.content});
       if (r.ok) { toast('Saved & FPM reloaded', 'success'); this.iniModal.show=false; }
     },
-    async fpmAction(v, action) {
-      const r = await post('/api/php/'+v+'/fpm', {action});
-      toast((r.ok?'Done: ':'Error: ')+action+' php'+v+'-fpm', r.ok?'success':'error');
+
+    async fpmAction(action) {
+      const r = await post('/api/php/'+this.selVer+'/fpm', {action});
+      toast((r.ok?'Done: ':'Error: ')+action, r.ok?'success':'error');
       const rr = await get('/api/php/versions'); if (rr.ok) this.versions = rr.versions;
     }
   };

@@ -4,6 +4,12 @@ import os, shutil, mimetypes, base64
 files_bp = Blueprint('files', __name__)
 def req(): return 'user' in session
 ROOT = '/'
+def get_webroot():
+    import os
+    for p in ['/www/wwwroot','/var/www/html','/var/www','/srv/www']:
+        if os.path.isdir(p): return p
+    os.makedirs('/www/wwwroot', exist_ok=True)
+    return '/www/wwwroot'
 MAX_EDIT_SIZE = 1024*1024  # 1MB
 
 def safe_path(p):
@@ -13,7 +19,7 @@ def safe_path(p):
 @files_bp.route('/api/files/list')
 def list_files():
     if not req(): return jsonify({'ok':False}),401
-    path = safe_path(request.args.get('path','/www/wwwroot'))
+    path = safe_path(request.args.get('path', get_webroot()))
     if not os.path.isdir(path): return jsonify({'ok':False,'error':'Not a directory'}),400
     items = []
     try:

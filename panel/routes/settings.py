@@ -75,3 +75,11 @@ def reboot():
     import threading
     threading.Thread(target=lambda: sh('sleep 3 && reboot'), daemon=True).start()
     return jsonify({'ok':True,'message':'Rebooting in 3 seconds...'})
+
+@settings_bp.route('/api/settings/webroot')
+def get_webroot():
+    import os
+    for p in ['/www/wwwroot','/var/www/html','/var/www','/srv/www']:
+        if os.path.isdir(p): return jsonify({'ok':True,'path':p})
+    os.makedirs('/www/wwwroot', exist_ok=True)
+    return jsonify({'ok':True,'path':'/www/wwwroot'})

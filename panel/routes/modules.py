@@ -33,30 +33,32 @@ MODULES = [
 
 def is_installed(mod_id):
     checks = {
-        'phpmyadmin':   'dpkg -l phpmyadmin 2>/dev/null | grep -c "^ii"',
-        'redis':        'which redis-server',
-        'memcached':    'which memcached',
-        'fail2ban':     'which fail2ban-client',
-        'certbot':      'which certbot',
-        'nodejs':       'which node',
-        'python3':      'which python3',
-        'composer':     'which composer',
-        'git':          'which git',
-        'supervisor':   'which supervisord',
-        'imagemagick':  'which convert',
-        'ffmpeg':       'which ffmpeg',
-        'postfix':      'which postfix',
-        'dovecot':      'which dovecot',
-        'bind9':        'which named',
-        'docker':       'which docker',
-        'vsftpd':       'which vsftpd',
-        'opendkim':     'which opendkim',
-        'spamassassin': 'which spamassassin',
-        'wordpress':    'which wp',
+        'phpmyadmin':   'dpkg -l phpmyadmin 2>/dev/null | grep -c "^ii" | grep -v "^0"',
+        'redis':        'which redis-server 2>/dev/null || systemctl is-active redis-server 2>/dev/null | grep -c active',
+        'memcached':    'which memcached 2>/dev/null',
+        'fail2ban':     'which fail2ban-client 2>/dev/null',
+        'certbot':      'which certbot 2>/dev/null',
+        'nodejs':       'which node 2>/dev/null || which nodejs 2>/dev/null',
+        'python3':      'which python3 2>/dev/null',
+        'composer':     'which composer 2>/dev/null',
+        'git':          'which git 2>/dev/null',
+        'supervisor':   'which supervisord 2>/dev/null || which supervisorctl 2>/dev/null',
+        'imagemagick':  'which convert 2>/dev/null',
+        'ffmpeg':       'which ffmpeg 2>/dev/null',
+        'postfix':      'which postfix 2>/dev/null',
+        'dovecot':      'which dovecot 2>/dev/null',
+        'bind9':        'which named 2>/dev/null',
+        'docker':       'which docker 2>/dev/null',
+        'vsftpd':       'which vsftpd 2>/dev/null',
+        'opendkim':     'which opendkim 2>/dev/null',
+        'spamassassin': 'which spamassassin 2>/dev/null',
+        'wordpress':    'which wp 2>/dev/null',
     }
     try:
-        r = subprocess.run(checks.get(mod_id,'false'), shell=True, capture_output=True)
-        return r.returncode == 0 and r.stdout.strip() not in ('', '0')
+        cmd = checks.get(mod_id, 'false')
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        out = r.stdout.strip()
+        return r.returncode == 0 and out not in ('', '0', 'inactive')
     except: return False
 
 @modules_bp.route('/api/modules')
