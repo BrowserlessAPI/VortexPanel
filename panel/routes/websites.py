@@ -181,3 +181,83 @@ def save_config(domain):
 def webroot():
     if not req(): return jsonify({'ok':False}), 401
     return jsonify({'ok':True, 'path':get_webroot()})
+
+@websites_bp.route('/api/websites/<domain>/ssl/letsencrypt', methods=['POST'])
+def letsencrypt_ssl(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d     = request.get_json() or {}
+    email = d.get('email', f'admin@{domain}')
+    # Try certbot
+    certbot = sh('which certbot 2>/dev/null')
+    if not certbot:
+        out = sh('apt-get install -y certbot python3-certbot-nginx 2>&1', t=120)
+    out = sh(f'certbot --nginx -d {domain} -d www.{domain} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+    ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
+    return jsonify({'ok':ok, 'output':out[-800:]})
+
+@websites_bp.route('/api/websites/<domain>/ssl/manual', methods=['POST'])
+def manual_ssl(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d    = request.get_json() or {}
+    key  = d.get('key','').strip()
+    cert = d.get('cert','').strip()
+    if not key or not cert:
+        return jsonify({'ok':False,'error':'Private key and certificate are required'}), 400
+
+    ssl_dir = f'/etc/nginx/ssl/{domain}'
+    os.makedirs(ssl_dir, exist_ok=True)
+
+    key_path  = f'{ssl_dir}/privkey.pem'
+    cert_path = f'{ssl_dir}/fullchain.pem'
+    with open(key_path,  'w') as f: f.write(key)
+    with open(cert_path, 'w') as f: f.write(cert)
+    os.chmod(key_path, 0o600)
+
+    # Update nginx config to add SSL
+    avail, _ = get_nginx_dirs()
+    conf_path = os.path.join(avail, f'{domain}.conf')
+    if os.path.exists(conf_path):
+        with open(conf_path) as f: content = f.read()
+        # Add ssl server block if not already there
+        if 'ssl_certificate' not in content:
+            ssl_block = f"""
+server {{
+    listen 443 ssl;
+    server_name {domain} www.{domain};
+    root {re.search(r'root\s+([^;]+);', content).group(1).strip() if re.search(r'root\s+([^;]+);', content) else '/www/wwwroot/'+domain};
+    index index.php index.html;
+
+    ssl_certificate     {cert_path};
+    ssl_certificate_key {key_path};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    location / {{
+        try_files $uri $uri/ /index.php?$query_string;
+    }}
+}}
+"""
+            content += ssl_block
+            # Add redirect from http to https
+            http_old = 'listen 80;\n    server_name ' + domain
+            http_new = 'listen 80;\n    server_name ' + domain + '\n    return 301 https://$host$request_uri;'
+            content = content.replace(http_old, http_new)
+            with open(conf_path,'w') as f: f.write(content)
+
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower():
+        return jsonify({'ok':False,'error':f'Nginx config error: {test}'}), 400
+    reload_nginx()
+    return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
+
+@websites_bp.route('/api/websites/<domain>/ssl/info')
+def ssl_info(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    cert_path = f'/etc/nginx/ssl/{domain}/fullchain.pem'
+    # Also check certbot path
+    for p in [cert_path, f'/etc/letsencrypt/live/{domain}/fullchain.pem']:
+        if os.path.exists(p):
+            info = sh(f'openssl x509 -in {p} -noout -dates -subject -issuer 2>/dev/null')
+            expiry = sh(f'openssl x509 -in {p} -noout -enddate 2>/dev/null')
+            return jsonify({'ok':True,'info':info,'expiry':expiry,'path':p})
+    return jsonify({'ok':False,'error':'No SSL certificate installed'})

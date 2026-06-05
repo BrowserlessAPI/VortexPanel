@@ -174,7 +174,7 @@
                   <td>
                     <div style="display:flex;gap:6px">
                       <button class="btn btn-ghost btn-xs" @click="editConf(s)">Config</button>
-                      <button class="btn btn-success btn-xs" @click="issueSSL(s)" x-show="!s.ssl">SSL</button>
+                      <button class="btn btn-success btn-xs" @click="openSSL(s)">SSL</button>
                       <button class="btn btn-danger btn-xs" @click="del(s.domain)">✕</button>
                     </div>
                   </td>
@@ -263,6 +263,69 @@
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="confModal.show=false">Cancel</button>
               <button class="btn btn-primary" @click="saveConf()">Save & Reload Nginx</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SSL Modal — aaPanel style -->
+        <div class="modal-overlay" x-show="sslModal.show" @click.self="sslModal.show=false">
+          <div class="modal" style="max-width:700px">
+            <div class="modal-hd">
+              <div>
+                <div class="modal-title">SSL Certificate — <span x-text="sslModal.domain"></span></div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:3px" x-show="sslModal.info" x-text="sslModal.info"></div>
+              </div>
+              <button class="modal-close" @click="sslModal.show=false">×</button>
+            </div>
+            <!-- Tabs -->
+            <div class="tabs">
+              <div class="tab" :class="{active:sslModal.tab==='letsencrypt'}" @click="sslModal.tab='letsencrypt'">Let's Encrypt (Free)</div>
+              <div class="tab" :class="{active:sslModal.tab==='manual'}" @click="sslModal.tab='manual'">Business / Third-party</div>
+            </div>
+
+            <!-- Let's Encrypt tab -->
+            <div x-show="sslModal.tab==='letsencrypt'">
+              <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:14px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+                <div style="font-weight:600;color:var(--green);margin-bottom:6px">🔒 Let's Encrypt Free SSL</div>
+                <div>• Free certificate issued automatically via Certbot</div>
+                <div>• Valid for 90 days, auto-renews</div>
+                <div>• Domain must point to this server's IP</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Email Address (for renewal notifications)</label>
+                <input class="form-input" x-model="sslModal.email" :placeholder="'admin@'+sslModal.domain">
+              </div>
+              <div x-show="sslModal.output" class="terminal-out" style="min-height:80px;max-height:200px;margin-bottom:14px" x-text="sslModal.output"></div>
+              <button class="btn btn-success" style="width:100%;justify-content:center" @click="issueLetsEncrypt()" :disabled="sslModal.loading">
+                <span x-show="sslModal.loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+                <span x-text="sslModal.loading?'Issuing SSL Certificate…':'Issue Let\'s Encrypt Certificate'"></span>
+              </button>
+            </div>
+
+            <!-- Manual/Business tab — exactly like aaPanel -->
+            <div x-show="sslModal.tab==='manual'">
+              <div style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+                <div>• Paste your KEY and CRT/PEM content below, then click Save</div>
+                <div>• PEM format = domain certificate (.crt) + intermediate/root bundle</div>
+                <div>• If browser shows incomplete chain, ensure you included the full chain</div>
+              </div>
+              <div class="form-row form-row-2" style="align-items:flex-start">
+                <div class="form-group">
+                  <label class="form-label">Private Key (KEY)</label>
+                  <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:11px" x-model="sslModal.key" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Certificate (CRT/PEM)</label>
+                  <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:11px" x-model="sslModal.cert" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+                </div>
+              </div>
+              <div class="modal-ft" style="margin-top:0">
+                <button class="btn btn-ghost" @click="sslModal.show=false">Cancel</button>
+                <button class="btn btn-primary" @click="saveManualSSL()" :disabled="sslModal.loading">
+                  <span x-show="sslModal.loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+                  <span x-text="sslModal.loading?'Saving…':'Save & Enable SSL'"></span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1048,31 +1111,30 @@
       <!-- MODULES -->
       <div x-show="page==='modules'" x-data="modulesPage()">
         <div class="page-header"><div><div class="page-title">Modules</div><div class="page-sub">Install and manage server software</div></div></div>
-
-        <!-- Category filter -->
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
           <button class="btn btn-sm" :class="cat===''?'btn-primary':'btn-ghost'" @click="cat=''">All</button>
           <template x-for="cc in categories()" :key="cc">
             <button class="btn btn-sm" :class="cat===cc?'btn-primary':'btn-ghost'" @click="cat=cc" x-text="cc"></button>
           </template>
         </div>
-
         <div class="grid-4">
           <template x-for="m in filtered()" :key="m.id">
-            <div class="mod-card" :class="{installed:m.installed}"
-                 :style="m.installed?'border-color:rgba(16,185,129,.3)':' '">
+            <div class="mod-card" :style="m.installed?'border-color:rgba(16,185,129,.3);':''">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
                 <span style="font-size:26px" x-text="m.icon"></span>
-                <span :class="'badge badge-'+(m.installed?'green':'gray')"
-                      x-text="m.installed?'Installed':'Not Installed'"></span>
+                <span :class="'badge badge-'+(m.installed?'green':'gray')" x-text="m.installed?'Installed':'Not Installed'"></span>
               </div>
               <div style="font-size:13px;font-weight:700;color:var(--text-primary)" x-text="m.name"></div>
               <div style="font-size:11px;color:var(--text-muted);margin:4px 0 6px" x-text="m.desc"></div>
               <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:8px" x-text="m.category"></div>
-
-              <!-- Installed: show control buttons -->
+              <!-- Service status dot -->
+              <div x-show="m.installed && m.svcStatus" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+                <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus==='inactive'?'red':'yellow')"></span>
+                <span style="font-size:11px;color:var(--text-secondary)" x-text="m.svcStatus"></span>
+              </div>
+              <!-- Controls when installed -->
               <div x-show="m.installed" style="display:flex;flex-direction:column;gap:5px">
-                <div style="display:flex;gap:5px" x-show="m.manage">
+                <div x-show="m.manage" style="display:flex;gap:4px">
                   <button class="btn btn-success btn-xs" style="flex:1;justify-content:center" @click="control(m,'start')">Start</button>
                   <button class="btn btn-ghost btn-xs" style="flex:1;justify-content:center" @click="control(m,'restart')">Restart</button>
                   <button class="btn btn-danger btn-xs" style="flex:1;justify-content:center" @click="control(m,'stop')">Stop</button>
@@ -1082,8 +1144,7 @@
                   <span x-text="m.loading?'Removing…':'Uninstall'"></span>
                 </button>
               </div>
-
-              <!-- Not installed: show install button -->
+              <!-- Install button -->
               <div x-show="!m.installed">
                 <button class="btn btn-primary btn-xs" style="width:100%;justify-content:center" @click="install(m)" :disabled="m.loading">
                   <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
@@ -1094,40 +1155,56 @@
           </template>
         </div>
 
-        <!-- PHP version picker modal -->
+        <!-- PHP/Version picker modal -->
         <div class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
-          <div class="modal" style="max-width:420px">
-            <div class="modal-hd">
-              <div class="modal-title">Install PHP</div>
-              <button class="modal-close" @click="verModal.show=false">×</button>
-            </div>
+          <div class="modal" style="max-width:400px">
+            <div class="modal-hd"><div class="modal-title">Install <span x-text="verModal.mod?.name"></span></div><button class="modal-close" @click="verModal.show=false">×</button></div>
             <div class="form-group">
-              <label class="form-label">Select PHP Version</label>
+              <label class="form-label">Select Version</label>
               <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
                 <template x-for="v in (verModal.mod?.versions||[])" :key="v">
                   <div style="padding:10px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid transparent;font-weight:600;font-size:13px;transition:.12s"
                        :style="verModal.selVer===v?'border-color:var(--accent);background:var(--bg-hover);color:var(--accent)':'border-color:var(--border);background:var(--bg-raised);color:var(--text-secondary)'"
-                       @click="verModal.selVer=v"
-                       x-text="'PHP '+v"></div>
+                       @click="verModal.selVer=v" x-text="v"></div>
                 </template>
               </div>
             </div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-              This will install PHP <span x-text="verModal.selVer"></span>-FPM with common extensions (mysql, gd, curl, mbstring, xml, zip, bcmath, intl, soap).
-            </div>
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="verModal.show=false">Cancel</button>
-              <button class="btn btn-primary" @click="installWithVer()">Install PHP <span x-text="verModal.selVer"></span></button>
+              <button class="btn btn-primary" @click="installWithVer()">Install <span x-text="verModal.selVer"></span></button>
             </div>
           </div>
         </div>
 
-        <!-- Output modal -->
-        <div class="modal-overlay" x-show="outModal.show" @click.self="outModal.show=false">
+        <!-- Job progress modal -->
+        <div class="modal-overlay" x-show="jobModal.show">
           <div class="modal" style="max-width:760px">
-            <div class="modal-hd"><div class="modal-title" x-text="outModal.title"></div><button class="modal-close" @click="outModal.show=false">×</button></div>
-            <div class="terminal-out" x-text="outModal.content"></div>
-            <div class="modal-ft"><button class="btn btn-primary" @click="outModal.show=false">Close</button></div>
+            <div class="modal-hd">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span x-show="!jobModal.done" class="loading-spinner"></span>
+                <span x-show="jobModal.done && jobModal.installed" style="color:var(--green);font-size:18px">✓</span>
+                <span x-show="jobModal.done && !jobModal.installed" style="color:var(--yellow);font-size:18px">⚠</span>
+                <div class="modal-title" x-text="jobModal.title"></div>
+              </div>
+            </div>
+            <!-- Progress bar -->
+            <div x-show="!jobModal.done" style="height:3px;background:var(--bg-raised);border-radius:2px;overflow:hidden;margin-bottom:12px">
+              <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));animation:progress-anim 1.5s ease-in-out infinite;width:60%"></div>
+            </div>
+            <div class="terminal-out job-terminal" style="min-height:200px;max-height:400px">
+              <template x-for="(line,i) in jobModal.lines" :key="i">
+                <div :style="line.startsWith('[VortexPanel]')?'color:#86efac;font-weight:600':''" x-text="line||'&nbsp;'"></div>
+              </template>
+            </div>
+            <div class="modal-ft">
+              <div x-show="jobModal.done && jobModal.installed" style="color:var(--green);font-size:13px;font-weight:600">✓ Installation successful</div>
+              <div x-show="jobModal.done && !jobModal.installed" style="color:var(--yellow);font-size:13px">⚠ Check output above for errors</div>
+              <div style="flex:1"></div>
+              <button class="btn btn-primary" @click="jobModal.show=false" :disabled="!jobModal.done">
+                <span x-show="!jobModal.done" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+                <span x-text="jobModal.done?'Close':'Installing…'"></span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

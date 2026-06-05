@@ -144,6 +144,7 @@ function dashboardPage() {
 function websitesPage() {
   return {
     sites: [], showAdd: false, addTab: 'create',
+    sslModal: {show:false,domain:'',tab:'letsencrypt',email:'',key:'',cert:'',output:'',loading:false,info:''},
     form: { domain:'', path:'', php:'8.3', type:'PHP', createDb:false, createFtp:false, deploy:'' },
     confModal: { show:false, domain:'', content:'', path:'' },
     batchDomains: '',
@@ -194,6 +195,36 @@ function websitesPage() {
       const r = await put(`/api/websites/${this.confModal.domain}/config`, {content:this.confModal.content});
       if (r.ok) { toast('Config saved & Nginx reloaded', 'success'); this.confModal.show=false; }
       else toast('Save failed', 'error');
+    },
+
+    openSSL(s) {
+      this.sslModal = {show:true, domain:s.domain, tab:'letsencrypt',
+        email:'', key:'', cert:'', output:'', loading:false, info:''};
+      this.loadSSLInfo(s.domain);
+    },
+
+    async loadSSLInfo(domain) {
+      const r = await get(`/api/websites/${domain}/ssl/info`);
+      if (r.ok) this.sslModal.info = r.info;
+    },
+
+    async issueLetsEncrypt() {
+      this.sslModal.loading=true; this.sslModal.output='Contacting Let\'s Encrypt...\n';
+      const r = await post(`/api/websites/${this.sslModal.domain}/ssl/letsencrypt`,{email:this.sslModal.email});
+      this.sslModal.loading=false;
+      this.sslModal.output = r.output||'';
+      if (r.ok) { toast('SSL issued successfully!','success'); await this.load(); }
+      else toast('SSL failed — check output','error');
+    },
+
+    async saveManualSSL() {
+      if (!this.sslModal.key || !this.sslModal.cert) { toast('Key and certificate required','error'); return; }
+      this.sslModal.loading=true;
+      const r = await post(`/api/websites/${this.sslModal.domain}/ssl/manual`,
+                           {key:this.sslModal.key, cert:this.sslModal.cert});
+      this.sslModal.loading=false;
+      if (r.ok) { toast('SSL installed!','success'); this.sslModal.show=false; await this.load(); }
+      else toast(r.error||'Failed','error');
     }
   };
 }
@@ -627,8 +658,8 @@ function monitoringPage() {
 function modulesPage() {
   return {
     modules: [], cat: '',
-    outModal: { show:false, title:'', content:'' },
-    verModal: { show:false, mod:null, selVer:'' },
+    verModal:  { show:false, mod:null, selVer:'' },
+    jobModal:  { show:false, title:'', lines:[], done:false, installed:false },
 
     async init() { await this.load(); },
     async load() {
@@ -636,53 +667,60 @@ function modulesPage() {
       if (r.ok) this.modules = r.modules.map(m=>({...m,loading:false}));
     },
     categories() { return [...new Set(this.modules.map(m=>m.category))].sort(); },
-    filtered() { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
+    filtered()   { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
 
     async install(m) {
-      // PHP needs version selection
-      if (m.id === 'php' && m.versions && m.versions.length) {
-        this.verModal = { show:true, mod:m, selVer: m.versions[2] || m.versions[0] };
+      if (m.id==='php' || (m.versions && m.versions.length && m.id!=='nginx')) {
+        this.verModal = {show:true, mod:m, selVer: m.versions[2]||m.versions[0]||''};
         return;
       }
-      await this._doInstall(m, '');
+      await this._startJob(m,'install','');
     },
 
     async installWithVer() {
-      const m = this.verModal.mod;
-      const ver = this.verModal.selVer;
-      this.verModal.show = false;
-      await this._doInstall(m, ver);
-    },
-
-    async _doInstall(m, ver) {
-      m.loading = true;
-      toast('Installing ' + m.name + (ver?' '+ver:'') + '…', 'info');
-      const r = await post('/api/modules/'+m.id+'/install', {version:ver});
-      m.loading = false;
-      if (r.ok) {
-        m.installed = r.installed;
-        this.outModal = {show:true, title:'Install: '+m.name+(ver?' '+ver:''), content:r.output||'Done'};
-        toast(r.installed ? m.name+' installed!' : 'Install may have failed — check output', r.installed?'success':'warn');
-      } else {
-        toast(r.error||'Failed', 'error');
-      }
+      const m=this.verModal.mod, ver=this.verModal.selVer;
+      this.verModal.show=false;
+      await this._startJob(m,'install',ver);
     },
 
     async uninstall(m) {
-      if (!confirm('Uninstall '+m.name+'? This will remove the software.')) return;
-      m.loading = true;
-      const r = await post('/api/modules/'+m.id+'/uninstall');
-      m.loading = false;
-      m.installed = r.installed || false;
-      toast(m.name+' uninstalled', 'success');
+      if (!confirm('Uninstall '+m.name+'?\nThis will remove the software from your server.')) return;
+      await this._startJob(m,'uninstall','');
+    },
+
+    async _startJob(m, action, ver) {
+      m.loading=true;
+      const url = `/api/modules/${m.id}/${action}`;
+      const r   = await post(url, {version:ver});
+      if (!r.ok) { m.loading=false; toast(r.error||'Failed','error'); return; }
+      const jobId = r.job_id;
+      this.jobModal = {show:true, title:(action==='install'?'Installing':'Removing')+': '+m.name+(ver?' '+ver:''), lines:[], done:false, installed:false};
+      // SSE stream
+      const es = new EventSource(`/api/modules/job/${jobId}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.line)  this.jobModal.lines.push(d.line);
+        if (d.done) {
+          es.close();
+          m.loading=false;
+          m.installed=d.installed;
+          this.jobModal.done=true;
+          this.jobModal.installed=d.installed;
+          this.load(); // refresh all modules status
+        }
+        if (d.error) { es.close(); m.loading=false; toast(d.error,'error'); }
+        // auto-scroll terminal
+        this.$nextTick(()=>{
+          const t=document.querySelector('.job-terminal');
+          if(t) t.scrollTop=t.scrollHeight;
+        });
+      };
+      es.onerror=()=>{ es.close(); m.loading=false; };
     },
 
     async control(m, action) {
-      await post('/api/modules/'+m.id+'/control', {action});
-      toast(action+' '+m.name, 'success');
-      // Refresh status
-      const sr = await get('/api/modules/'+m.id+'/status');
-      if (sr.ok) m.svcStatus = sr.status;
+      const r = await post(`/api/modules/${m.id}/control`,{action});
+      if (r.ok) { m.svcStatus=r.status; toast(`${action} ${m.name}`,'success'); }
     }
   };
 }
