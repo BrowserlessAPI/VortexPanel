@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .routes import auth, system, websites, databases, files
 from .routes import modules, services, firewall, cron, backups
-from .routes import dns, mail, ftp, docker, php, settings, terminal
+from .routes import dns, mail, ftp, docker, php, settings, terminal, pages
 from .tasks.monitor import start_monitor
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

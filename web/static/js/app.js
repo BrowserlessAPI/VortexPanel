@@ -19,14 +19,18 @@ async function request(method, path, data) {
 
     const res = await fetch(API + path, opts);
 
+    const json = await res.json().catch(() => ({}));
+
     if (res.status === 401) {
-        localStorage.removeItem('vp_token');
-        localStorage.removeItem('vp_user');
-        window.location.href = '/login';
-        return;
+        // on login page just throw the error, don't redirect
+        if (window.location.pathname !== '/login') {
+            localStorage.removeItem('vp_token');
+            localStorage.removeItem('vp_user');
+            window.location.href = '/login';
+            return;
+        }
     }
 
-    const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(json.detail || json.error || `HTTP ${res.status}`);
     return json;
 }
@@ -257,3 +261,247 @@ document.addEventListener('alpine:init', () => {
     }));
 
 });
+
+
+// ── Websites ──────────────────────────────────────────────
+document.addEventListener('alpine:init', () => {
+
+Alpine.data('websites', () => ({
+    list: [], loading: true, show_add: false,
+    form: { domain: '', php: '8.3', ssl: false, type: 'static' },
+    php_versions: ['8.3','8.2','8.1','7.4'],
+
+    async init() { await this.load(); },
+    async load() {
+        this.loading = true;
+        this.list = await api.get('/api/websites').catch(() => []);
+        this.loading = false;
+    },
+    async add() {
+        try {
+            await api.post('/api/websites', this.form);
+            toast('Website created', 'ok');
+            this.show_add = false;
+            this.form = { domain: '', php: '8.3', ssl: false, type: 'static' };
+            await this.load();
+        } catch(e) { toast(e.message, 'danger'); }
+    },
+    async remove(id) {
+        if (!confirm('Delete this website?')) return;
+        await api.delete(`/api/websites/${id}`).catch(e => toast(e.message,'danger'));
+        await this.load();
+    }
+}));
+
+
+// ── File Manager ──────────────────────────────────────────
+Alpine.data('filemanager', () => ({
+    path: '/', files: [], loading: true,
+    selected: null, content: '', editing: false,
+
+    async init() { await this.ls('/'); },
+    async ls(p) {
+        this.loading = true; this.path = p;
+        const r = await api.get(`/api/files/list?path=${encodeURIComponent(p)}`).catch(() => ({ items: [] }));
+        this.files = r.items || [];
+        this.loading = false;
+    },
+    async open(f) {
+        if (f.is_dir) { await this.ls(f.path); return; }
+        const r = await api.get(`/api/files/read?path=${encodeURIComponent(f.path)}`).catch(() => ({ content: '' }));
+        this.selected = f; this.content = r.content; this.editing = true;
+    },
+    async save() {
+        await api.put('/api/files/write', { path: this.selected.path, content: this.content });
+        toast('File saved', 'ok'); this.editing = false;
+    },
+    up() {
+        const parts = this.path.split('/').filter(Boolean);
+        parts.pop();
+        this.ls('/' + parts.join('/') || '/');
+    }
+}));
+
+
+// ── Databases ─────────────────────────────────────────────
+Alpine.data('databases', () => ({
+    list: [], loading: true, show_add: false,
+    form: { name: '', type: 'mysql', user: '', password: '' },
+
+    async init() { await this.load(); },
+    async load() {
+        this.loading = true;
+        this.list = await api.get('/api/databases').catch(() => []);
+        this.loading = false;
+    },
+    async add() {
+        try {
+            await api.post('/api/databases', this.form);
+            toast('Database created', 'ok');
+            this.show_add = false;
+            await this.load();
+        } catch(e) { toast(e.message, 'danger'); }
+    }
+}));
+
+
+// ── Modules ───────────────────────────────────────────────
+Alpine.data('modules', () => ({
+    catalog: [], installed: [], loading: true, filter: 'All', search: '',
+    installing: null, log_lines: [],
+
+    categories: ['All','Web Server','PHP','Database','Cache','Runtime','Security','Mail','FTP','DevOps'],
+
+    async init() {
+        this.loading = true;
+        [this.catalog, this.installed] = await Promise.all([
+            api.get('/api/modules/catalog').catch(() => []),
+            api.get('/api/modules/installed').catch(() => []),
+        ]);
+        this.loading = false;
+    },
+
+    get filtered() {
+        return this.catalog.filter(m => {
+            const cat = this.filter === 'All' || m.category === this.filter;
+            const q   = !this.search || m.name.toLowerCase().includes(this.search.toLowerCase());
+            return cat && q;
+        });
+    },
+
+    is_installed(id) { return this.installed.some(i => i.id === id && i.installed); },
+
+    async install(id, name) {
+        this.installing = id; this.log_lines = [];
+        const es = new EventSource(`/api/modules/${id}/install?token=${localStorage.getItem('vp_token')}`);
+        es.onmessage = e => {
+            const d = JSON.parse(e.data);
+            if (d.log) this.log_lines.push(d.log);
+            if (d.done) { es.close(); this.installing = null; this.init(); }
+        };
+        es.onerror = () => { es.close(); this.installing = null; toast('Install failed','danger'); };
+    }
+}));
+
+
+// ── Firewall ──────────────────────────────────────────────
+Alpine.data('firewall', () => ({
+    rules: [], status: {}, loading: true, show_add: false,
+    form: { port: '', protocol: 'tcp', action: 'allow', comment: '' },
+
+    async init() { await this.load(); },
+    async load() {
+        this.loading = true;
+        [this.rules, this.status] = await Promise.all([
+            api.get('/api/firewall/rules').catch(() => []),
+            api.get('/api/firewall/status').catch(() => ({})),
+        ]);
+        this.loading = false;
+    },
+    async add() {
+        try {
+            await api.post('/api/firewall/rules', this.form);
+            toast('Rule added', 'ok'); this.show_add = false; await this.load();
+        } catch(e) { toast(e.message, 'danger'); }
+    },
+    async remove(id) {
+        await api.delete(`/api/firewall/rules/${id}`).catch(e => toast(e.message,'danger'));
+        await this.load();
+    }
+}));
+
+
+// ── Cron Jobs ─────────────────────────────────────────────
+Alpine.data('cron', () => ({
+    jobs: [], loading: true, show_add: false,
+    form: { name: '', schedule: '0 * * * *', command: '', enabled: true },
+    presets: [
+        { label: 'Every minute',  val: '* * * * *'   },
+        { label: 'Every hour',    val: '0 * * * *'   },
+        { label: 'Daily at 2am',  val: '0 2 * * *'   },
+        { label: 'Weekly Sunday', val: '0 2 * * 0'   },
+        { label: 'Monthly',       val: '0 2 1 * *'   },
+    ],
+
+    async init() { await this.load(); },
+    async load() {
+        this.loading = true;
+        this.jobs = await api.get('/api/cron').catch(() => []);
+        this.loading = false;
+    },
+    async add() {
+        try {
+            await api.post('/api/cron', this.form);
+            toast('Cron job added', 'ok'); this.show_add = false; await this.load();
+        } catch(e) { toast(e.message, 'danger'); }
+    },
+    async toggle(id) {
+        await api.post(`/api/cron/${id}/toggle`).catch(e => toast(e.message,'danger'));
+        await this.load();
+    },
+    async remove(id) {
+        await api.delete(`/api/cron/${id}`).catch(e => toast(e.message,'danger'));
+        await this.load();
+    }
+}));
+
+
+// ── Settings ──────────────────────────────────────────────
+Alpine.data('settings', () => ({
+    cfg: {}, loading: true, saving: false, tab: 'panel',
+    pw: { current: '', new_password: '', confirm: '' },
+
+    async init() { await this.load(); },
+    async load() {
+        this.loading = true;
+        this.cfg = await api.get('/api/settings').catch(() => ({}));
+        this.loading = false;
+    },
+    async save() {
+        this.saving = true;
+        try {
+            await api.post('/api/settings', this.cfg);
+            toast('Settings saved', 'ok');
+        } catch(e) { toast(e.message, 'danger'); }
+        this.saving = false;
+    },
+    async change_password() {
+        if (this.pw.new_password !== this.pw.confirm) { toast('Passwords do not match','danger'); return; }
+        try {
+            await api.post('/api/auth/change-password', { current: this.pw.current, new_password: this.pw.new_password });
+            toast('Password changed', 'ok');
+            this.pw = { current: '', new_password: '', confirm: '' };
+        } catch(e) { toast(e.message, 'danger'); }
+    }
+}));
+
+
+// ── Monitoring ────────────────────────────────────────────
+Alpine.data('monitoring', () => ({
+    metrics: null, history: [], processes: [], loading: true,
+
+    async init() {
+        await this.refresh();
+        setInterval(() => this.refresh(), 5000);
+    },
+    async refresh() {
+        [this.metrics, this.processes] = await Promise.all([
+            api.get('/api/system/metrics').catch(() => null),
+            api.get('/api/system/processes').catch(() => []),
+        ]);
+        if (this.metrics) {
+            this.history.push({
+                time: new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'}),
+                cpu:  Math.round(this.metrics.cpu.percent),
+                mem:  Math.round(this.metrics.memory.percent),
+            });
+            if (this.history.length > 20) this.history.shift();
+        }
+        this.loading = false;
+    },
+    bar(v, warn=70, danger=90) {
+        return v > danger ? 'var(--danger)' : v > warn ? 'var(--warn)' : 'var(--ok)';
+    }
+}));
+
+}); // end alpine:init
