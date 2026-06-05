@@ -14,7 +14,9 @@ echo ""
 
 # ── 1. Python deps ───────────────────────────────────────────────────────────
 echo -e "[1/5] Installing Python dependencies..."
-pip3 install flask --break-system-packages -q 2>/dev/null || pip3 install flask -q
+apt-get install -y python3-venv python3-full -qq 2>/dev/null || true
+python3 -m venv "$PANEL_DIR/venv" --system-site-packages 2>/dev/null || python3 -m venv "$PANEL_DIR/venv"
+"$PANEL_DIR/venv/bin/pip" install flask -q
 
 # ── 2. Copy files ────────────────────────────────────────────────────────────
 echo -e "[2/5] Copying panel files..."
@@ -27,8 +29,8 @@ echo -e "[3/5] Setting up credentials..."
 mkdir -p "$PANEL_DIR"
 
 # Generate random password
-RAND_PW=$(python3 -c "import secrets,string; print('VP'+''.join(secrets.choice(string.ascii_letters+string.digits) for _ in range(10))+'!')")
-PW_HASH=$(python3 -c "import hashlib; print(hashlib.sha256('${RAND_PW}'.encode()).hexdigest())")
+RAND_PW=$("$PANEL_DIR/venv/bin/python3" -c "import secrets,string; print('VP'+''.join(secrets.choice(string.ascii_letters+string.digits) for _ in range(10))+'!')")
+PW_HASH=$("$PANEL_DIR/venv/bin/python3" -c "import hashlib; print(hashlib.sha256('${RAND_PW}'.encode()).hexdigest())")
 
 # Write credentials.json in the exact format our auth.py reads
 cat > "${PANEL_DIR}/credentials.json" << JSONEOF
@@ -50,7 +52,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${PANEL_DIR}
-ExecStart=/usr/bin/python3 ${PANEL_DIR}/app.py
+ExecStart=${PANEL_DIR}/venv/bin/python3 ${PANEL_DIR}/app.py
 Restart=always
 RestartSec=5
 Environment=PORT=${PORT}
@@ -77,8 +79,8 @@ case "$1" in
   start)    systemctl start vortexpanel && echo "Started" ;;
   logs)     journalctl -u vortexpanel -f ;;
   reset-password)
-    NEW_PW=$(python3 -c "import secrets,string; print('VP'+''.join(secrets.choice(string.ascii_letters+string.digits) for _ in range(10))+'!')")
-    PW_HASH=$(python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" "$NEW_PW")
+    NEW_PW=$(${PANEL_DIR}/venv/bin/python3 -c "import secrets,string; print('VP'+''.join(secrets.choice(string.ascii_letters+string.digits) for _ in range(10))+'!')")
+    PW_HASH=$(${PANEL_DIR}/venv/bin/python3 -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" "$NEW_PW")
     python3 -c "
 import json, os
 f = '$PANEL_DIR/credentials.json'
