@@ -53,60 +53,52 @@ def compare_versions(current, latest):
 def check_update():
     if not req(): return jsonify({'ok': False}), 401
     current = get_current_version()
+
+    # Always return a valid response — never fail completely
+    base = {
+        'ok': True, 'current': current, 'latest': current,
+        'name': 'VortexPanel', 'body': '', 'published': '',
+        'url': 'https://github.com/'+GITHUB_REPO+'/releases',
+        'has_update': False,
+    }
+
     try:
-        url = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
+        url  = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
         req2 = urllib.request.Request(url)
         req2.add_header('Accept', 'application/vnd.github+json')
         req2.add_header('User-Agent', 'VortexPanel/3.0')
         req2.add_header('X-GitHub-Api-Version', '2022-11-28')
-        with urllib.request.urlopen(req2, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
 
-        latest_tag   = data.get('tag_name', '')
-        release_name = data.get('name', latest_tag)
-        body         = data.get('body', '')
-        published    = data.get('published_at', '')
-        html_url     = data.get('html_url', '')
+        try:
+            with urllib.request.urlopen(req2, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                # No releases published yet — totally normal for new repos
+                return jsonify({**base, 'note': 'No releases on GitHub yet. Panel is up to date.'})
+            raise
 
-        # If no releases exist yet on GitHub, return current version
+        latest_tag = data.get('tag_name', '').strip()
         if not latest_tag:
-            return jsonify({
-                'ok': True, 'current': current, 'latest': current,
-                'name': 'VortexPanel', 'body': '',
-                'published': '', 'url': '', 'has_update': False,
-                'note': 'No releases found on GitHub yet.'
-            })
+            return jsonify({**base, 'note': 'No release tags found.'})
 
         has_update = compare_versions(current, latest_tag)
         return jsonify({
             'ok':         True,
             'current':    current,
             'latest':     latest_tag,
-            'name':       release_name,
-            'body':       body,
-            'published':  published,
-            'url':        html_url,
+            'name':       data.get('name', latest_tag),
+            'body':       data.get('body', ''),
+            'published':  data.get('published_at', ''),
+            'url':        data.get('html_url', base['url']),
             'has_update': has_update,
         })
-    except urllib.error.HTTPError as e:
-        # 404 = no releases yet on repo, not a real error
-        if e.code == 404:
-            return jsonify({
-                'ok': True, 'current': current, 'latest': current,
-                'has_update': False, 'name': 'VortexPanel',
-                'body': '', 'published': '', 'url': '',
-                'note': 'No releases published on GitHub yet.'
-            })
-        return jsonify({'ok': True, 'current': current, 'latest': current,
-                       'has_update': False,
-                       'error': f'GitHub API error {e.code}: {str(e.reason)}'})
+
     except urllib.error.URLError as e:
-        return jsonify({'ok': True, 'current': current, 'latest': current,
-                       'has_update': False,
-                       'error': f'Cannot reach GitHub: {str(e.reason)}'})
+        reason = str(getattr(e, 'reason', e))
+        return jsonify({**base, 'error': f'Cannot reach GitHub: {reason}'})
     except Exception as e:
-        return jsonify({'ok': True, 'current': current, 'latest': current,
-                       'has_update': False, 'error': str(e)})
+        return jsonify({**base, 'error': str(e)})
 
 @update_bp.route('/api/update/start', methods=['POST'])
 def start_update():

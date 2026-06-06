@@ -87,14 +87,15 @@ function panelApp() {
     async silentUpdateCheck() {
       try {
         const r = await get('/api/update/check');
+        // Always update current version display
+        if (r.current) this.updateModal.current = r.current;
         if (r.ok && r.has_update) {
           this.updateAvailable = true;
-          this.updateModal = {...this.updateModal,
-            current:r.current, latest:r.latest, name:r.name,
-            body:r.body, published:r.published, url:r.url,
-          };
-        } else if (r.ok) {
-          this.updateModal.current = r.current;
+          this.updateModal.latest    = r.latest    || r.current;
+          this.updateModal.name      = r.name      || 'VortexPanel';
+          this.updateModal.body      = r.body      || '';
+          this.updateModal.published = r.published || '';
+          this.updateModal.url       = r.url       || '';
         }
       } catch {}
     },
@@ -1258,39 +1259,42 @@ function updateModalData() {
     updateError:'',updateLines:[],updateProgress:0,_pollTimer:null,errorMsg:'',
     async init(){document.addEventListener('vortex-check-update',()=>this.checkForUpdates());await this.checkForUpdates();},
     async checkForUpdates(){
-      this.checkState='checking'; this.updating=false;
+      this.checkState='checking'; this.updating=false; this.errorMsg='';
       try {
         const r = await get('/api/update/check');
-        // Update parent panelApp state
+
+        // Sync to parent panelApp
         try {
           const appEl = document.querySelector('[x-data="panelApp()"]');
           const app   = appEl ? Alpine.$data(appEl) : null;
           if (app) {
-            if (r.current) {
-              app.updateModal.current   = r.current;
-              app.updateModal.latest    = r.latest  || r.current;
-              app.updateModal.name      = r.name    || 'VortexPanel';
-              app.updateModal.body      = r.body    || '';
-              app.updateModal.published = r.published || '';
-              app.updateModal.error     = r.error   || '';
-            }
+            app.updateModal.current   = r.current   || 'v3.0.0';
+            app.updateModal.latest    = r.latest    || r.current || 'v3.0.0';
+            app.updateModal.name      = r.name      || 'VortexPanel';
+            app.updateModal.body      = r.body      || '';
+            app.updateModal.published = r.published || '';
             if (r.has_update) app.updateAvailable = true;
           }
         } catch(e) {}
 
-        if (!r.ok) {
-          this.errorMsg = r.error || 'Failed to check for updates';
-          this.checkState = 'error';
-          return;
-        }
-        if (r.error && !r.has_update) {
+        // r.ok is always true from our backend (even on no-releases)
+        // Only go to error state if there's an error AND no version info
+        if (r.error && !r.current) {
           this.errorMsg = r.error;
           this.checkState = 'error';
           return;
         }
+
+        // note = informational (e.g. "no releases yet") → show as up to date
+        if (r.note || (!r.has_update && !r.error)) {
+          this.checkState = 'uptodate';
+          return;
+        }
+
         this.checkState = r.has_update ? 'available' : 'uptodate';
+
       } catch(e) {
-        this.errorMsg = e.message || 'Network error — cannot reach update server';
+        this.errorMsg = 'Network error: ' + (e.message || 'Cannot reach server');
         this.checkState = 'error';
       }
     },
