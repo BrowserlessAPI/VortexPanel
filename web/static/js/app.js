@@ -1152,18 +1152,25 @@ function modulesPage() {
     categories() { return [...new Set(this.modules.map(m=>m.category))].sort(); },
     filtered()   { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
 
-    async install(m) {
-      if (m.versions?.length && !m.selVer) { toast('Select a version','error'); return; }
-      await this._startJob(m, 'install', m.selVer||'');
-    },
-
     async uninstall(m) {
-      if (!confirm(`Uninstall ${m.name}?`)) return;
+      // For multi-version modules (PHP, Python), ask WHICH version to remove
       if ((m.id==='php'||m.id==='python') && m.versions?.length) {
         this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'uninstall'};
         return;
       }
+      // Single-version: confirm then remove directly
+      if (!confirm(`Uninstall ${m.name}? This cannot be undone.`)) return;
       await this._startJob(m, 'uninstall', '');
+    },
+
+    async install(m) {
+      // For multi-version modules (PHP, Python, Node.js) — pick version first
+      if (m.versions?.length > 1) {
+        this.verModal = {show:true, mod:m, selVer:m.selVer||m.versions[0].value, action:'install'};
+        return;
+      }
+      // Single-version or no version choice — install directly
+      await this._startJob(m, 'install', m.selVer||'');
     },
 
     async installWithVer() {

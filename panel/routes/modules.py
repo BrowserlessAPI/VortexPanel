@@ -60,10 +60,10 @@ MODULES = [
             {'label':'1.31.1 (Mainline)', 'value':'mainline'},
         ],
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
-curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
-echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/{ver}/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
-apt-get update -q && apt-get install -y nginx && systemctl enable nginx && systemctl start nginx''',
-        'install':'apt-get install -y nginx && systemctl enable nginx && systemctl start nginx',
+curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
+apt-get update -q && apt-get install -y nginx && systemctl enable --now nginx''',
+        'install':'apt-get install -y nginx && systemctl enable --now nginx',
         'uninstall':'apt-get remove -y --purge nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
         'service':'nginx', 'manage':True,
     },
@@ -136,12 +136,13 @@ systemctl enable caddy && systemctl start caddy''',
             {'label':'8.4.4 (LTS)',    'value':'8.4'},
             {'label':'9.3.0 (Latest)', 'value':'9.0'},
         ],
-        'install_tpl':'''apt-get install -y wget lsb-release && \
+        'install_tpl':'''apt-get install -y wget lsb-release gnupg && \
 wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && \
-DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb 2>/dev/null && \
+DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && \
 apt-get update -q && \
+DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server-{ver} 2>/dev/null || \
 DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server && \
-systemctl enable mysql && systemctl start mysql''',
+systemctl enable --now mysql''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server && systemctl enable mysql && systemctl start mysql',
         'uninstall':'apt-get remove -y --purge mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
         'service':'mysql', 'manage':True,
@@ -155,9 +156,10 @@ systemctl enable mysql && systemctl start mysql''',
             {'label':'11.4.5 (LTS)',    'value':'11.4'},
             {'label':'11.7.2 (Latest)', 'value':'11.7'},
         ],
-        'install_tpl':'''curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version="mariadb-{ver}" && \
+        'install_tpl':'''curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
+bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
 apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && \
-systemctl enable mariadb && systemctl start mariadb''',
+systemctl enable --now mariadb''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && systemctl enable mariadb && systemctl start mariadb',
         'uninstall':'apt-get remove -y --purge mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
         'service':'mariadb', 'manage':True,
@@ -174,7 +176,7 @@ systemctl enable mariadb && systemctl start mariadb''',
 curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc | gpg -o /usr/share/keyrings/mongodb-server-{ver}.gpg --dearmor 2>/dev/null && \
 echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" | tee /etc/apt/sources.list.d/mongodb-org-{ver}.list && \
 apt-get update -q && apt-get install -y mongodb-org && systemctl enable mongod && systemctl start mongod''',
-        'install':'',
+        'install':'',  # always uses install_tpl
         'uninstall':'apt-get remove -y --purge mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb',
         'service':'mongod', 'manage':True,
     },
@@ -242,21 +244,28 @@ apt-get autoremove -y 2>/dev/null || true''',
     # ── Admin Tools ──────────────────────────────────────────────────────────
     {
         'id':'phpmyadmin', 'name':'phpMyAdmin', 'icon':'🗄', 'category':'Admin Tools',
-        'desc':'Web-based MySQL/MariaDB administration tool',
+        'desc':'Web-based MySQL/MariaDB admin — auto-configured at port 8082',
         'check':'test -d /usr/share/phpmyadmin && echo found',
         'versions':[
             {'label':'5.2.2 (Latest)', 'value':'5.2.2'},
         ],
-        'install_tpl':'''apt-get install -y wget php-mbstring php-zip php-gd php-json php-curl && \
-wget -q https://files.phpmyadmin.net/phpMyAdmin/{ver}/phpMyAdmin-{ver}-all-languages.tar.gz -O /tmp/pma.tar.gz && \
-mkdir -p /usr/share/phpmyadmin && \
-tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 && \
-cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php''',
-        'install':'''apt-get install -y phpmyadmin php-mbstring php-zip php-gd php-json php-curl 2>/dev/null || \
-(apt-get install -y wget php-mbstring php-zip php-gd php-json php-curl && \
-wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.2/phpMyAdmin-5.2.2-all-languages.tar.gz -O /tmp/pma.tar.gz && \
-mkdir -p /usr/share/phpmyadmin && tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1)''',
-        'uninstall':'apt-get remove -y phpmyadmin 2>/dev/null; rm -rf /usr/share/phpmyadmin',
+        'install':(
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y '
+            'php-mbstring php-zip php-gd php-json php-curl php-cli wget && '
+            'wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.2/'
+            'phpMyAdmin-5.2.2-all-languages.tar.gz -O /tmp/pma.tar.gz && '
+            'mkdir -p /usr/share/phpmyadmin && '
+            'tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 && '
+            'cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php && '
+            'SOCK=$(ls /run/php/php8.*-fpm.sock 2>/dev/null | sort -r | head -1) && '
+            'SOCK=${SOCK:-/run/php/php8.3-fpm.sock} && '
+            'echo "server{listen 8082;server_name _;root /usr/share/phpmyadmin;index index.php;'
+            'location ~ [.]php${include snippets/fastcgi-php.conf;fastcgi_pass $SOCK;include fastcgi_params;}}" '
+            '> /etc/nginx/conf.d/phpmyadmin.conf && '
+            'nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true && '
+            'echo "[VortexPanel] phpMyAdmin ready at http://YOUR-SERVER-IP:8082"'
+        ),
+        'uninstall':'rm -rf /usr/share/phpmyadmin /etc/nginx/conf.d/phpmyadmin.conf && systemctl reload nginx 2>/dev/null || true',
         'manage':False,
     },
     # ── Security ─────────────────────────────────────────────────────────────
