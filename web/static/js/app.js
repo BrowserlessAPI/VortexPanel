@@ -658,69 +658,61 @@ function monitoringPage() {
 function modulesPage() {
   return {
     modules: [], cat: '',
-    verModal:  { show:false, mod:null, selVer:'' },
-    jobModal:  { show:false, title:'', lines:[], done:false, installed:false },
+    jobModal: { show:false, title:'', lines:[], done:false, installed:false, installedVer:'' },
 
     async init() { await this.load(); },
     async load() {
       const r = await get('/api/modules');
-      if (r.ok) this.modules = r.modules.map(m=>({...m,loading:false}));
+      if (r.ok) this.modules = r.modules.map(m=>({
+        ...m, loading:false,
+        // Set default selected version to middle option
+        selVer: m.versions && m.versions.length ? m.versions[Math.floor(m.versions.length/2)].value : ''
+      }));
     },
     categories() { return [...new Set(this.modules.map(m=>m.category))].sort(); },
     filtered()   { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
 
     async install(m) {
-      if (m.id==='php' || (m.versions && m.versions.length && m.id!=='nginx')) {
-        this.verModal = {show:true, mod:m, selVer: m.versions[2]||m.versions[0]||''};
-        return;
+      if (m.versions && m.versions.length && !m.selVer) {
+        toast('Please select a version first','error'); return;
       }
-      await this._startJob(m,'install','');
-    },
-
-    async installWithVer() {
-      const m=this.verModal.mod, ver=this.verModal.selVer;
-      this.verModal.show=false;
-      await this._startJob(m,'install',ver);
+      await this._startJob(m, 'install', m.selVer||'');
     },
 
     async uninstall(m) {
       if (!confirm('Uninstall '+m.name+'?\nThis will remove the software from your server.')) return;
-      await this._startJob(m,'uninstall','');
+      await this._startJob(m, 'uninstall', '');
     },
 
     async _startJob(m, action, ver) {
-      m.loading=true;
-      const url = `/api/modules/${m.id}/${action}`;
-      const r   = await post(url, {version:ver});
+      m.loading = true;
+      const r = await post(`/api/modules/${m.id}/${action}`, {version:ver});
       if (!r.ok) { m.loading=false; toast(r.error||'Failed','error'); return; }
       const jobId = r.job_id;
-      this.jobModal = {show:true, title:(action==='install'?'Installing':'Removing')+': '+m.name+(ver?' '+ver:''), lines:[], done:false, installed:false};
-      // SSE stream
+      const label = (action==='install'?'Installing':'Removing')+': '+m.name+(ver?' v'+ver:'');
+      this.jobModal = {show:true, title:label, lines:[], done:false, installed:false, installedVer:''};
       const es = new EventSource(`/api/modules/job/${jobId}`);
       es.onmessage = (e) => {
         const d = JSON.parse(e.data);
-        if (d.line)  this.jobModal.lines.push(d.line);
+        if (d.line) this.jobModal.lines.push(d.line);
         if (d.done) {
-          es.close();
-          m.loading=false;
+          es.close(); m.loading=false;
           m.installed=d.installed;
+          if (d.installedVer) m.installedVer=d.installedVer;
           this.jobModal.done=true;
           this.jobModal.installed=d.installed;
-          this.load(); // refresh all modules status
+          this.jobModal.installedVer=d.installedVer||'';
+          setTimeout(()=>this.load(), 1000);
         }
         if (d.error) { es.close(); m.loading=false; toast(d.error,'error'); }
-        // auto-scroll terminal
-        this.$nextTick(()=>{
-          const t=document.querySelector('.job-terminal');
-          if(t) t.scrollTop=t.scrollHeight;
-        });
+        this.$nextTick(()=>{ const t=document.querySelector('.job-terminal'); if(t) t.scrollTop=t.scrollHeight; });
       };
       es.onerror=()=>{ es.close(); m.loading=false; };
     },
 
     async control(m, action) {
       const r = await post(`/api/modules/${m.id}/control`,{action});
-      if (r.ok) { m.svcStatus=r.status; toast(`${action} ${m.name}`,'success'); }
+      if (r.ok) { m.svcStatus=r.status; toast(action+' '+m.name,'success'); }
     }
   };
 }
