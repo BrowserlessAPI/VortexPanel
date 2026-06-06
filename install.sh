@@ -125,7 +125,16 @@ echo -e "${GREEN}  VortexPanel installed successfully!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "  ${BOLD}YOUR LOGIN CREDENTIALS${NC}"
-echo -e "  URL:      ${CYAN}http://${SERVER_IP}:${PORT}${NC}"
+# Get IPs
+SERVER_IP=$(hostname -I | awk '{print $1}')
+SERVER_IP6=$(ip -6 addr show scope global | grep -oP "(?<=inet6 )[\da-f:]+" | head -1)
+
+echo -e "  URL (IPv4): ${CYAN}http://${SERVER_IP}:${PORT}${NC}"
+if [ -n "$SERVER_IP6" ]; then
+    echo -e "  URL (IPv6): ${CYAN}http://[${SERVER_IP6}]:${PORT}${NC}"
+fi
+# Allow port through UFW for both IPv4 and IPv6
+ufw allow ${PORT}/tcp 2>/dev/null || true
 echo -e "  Username: ${CYAN}admin${NC}"
 echo -e "  Password: ${YELLOW}${RAND_PW}${NC}"
 echo -e "  Email:    ${CYAN}admin@vortexpanel.local${NC}"

@@ -161,3 +161,118 @@ def security_score():
     passed = sum(1 for c in checks if c['pass'])
     score  = round(passed / len(checks) * 100) if checks else 0
     return jsonify({'ok':True,'checks':checks,'score':score})
+
+# ── ModSecurity ───────────────────────────────────────────────────────────────
+@security_bp.route('/api/security/modsecurity')
+def modsec_status():
+    if not req(): return jsonify({'ok':False}), 401
+    conf = '/etc/nginx/modsec/modsecurity.conf'
+    installed = os.path.exists(conf)
+    enabled   = False
+    if installed:
+        with open(conf) as f: content = f.read()
+        enabled = 'SecRuleEngine On' in content
+    rules_count = sh('find /etc/nginx/modsec/crs/rules/ -name "*.conf" 2>/dev/null | wc -l')
+    return jsonify({'ok':True,'installed':installed,'enabled':enabled,'rules':int(rules_count or 0)})
+
+@security_bp.route('/api/security/modsecurity/toggle', methods=['POST'])
+def modsec_toggle():
+    if not req(): return jsonify({'ok':False}), 401
+    enable = (request.get_json() or {}).get('enable', True)
+    conf   = '/etc/nginx/modsec/modsecurity.conf'
+    if not os.path.exists(conf):
+        return jsonify({'ok':False,'error':'ModSecurity not installed'}), 404
+    with open(conf) as f: content = f.read()
+    if enable:
+        content = content.replace('SecRuleEngine DetectionOnly','SecRuleEngine On')
+        content = content.replace('SecRuleEngine Off','SecRuleEngine On')
+    else:
+        content = content.replace('SecRuleEngine On','SecRuleEngine DetectionOnly')
+    with open(conf,'w') as f: f.write(content)
+    sh('nginx -t && systemctl reload nginx 2>/dev/null')
+    return jsonify({'ok':True,'enabled':enable})
+
+# ── Nginx Load Balancer ───────────────────────────────────────────────────────
+LB_CONF = '/etc/nginx/conf.d/loadbalancer.conf'
+
+@security_bp.route('/api/security/loadbalancer')
+def lb_status():
+    if not req(): return jsonify({'ok':False}), 401
+    if not os.path.exists(LB_CONF):
+        return jsonify({'ok':True,'configured':False,'servers':[],'method':'roundrobin'})
+    with open(LB_CONF) as f: content = f.read()
+    # Parse upstream servers
+    import re
+    servers = re.findall(r'server\s+([^\s;]+)\s*(?:weight=(\d+))?', content)
+    method = 'roundrobin'
+    if 'least_conn' in content: method = 'leastconn'
+    if 'ip_hash'    in content: method = 'iphash'
+    server_list = [{'address':s[0],'weight':int(s[1]) if s[1] else 1} for s in servers]
+    return jsonify({'ok':True,'configured':True,'servers':server_list,'method':method,'content':content})
+
+@security_bp.route('/api/security/loadbalancer', methods=['PUT'])
+def lb_save():
+    if not req(): return jsonify({'ok':False}), 401
+    d       = request.get_json() or {}
+    servers = d.get('servers', [])  # [{address, weight}]
+    method  = d.get('method', 'roundrobin')
+    domain  = d.get('domain', '_')
+    port    = d.get('port', '80')
+    if not servers: return jsonify({'ok':False,'error':'At least one server required'}), 400
+
+    # Build upstream block
+    method_directive = ''
+    if method == 'leastconn': method_directive = '    least_conn;\n'
+    if method == 'iphash':    method_directive = '    ip_hash;\n'
+
+    server_lines = '\n'.join([
+        f"    server {s['address']} weight={s.get('weight',1)};"
+        for s in servers
+    ])
+
+    conf = f"""# VortexPanel Load Balancer — managed by VortexPanel
+# Method: {method}
+upstream vortex_backend {{
+{method_directive}{server_lines}
+    keepalive 32;
+}}
+
+server {{
+    listen {port};
+    server_name {domain};
+
+    access_log /var/log/nginx/lb.access.log;
+    error_log  /var/log/nginx/lb.error.log;
+
+    location / {{
+        proxy_pass http://vortex_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    60s;
+        proxy_read_timeout    60s;
+        proxy_next_upstream   error timeout invalid_header http_500 http_502 http_503;
+    }}
+}}
+"""
+    import os
+    os.makedirs('/etc/nginx/conf.d', exist_ok=True)
+    with open(LB_CONF,'w') as f: f.write(conf)
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower():
+        return jsonify({'ok':False,'error':test}), 400
+    sh('systemctl reload nginx 2>/dev/null')
+    return jsonify({'ok':True})
+
+@security_bp.route('/api/security/loadbalancer', methods=['DELETE'])
+def lb_delete():
+    if not req(): return jsonify({'ok':False}), 401
+    import os
+    try: os.unlink(LB_CONF)
+    except: pass
+    sh('systemctl reload nginx 2>/dev/null')
+    return jsonify({'ok':True})

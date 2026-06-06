@@ -59,21 +59,30 @@
       <div class="nav-group">
         <div class="nav-group-label" x-text="group.group"></div>
         <template x-for="item in group.items" :key="item.id">
-          <div class="nav-item" :class="{active: page===item.id}" @click="go(item.id)">
+          <div class="nav-item" :class="{active: page===item.id}"
+               :style="!pageAvailable(item.id)?'opacity:0.5':' '"
+               @click="go(item.id)">
             <span class="nav-icon" x-text="item.icon"></span>
             <span x-text="item.label"></span>
+            <span x-show="!pageAvailable(item.id)"
+                  style="margin-left:auto;font-size:10px;color:var(--text-muted)"
+                  title="Module not installed">🔒</span>
           </div>
         </template>
       </div>
     </template>
 
-    <div class="sidebar-footer">
-      <div class="user-avatar" x-text="(username||'A')[0].toUpperCase()"></div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="username"></div>
-        <div style="font-size:10px;color:var(--text-muted)">Administrator</div>
+    <div class="sidebar-footer" style="flex-direction:column;gap:8px;padding:12px">
+      <div style="display:flex;align-items:center;gap:10px;width:100%">
+        <div class="user-avatar" x-text="(username||'A')[0].toUpperCase()"></div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="username"></div>
+          <div style="font-size:10px;color:var(--text-muted)">Administrator</div>
+        </div>
       </div>
-      <button class="btn btn-ghost btn-xs" @click="logout()" title="Logout">↩</button>
+      <button class="btn btn-ghost" style="width:100%;justify-content:center;gap:6px;font-size:12px;padding:6px" @click="logout()">
+        <span>⎋</span> Sign Out
+      </button>
     </div>
   </nav>
 
@@ -91,7 +100,6 @@
 
     <!-- PAGE CONTENT -->
     <div class="page-content">
-
       <!-- DASHBOARD -->
       <div x-show="page==='dashboard'" x-data="dashboardPage()">
         <div class="page-header">
@@ -270,12 +278,10 @@
           </div>
         </div>
 
-        <!-- SITE MANAGEMENT DRAWER (right panel) -->
-        <div x-show="drawer.show" style="position:fixed;inset:0;z-index:150;display:flex">
-          <!-- Backdrop -->
-          <div style="flex:1;background:rgba(0,0,0,0.5);backdrop-filter:blur(2px)" @click="drawer.show=false"></div>
-          <!-- Drawer panel -->
-          <div style="width:680px;background:var(--bg-card);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden">
+        <!-- SITE MANAGEMENT MODAL -->
+        <div x-show="drawer.show" style="position:fixed;inset:0;z-index:150;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px)" @click.self="drawer.show=false">
+          <!-- Modal panel -->
+          <div style="width:min(780px,95vw);max-height:90vh;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.6)">
             <!-- Drawer header -->
             <div style="padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0">
               <div style="flex:1">
@@ -344,18 +350,49 @@
               </div>
 
               <!-- PHP Version tab -->
-              <div x-show="drawer.tab==='php'">
-                <div class="form-group"><label class="form-label">Select PHP Version for this domain</label>
-                  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px">
-                    <template x-for="v in ['8.4','8.3','8.2','8.1','7.4','Static']" :key="v">
-                      <div style="padding:10px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid transparent;font-weight:600;font-size:13px;transition:.12s"
-                           :style="drawer.phpVer===v?'border-color:var(--accent);background:var(--bg-hover);color:var(--accent)':{borderColor:'var(--border)',background:'var(--bg-raised)',color:'var(--text-secondary)'}"
-                           @click="drawer.phpVer=v" x-text="v==='Static'?'Static':'PHP '+v"></div>
-                    </template>
-                  </div>
+              <div x-show="drawer.tab==='php'" x-data="{phpVersions:[]}">
+                <div x-init="fetch('/api/php/versions').then(r=>r.json()).then(d=>{if(d.ok)phpVersions=d.versions})">
+                  <template x-if="phpVersions.length===0">
+                    <div class="empty-state" style="padding:32px 20px">
+                      <div class="empty-icon">🐘</div>
+                      <div class="empty-text">No PHP versions installed</div>
+                      <div style="font-size:12px;color:var(--text-muted);margin-top:8px">Install PHP via <strong>Modules</strong> first, then return here to switch versions.</div>
+                    </div>
+                  </template>
+                  <template x-if="phpVersions.length>0">
+                    <div>
+                      <div class="form-group"><label class="form-label">Installed PHP Versions — select one to apply to this domain</label>
+                        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+                          <template x-for="v in phpVersions" :key="v.version">
+                            <div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:8px;cursor:pointer;border:2px solid transparent;transition:.12s"
+                                 :style="drawer.phpVer===v.version?'border-color:var(--accent);background:var(--bg-hover)':'border-color:var(--border);background:var(--bg-raised)'"
+                                 @click="drawer.phpVer=v.version">
+                              <span style="font-size:20px">🐘</span>
+                              <div style="flex:1">
+                                <div style="font-weight:600;font-size:13px" x-text="'PHP '+v.version"></div>
+                                <div style="font-size:11px;color:var(--text-muted)" x-text="v.binary"></div>
+                              </div>
+                              <span :class="'badge badge-'+(v.status==='active'?'green':'gray')" x-text="v.status"></span>
+                              <span x-show="drawer.phpVer===v.version" style="color:var(--accent);font-size:16px">✓</span>
+                            </div>
+                          </template>
+                          <!-- Static option -->
+                          <div style="display:flex;align-items:center;gap:12px;padding:12px;border-radius:8px;cursor:pointer;border:2px solid transparent;transition:.12s"
+                               :style="drawer.phpVer==='Static'?'border-color:var(--accent);background:var(--bg-hover)':'border-color:var(--border);background:var(--bg-raised)'"
+                               @click="drawer.phpVer='Static'">
+                            <span style="font-size:20px">📄</span>
+                            <div style="flex:1">
+                              <div style="font-weight:600;font-size:13px">Static (No PHP)</div>
+                              <div style="font-size:11px;color:var(--text-muted)">HTML/CSS/JS only</div>
+                            </div>
+                            <span x-show="drawer.phpVer==='Static'" style="color:var(--accent);font-size:16px">✓</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button class="btn btn-primary" @click="savePhpVer()" style="margin-top:8px">Apply PHP Version</button>
+                    </div>
+                  </template>
                 </div>
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">PHP version must be installed via Modules first.</div>
-                <button class="btn btn-primary" @click="savePhpVer()">Apply PHP Version</button>
               </div>
 
               <!-- Reverse Proxy tab -->
@@ -764,6 +801,127 @@
         </div>
       </div>
 
+      <!-- MODULES -->
+      <div x-show="page==='modules'" x-data="modulesPage()">
+        <div class="page-header"><div><div class="page-title">Modules</div><div class="page-sub">Install and manage server software</div></div></div>
+        <!-- Category filter -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
+          <button :class="'btn btn-xs '+(cat===''?'btn-primary':'btn-ghost')" @click="cat=''">All</button>
+          <template x-for="c in categories()" :key="c">
+            <button :class="'btn btn-xs '+(cat===c?'btn-primary':'btn-ghost')" @click="cat=c" x-text="c"></button>
+          </template>
+        </div>
+        <!-- Module cards grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+          <template x-for="m in filtered()" :key="m.id">
+            <div class="mod-card" :style="m.installed?'border-color:rgba(16,185,129,.3)':''">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <span style="font-size:26px" x-text="m.icon"></span>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span x-show="m.installed && m.installedVer" style="font-size:10px;font-family:var(--font-mono);color:var(--accent);background:rgba(88,101,242,.12);padding:2px 6px;border-radius:4px" x-text="'v'+m.installedVer"></span>
+                  <span :class="'badge badge-'+(m.installed?'green':'gray')" x-text="m.installed?'Installed':'Not Installed'"></span>
+                </div>
+              </div>
+              <div style="font-size:13px;font-weight:700;color:var(--text-primary)" x-text="m.name"></div>
+              <div style="font-size:11px;color:var(--text-muted);margin:4px 0 6px;min-height:30px" x-text="m.desc"></div>
+              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:10px" x-text="m.category"></div>
+              <!-- Version selector (not installed) -->
+              <div x-show="!m.installed && m.versions && m.versions.length" style="margin-bottom:8px">
+                <label style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">Version</label>
+                <select class="form-input" style="font-size:12px;padding:5px 8px" x-model="m.selVer">
+                  <template x-for="v in m.versions" :key="v.value">
+                    <option :value="v.value" x-text="v.label"></option>
+                  </template>
+                </select>
+              </div>
+              <!-- Service status -->
+              <div x-show="m.installed && m.svcStatus" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+                <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus==='inactive'?'red':'yellow')"></span>
+                <span style="font-size:11px;color:var(--text-secondary)" x-text="m.svcStatus"></span>
+              </div>
+              <!-- Service controls -->
+              <div x-show="m.installed && m.manage" style="display:flex;gap:4px;margin-bottom:6px">
+                <button class="btn btn-success btn-xs" style="flex:1;justify-content:center" @click="control(m,'start')">Start</button>
+                <button class="btn btn-ghost btn-xs" style="flex:1;justify-content:center" @click="control(m,'restart')">Restart</button>
+                <button class="btn btn-danger btn-xs" style="flex:1;justify-content:center" @click="control(m,'stop')">Stop</button>
+              </div>
+              <!-- Uninstall -->
+              <div x-show="m.installed">
+                <button class="btn btn-danger btn-xs" style="width:100%;justify-content:center" @click="uninstall(m)" :disabled="m.loading">
+                  <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
+                  <span x-text="m.loading?'Removing…':'Uninstall'"></span>
+                </button>
+              </div>
+              <!-- Install -->
+              <div x-show="!m.installed">
+                <button class="btn btn-primary btn-xs" style="width:100%;justify-content:center" @click="install(m)" :disabled="m.loading">
+                  <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
+                  <span x-text="m.loading?'Installing…':'Install'"></span>
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <!-- Version picker modal -->
+        <div class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
+          <div class="modal" style="max-width:400px">
+            <div class="modal-hd">
+              <div class="modal-title"><span x-text="verModal.action==='uninstall'?'Uninstall':'Install'"></span> <span x-text="verModal.mod?.name"></span></div>
+              <button class="modal-close" @click="verModal.show=false">×</button>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Select Version</label>
+              <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:8px">
+                <template x-for="v in (verModal.mod?.versions||[])" :key="v.value">
+                  <div style="padding:10px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid transparent;font-size:12px;font-weight:600;transition:.12s"
+                       :style="verModal.selVer===v.value?'border-color:var(--accent);background:var(--bg-hover);color:var(--accent)':'border-color:var(--border);background:var(--bg-raised);color:var(--text-secondary)'"
+                       @click="verModal.selVer=v.value" x-text="v.label"></div>
+                </template>
+              </div>
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="verModal.show=false">Cancel</button>
+              <button :class="'btn '+(verModal.action==='uninstall'?'btn-danger':'btn-primary')" @click="installWithVer()">
+                <span x-text="(verModal.action==='uninstall'?'Uninstall':'Install')+' '+verModal.selVer"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- Job progress modal -->
+        <div class="modal-overlay" x-show="jobModal.show">
+          <div class="modal" style="max-width:600px">
+            <div class="modal-hd">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span x-show="!jobModal.done" class="loading-spinner"></span>
+                <span x-show="jobModal.done && jobModal.success" style="color:var(--green);font-size:18px">✓</span>
+                <span x-show="jobModal.done && !jobModal.success" style="color:var(--red);font-size:18px">✗</span>
+                <div class="modal-title" x-text="jobModal.title"></div>
+              </div>
+            </div>
+            <div x-show="!jobModal.done" style="height:3px;background:var(--bg-raised);border-radius:2px;overflow:hidden;margin-bottom:12px">
+              <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));animation:progress-anim 1.5s ease-in-out infinite;width:60%"></div>
+            </div>
+            <div class="terminal-out job-terminal" style="max-height:300px">
+              <template x-for="(line,i) in jobModal.lines" :key="i">
+                <div :style="line.startsWith('✓')?'color:var(--green)':line.startsWith('⚠')?'color:var(--yellow)':line.startsWith('✗')?'color:var(--red)':''" x-text="line"></div>
+              </template>
+            </div>
+            <div class="modal-ft">
+              <div x-show="jobModal.done && jobModal.success && jobModal.action==='install'" style="display:flex;align-items:center;gap:8px;color:var(--green);font-size:13px;font-weight:600">
+                <span>✓ Installed successfully</span>
+                <span x-show="jobModal.installedVer" style="font-family:var(--font-mono);background:rgba(16,185,129,.12);padding:2px 8px;border-radius:4px;font-size:11px" x-text="'v'+jobModal.installedVer"></span>
+              </div>
+              <div x-show="jobModal.done && jobModal.success && jobModal.action==='uninstall'" style="color:var(--green);font-size:13px;font-weight:600">✓ Removed successfully</div>
+              <div x-show="jobModal.done && !jobModal.success" style="color:var(--yellow);font-size:13px">⚠ Check output above for errors</div>
+              <div style="flex:1"></div>
+              <button class="btn btn-primary" @click="jobModal.show=false;load()" :disabled="!jobModal.done">
+                <span x-text="jobModal.done?'Close':'Working…'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- SERVICES -->
       <div x-show="page==='services'" x-data="servicesPage()">
         <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">System service management</div></div></div>
@@ -873,55 +1031,271 @@
       <!-- BACKUPS -->
       <div x-show="page==='backups'" x-data="backupsPage()">
         <div class="page-header">
-          <div><div class="page-title">Backups</div><div class="page-sub">Server data backup management</div></div>
+          <div><div class="page-title">Backups</div><div class="page-sub">Create, download and restore server backups</div></div>
+          <button class="btn btn-ghost" @click="showUpload=true">↑ Restore from File</button>
         </div>
+
+        <!-- Create backup cards -->
         <div class="grid-3" style="margin-bottom:20px">
-          <div class="card" style="text-align:center;cursor:pointer;transition:.15s" @click="create('webroot')" :style="creating==='webroot'?'border-color:var(--accent)':''">
-            <div style="font-size:32px;margin-bottom:8px">🌐</div>
-            <div style="font-weight:600;margin-bottom:4px">Websites Backup</div>
-            <div style="font-size:11px;color:var(--text-muted)">/www/wwwroot/ directory</div>
-            <button class="btn btn-primary btn-sm" style="margin-top:12px;width:100%;justify-content:center" :disabled="creating==='webroot'">
-              <span x-show="creating==='webroot'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
-              <span x-text="creating==='webroot'?'Creating…':'Create Backup'"></span>
+          <!-- Website Backup -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+              <span style="font-size:28px">🌐</span>
+              <div><div style="font-weight:600;font-size:14px">Website Backup</div><div style="font-size:11px;color:var(--text-muted)">Backup a specific domain or all sites</div></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Select Domain</label>
+              <select class="form-input" x-model="form.website.domain">
+                <option value="">— All websites —</option>
+                <template x-for="s in info.websites" :key="s.domain">
+                  <option :value="s.domain" x-text="s.domain+'  ('+s.path+')'"></option>
+                </template>
+              </select>
+            </div>
+            <div x-show="!info.websites || info.websites.length===0" style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
+              No websites configured yet
+            </div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center" @click="createBackup('website',form.website.domain,'')" :disabled="creating">
+              <span x-show="creating==='website'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+              <span x-text="creating==='website'?'Creating…':'Create Backup'"></span>
             </button>
           </div>
-          <div class="card" style="text-align:center;cursor:pointer;transition:.15s" @click="create('database')">
-            <div style="font-size:32px;margin-bottom:8px">🗄</div>
-            <div style="font-weight:600;margin-bottom:4px">Database Backup</div>
-            <div style="font-size:11px;color:var(--text-muted)">All MySQL databases</div>
-            <button class="btn btn-primary btn-sm" style="margin-top:12px;width:100%;justify-content:center" :disabled="creating==='database'">
+
+          <!-- Database Backup -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+              <span style="font-size:28px">🗄</span>
+              <div><div style="font-weight:600;font-size:14px">Database Backup</div><div style="font-size:11px;color:var(--text-muted)">Backup a specific DB or all databases</div></div>
+            </div>
+            <template x-if="!info.mysql">
+              <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:10px;font-size:12px;color:var(--red);margin-bottom:10px">
+                MySQL/MariaDB not installed or not running
+              </div>
+            </template>
+            <div class="form-group" x-show="info.mysql">
+              <label class="form-label">Select Database</label>
+              <select class="form-input" x-model="form.db.name">
+                <option value="">— All databases —</option>
+                <template x-for="db in info.databases" :key="db">
+                  <option :value="db" x-text="db"></option>
+                </template>
+              </select>
+              <div x-show="info.databases && info.databases.length===0" style="font-size:11px;color:var(--text-muted);margin-top:4px">
+                No databases found. Create one in the Databases page first.
+              </div>
+            </div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center"
+                    @click="createBackup('database','',form.db.name)"
+                    :disabled="creating || !info.mysql || (info.databases && info.databases.length===0)">
               <span x-show="creating==='database'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
               <span x-text="creating==='database'?'Creating…':'Create Backup'"></span>
             </button>
+            <div x-show="info.mysql && info.databases && info.databases.length===0" style="font-size:11px;color:var(--yellow);margin-top:8px;text-align:center">
+              ⚠ No databases to backup
+            </div>
           </div>
-          <div class="card" style="text-align:center;cursor:pointer;transition:.15s" @click="create('full')">
-            <div style="font-size:32px;margin-bottom:8px">💾</div>
-            <div style="font-weight:600;margin-bottom:4px">Full Backup</div>
-            <div style="font-size:11px;color:var(--text-muted)">Websites + Nginx configs</div>
-            <button class="btn btn-primary btn-sm" style="margin-top:12px;width:100%;justify-content:center" :disabled="creating==='full'">
+
+          <!-- Full Backup -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+              <span style="font-size:28px">💾</span>
+              <div><div style="font-weight:600;font-size:14px">Full Backup</div><div style="font-size:11px;color:var(--text-muted)">Websites + Nginx/Caddy configs</div></div>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px;line-height:1.7">
+              Includes:<br>
+              ✓ All website files (<span x-text="info.webroot||'\/www\/wwwroot'"></span>)<br>
+              ✓ Nginx configuration (/etc/nginx)<br>
+              ✓ Caddy configuration (/etc/caddy)
+            </div>
+            <button class="btn btn-primary" style="width:100%;justify-content:center" @click="createBackup('full','','')" :disabled="creating">
               <span x-show="creating==='full'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
-              <span x-text="creating==='full'?'Creating…':'Create Backup'"></span>
+              <span x-text="creating==='full'?'Creating…':'Create Full Backup'"></span>
             </button>
           </div>
         </div>
+
+        <!-- Backup progress modal -->
+        <div class="modal-overlay" x-show="jobModal.show">
+          <div class="modal" style="max-width:560px">
+            <div class="modal-hd">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span x-show="!jobModal.done" class="loading-spinner"></span>
+                <span x-show="jobModal.done && jobModal.success" style="color:var(--green);font-size:18px">✓</span>
+                <span x-show="jobModal.done && !jobModal.success" style="color:var(--red);font-size:18px">✗</span>
+                <div class="modal-title" x-text="jobModal.title"></div>
+              </div>
+            </div>
+            <div x-show="!jobModal.done" style="height:3px;background:var(--bg-raised);border-radius:2px;overflow:hidden;margin-bottom:12px">
+              <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));animation:progress-anim 1.5s ease-in-out infinite;width:60%"></div>
+            </div>
+            <div class="terminal-out" style="min-height:80px;max-height:200px">
+              <template x-for="(line,i) in jobModal.lines" :key="i">
+                <div :style="line.startsWith('✓')?'color:var(--green)':line.startsWith('✗')||line.startsWith('Error')?'color:var(--red)':''" x-text="line||'…'"></div>
+              </template>
+            </div>
+            <div class="modal-ft">
+              <div x-show="jobModal.done && jobModal.success" style="color:var(--green);font-size:13px;font-weight:600" x-text="'✓ '+jobModal.name+(jobModal.size?' ('+fmtSize(jobModal.size)+')':'')+' created successfully'"></div>
+              <div x-show="jobModal.done && !jobModal.success" style="color:var(--red);font-size:13px" x-text="'✗ '+jobModal.error"></div>
+              <div style="flex:1"></div>
+              <button class="btn btn-primary" @click="jobModal.show=false;load()" :disabled="!jobModal.done">
+                <span x-text="jobModal.done?'Close':'Working…'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Backup files list -->
         <div class="card">
-          <div class="card-hd"><div class="card-title">Backup Files</div><button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button></div>
+          <div class="card-hd">
+            <div class="card-title">Backup Files (<span x-text="backups.length"></span>)</div>
+            <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
+          </div>
           <template x-if="backups.length===0">
-            <div class="empty-state"><div class="empty-icon">💾</div><div class="empty-text">No backups yet</div></div>
+            <div class="empty-state"><div class="empty-icon">💾</div><div class="empty-text">No backups yet. Create one above.</div></div>
           </template>
           <table class="data-table" x-show="backups.length>0">
-            <thead><tr><th>Filename</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Filename</th><th>Type</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
             <tbody>
               <template x-for="b in backups" :key="b.name">
                 <tr>
-                  <td x-text="b.name"></td>
+                  <td style="font-family:var(--font-mono);font-size:12px" x-text="b.name"></td>
+                  <td>
+                    <span :class="'badge badge-'+(b.type==='website'?'blue':b.type==='database'?'green':b.type==='full'?'yellow':'gray')"
+                          x-text="b.type==='website'?'Website':b.type==='database'?'Database':b.type==='full'?'Full':b.type"></span>
+                  </td>
                   <td x-text="fmtSize(b.size)"></td>
-                  <td x-text="fmtDate(b.mtime)"></td>
-                  <td><button class="btn btn-danger btn-xs" @click="del(b.name)">Delete</button></td>
+                  <td style="font-size:12px;color:var(--text-muted)" x-text="fmtDate(b.mtime)"></td>
+                  <td>
+                    <div style="display:flex;gap:5px">
+                      <button class="btn btn-success btn-xs" @click="downloadBackup(b.name)">↓ Download</button>
+                      <button class="btn btn-ghost btn-xs" @click="openRestore(b)">↩ Restore</button>
+                      <button class="btn btn-danger btn-xs" @click="del(b.name)">Delete</button>
+                    </div>
+                  </td>
                 </tr>
               </template>
             </tbody>
           </table>
+        </div>
+
+        <!-- RESTORE MODAL -->
+        <div class="modal-overlay" x-show="restoreModal.show" @click.self="restoreModal.show=false">
+          <div class="modal" style="max-width:500px">
+            <div class="modal-hd">
+              <div><div class="modal-title">Restore Backup</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px" x-text="restoreModal.name"></div></div>
+              <button class="modal-close" @click="restoreModal.show=false">×</button>
+            </div>
+
+            <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+              ⚠ <strong>Warning:</strong> Restoring will overwrite existing files/data. Make sure you have a current backup before restoring.
+            </div>
+
+            <!-- Website restore -->
+            <template x-if="restoreModal.type==='website'">
+              <div>
+                <div class="form-group">
+                  <label class="form-label">Restore To Path</label>
+                  <select class="form-input" x-model="restoreModal.target">
+                    <option value="">— Auto-detect from backup —</option>
+                    <template x-for="s in info.websites" :key="s.domain">
+                      <option :value="s.path" x-text="s.domain+'  →  '+s.path"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Or enter custom path</label>
+                  <input class="form-input" x-model="restoreModal.customPath" placeholder="/www/wwwroot/example.com">
+                </div>
+                <div style="font-size:11px;color:var(--text-muted)">
+                  Files will be extracted to the selected path. Existing files with the same name will be overwritten.
+                </div>
+              </div>
+            </template>
+
+            <!-- Database restore -->
+            <template x-if="restoreModal.type==='database'">
+              <div>
+                <div class="form-group">
+                  <label class="form-label">Restore Into Database</label>
+                  <select class="form-input" x-model="restoreModal.target">
+                    <option value="">— Create new database from backup name —</option>
+                    <template x-for="db in info.databases" :key="db">
+                      <option :value="db" x-text="db"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Or enter new database name</label>
+                  <input class="form-input" x-model="restoreModal.customPath" placeholder="my_restored_db">
+                </div>
+                <div style="font-size:11px;color:var(--yellow)">
+                  ⚠ If the target database already has data, it will be overwritten by the restore.
+                </div>
+              </div>
+            </template>
+
+            <!-- Full backup restore -->
+            <template x-if="restoreModal.type==='full'">
+              <div>
+                <div style="font-size:13px;margin-bottom:12px">This will restore:</div>
+                <div style="font-size:12px;color:var(--text-secondary);line-height:1.8;background:var(--bg-raised);padding:12px;border-radius:6px">
+                  ✓ All website files<br>
+                  ✓ Nginx configuration<br>
+                  ✓ Caddy configuration
+                </div>
+              </div>
+            </template>
+
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="restoreModal.show=false">Cancel</button>
+              <button class="btn btn-danger" @click="doRestore()">↩ Restore Now</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- UPLOAD & RESTORE MODAL -->
+        <div class="modal-overlay" x-show="showUpload" @click.self="showUpload=false">
+          <div class="modal" style="max-width:500px">
+            <div class="modal-hd"><div class="modal-title">Restore from File</div><button class="modal-close" @click="showUpload=false">×</button></div>
+
+            <div style="border:2px dashed var(--border);border-radius:8px;padding:28px;text-align:center;margin-bottom:16px;cursor:pointer"
+                 @click="$refs.uploadInput.click()"
+                 @dragover.prevent="$event.target.style.borderColor='var(--accent)'"
+                 @dragleave="$event.target.style.borderColor='var(--border)'"
+                 @drop.prevent="handleDrop($event)">
+              <div style="font-size:32px;margin-bottom:8px">📂</div>
+              <div style="font-weight:600;margin-bottom:4px">Click or drag file here</div>
+              <div style="font-size:11px;color:var(--text-muted)">Supported: .tar.gz .sql.gz .zip .sql</div>
+              <div x-show="uploadFile" style="margin-top:10px;font-size:12px;color:var(--accent)" x-text="uploadFile?.name"></div>
+            </div>
+            <input type="file" x-ref="uploadInput" style="display:none"
+                   accept=".tar.gz,.sql.gz,.zip,.sql,.gz"
+                   @change="uploadFile=$event.target.files[0]">
+
+            <div class="form-group">
+              <label class="form-label">Backup Type</label>
+              <select class="form-input" x-model="uploadType">
+                <option value="website">Website (tar.gz)</option>
+                <option value="database">Database (sql.gz)</option>
+              </select>
+            </div>
+
+            <div class="form-group" x-show="uploadType==='website'">
+              <label class="form-label">Restore to Path</label>
+              <input class="form-input" x-model="uploadTarget" placeholder="/www/wwwroot/example.com">
+            </div>
+            <div class="form-group" x-show="uploadType==='database'">
+              <label class="form-label">Database Name</label>
+              <input class="form-input" x-model="uploadTarget" placeholder="database_name">
+            </div>
+
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="showUpload=false">Cancel</button>
+              <button class="btn btn-primary" @click="uploadAndRestore()" :disabled="!uploadFile">
+                ↑ Upload & Restore
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -973,8 +1347,27 @@
       <!-- MAIL SERVER -->
       <div x-show="page==='mail'" x-data="mailPage()">
         <div class="page-header"><div><div class="page-title">Mail Server</div><div class="page-sub">Postfix + Dovecot management</div></div></div>
-        <!-- Status bar -->
-        <div class="card-sm" style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+
+        <!-- Not installed guard -->
+        <template x-if="status.postfix==='inactive' && status.dovecot==='inactive' && !status._checked">
+          <div x-init="setTimeout(()=>status._checked=true,2000)"></div>
+        </template>
+        <template x-if="status._notInstalled">
+          <div class="card" style="text-align:center;padding:48px 32px">
+            <div style="font-size:48px;margin-bottom:16px">📧</div>
+            <div style="font-size:18px;font-weight:700;margin-bottom:8px">Mail Server Not Installed</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px;max-width:480px;margin-left:auto;margin-right:auto">
+              Install <strong>Postfix</strong> (SMTP) and <strong>Dovecot</strong> (IMAP) via Modules to enable mail server management.
+              Your domain also needs an <strong>MX record</strong> pointing to this server's IP.
+            </div>
+            <button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">
+              📦 Go to Modules → Install Postfix + Dovecot
+            </button>
+          </div>
+        </template>
+
+        <!-- Status bar (only when installed) -->
+        <div class="card-sm" x-show="!status._notInstalled" style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px">
             <span :class="'dot dot-'+(status.postfix==='active'?'green':'red')"></span>
             <span style="font-size:13px">Postfix</span>
@@ -1080,36 +1473,126 @@
       <!-- FTP -->
       <div x-show="page==='ftp'" x-data="ftpPage()">
         <div class="page-header">
-          <div><div class="page-title">FTP / SFTP</div><div class="page-sub">File transfer accounts</div></div>
-          <button class="btn btn-primary" @click="showAdd=true">+ Add Account</button>
+          <div><div class="page-title">FTP / SFTP</div><div class="page-sub">File transfer account management</div></div>
+          <button class="btn btn-primary" @click="showAdd=true" :disabled="!ftpStatus.installed">+ Add Account</button>
         </div>
-        <div class="card-sm" style="margin-bottom:16px;display:flex;align-items:center;gap:16px">
-          <span style="font-size:13px;color:var(--text-muted)">Active Daemon:</span>
-          <span class="badge badge-blue" x-text="ftpStatus.daemon||'none'"></span>
-        </div>
-        <div class="card" style="padding:0;overflow:hidden">
-          <table class="data-table">
-            <thead><tr><th>Username</th><th>Home Directory</th><th>Actions</th></tr></thead>
-            <tbody>
-              <template x-for="a in accounts" :key="a.user">
-                <tr>
-                  <td x-text="a.user"></td>
-                  <td x-text="a.home"></td>
-                  <td><button class="btn btn-danger btn-xs" @click="del(a.user)">Delete</button></td>
-                </tr>
+
+        <!-- Not installed state -->
+        <template x-if="!ftpStatus.installed">
+          <div class="card" style="text-align:center;padding:48px 32px">
+            <div style="font-size:48px;margin-bottom:16px">📂</div>
+            <div style="font-size:18px;font-weight:700;margin-bottom:8px">FTP Daemon Not Installed</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px;max-width:400px;margin-left:auto;margin-right:auto">
+              Install <strong>Pure-FTPd</strong> via the Modules page to enable FTP/SFTP account management.
+            </div>
+            <button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">
+              📦 Go to Modules → Install Pure-FTPd
+            </button>
+          </div>
+        </template>
+
+        <!-- Installed state -->
+        <template x-if="ftpStatus.installed">
+          <div>
+            <!-- Status bar -->
+            <div class="card-sm" style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span :class="'dot dot-'+(ftpStatus.status==='active'?'green':'red')"></span>
+                <span style="font-size:13px;font-weight:500" x-text="ftpStatus.daemon"></span>
+                <span :class="'badge badge-'+(ftpStatus.status==='active'?'green':'red')" x-text="ftpStatus.status"></span>
+              </div>
+              <div style="font-size:12px;color:var(--text-muted)">
+                <span x-text="ftpStatus.accounts_count||0"></span> account(s) configured
+              </div>
+            </div>
+
+            <!-- Accounts table -->
+            <div class="card" style="padding:0;overflow:hidden">
+              <template x-if="accounts.length===0">
+                <div class="empty-state">
+                  <div class="empty-icon">📂</div>
+                  <div class="empty-text">No FTP accounts yet. Click "+ Add Account" to create one.</div>
+                </div>
               </template>
-            </tbody>
-          </table>
-        </div>
+              <table class="data-table" x-show="accounts.length>0">
+                <thead><tr><th>Username</th><th>Home Directory</th><th>Actions</th></tr></thead>
+                <tbody>
+                  <template x-for="a in accounts" :key="a.user">
+                    <tr>
+                      <td x-text="a.user"></td>
+                      <td style="font-size:11px;color:var(--text-muted)" x-text="a.home"></td>
+                      <td>
+                        <div style="display:flex;gap:6px">
+                          <button class="btn btn-ghost btn-xs" @click="changePw(a.user)">Change PW</button>
+                          <button class="btn btn-danger btn-xs" @click="del(a.user)">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+
+        <!-- Add Account Modal -->
         <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
-          <div class="modal" style="max-width:420px">
+          <div class="modal" style="max-width:460px">
             <div class="modal-hd"><div class="modal-title">Add FTP Account</div><button class="modal-close" @click="showAdd=false">×</button></div>
-            <div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="form.user" placeholder="ftpuser"></div>
-            <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="form.password"></div>
-            <div class="form-group"><label class="form-label">Home Directory</label><input class="form-input" x-model="form.home" placeholder="/www/wwwroot/domain.com"></div>
+
+            <div class="form-group">
+              <label class="form-label">Username</label>
+              <input class="form-input" x-model="form.user" placeholder="ftpuser">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Password (min 6 characters)</label>
+              <input class="form-input" type="password" x-model="form.password" placeholder="Strong password">
+            </div>
+
+            <!-- Domain picker — auto-fills Home Directory -->
+            <div class="form-group">
+              <label class="form-label">Link to Domain (optional)</label>
+              <select class="form-input" x-model="form.selectedDomain" @change="onDomainChange()">
+                <option value="">— Custom path —</option>
+                <template x-for="s in sites" :key="s.domain">
+                  <option :value="s.path" x-text="s.domain+'  →  '+s.path"></option>
+                </template>
+              </select>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+                Selecting a domain auto-fills the home directory with that website's path
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Home Directory</label>
+              <input class="form-input" x-model="form.home" placeholder="/www/wwwroot/domain.com"
+                     :style="form.selectedDomain?'border-color:var(--accent-3)':' '">
+              <div x-show="form.selectedDomain" style="font-size:11px;color:var(--accent-3);margin-top:3px">
+                ✓ Linked to domain — directory auto-filled
+              </div>
+            </div>
+
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="showAdd=false">Cancel</button>
-              <button class="btn btn-primary" @click="create()">Create</button>
+              <button class="btn btn-primary" @click="create()">Create Account</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Change Password Modal -->
+        <div class="modal-overlay" x-show="pwModal.show" @click.self="pwModal.show=false">
+          <div class="modal" style="max-width:380px">
+            <div class="modal-hd">
+              <div class="modal-title">Change Password — <span x-text="pwModal.user"></span></div>
+              <button class="modal-close" @click="pwModal.show=false">×</button>
+            </div>
+            <div class="form-group">
+              <label class="form-label">New Password</label>
+              <input class="form-input" type="password" x-model="pwModal.password" placeholder="Min 6 characters">
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="pwModal.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="savePw()">Save Password</button>
             </div>
           </div>
         </div>
@@ -1164,346 +1647,58 @@
         </div>
       </div>
 
-      <!-- DOCKER -->
-      <div x-show="page==='docker'" x-data="dockerPage()">
-        <div class="page-header"><div><div class="page-title">Docker</div><div class="page-sub">Container management</div></div></div>
-        <div class="grid-4" style="margin-bottom:16px">
-          <div class="stat-card"><div class="stat-label">Containers</div><div class="stat-value" x-text="info.containers||0"></div></div>
-          <div class="stat-card"><div class="stat-label">Running</div><div class="stat-value" x-text="info.running||0" style="color:var(--green)"></div></div>
-          <div class="stat-card"><div class="stat-label">Images</div><div class="stat-value" x-text="info.images||0"></div></div>
-          <div class="stat-card"><div class="stat-label">Version</div><div class="stat-value" style="font-size:16px;padding-top:4px" x-text="info.version||'—'"></div></div>
-        </div>
-        <div class="tabs">
-          <div class="tab" :class="{active:tab==='containers'}" @click="tab='containers'">Containers</div>
-          <div class="tab" :class="{active:tab==='images'}" @click="tab='images';loadImages()">Images</div>
-        </div>
-        <div x-show="tab==='containers'">
-          <div class="card" style="padding:0;overflow:hidden">
-            <table class="data-table">
-              <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th>Actions</th></tr></thead>
-              <tbody>
-                <template x-for="c in containers" :key="c.id">
-                  <tr>
-                    <td x-text="c.name"></td>
-                    <td style="font-size:12px;color:var(--text-muted)" x-text="c.image"></td>
-                    <td><span :class="'badge badge-'+(c.state==='running'?'green':'red')" x-text="c.status"></span></td>
-                    <td style="font-size:11px;font-family:var(--font-mono)" x-text="c.ports"></td>
-                    <td>
-                      <div style="display:flex;gap:5px">
-                        <button class="btn btn-success btn-xs" @click="ctrl(c.name,'start')" x-show="c.state!=='running'">Start</button>
-                        <button class="btn btn-danger btn-xs" @click="ctrl(c.name,'stop')" x-show="c.state==='running'">Stop</button>
-                        <button class="btn btn-ghost btn-xs" @click="ctrl(c.name,'restart')">Restart</button>
-                        <button class="btn btn-ghost btn-xs" @click="showLogs(c.name)">Logs</button>
-                      </div>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div x-show="tab==='images'">
-          <div class="card" style="padding:0;overflow:hidden">
-            <table class="data-table">
-              <thead><tr><th>Repository</th><th>Tag</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
-              <tbody>
-                <template x-for="img in images" :key="img.id">
-                  <tr>
-                    <td x-text="img.repo"></td>
-                    <td><span class="badge badge-gray" x-text="img.tag"></span></td>
-                    <td style="font-size:12px" x-text="img.size"></td>
-                    <td style="font-size:12px;color:var(--text-muted)" x-text="img.created"></td>
-                    <td><button class="btn btn-danger btn-xs" @click="rmImage(img.repo+':'+img.tag)">Remove</button></td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <!-- Logs modal -->
-        <div class="modal-overlay" x-show="logsModal.show" @click.self="logsModal.show=false">
-          <div class="modal" style="max-width:800px">
-            <div class="modal-hd"><div class="modal-title" x-text="'Logs: '+logsModal.name"></div><button class="modal-close" @click="logsModal.show=false">×</button></div>
-            <div class="terminal-out" x-text="logsModal.content"></div>
-          </div>
-        </div>
-      </div>
-
       <!-- MONITORING -->
       <div x-show="page==='monitoring'" x-data="monitoringPage()">
-        <div class="page-header"><div><div class="page-title">Monitoring</div><div class="page-sub">Process monitor and system logs</div></div></div>
-        <div class="tabs">
-          <div class="tab" :class="{active:tab==='processes'}" @click="tab='processes'">Processes</div>
-          <div class="tab" :class="{active:tab==='logs'}" @click="tab='logs'">System Logs</div>
-          <div class="tab" :class="{active:tab==='network'}" @click="tab='network';loadNetstat()">Network</div>
+        <div class="page-header"><div><div class="page-title">Monitoring</div><div class="page-sub">Real-time server performance</div></div></div>
+        <div class="grid-4" style="margin-bottom:16px">
+          <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value" x-text="(stats.cpu||0)+'%'"></div></div>
+          <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-value" style="font-size:16px" x-text="stats.ram||'—'"></div></div>
+          <div class="stat-card"><div class="stat-label">Disk</div><div class="stat-value" x-text="(stats.disk||0)+'%'"></div></div>
+          <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value" style="font-size:14px" x-text="stats.uptime||'—'"></div></div>
         </div>
-        <div x-show="tab==='processes'">
-          <div class="card" style="padding:0;overflow:hidden">
-            <table class="data-table">
-              <thead><tr><th>User</th><th>PID</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr></thead>
-              <tbody>
-                <template x-for="p in processes" :key="p.pid">
-                  <tr>
-                    <td x-text="p.user"></td>
-                    <td x-text="p.pid"></td>
-                    <td><span :class="'badge badge-'+(parseFloat(p.cpu)>50?'red':parseFloat(p.cpu)>20?'yellow':'green')" x-text="p.cpu+'%'"></span></td>
-                    <td x-text="p.mem+'%'"></td>
-                    <td style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="p.cmd"></td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div x-show="tab==='logs'">
-          <div style="display:flex;gap:10px;margin-bottom:14px;align-items:center">
-            <select class="form-input" style="width:220px" x-model="logType" @change="loadLog()">
-              <option value="nginx_error">Nginx Error</option>
-              <option value="nginx_access">Nginx Access</option>
-              <option value="mysql">MySQL Error</option>
-              <option value="syslog">Syslog</option>
-              <option value="auth">Auth Log</option>
-              <option value="mail">Mail Log</option>
-            </select>
-            <input class="form-input" style="flex:1" x-model="logSearch" placeholder="Filter log lines…">
-            <button class="btn btn-ghost" @click="loadLog()">↻</button>
-          </div>
-          <div class="terminal-out" x-text="filteredLog()"></div>
-        </div>
-        <div x-show="tab==='network'">
-          <div class="card">
-            <div class="card-hd"><div class="card-title">Open Ports (ss -tlnp)</div><button class="btn btn-ghost btn-sm" @click="loadNetstat()">↻</button></div>
-            <div class="code-block" x-text="netstat"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- MODULES -->
-      <div x-show="page==='modules'" x-data="modulesPage()">
-        <div class="page-header"><div><div class="page-title">Modules</div><div class="page-sub">Install and manage server software</div></div></div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
-          <button class="btn btn-sm" :class="cat===''?'btn-primary':'btn-ghost'" @click="cat=''">All</button>
-          <template x-for="cc in categories()" :key="cc">
-            <button class="btn btn-sm" :class="cat===cc?'btn-primary':'btn-ghost'" @click="cat=cc" x-text="cc"></button>
-          </template>
-        </div>
-        <div class="grid-4">
-          <template x-for="m in filtered()" :key="m.id">
-            <div class="mod-card" :style="m.installed?'border-color:rgba(16,185,129,.3);':''">
-              <!-- Header: icon + status badge -->
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                <span style="font-size:26px" x-text="m.icon"></span>
-                <div style="display:flex;align-items:center;gap:6px">
-                  <span x-show="m.installed && m.installedVer" style="font-size:10px;font-family:var(--font-mono);color:var(--accent);background:rgba(88,101,242,.12);padding:2px 6px;border-radius:4px" x-text="'v'+m.installedVer"></span>
-                  <span :class="'badge badge-'+(m.installed?'green':'gray')" x-text="m.installed?'Installed':'Not Installed'"></span>
-                </div>
-              </div>
-              <!-- Name + desc -->
-              <div style="font-size:13px;font-weight:700;color:var(--text-primary)" x-text="m.name"></div>
-              <div style="font-size:11px;color:var(--text-muted);margin:4px 0 6px;min-height:30px" x-text="m.desc"></div>
-              <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:10px" x-text="m.category"></div>
-
-              <!-- Version selector (not installed) -->
-              <div x-show="!m.installed && m.versions && m.versions.length" style="margin-bottom:8px">
-                <label style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:5px">Version</label>
-                <select class="form-input" style="font-size:12px;padding:5px 8px" x-model="m.selVer">
-                  <template x-for="v in m.versions" :key="v.value">
-                    <option :value="v.value" x-text="v.label"></option>
-                  </template>
-                </select>
-              </div>
-
-              <!-- Service status (installed) -->
-              <div x-show="m.installed && m.svcStatus" style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-                <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus==='inactive'?'red':'yellow')"></span>
-                <span style="font-size:11px;color:var(--text-secondary)" x-text="m.svcStatus"></span>
-              </div>
-
-              <!-- Service controls (installed + manageable) -->
-              <div x-show="m.installed && m.manage" style="display:flex;gap:4px;margin-bottom:6px">
-                <button class="btn btn-success btn-xs" style="flex:1;justify-content:center" @click="control(m,'start')">Start</button>
-                <button class="btn btn-ghost btn-xs" style="flex:1;justify-content:center" @click="control(m,'restart')">Restart</button>
-                <button class="btn btn-danger btn-xs" style="flex:1;justify-content:center" @click="control(m,'stop')">Stop</button>
-              </div>
-
-              <!-- Uninstall button -->
-              <div x-show="m.installed">
-                <button class="btn btn-danger btn-xs" style="width:100%;justify-content:center" @click="uninstall(m)" :disabled="m.loading">
-                  <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
-                  <span x-text="m.loading?'Removing…':'Uninstall'"></span>
-                </button>
-              </div>
-
-              <!-- Install button -->
-              <div x-show="!m.installed">
-                <button class="btn btn-primary btn-xs" style="width:100%;justify-content:center" @click="install(m)" :disabled="m.loading">
-                  <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
-                  <span x-text="m.loading?'Installing…':'Install'"></span>
-                </button>
-              </div>
-            </div>
-          </template>
-        </div>
-
-        <!-- Job progress modal -->
-        <div class="modal-overlay" x-show="jobModal.show">
-          <div class="modal" style="max-width:760px">
-            <div class="modal-hd">
-              <div style="display:flex;align-items:center;gap:10px">
-                <span x-show="!jobModal.done" class="loading-spinner"></span>
-                <span x-show="jobModal.done && jobModal.installed" style="color:var(--green);font-size:18px">✓</span>
-                <span x-show="jobModal.done && !jobModal.installed" style="color:var(--yellow);font-size:18px">⚠</span>
-                <div class="modal-title" x-text="jobModal.title"></div>
-              </div>
-            </div>
-            <!-- Progress bar -->
-            <div x-show="!jobModal.done" style="height:3px;background:var(--bg-raised);border-radius:2px;overflow:hidden;margin-bottom:12px">
-              <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));animation:progress-anim 1.5s ease-in-out infinite;width:60%"></div>
-            </div>
-            <div class="terminal-out job-terminal" style="min-height:200px;max-height:400px">
-              <template x-for="(line,i) in jobModal.lines" :key="i">
-                <div :style="line.startsWith('[VortexPanel]')?'color:#86efac;font-weight:600':''" x-text="line||'&nbsp;'"></div>
+        <div class="card">
+          <div class="card-hd"><div class="card-title">Running Processes</div></div>
+          <table class="data-table">
+            <thead><tr><th>PID</th><th>Name</th><th>CPU%</th><th>Memory</th><th>Status</th></tr></thead>
+            <tbody>
+              <template x-for="p in processes" :key="p.pid">
+                <tr><td x-text="p.pid"></td><td x-text="p.name"></td><td x-text="p.cpu"></td><td x-text="p.mem"></td><td x-text="p.status"></td></tr>
               </template>
-            </div>
-            <div class="modal-ft">
-              <!-- Install success -->
-              <div x-show="jobModal.done && jobModal.success && jobModal.action==='install'" style="display:flex;align-items:center;gap:8px;color:var(--green);font-size:13px;font-weight:600">
-                <span>✓ Installed successfully</span>
-                <span x-show="jobModal.installedVer" style="font-family:var(--font-mono);background:rgba(16,185,129,.12);padding:2px 8px;border-radius:4px;font-size:11px" x-text="'v'+jobModal.installedVer"></span>
-              </div>
-              <!-- Uninstall success -->
-              <div x-show="jobModal.done && jobModal.success && jobModal.action==='uninstall'" style="color:var(--green);font-size:13px;font-weight:600">✓ Removed successfully</div>
-              <!-- Any failure -->
-              <div x-show="jobModal.done && !jobModal.success" style="color:var(--yellow);font-size:13px">⚠ Check output above for errors</div>
-              <div style="flex:1"></div>
-              <button class="btn btn-primary" @click="jobModal.show=false" :disabled="!jobModal.done">
-                <span x-show="!jobModal.done" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
-                <span x-text="jobModal.done?'Close':(jobModal.action==='uninstall'?'Removing…':'Installing…')"></span>
-              </button>
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
       </div>
-
-      <!-- SETTINGS -->
-      <div x-show="page==='settings'" x-data="settingsPage()">
-        <div class="page-header"><div><div class="page-title">Settings</div><div class="page-sub">Panel and system configuration</div></div></div>
-        <div class="tabs">
-          <div class="tab" :class="{active:tab==='general'}" @click="tab='general'">General</div>
-          <div class="tab" :class="{active:tab==='password'}" @click="tab='password'">Password</div>
-          <div class="tab" :class="{active:tab==='system'}" @click="tab='system'">System</div>
-        </div>
-        <div x-show="tab==='general'" class="card" style="max-width:600px">
-          <div class="form-group"><label class="form-label">Panel Name</label><input class="form-input" x-model="config.panel_name"></div>
-          <div class="form-group"><label class="form-label">Timezone</label>
-            <select class="form-input" x-model="config.timezone">
-              <option>UTC</option><option>Asia/Kolkata</option><option>Asia/Singapore</option><option>America/New_York</option><option>America/Los_Angeles</option><option>Europe/London</option><option>Europe/Berlin</option>
-            </select>
-          </div>
-          <label class="form-check" style="margin-bottom:14px"><input type="checkbox" x-model="config.auto_update"><span>Enable automatic security updates</span></label>
-          <button class="btn btn-primary" @click="save()">Save Settings</button>
-        </div>
-        <div x-show="tab==='password'" class="card" style="max-width:500px">
-          <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pw.new_password" placeholder="Min 6 characters"></div>
-          <div class="form-group"><label class="form-label">Confirm Password</label><input class="form-input" type="password" x-model="pw.confirm" placeholder="Repeat password"></div>
-          <button class="btn btn-primary" @click="changePw()">Change Password</button>
-        </div>
-        <div x-show="tab==='system'">
-          <div class="grid-2" style="max-width:800px">
-            <div class="card">
-              <div class="card-hd"><div class="card-title">System Info</div></div>
-              <table class="data-table">
-                <tbody>
-                  <tr><td style="color:var(--text-muted)">Hostname</td><td x-text="sysInfo.hostname"></td></tr>
-                  <tr><td style="color:var(--text-muted)">OS</td><td x-text="sysInfo.os"></td></tr>
-                  <tr><td style="color:var(--text-muted)">Kernel</td><td style="font-family:var(--font-mono);font-size:12px" x-text="sysInfo.kernel"></td></tr>
-                  <tr><td style="color:var(--text-muted)">CPU</td><td x-text="sysInfo.cpu"></td></tr>
-                  <tr><td style="color:var(--text-muted)">IP</td><td x-text="sysInfo.ip"></td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="card">
-              <div class="card-hd"><div class="card-title">System Actions</div></div>
-              <div style="display:flex;flex-direction:column;gap:10px">
-                <div>
-                  <div style="font-size:13px;margin-bottom:6px">Set Hostname</div>
-                  <div style="display:flex;gap:8px">
-                    <input class="form-input" x-model="newHostname" placeholder="server.example.com" style="flex:1">
-                    <button class="btn btn-ghost" @click="setHostname()">Set</button>
-                  </div>
-                </div>
-                <button class="btn btn-warn" @click="sysUpdate()">⬆ System Update (apt upgrade)</button>
-                <button class="btn btn-danger" @click="if(confirm('Reboot server?'))sysReboot()">↻ Reboot Server</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
 
       <!-- BANDWIDTH -->
       <div x-show="page==='bandwidth'" x-data="bandwidthPage()">
-        <div class="page-header">
-          <div><div class="page-title">Bandwidth</div><div class="page-sub">Server & domain traffic monitoring</div></div>
-          <button class="btn btn-ghost" @click="installVnstat()" x-show="!hasVnstat">Install vnstat</button>
-        </div>
-        <!-- Real-time -->
+        <div class="page-header"><div><div class="page-title">Bandwidth</div><div class="page-sub">Server & domain traffic monitoring</div></div><button class="btn btn-ghost" @click="installVnstat()" x-show="!hasVnstat">Install vnstat</button></div>
         <div class="grid-4" style="margin-bottom:16px">
-          <div class="stat-card">
-            <div class="stat-label">Interface</div>
-            <div class="stat-value" style="font-size:16px;padding-top:4px" x-text="summary.interface||'—'"></div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">↓ Download (live)</div>
-            <div class="stat-value" style="color:var(--accent-3)" x-text="fmtBytes(rt.rx_per_sec)+'/s'">0 B/s</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">↑ Upload (live)</div>
-            <div class="stat-value" style="color:var(--accent)" x-text="fmtBytes(rt.tx_per_sec)+'/s'">0 B/s</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Total Traffic</div>
-            <div class="stat-value" style="font-size:16px" x-text="fmtBytes((summary.total_rx||0)+(summary.total_tx||0))"></div>
-            <div class="stat-sub">↓ <span x-text="fmtBytes(summary.total_rx||0)"></span> ↑ <span x-text="fmtBytes(summary.total_tx||0)"></span></div>
-          </div>
+          <div class="stat-card"><div class="stat-label">Interface</div><div class="stat-value" style="font-size:16px;padding-top:4px" x-text="summary.interface||'—'"></div></div>
+          <div class="stat-card"><div class="stat-label">↓ Download (live)</div><div class="stat-value" style="color:var(--accent-3)" x-text="fmtBytes(rt.rx_per_sec)+'/s'">0 B/s</div></div>
+          <div class="stat-card"><div class="stat-label">↑ Upload (live)</div><div class="stat-value" style="color:var(--accent)" x-text="fmtBytes(rt.tx_per_sec)+'/s'">0 B/s</div></div>
+          <div class="stat-card"><div class="stat-label">Total Traffic</div><div class="stat-value" style="font-size:16px" x-text="fmtBytes((summary.total_rx||0)+(summary.total_tx||0))"></div><div class="stat-sub">↓ <span x-text="fmtBytes(summary.total_rx||0)"></span> ↑ <span x-text="fmtBytes(summary.total_tx||0)"></span></div></div>
         </div>
-
-        <div class="grid-2" style="margin-bottom:16px">
-          <!-- Daily usage -->
+        <div class="grid-2">
           <div class="card">
-            <div class="card-hd"><div class="card-title">Daily Usage (last 7 days)</div></div>
-            <template x-if="summary.daily && summary.daily.length===0">
-              <div class="empty-state"><div class="empty-icon">📊</div><div class="empty-text" x-text="hasVnstat?'vnstat is collecting data — check back in a few minutes':'Install vnstat for historical data'"></div></div>
-            </template>
-            <table class="data-table" x-show="summary.daily && summary.daily.length>0">
+            <div class="card-hd"><div class="card-title">Daily Usage</div></div>
+            <template x-if="!summary.daily||summary.daily.length===0"><div class="empty-state"><div class="empty-icon">📊</div><div class="empty-text" x-text="hasVnstat?'Collecting data…':'Install vnstat for historical data'"></div></div></template>
+            <table class="data-table" x-show="summary.daily&&summary.daily.length>0">
               <thead><tr><th>Date</th><th>↓ RX</th><th>↑ TX</th><th>Total</th></tr></thead>
               <tbody>
                 <template x-for="d in (summary.daily||[])" :key="d.date">
-                  <tr>
-                    <td x-text="d.date"></td>
-                    <td style="color:var(--accent-3)" x-text="fmtBytes(d.rx)"></td>
-                    <td style="color:var(--accent)" x-text="fmtBytes(d.tx)"></td>
-                    <td x-text="fmtBytes(d.rx+d.tx)"></td>
-                  </tr>
+                  <tr><td x-text="d.date"></td><td style="color:var(--accent-3)" x-text="fmtBytes(d.rx)"></td><td style="color:var(--accent)" x-text="fmtBytes(d.tx)"></td><td x-text="fmtBytes(d.rx+d.tx)"></td></tr>
                 </template>
               </tbody>
             </table>
           </div>
-          <!-- Per-domain bandwidth -->
           <div class="card">
-            <div class="card-hd"><div class="card-title">Per-Domain Traffic (Nginx logs)</div><button class="btn btn-ghost btn-sm" @click="loadDomains()">↻</button></div>
-            <template x-if="domains.length===0">
-              <div class="empty-state"><div class="empty-icon">🌐</div><div class="empty-text">No Nginx access logs found</div></div>
-            </template>
+            <div class="card-hd"><div class="card-title">Per-Domain Traffic</div><button class="btn btn-ghost btn-sm" @click="loadDomains()">↻</button></div>
+            <template x-if="domains.length===0"><div class="empty-state"><div class="empty-icon">🌐</div><div class="empty-text">No Nginx access logs found</div></div></template>
             <table class="data-table" x-show="domains.length>0">
               <thead><tr><th>Domain</th><th>Requests</th><th>Data Sent</th></tr></thead>
               <tbody>
                 <template x-for="d in domains" :key="d.domain">
-                  <tr>
-                    <td x-text="d.domain"></td>
-                    <td x-text="d.requests.toLocaleString()"></td>
-                    <td x-text="fmtBytes(d.bytes)"></td>
-                  </tr>
+                  <tr><td x-text="d.domain"></td><td x-text="d.requests.toLocaleString()"></td><td x-text="fmtBytes(d.bytes)"></td></tr>
                 </template>
               </tbody>
             </table>
@@ -1514,115 +1709,1200 @@
       <!-- SECURITY -->
       <div x-show="page==='security'" x-data="securityPage()">
         <div class="page-header"><div><div class="page-title">Security</div><div class="page-sub">Server hardening & intrusion prevention</div></div></div>
-
-        <!-- Security Score -->
+        <!-- Score -->
         <div class="card" style="margin-bottom:16px">
           <div class="card-hd">
             <div class="card-title">Security Score</div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <div style="font-size:28px;font-weight:700" :style="'color:'+(score>=80?'var(--green)':score>=50?'var(--yellow)':'var(--red)')" x-text="score+'%'"></div>
-            </div>
+            <div style="font-size:28px;font-weight:700" :style="'color:'+(score>=80?'var(--green)':score>=50?'var(--yellow)':'var(--red)')" x-text="score+'%'"></div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-            <template x-for="c in checks" :key="c.label">
+            <template x-for="check in checks" :key="check.label">
               <div style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:6px"
-                   :style="c.pass?'background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.15)':'background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15)'">
-                <span x-text="c.pass?'✓':'✗'" :style="'font-size:16px;color:'+(c.pass?'var(--green)':'var(--red)')"></span>
+                   :style="check.pass?'background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.15)':'background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15)'">
+                <span x-text="check.pass?'✓':'✗'" :style="'font-size:16px;color:'+(check.pass?'var(--green)':'var(--red)')"></span>
                 <div>
-                  <div style="font-size:12px;font-weight:500" x-text="c.label"></div>
-                  <div style="font-size:10px" :style="'color:'+(c.severity==='high'?'var(--red)':c.severity==='medium'?'var(--yellow)':'var(--text-muted)')" x-text="c.severity.toUpperCase()"></div>
+                  <div style="font-size:12px;font-weight:500" x-text="check.label"></div>
+                  <div style="font-size:10px" :style="'color:'+(check.severity==='high'?'var(--red)':check.severity==='medium'?'var(--yellow)':'var(--text-muted)')" x-text="check.severity?.toUpperCase()"></div>
                 </div>
               </div>
             </template>
           </div>
         </div>
-
         <div class="tabs">
           <div class="tab" :class="{active:tab==='ssh'}" @click="tab='ssh'">SSH</div>
           <div class="tab" :class="{active:tab==='fail2ban'}" @click="tab='fail2ban';loadFail2ban()">Fail2ban</div>
+          <div class="tab" :class="{active:tab==='modsec'}" @click="tab='modsec';loadModsec()">ModSecurity WAF</div>
+          <div class="tab" :class="{active:tab==='lb'}" @click="tab='lb';loadLB()">Load Balancer</div>
           <div class="tab" :class="{active:tab==='attempts'}" @click="tab='attempts';loadAttempts()">Login Attempts</div>
           <div class="tab" :class="{active:tab==='ports'}" @click="tab='ports';loadPorts()">Open Ports</div>
         </div>
-
         <!-- SSH -->
-        <div x-show="tab==='ssh'" class="card" style="max-width:600px">
+        <div x-show="tab==='ssh'" class="card" style="max-width:600px;margin-top:14px">
           <div class="card-hd"><div class="card-title">SSH Configuration</div></div>
           <div class="form-row form-row-2" style="margin-bottom:14px">
             <div class="form-group"><label class="form-label">SSH Port</label><input class="form-input" x-model="ssh.port" placeholder="22"></div>
             <div class="form-group"><label class="form-label">Max Auth Tries</label><input class="form-input" x-model="ssh.max_auth_tries" placeholder="6"></div>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
-            <label class="form-check">
-              <input type="checkbox" :checked="ssh.root_login==='yes' || ssh.root_login==='without-password'" @change="ssh.root_login=$event.target.checked?'yes':'no'">
-              <div><div style="font-size:13px;font-weight:500">Allow Root Login</div><div style="font-size:11px;color:var(--text-muted)">Disable for better security</div></div>
-            </label>
-            <label class="form-check">
-              <input type="checkbox" :checked="ssh.password_auth==='yes'" @change="ssh.password_auth=$event.target.checked?'yes':'no'">
-              <div><div style="font-size:13px;font-weight:500">Password Authentication</div><div style="font-size:11px;color:var(--text-muted)">Disable if using SSH keys only</div></div>
-            </label>
-            <label class="form-check">
-              <input type="checkbox" :checked="ssh.pubkey_auth==='yes'" @change="ssh.pubkey_auth=$event.target.checked?'yes':'no'">
-              <div><div style="font-size:13px;font-weight:500">Public Key Authentication</div><div style="font-size:11px;color:var(--text-muted)">Recommended — keep enabled</div></div>
-            </label>
+            <label class="form-check"><input type="checkbox" :checked="ssh.root_login==='yes'" @change="ssh.root_login=$event.target.checked?'yes':'no'"><div><div style="font-size:13px;font-weight:500">Allow Root Login</div><div style="font-size:11px;color:var(--text-muted)">Disable for better security</div></div></label>
+            <label class="form-check"><input type="checkbox" :checked="ssh.password_auth==='yes'" @change="ssh.password_auth=$event.target.checked?'yes':'no'"><div><div style="font-size:13px;font-weight:500">Password Authentication</div><div style="font-size:11px;color:var(--text-muted)">Disable if using SSH keys only</div></div></label>
+            <label class="form-check"><input type="checkbox" :checked="ssh.pubkey_auth==='yes'" @change="ssh.pubkey_auth=$event.target.checked?'yes':'no'"><div><div style="font-size:13px;font-weight:500">Public Key Authentication</div><div style="font-size:11px;color:var(--text-muted)">Recommended</div></div></label>
           </div>
-          <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:10px;font-size:11px;color:var(--yellow);margin-bottom:14px">
-            ⚠ Changing SSH port or disabling password auth may lock you out if misconfigured. Ensure you have SSH key access before disabling passwords.
-          </div>
+          <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--yellow);margin-bottom:14px">⚠ Changing SSH settings may lock you out. Ensure you have alternative access.</div>
           <button class="btn btn-primary" @click="saveSSH()">Save SSH Config</button>
         </div>
-
         <!-- Fail2ban -->
-        <div x-show="tab==='fail2ban'">
-          <template x-if="!f2bJails || f2bJails.length===0">
-            <div class="card"><div class="empty-state"><div class="empty-icon">🛡</div><div class="empty-text">Fail2ban is not running or not installed</div></div></div>
-          </template>
+        <div x-show="tab==='fail2ban'" style="margin-top:14px">
+          <template x-if="!f2bJails||f2bJails.length===0"><div class="card"><div class="empty-state"><div class="empty-icon">🛡</div><div class="empty-text">Fail2ban not running or not installed</div></div></div></template>
           <template x-for="jail in f2bJails" :key="jail.name">
             <div class="card" style="margin-bottom:12px">
-              <div class="card-hd">
-                <div>
-                  <div class="card-title" x-text="jail.name"></div>
-                  <div class="card-sub">Currently banned: <span x-text="jail.currently"></span> · Total: <span x-text="jail.total"></span></div>
-                </div>
-              </div>
-              <div x-show="jail.banned_ips && jail.banned_ips.length>0" style="display:flex;flex-wrap:wrap;gap:6px">
+              <div class="card-hd"><div><div class="card-title" x-text="jail.name"></div><div class="card-sub">Banned: <span x-text="jail.currently"></span> now · <span x-text="jail.total"></span> total</div></div></div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
                 <template x-for="ip in jail.banned_ips" :key="ip">
                   <div style="display:flex;align-items:center;gap:5px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:4px 10px;font-family:var(--font-mono);font-size:12px">
-                    <span x-text="ip"></span>
-                    <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;line-height:1" @click="unbanIP(ip,jail.name)" title="Unban">×</button>
+                    <span x-text="ip"></span><button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px" @click="unbanIP(ip,jail.name)">×</button>
                   </div>
                 </template>
+                <div x-show="!jail.banned_ips||jail.banned_ips.length===0" style="font-size:12px;color:var(--text-muted)">No IPs currently banned</div>
               </div>
-              <div x-show="!jail.banned_ips || jail.banned_ips.length===0" style="color:var(--text-muted);font-size:12px">No IPs currently banned in this jail</div>
-              <!-- Manual ban -->
-              <div style="display:flex;gap:8px;margin-top:12px">
-                <input class="form-input" x-model="jail.banInput" placeholder="IP to ban manually" style="max-width:200px;font-family:var(--font-mono)">
+              <div style="display:flex;gap:8px">
+                <input class="form-input" x-model="jail.banInput" placeholder="IP to ban" style="max-width:200px;font-family:var(--font-mono)">
                 <button class="btn btn-danger btn-sm" @click="banIP(jail.banInput,jail.name);jail.banInput=''">Ban IP</button>
               </div>
             </div>
           </template>
         </div>
-
-        <!-- Login Attempts -->
-        <div x-show="tab==='attempts'">
+        <!-- ModSecurity -->
+        <div x-show="tab==='modsec'" style="margin-top:14px">
           <div class="card">
-            <div class="card-hd"><div class="card-title">Recent Failed Login Attempts</div><button class="btn btn-ghost btn-sm" @click="loadAttempts()">↻</button></div>
-            <template x-for="a in attempts" :key="a.log">
+            <div class="card-hd"><div><div class="card-title">🔥 ModSecurity WAF</div><div class="card-sub">OWASP Core Rule Set</div></div><span :class="'badge badge-'+(modsec.installed?(modsec.enabled?'green':'yellow'):'gray')" x-text="modsec.installed?(modsec.enabled?'Blocking':'Detection Only'):'Not Installed'"></span></div>
+            <template x-if="!modsec.installed"><div style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:8px;padding:14px;font-size:12px;color:var(--text-secondary)">Install ModSecurity via <strong>Modules → ModSecurity WAF</strong> first.</div></template>
+            <template x-if="modsec.installed">
               <div>
-                <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px" x-text="a.log"></div>
-                <div class="terminal-out" style="max-height:300px" x-text="a.content"></div>
+                <div class="grid-3" style="margin-bottom:16px">
+                  <div class="stat-card"><div class="stat-label">Status</div><div style="font-size:14px;font-weight:700" :style="'color:'+(modsec.enabled?'var(--green)':'var(--yellow)')" x-text="modsec.enabled?'Blocking Mode':'Detection Only'"></div></div>
+                  <div class="stat-card"><div class="stat-label">Rules</div><div class="stat-value" x-text="modsec.rules||0"></div></div>
+                  <div class="stat-card"><div class="stat-label">Engine</div><div style="font-size:13px;font-weight:600;padding-top:4px">libmodsecurity v3</div></div>
+                </div>
+                <button class="btn btn-success" x-show="!modsec.enabled" @click="toggleModsec(true)">🔥 Enable Blocking Mode</button>
+                <button class="btn btn-warn" x-show="modsec.enabled" @click="toggleModsec(false)">⚠ Detection Only Mode</button>
               </div>
             </template>
-            <template x-if="attempts.length===0">
-              <div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">No auth logs found</div></div>
+          </div>
+        </div>
+        <!-- Load Balancer -->
+        <div x-show="tab==='lb'" style="margin-top:14px">
+          <div class="card">
+            <div class="card-hd"><div><div class="card-title">⚖ Nginx Load Balancer</div><div class="card-sub">Distribute traffic across backend servers</div></div><span :class="'badge badge-'+(lb.configured?'green':'gray')" x-text="lb.configured?'Configured':'Not Configured'"></span></div>
+            <div class="form-group"><label class="form-label">Algorithm</label>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+                <template x-for="algo in [{id:'roundrobin',label:'Round Robin',desc:'Even distribution'},{id:'leastconn',label:'Least Connections',desc:'Least busy server'},{id:'iphash',label:'IP Hash (Sticky)',desc:'Same client → same server'}]" :key="algo.id">
+                  <div style="padding:10px;border-radius:8px;cursor:pointer;border:2px solid;transition:.12s" :style="lb.method===algo.id?'border-color:var(--accent);background:var(--bg-hover)':'border-color:var(--border);background:var(--bg-raised)'" @click="lb.method=algo.id">
+                    <div style="font-weight:600;font-size:12px" x-text="algo.label"></div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px" x-text="algo.desc"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Domain (or _ for all)</label><input class="form-input" x-model="lb.domain" placeholder="_"></div>
+              <div class="form-group"><label class="form-label">Port</label><input class="form-input" x-model="lb.port" placeholder="80"></div>
+            </div>
+            <div class="form-group">
+              <div style="display:flex;justify-content:space-between;margin-bottom:8px"><label class="form-label" style="margin:0">Backend Servers</label><button class="btn btn-ghost btn-xs" @click="lb.servers.push({address:'127.0.0.1:8001',weight:1})">+ Add</button></div>
+              <template x-for="(s,i) in lb.servers" :key="i">
+                <div style="display:flex;gap:8px;margin-bottom:8px">
+                  <input class="form-input" x-model="s.address" placeholder="127.0.0.1:8001" style="flex:2;font-family:var(--font-mono)">
+                  <input class="form-input" type="number" x-model.number="s.weight" style="width:80px" min="1">
+                  <button class="btn btn-danger btn-xs" @click="lb.servers.splice(i,1)" x-show="lb.servers.length>1">✕</button>
+                </div>
+              </template>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" @click="saveLB()">Apply Config</button>
+              <button class="btn btn-danger" x-show="lb.configured" @click="deleteLB()">Remove</button>
+            </div>
+          </div>
+        </div>
+        <!-- Login Attempts -->
+        <div x-show="tab==='attempts'" style="margin-top:14px">
+          <div class="card"><div class="card-hd"><div class="card-title">Recent Failed Login Attempts</div><button class="btn btn-ghost btn-sm" @click="loadAttempts()">↻</button></div>
+            <template x-for="a in attempts" :key="a.log"><div><div style="font-size:11px;color:var(--text-muted);margin-bottom:8px" x-text="a.log"></div><div class="terminal-out" style="max-height:300px" x-text="a.content"></div></div></template>
+            <template x-if="attempts.length===0"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">No auth logs found</div></div></template>
+          </div>
+        </div>
+        <!-- Open Ports -->
+        <div x-show="tab==='ports'" style="margin-top:14px">
+          <div class="card"><div class="card-hd"><div class="card-title">Open Listening Ports</div><button class="btn btn-ghost btn-sm" @click="loadPorts()">↻</button></div><div class="code-block" x-text="portsOutput||'Loading…'"></div></div>
+        </div>
+      </div>
+
+      <!-- DOCKER -->
+      <div x-show="page==='docker'" x-data="dockerPage()">
+        <div class="page-header">
+          <div><div class="page-title">Docker</div><div class="page-sub">Container management with Docker Hardened &amp; Official images</div></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" @click="prune()" x-show="status.running">🧹 Prune</button>
+            <button class="btn btn-ghost btn-sm" @click="loadContainers();loadImages();loadVolumes()">↻</button>
+          </div>
+        </div>
+
+        <!-- NOT INSTALLED -->
+        <template x-if="!status.installed">
+          <div class="card" style="text-align:center;padding:52px 32px">
+            <div style="font-size:52px;margin-bottom:16px">🐋</div>
+            <div style="font-size:20px;font-weight:700;margin-bottom:8px">Docker Not Installed</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px;max-width:480px;margin:0 auto 24px">
+              Install Docker CE via the <strong>Modules</strong> page to enable container management and one-click application deployment.
+            </div>
+            <button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">📦 Install Docker via Modules</button>
+          </div>
+        </template>
+
+        <!-- NOT RUNNING -->
+        <template x-if="status.installed && !status.running">
+          <div class="card" style="text-align:center;padding:40px 32px">
+            <div style="font-size:40px;margin-bottom:12px">⚠️</div>
+            <div style="font-size:16px;font-weight:700;margin-bottom:8px">Docker Daemon Not Running</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:20px">Run: <code>systemctl start docker</code></div>
+            <button class="btn btn-primary" @click="loadStatus()">↻ Check Again</button>
+          </div>
+        </template>
+
+        <!-- MAIN UI -->
+        <template x-if="status.installed && status.running">
+          <div>
+            <!-- Status bar -->
+            <div class="card-sm" style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="dot dot-green"></span>
+                <span style="font-size:13px;font-weight:600">Docker</span>
+                <span class="badge badge-green">Running</span>
+              </div>
+              <span style="font-size:11px;font-family:var(--font-mono);color:var(--accent)" x-text="status.version"></span>
+              <div style="flex:1"></div>
+              <span style="font-size:12px;color:var(--text-muted)"><span x-text="containers.length"></span> containers · <span x-text="images.length"></span> images</span>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs" style="margin-bottom:16px">
+              <div class="tab" :class="{active:tab==='catalog'}" @click="tab='catalog'">🐳 Image Catalog</div>
+              <div class="tab" :class="{active:tab==='containers'}" @click="tab='containers';loadContainers()">📦 Containers (<span x-text="containers.length"></span>)</div>
+              <div class="tab" :class="{active:tab==='images'}" @click="tab='images';loadImages()">🖼 Local Images (<span x-text="images.length"></span>)</div>
+              <div class="tab" :class="{active:tab==='volumes'}" @click="tab='volumes';loadVolumes()">💾 Volumes</div>
+            </div>
+
+            <!-- CATALOG -->
+            <div x-show="tab==='catalog'">
+              <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+                <input class="form-input" style="flex:1;min-width:180px;max-width:300px" x-model="search" placeholder="🔍 Search images...">
+                <div style="display:flex;gap:5px;flex-wrap:wrap">
+                  <template x-for="cat in categories" :key="cat">
+                    <button :class="'btn btn-xs '+(catalogFilter===cat?'btn-primary':'btn-ghost')" @click="catalogFilter=cat" x-text="cat"></button>
+                  </template>
+                </div>
+              </div>
+
+              <!-- DHI callout -->
+              <div style="background:linear-gradient(135deg,rgba(88,101,242,.12),rgba(6,182,212,.08));border:1px solid rgba(88,101,242,.25);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
+                <span style="font-size:24px">🔒</span>
+                <div>
+                  <div style="font-weight:600;font-size:13px;margin-bottom:2px">Docker Hardened Images (DHI) <span style="background:rgba(16,185,129,.15);color:var(--green);border:1px solid rgba(16,185,129,.3);font-size:10px;padding:1px 7px;border-radius:10px;margin-left:6px">Zero-CVE</span></div>
+                  <div style="font-size:11px;color:var(--text-secondary)">Images marked <strong>🔒 Hardened</strong> are built with zero-known CVEs, signed provenance and full SBOM — production-grade security.</div>
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px">
+                <template x-for="img in filteredCatalog" :key="img.id">
+                  <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:16px;transition:.15s"
+                       :style="isInstalled(img)?'border-color:rgba(16,185,129,.35)':''"
+                       @mouseenter="$el.style.transform='translateY(-2px)';$el.style.boxShadow='0 6px 20px rgba(0,0,0,.3)'"
+                       @mouseleave="$el.style.transform='none';$el.style.boxShadow='none'">
+
+                    <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
+                      <span style="font-size:22px" x-text="img.icon"></span>
+                      <div style="flex:1;min-width:0">
+                        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                          <span style="font-weight:700;font-size:13px" x-text="img.name"></span>
+                          <span x-show="img.hardened" style="font-size:9px;background:rgba(88,101,242,.15);color:#7c8af7;border:1px solid rgba(88,101,242,.3);padding:1px 6px;border-radius:8px">🔒 DHI</span>
+                          <span x-show="isInstalled(img)" class="badge badge-green" style="font-size:9px">✓ Local</span>
+                        </div>
+                        <div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted);margin-top:2px" x-text="img.image+':'+img.tag"></div>
+                      </div>
+                      <span class="badge badge-gray" style="font-size:9px;flex-shrink:0" x-text="img.cat"></span>
+                    </div>
+
+                    <div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;min-height:32px" x-text="img.desc"></div>
+
+                    <div x-show="img.ports && img.ports.length" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">
+                      <template x-for="p in img.ports.slice(0,3)" :key="p.host">
+                        <span style="font-size:10px;font-family:var(--font-mono);background:var(--bg-raised);border:1px solid var(--border);padding:2px 6px;border-radius:4px;color:var(--text-muted)" x-text="p.host+':'+p.container"></span>
+                      </template>
+                    </div>
+
+                    <div style="display:flex;gap:6px">
+                      <button class="btn btn-primary btn-xs" style="flex:1;justify-content:center" @click="openRun(img)" x-text="isInstalled(img)?'▶ Run':'🐳 Deploy'"></button>
+                      <a :href="img.docs" target="_blank" class="btn btn-ghost btn-xs" style="text-decoration:none">Hub ↗</a>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- CONTAINERS -->
+            <div x-show="tab==='containers'">
+              <template x-if="containers.length===0">
+                <div class="empty-state"><div class="empty-icon">📦</div><div class="empty-text">No containers. Deploy from the Catalog tab.</div></div>
+              </template>
+              <div class="card" style="padding:0;overflow:hidden" x-show="containers.length>0">
+                <table class="data-table">
+                  <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    <template x-for="ct in containers" :key="ct.id">
+                      <tr>
+                        <td><div style="font-weight:600;font-size:12px" x-text="ct.name"></div><div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted)" x-text="ct.id"></div></td>
+                        <td style="font-size:11px;font-family:var(--font-mono)" x-text="ct.image"></td>
+                        <td><span :class="'badge badge-'+(ct.state==='running'?'green':ct.state==='exited'?'red':'yellow')" style="font-size:10px" x-text="ct.status"></span></td>
+                        <td style="font-size:11px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis" x-text="ct.ports||'—'"></td>
+                        <td>
+                          <div style="display:flex;gap:4px">
+                            <button class="btn btn-success btn-xs" x-show="ct.state!=='running'" @click="containerAction(ct,'start')">▶</button>
+                            <button class="btn btn-ghost btn-xs" x-show="ct.state==='running'" @click="containerAction(ct,'restart')">↺</button>
+                            <button class="btn btn-danger btn-xs" x-show="ct.state==='running'" @click="containerAction(ct,'stop')">■</button>
+                            <button class="btn btn-ghost btn-xs" @click="showLogs(ct)">Logs</button>
+                            <button class="btn btn-ghost btn-xs" x-show="ct.state==='running'" @click="showStats(ct)">Stats</button>
+                            <button class="btn btn-danger btn-xs" @click="containerAction(ct,'remove')">✕</button>
+                          </div>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- LOCAL IMAGES -->
+            <div x-show="tab==='images'">
+              <template x-if="images.length===0"><div class="empty-state"><div class="empty-icon">🖼</div><div class="empty-text">No images pulled yet. Deploy from the Catalog.</div></div></template>
+              <div class="card" style="padding:0;overflow:hidden" x-show="images.length>0">
+                <table class="data-table">
+                  <thead><tr><th>Repository</th><th>Tag</th><th>Size</th><th>Created</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    <template x-for="img in images" :key="img.id">
+                      <tr>
+                        <td style="font-family:var(--font-mono);font-size:12px" x-text="img.repository"></td>
+                        <td><span class="badge badge-blue" style="font-size:10px" x-text="img.tag"></span></td>
+                        <td style="font-size:12px" x-text="img.size"></td>
+                        <td style="font-size:11px;color:var(--text-muted)" x-text="img.created"></td>
+                        <td><button class="btn btn-danger btn-xs" @click="removeImage(img)">Remove</button></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- VOLUMES -->
+            <div x-show="tab==='volumes'">
+              <div class="grid-2">
+                <div class="card">
+                  <div class="card-hd"><div class="card-title">Volumes (<span x-text="volumes.length"></span>)</div></div>
+                  <template x-if="volumes.length===0"><div class="empty-state" style="padding:20px"><div class="empty-text">No volumes</div></div></template>
+                  <template x-for="v in volumes" :key="v.name">
+                    <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px">
+                      <div style="font-weight:500" x-text="v.name"></div>
+                      <div style="color:var(--text-muted);font-size:11px" x-text="v.mountpoint"></div>
+                    </div>
+                  </template>
+                </div>
+                <div class="card">
+                  <div class="card-hd"><div class="card-title">Networks (<span x-text="networks.length"></span>)</div></div>
+                  <template x-if="networks.length===0"><div class="empty-state" style="padding:20px"><div class="empty-text">No networks</div></div></template>
+                  <template x-for="n in networks" :key="n.id">
+                    <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;gap:10px;align-items:center">
+                      <div style="flex:1;font-weight:500" x-text="n.name"></div>
+                      <span class="badge badge-gray" style="font-size:10px" x-text="n.driver"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- DEPLOY MODAL -->
+        <div class="modal-overlay" x-show="showRun" @click.self="showRun=false">
+          <div class="modal" style="max-width:600px">
+            <div class="modal-hd">
+              <div>
+                <div class="modal-title" x-text="'Deploy: '+(runTarget?.name||'')"></div>
+                <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);margin-top:2px" x-text="(runTarget?.image||'')+':'+(runTarget?.tag||'')"></div>
+              </div>
+              <button class="modal-close" @click="showRun=false">×</button>
+            </div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Container Name</label><input class="form-input" x-model="runForm.name" placeholder="my-container"></div>
+              <div class="form-group"><label class="form-label">Restart Policy</label>
+                <select class="form-input" x-model="runForm.restart">
+                  <option value="unless-stopped">unless-stopped (recommended)</option>
+                  <option value="always">always</option>
+                  <option value="on-failure">on-failure</option>
+                  <option value="no">no</option>
+                </select>
+              </div>
+            </div>
+            <!-- Ports -->
+            <div x-show="runForm.ports && runForm.ports.length" class="form-group">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <label class="form-label" style="margin:0">Port Mappings</label>
+                <button class="btn btn-ghost btn-xs" @click="runForm.ports.push({host:'',container:''})">+ Add</button>
+              </div>
+              <template x-for="(p,i) in runForm.ports" :key="i">
+                <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
+                  <input class="form-input" x-model="p.host" placeholder="Host port" style="font-family:var(--font-mono)">
+                  <span style="color:var(--text-muted)">→</span>
+                  <input class="form-input" x-model="p.container" placeholder="Container port" style="font-family:var(--font-mono)">
+                  <button class="btn btn-ghost btn-xs" @click="runForm.ports.splice(i,1)">✕</button>
+                </div>
+              </template>
+            </div>
+            <!-- Env vars -->
+            <div x-show="runForm.envs && runForm.envs.length" class="form-group">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <label class="form-label" style="margin:0">Environment Variables</label>
+                <button class="btn btn-ghost btn-xs" @click="runForm.envs.push({key:'',value:'',placeholder:''})">+ Add</button>
+              </div>
+              <template x-for="(e,i) in runForm.envs" :key="i">
+                <div style="display:flex;gap:6px;margin-bottom:6px">
+                  <input class="form-input" x-model="e.key" :placeholder="e.key||'KEY'" style="flex:1;font-family:var(--font-mono);font-size:12px">
+                  <input class="form-input" x-model="e.value" :placeholder="e.placeholder||'value'" style="flex:2;font-size:12px" :type="e.key&&e.key.toLowerCase().includes('password')?'password':'text'">
+                  <button class="btn btn-ghost btn-xs" @click="runForm.envs.splice(i,1)">✕</button>
+                </div>
+              </template>
+            </div>
+            <!-- Volumes -->
+            <div x-show="runForm.volumes && runForm.volumes.length" class="form-group">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <label class="form-label" style="margin:0">Volume Mounts</label>
+                <button class="btn btn-ghost btn-xs" @click="runForm.volumes.push({host:'',container:''})">+ Add</button>
+              </div>
+              <template x-for="(v,i) in runForm.volumes" :key="i">
+                <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
+                  <input class="form-input" x-model="v.host" placeholder="/host/path" style="flex:1;font-size:11px;font-family:var(--font-mono)">
+                  <span style="color:var(--text-muted)">:</span>
+                  <input class="form-input" x-model="v.container" placeholder="/container/path" style="flex:1;font-size:11px;font-family:var(--font-mono)">
+                  <button class="btn btn-ghost btn-xs" @click="runForm.volumes.splice(i,1)">✕</button>
+                </div>
+              </template>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);background:var(--bg-raised);padding:8px 10px;border-radius:6px;margin-bottom:14px">
+              💡 VortexPanel runs <code>docker pull</code> then <code>docker run -d</code> with the config above. Host paths are created automatically.
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="showRun=false">Cancel</button>
+              <button class="btn btn-primary" @click="pullAndRun()">🐳 Pull &amp; Deploy</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- JOB MODAL -->
+        <div class="modal-overlay" x-show="jobModal.show">
+          <div class="modal" style="max-width:600px">
+            <div class="modal-hd">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span x-show="!jobModal.done" class="loading-spinner"></span>
+                <span x-show="jobModal.done && jobModal.success" style="color:var(--green);font-size:18px">✓</span>
+                <span x-show="jobModal.done && !jobModal.success" style="color:var(--red);font-size:18px">✗</span>
+                <div class="modal-title" x-text="jobModal.title"></div>
+              </div>
+            </div>
+            <div x-show="!jobModal.done" style="height:3px;background:var(--bg-raised);border-radius:2px;overflow:hidden;margin-bottom:10px">
+              <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));animation:progress-anim 1.5s ease-in-out infinite;width:60%"></div>
+            </div>
+            <div class="terminal-out" style="max-height:280px">
+              <template x-for="(line,i) in jobModal.lines" :key="i">
+                <div :style="line.startsWith('✓')?'color:var(--green)':line.startsWith('✗')?'color:var(--red)':''" x-text="line"></div>
+              </template>
+            </div>
+            <div class="modal-ft">
+              <div x-show="jobModal.done && jobModal.success" style="color:var(--green);font-size:13px;font-weight:600">✓ Container deployed successfully</div>
+              <div x-show="jobModal.done && !jobModal.success" style="color:var(--red);font-size:13px">✗ Failed — check output above</div>
+              <div style="flex:1"></div>
+              <button class="btn btn-primary" @click="jobModal.show=false" :disabled="!jobModal.done" x-text="jobModal.done?'Close':'Deploying…'"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- LOGS MODAL -->
+        <div class="modal-overlay" x-show="logsModal.show" @click.self="logsModal.show=false">
+          <div class="modal" style="max-width:700px">
+            <div class="modal-hd"><div class="modal-title">Logs: <span x-text="logsModal.name"></span></div><button class="modal-close" @click="logsModal.show=false">×</button></div>
+            <div class="terminal-out" style="max-height:400px;white-space:pre-wrap" x-text="logsModal.content"></div>
+            <div class="modal-ft"><button class="btn btn-primary" @click="logsModal.show=false">Close</button></div>
+          </div>
+        </div>
+
+        <!-- STATS MODAL -->
+        <div class="modal-overlay" x-show="statsModal.show" @click.self="statsModal.show=false">
+          <div class="modal" style="max-width:400px">
+            <div class="modal-hd"><div class="modal-title">Stats: <span x-text="statsModal.name"></span></div><button class="modal-close" @click="statsModal.show=false">×</button></div>
+            <div class="grid-2" style="gap:10px">
+              <div class="stat-card"><div class="stat-label">CPU</div><div class="stat-value" style="font-size:18px" x-text="statsModal.stats.cpu||'—'"></div></div>
+              <div class="stat-card"><div class="stat-label">Memory</div><div class="stat-value" style="font-size:14px" x-text="statsModal.stats.mem||'—'"></div></div>
+              <div class="stat-card"><div class="stat-label">Network I/O</div><div class="stat-value" style="font-size:14px" x-text="statsModal.stats.net||'—'"></div></div>
+              <div class="stat-card"><div class="stat-label">Block I/O</div><div class="stat-value" style="font-size:14px" x-text="statsModal.stats.block||'—'"></div></div>
+            </div>
+            <div class="modal-ft"><button class="btn btn-primary" @click="statsModal.show=false">Close</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CADDY -->
+      <div x-show="page==='caddy'" x-data="caddyPage()">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Caddy Web Server</div>
+            <div class="page-sub">Automatic HTTPS · HTTP/3 · Zero-config TLS via Let's Encrypt</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" @click="openCaddyfile()">📄 Caddyfile</button>
+            <button class="btn btn-primary" @click="showAdd=true" :disabled="!status.installed">+ Add Site</button>
+          </div>
+        </div>
+
+        <!-- Not installed state -->
+        <template x-if="!status.installed">
+          <div class="card" style="text-align:center;padding:48px 32px">
+            <div style="font-size:52px;margin-bottom:16px">🟩</div>
+            <div style="font-size:20px;font-weight:700;margin-bottom:8px">Caddy Not Installed</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px;max-width:520px;margin-left:auto;margin-right:auto">
+              Caddy is a modern web server with <strong>automatic HTTPS</strong> — it provisions and renews Let's Encrypt certificates automatically with zero configuration.
+            </div>
+            <div style="display:flex;justify-content:center;gap:24px;margin:16px 0;font-size:12px;color:var(--text-secondary)">
+              <span>✓ Auto HTTPS (Let's Encrypt)</span>
+              <span>✓ HTTP/3 support</span>
+              <span>✓ Built-in reverse proxy</span>
+              <span>✓ PHP-FPM support</span>
+              <span>✓ No certbot needed</span>
+            </div>
+            <button class="btn btn-primary" style="margin-top:8px" @click="$dispatch('nav',{page:'modules'})">
+              📦 Install Caddy via Modules
+            </button>
+          </div>
+        </template>
+
+        <!-- Installed state -->
+        <template x-if="status.installed">
+          <div>
+            <!-- Status bar -->
+            <div class="card-sm" style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span :class="'dot dot-'+(status.status==='active'?'green':'red')"></span>
+                <span style="font-size:13px;font-weight:600">Caddy</span>
+                <span :class="'badge badge-'+(status.status==='active'?'green':'red')" x-text="status.status"></span>
+              </div>
+              <span style="font-size:12px;font-family:var(--font-mono);color:var(--accent)" x-text="status.version"></span>
+              <div style="flex:1"></div>
+              <button class="btn btn-success btn-sm" x-show="status.status!=='active'" @click="control('start')">Start</button>
+              <button class="btn btn-ghost btn-sm" @click="control('reload')">↻ Reload</button>
+              <button class="btn btn-ghost btn-sm" @click="control('restart')">Restart</button>
+              <button class="btn btn-danger btn-sm" x-show="status.status==='active'" @click="control('stop')">Stop</button>
+              <button class="btn btn-ghost btn-sm" @click="loadLogs();$nextTick(()=>document.querySelector('.caddy-log')?.scrollIntoView({behavior:'smooth'}))">Logs</button>
+            </div>
+
+            <!-- Key feature callouts -->
+            <div class="grid-4" style="margin-bottom:16px">
+              <div class="card-sm" style="text-align:center">
+                <div style="font-size:22px;margin-bottom:4px">🔒</div>
+                <div style="font-size:12px;font-weight:600">Auto HTTPS</div>
+                <div style="font-size:11px;color:var(--text-muted)">Let's Encrypt + ZeroSSL</div>
+              </div>
+              <div class="card-sm" style="text-align:center">
+                <div style="font-size:22px;margin-bottom:4px">⚡</div>
+                <div style="font-size:12px;font-weight:600">HTTP/3 Ready</div>
+                <div style="font-size:11px;color:var(--text-muted)">QUIC protocol support</div>
+              </div>
+              <div class="card-sm" style="text-align:center">
+                <div style="font-size:22px;margin-bottom:4px">🔀</div>
+                <div style="font-size:12px;font-weight:600">Reverse Proxy</div>
+                <div style="font-size:11px;color:var(--text-muted)">With load balancing</div>
+              </div>
+              <div class="card-sm" style="text-align:center">
+                <div style="font-size:22px;margin-bottom:4px">🐘</div>
+                <div style="font-size:12px;font-weight:600">PHP-FPM</div>
+                <div style="font-size:11px;color:var(--text-muted)">FastCGI built-in</div>
+              </div>
+            </div>
+
+            <!-- Sites table -->
+            <div class="card" style="padding:0;overflow:hidden;margin-bottom:16px">
+              <div class="card-hd" style="padding:14px 16px">
+                <div class="card-title">Sites (<span x-text="sites.length"></span>)</div>
+              </div>
+              <template x-if="sites.length===0">
+                <div class="empty-state"><div class="empty-icon">🟩</div><div class="empty-text">No sites configured. Click "+ Add Site" to create one.</div></div>
+              </template>
+              <table class="data-table" x-show="sites.length>0">
+                <thead><tr><th>Domain</th><th>Path</th><th>Type</th><th>PHP</th><th>SSL</th><th>Actions</th></tr></thead>
+                <tbody>
+                  <template x-for="s in sites" :key="s.domain">
+                    <tr>
+                      <td style="font-weight:600" x-text="s.domain"></td>
+                      <td style="font-size:11px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis" x-text="s.path"></td>
+                      <td>
+                        <span class="badge badge-blue" x-text="s.type==='php'?'PHP':s.type==='proxy'?'Proxy':s.type==='nodejs'?'Node.js':'Static'"></span>
+                      </td>
+                      <td><span class="badge badge-gray" x-show="s.php && s.php!=='Static'" x-text="s.php"></span></td>
+                      <td>
+                        <span class="badge badge-green" x-show="s.ssl" @click="sslInfo(s.domain)" style="cursor:pointer" title="Click for cert info">🔒 Auto</span>
+                        <span class="badge badge-gray" x-show="!s.ssl">No SSL</span>
+                      </td>
+                      <td>
+                        <div style="display:flex;gap:5px">
+                          <button class="btn btn-ghost btn-xs" @click="openDrawer(s)">Config</button>
+                          <button class="btn btn-danger btn-xs" @click="del(s.domain)">✕</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Logs (shown on demand) -->
+            <div class="card caddy-log" x-show="logContent">
+              <div class="card-hd"><div class="card-title">Caddy Logs</div><button class="btn btn-ghost btn-xs" @click="logContent=''">✕ Close</button></div>
+              <div class="terminal-out" x-text="logContent"></div>
+            </div>
+          </div>
+        </template>
+
+        <!-- ADD SITE MODAL -->
+        <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
+          <div class="modal" style="max-width:540px">
+            <div class="modal-hd"><div class="modal-title">Add Caddy Site</div><button class="modal-close" @click="showAdd=false">×</button></div>
+
+            <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+              🔒 Caddy will <strong>automatically provision a free SSL certificate</strong> for your domain. Just make sure the domain's DNS points to this server.
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Domain Name</label>
+              <input class="form-input" x-model="form.domain" placeholder="example.com"
+                @input="if(form.domain&&!form.path_edited) form.path=(webroot||'\/www\/wwwroot')+'\/'+form.domain.replace(/^\*\./,'')">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Site Type</label>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+                <template x-for="t in [{id:'static',icon:'📄',label:'Static'},{id:'php',icon:'🐘',label:'PHP'},{id:'proxy',icon:'🔀',label:'Proxy'},{id:'nodejs',icon:'🟢',label:'Node.js'}]" :key="t.id">
+                  <div style="padding:10px 6px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid;transition:.12s;font-size:12px"
+                       :style="form.type===t.id?'border-color:var(--accent);background:var(--bg-hover);color:var(--accent)':{borderColor:'var(--border)',background:'var(--bg-raised)'}"
+                       @click="form.type=t.id">
+                    <div x-text="t.icon" style="font-size:18px;margin-bottom:3px"></div>
+                    <div x-text="t.label" style="font-weight:500"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Website Root Path</label>
+              <input class="form-input" x-model="form.path" placeholder="/www/wwwroot/example.com" @input="form.path_edited=true">
+            </div>
+
+            <!-- PHP version (only for PHP type) -->
+            <div class="form-group" x-show="form.type==='php'">
+              <label class="form-label">PHP Version</label>
+              <select class="form-input" x-model="form.php">
+                <option value="8.4">PHP 8.4</option>
+                <option value="8.3">PHP 8.3</option>
+                <option value="8.2">PHP 8.2</option>
+                <option value="8.1">PHP 8.1</option>
+                <option value="7.4">PHP 7.4</option>
+              </select>
+            </div>
+
+            <!-- Proxy/Node target -->
+            <div class="form-group" x-show="form.type==='proxy' || form.type==='nodejs'">
+              <label class="form-label" x-text="form.type==='nodejs'?'Node.js Port':'Proxy Target URL'"></label>
+              <input class="form-input" x-model="form.proxy_target"
+                     :placeholder="form.type==='nodejs'?'3000':'http://127.0.0.1:8080'">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px" x-show="form.type==='nodejs'">
+                Port your Node.js app listens on (e.g. 3000). PM2 must be running the app.
+              </div>
+            </div>
+
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="showAdd=false">Cancel</button>
+              <button class="btn btn-primary" @click="create()">Create Site</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- CADDYFILE EDITOR MODAL -->
+        <div class="modal-overlay" x-show="showCaddyfile" @click.self="showCaddyfile=false">
+          <div class="modal" style="max-width:800px">
+            <div class="modal-hd">
+              <div>
+                <div class="modal-title">Caddyfile Editor</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px" x-text="caddyfilePath"></div>
+              </div>
+              <button class="modal-close" @click="showCaddyfile=false">×</button>
+            </div>
+            <div style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--text-secondary)">
+              📖 The Caddyfile is validated before saving. If validation fails, the previous config is restored automatically.
+            </div>
+            <textarea class="form-input" style="min-height:400px;font-family:var(--font-mono);font-size:12px;line-height:1.6"
+                      x-model="caddyfileContent"
+                      placeholder="# example.com {
+#     root * /var/www/html
+#     encode gzip
+#     file_server
+# }"></textarea>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="showCaddyfile=false">Cancel</button>
+              <button class="btn btn-primary" @click="saveCaddyfile()">Save & Reload Caddy</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SITE CONFIG DRAWER -->
+        <div x-show="drawerShow" style="position:fixed;inset:0;z-index:150;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px)" @click.self="drawerShow=false">
+          <div style="width:min(720px,95vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden">
+            <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0">
+              <div style="flex:1">
+                <div style="font-weight:700;font-size:15px" x-text="drawerSite?.domain"></div>
+                <div style="font-size:11px;color:var(--accent);margin-top:2px">🔒 SSL auto-managed by Caddy</div>
+              </div>
+              <button class="modal-close" @click="drawerShow=false" style="font-size:20px">×</button>
+            </div>
+            <div style="padding:16px;flex:1;overflow-y:auto">
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+                Edit the full Caddyfile block for this site. Caddy validates config before applying.
+              </div>
+              <textarea class="form-input" style="min-height:340px;font-family:var(--font-mono);font-size:12px;line-height:1.6" x-model="drawerConf"></textarea>
+              <div style="margin-top:10px;font-size:11px;color:var(--text-muted);background:var(--bg-raised);padding:10px;border-radius:6px;line-height:1.8">
+                <strong>Caddyfile Quick Reference:</strong><br>
+                <code>root * /path/to/webroot</code> — set web root<br>
+                <code>php_fastcgi unix//run/php/php8.3-fpm.sock</code> — PHP support<br>
+                <code>reverse_proxy localhost:3000</code> — proxy to backend<br>
+                <code>encode gzip zstd</code> — enable compression<br>
+                <code>file_server</code> — serve static files<br>
+                <code>tls email@example.com</code> — custom email for SSL cert
+              </div>
+            </div>
+            <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
+              <button class="btn btn-ghost" @click="drawerShow=false">Cancel</button>
+              <button class="btn btn-primary" @click="saveDrawerConf()">Save & Reload Caddy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- CDN MANAGER -->
+      <div x-show="page==='cdn'" x-data="cdnPage()">
+        <div class="page-header">
+          <div>
+            <div class="page-title">CDN Manager</div>
+            <div class="page-sub">Connect and manage your Content Delivery Network</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span x-show="activeCdn" class="badge badge-green">⚡ <span x-text="activeCdn.toUpperCase()"></span> Active</span>
+            <button class="btn btn-ghost" x-show="view!=='grid'" @click="view='grid'">← All Providers</button>
+          </div>
+        </div>
+
+        <!-- PROVIDER GRID -->
+        <div x-show="view==='grid'">
+          <!-- Hot module callout -->
+          <div style="background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.1));border:1px solid rgba(88,101,242,.3);border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:16px">
+            <div style="font-size:36px">⚡</div>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:15px;margin-bottom:3px">CDN Manager — VortexPanel Hot Module</div>
+              <div style="font-size:12px;color:var(--text-secondary)">Connect any CDN provider in seconds. Full API integration for Cloudflare and BunnyCDN — purge cache, manage DNS, toggle settings, view analytics. Nginx cache-header optimization for all other providers.</div>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px">
+            <template x-for="p in providers" :key="p.id">
+              <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px;cursor:pointer;transition:.15s;position:relative"
+                   :style="p.connected?'border-color:rgba(16,185,129,.4)':' '"
+                   @mouseenter="$el.style.transform='translateY(-2px)';$el.style.boxShadow='0 8px 24px rgba(0,0,0,.3)'"
+                   @mouseleave="$el.style.transform='none';$el.style.boxShadow='none'">
+
+                <!-- Connected badge -->
+                <div x-show="p.connected" style="position:absolute;top:12px;right:12px">
+                  <span class="badge badge-green" style="font-size:10px">✓ Connected</span>
+                </div>
+                <div x-show="p.active && p.connected" style="position:absolute;top:12px;right:12px">
+                  <span class="badge badge-green" style="font-size:10px">⚡ Active</span>
+                </div>
+
+                <!-- Provider header -->
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+                  <div style="width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0"
+                       :style="'background:'+(p.color||'#333')+'22;border:1px solid '+(p.color||'#333')+'44'">
+                    <span x-text="p.icon"></span>
+                  </div>
+                  <div>
+                    <div style="font-weight:700;font-size:14px" x-text="p.name"></div>
+                    <div style="font-size:10px;margin-top:2px">
+                      <span x-show="p.free_plan" style="color:var(--green);font-weight:600">Free plan available</span>
+                      <span x-show="!p.free_plan" style="color:var(--text-muted)">Paid service</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.5" x-text="p.desc"></div>
+
+                <!-- Feature pills -->
+                <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px">
+                  <template x-for="f in p.features.slice(0,4)" :key="f">
+                    <span style="font-size:10px;padding:2px 7px;background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;color:var(--text-muted)" x-text="f"></span>
+                  </template>
+                  <span x-show="p.features.length>4" style="font-size:10px;padding:2px 7px;background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;color:var(--text-muted)" x-text="'+'+(p.features.length-4)+' more'"></span>
+                </div>
+
+                <!-- Action buttons -->
+                <div style="display:flex;gap:7px">
+                  <button x-show="!p.connected"
+                          class="btn btn-primary btn-sm" style="flex:1;justify-content:center"
+                          @click.stop="selectProvider(p)">
+                    Connect
+                  </button>
+                  <button x-show="p.connected"
+                          class="btn btn-success btn-sm" style="flex:1;justify-content:center"
+                          @click.stop="openDashboard(p)">
+                    ⚡ Dashboard
+                  </button>
+                  <button x-show="p.connected"
+                          class="btn btn-ghost btn-sm"
+                          @click.stop="selectProvider(p)" title="Edit settings">⚙</button>
+                  <button x-show="p.connected"
+                          class="btn btn-danger btn-sm"
+                          @click.stop="disconnect(p)" title="Disconnect">✕</button>
+                </div>
+              </div>
             </template>
           </div>
         </div>
 
-        <!-- Open Ports -->
-        <div x-show="tab==='ports'">
+        <!-- SETTINGS / CONNECT VIEW -->
+        <div x-show="view==='settings' && selectedProvider">
+          <div class="card" style="max-width:600px">
+            <!-- Provider header -->
+            <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+              <div style="width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:26px"
+                   :style="'background:'+(selectedProvider.color||'#333')+'22'">
+                <span x-text="selectedProvider?.icon"></span>
+              </div>
+              <div>
+                <div style="font-weight:700;font-size:16px" x-text="selectedProvider?.name"></div>
+                <a :href="selectedProvider?.setup_url" target="_blank"
+                   style="font-size:11px;color:var(--accent);text-decoration:none">
+                  Get API credentials → <span x-text="selectedProvider?.setup_url"></span>
+                </a>
+              </div>
+            </div>
+
+            <!-- Integration type badge -->
+            <div x-show="selectedProvider?.integration==='full_api'"
+                 style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+              ✓ <strong>Full API Integration</strong> — Cache purge, settings management, analytics, DNS management all available.
+            </div>
+            <div x-show="selectedProvider?.integration==='nginx_headers'"
+                 style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+              ℹ <strong>Nginx Header Optimization</strong> — VortexPanel configures your Nginx server with optimal cache headers for this CDN provider, maximizing cache hit rates.
+            </div>
+
+            <!-- Credential fields -->
+            <template x-for="field in (selectedProvider?.fields||[])" :key="field.key">
+              <div class="form-group">
+                <label class="form-label">
+                  <span x-text="field.label"></span>
+                  <span x-show="field.required" style="color:var(--red)">*</span>
+                </label>
+                <div style="position:relative">
+                  <input class="form-input"
+                         :type="field.type==='password'?(showPw[field.key]?'text':'password'):field.type"
+                         x-model="form[field.key]"
+                         :placeholder="field.placeholder">
+                  <button x-show="field.type==='password'"
+                          style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px"
+                          @click="showPw[field.key]=!showPw[field.key]"
+                          x-text="showPw[field.key]?'🙈':'👁'">
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Test URL for generic providers -->
+            <div x-show="selectedProvider?.integration==='nginx_headers'" class="form-group">
+              <label class="form-label">Test URL (verify CDN is active)</label>
+              <input class="form-input" x-model="generic.testUrl" placeholder="https://yourdomain.com">
+            </div>
+
+            <!-- Test result -->
+            <div x-show="testResult" style="padding:10px 12px;border-radius:6px;font-size:12px;margin-bottom:14px"
+                 :style="testResult?.ok?'background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2)'
+                                       :'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2)'">
+              <span x-text="testResult?.ok?'✓ Connection successful — '+JSON.stringify(testResult?.detail||testResult?.status||'OK')
+                                          :'✗ '+( testResult?.error||'Connection failed')">
+              </span>
+            </div>
+
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-ghost" @click="testConnection()" :disabled="testing">
+                <span x-show="testing" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                <span x-text="testing?'Testing…':'Test Connection'"></span>
+              </button>
+              <button class="btn btn-primary" style="flex:1;justify-content:center" @click="saveConfig()" :disabled="saving">
+                <span x-show="saving" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                <span x-text="saving?'Saving…':'Save & Connect'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- DASHBOARD VIEW -->
+        <div x-show="view==='dashboard' && selectedProvider">
+
+          <!-- ── CLOUDFLARE DASHBOARD ── -->
+          <div x-show="selectedProvider?.id==='cloudflare'">
+            <!-- Zone selector -->
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+              <label class="form-label" style="margin:0">Zone:</label>
+              <select class="form-input" style="width:auto;min-width:220px" x-model="cf.selZone" @change="loadCfSettings()">
+                <template x-for="z in cf.zones" :key="z.id">
+                  <option :value="z.id" x-text="z.name+' ('+z.plan+')'"></option>
+                </template>
+              </select>
+              <span x-show="cf.loading" class="loading-spinner"></span>
+            </div>
+
+            <!-- Analytics stats -->
+            <div class="grid-4" style="margin-bottom:16px" x-show="cf.analytics && cf.analytics.requests">
+              <div class="stat-card">
+                <div class="stat-label">Total Requests</div>
+                <div class="stat-value" x-text="(cf.analytics.requests||0).toLocaleString()"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Bandwidth</div>
+                <div class="stat-value" style="font-size:16px" x-text="fmtBytes(cf.analytics.bandwidth||0)"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Cached Requests</div>
+                <div class="stat-value" x-text="(cf.analytics.cached||0).toLocaleString()"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Threats Blocked</div>
+                <div class="stat-value" style="color:var(--red)" x-text="(cf.analytics.threats||0).toLocaleString()"></div>
+              </div>
+            </div>
+
+            <div class="grid-2" style="margin-bottom:16px">
+              <!-- Cache settings -->
+              <div class="card">
+                <div class="card-hd"><div class="card-title">🔧 Zone Settings</div></div>
+
+                <div style="display:flex;flex-direction:column;gap:12px">
+                  <label class="form-check" style="justify-content:space-between">
+                    <div><div style="font-size:13px;font-weight:500">Always Use HTTPS</div><div style="font-size:11px;color:var(--text-muted)">Force redirect HTTP to HTTPS</div></div>
+                    <input type="checkbox" :checked="cf.settings.always_https==='on'"
+                           @change="cfUpdateSetting('always_use_https',$event.target.checked?'on':'off')">
+                  </label>
+                  <label class="form-check" style="justify-content:space-between">
+                    <div><div style="font-size:13px;font-weight:500">Rocket Loader</div><div style="font-size:11px;color:var(--text-muted)">Async JS loading for faster pages</div></div>
+                    <input type="checkbox" :checked="cf.settings.rocket_loader==='on'"
+                           @change="cfUpdateSetting('rocket_loader',$event.target.checked?'on':'off')">
+                  </label>
+                  <label class="form-check" style="justify-content:space-between">
+                    <div><div style="font-size:13px;font-weight:500">Brotli Compression</div><div style="font-size:11px;color:var(--text-muted)">Better compression than gzip</div></div>
+                    <input type="checkbox" :checked="cf.settings.brotli==='on'"
+                           @change="cfUpdateSetting('brotli',$event.target.checked?'on':'off')">
+                  </label>
+                  <label class="form-check" style="justify-content:space-between">
+                    <div><div style="font-size:13px;font-weight:500">HTTP/3 (QUIC)</div><div style="font-size:11px;color:var(--text-muted)">Next-gen protocol support</div></div>
+                    <input type="checkbox" :checked="cf.settings.http3==='on'"
+                           @change="cfUpdateSetting('http3',$event.target.checked?'on':'off')">
+                  </label>
+                  <label class="form-check" style="justify-content:space-between">
+                    <div><div style="font-size:13px;font-weight:500">Development Mode</div><div style="font-size:11px;color:var(--text-muted)">Temporarily bypass cache</div></div>
+                    <input type="checkbox" :checked="cf.settings.dev_mode==='on'"
+                           @change="cfUpdateSetting('development_mode',$event.target.checked?'on':'off')">
+                  </label>
+                </div>
+
+                <div style="margin-top:14px" class="form-group">
+                  <label class="form-label">SSL Mode</label>
+                  <select class="form-input" x-model="cf.settings.ssl"
+                          @change="cfUpdateSetting('ssl',cf.settings.ssl)">
+                    <option value="off">Off</option>
+                    <option value="flexible">Flexible</option>
+                    <option value="full">Full</option>
+                    <option value="strict">Full (Strict)</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Cache Level</label>
+                  <select class="form-input" x-model="cf.settings.cache_level"
+                          @change="cfUpdateSetting('cache_level',cf.settings.cache_level)">
+                    <option value="bypass">Bypass</option>
+                    <option value="basic">Basic</option>
+                    <option value="simplified">Simplified</option>
+                    <option value="aggressive">Aggressive</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Cache Purge -->
+              <div class="card">
+                <div class="card-hd"><div class="card-title">🗑 Cache Purge</div></div>
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+                  Purge cached files from Cloudflare edge servers. Leave URL empty to purge everything.
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Purge Specific URL (optional)</label>
+                  <input class="form-input" x-model="cf.purgeUrl" placeholder="https://example.com/style.css">
+                </div>
+                <button class="btn btn-warn" style="width:100%;justify-content:center" @click="cfPurge()">
+                  <span x-text="cf.purgeUrl?'Purge URL':'Purge Everything'"></span>
+                </button>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
+                  ⚠ Purge Everything clears all cached content — use sparingly on high-traffic sites.
+                </div>
+
+                <div style="margin-top:20px;border-top:1px solid var(--border);padding-top:14px">
+                  <div class="card-hd" style="margin-bottom:10px"><div class="card-title">🌐 DNS Records</div>
+                    <button class="btn btn-ghost btn-xs" @click="loadCfDns()">Load</button>
+                  </div>
+                  <template x-if="cf.dns.length===0">
+                    <div style="font-size:12px;color:var(--text-muted)">Click Load to fetch DNS records</div>
+                  </template>
+                  <div style="max-height:200px;overflow-y:auto">
+                    <template x-for="r in cf.dns" :key="r.id">
+                      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px">
+                        <span class="badge badge-blue" style="font-size:9px;min-width:30px;text-align:center" x-text="r.type"></span>
+                        <span style="font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis" x-text="r.name"></span>
+                        <span style="color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis" x-text="r.content"></span>
+                        <span x-show="r.proxied" style="color:var(--orange);font-size:10px">🔶 Proxied</span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── BUNNYCDN DASHBOARD ── -->
+          <div x-show="selectedProvider?.id==='bunnycdn'">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+              <label class="form-label" style="margin:0">Pull Zone:</label>
+              <select class="form-input" style="width:auto;min-width:220px" x-model="bunny.selZone" @change="loadBunnyStats()">
+                <template x-for="z in bunny.zones" :key="z.id">
+                  <option :value="z.id" x-text="z.name+' — '+z.hostname"></option>
+                </template>
+              </select>
+              <span x-show="bunny.loading" class="loading-spinner"></span>
+            </div>
+
+            <div class="grid-4" style="margin-bottom:16px">
+              <div class="stat-card">
+                <div class="stat-label">Bandwidth Used</div>
+                <div class="stat-value" style="font-size:16px" x-text="fmtBytes(bunny.stats.bandwidth_used||0)"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Requests Served</div>
+                <div class="stat-value" x-text="(bunny.stats.requests_served||0).toLocaleString()"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Cache Hit Rate</div>
+                <div class="stat-value" style="color:var(--green)" x-text="((bunny.stats.cache_hit_rate||0)*100).toFixed(1)+'%'"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Pull Requests</div>
+                <div class="stat-value" x-text="(bunny.stats.pull_requests||0).toLocaleString()"></div>
+              </div>
+            </div>
+
+            <div class="card" style="max-width:500px">
+              <div class="card-hd"><div class="card-title">🗑 Purge Cache</div></div>
+              <div class="form-group">
+                <label class="form-label">Purge Specific URL (optional)</label>
+                <input class="form-input" x-model="bunny.purgeUrl" placeholder="https://yourzone.b-cdn.net/style.css">
+              </div>
+              <button class="btn btn-warn" style="width:100%;justify-content:center" @click="bunnyPurge()">
+                <span x-text="bunny.purgeUrl?'Purge URL':'Purge Entire Zone'"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- ── GENERIC CDN DASHBOARD (KeyCDN/Akamai/etc.) ── -->
+          <div x-show="selectedProvider && selectedProvider.id!=='cloudflare' && selectedProvider.id!=='bunnycdn'">
+            <div class="grid-2">
+              <div class="card">
+                <div class="card-hd"><div class="card-title">🔗 Connection Test</div></div>
+                <div class="form-group">
+                  <label class="form-label">Test URL</label>
+                  <input class="form-input" x-model="generic.testUrl" placeholder="https://yourdomain.com">
+                </div>
+                <button class="btn btn-ghost" @click="testConnection()" :disabled="testing">
+                  <span x-show="testing" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                  Test CDN Headers
+                </button>
+                <div x-show="testResult" style="margin-top:12px;padding:10px;border-radius:6px;font-size:12px"
+                     :style="testResult?.ok?'background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2)'
+                                           :'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2)'">
+                  <div x-show="testResult?.ok">
+                    ✓ CDN detected: <span x-text="JSON.stringify(testResult?.headers||{})"></span>
+                  </div>
+                  <div x-show="!testResult?.ok" x-text="testResult?.error||'Check URL'"></div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-hd"><div class="card-title">⚙ Apply Nginx Cache Headers</div></div>
+                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.6">
+                  VortexPanel will add optimized <code>Cache-Control</code> headers to your Nginx config for <strong x-text="selectedProvider?.name"></strong>, maximizing CDN cache hit rate.
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Apply to Domain</label>
+                  <select class="form-input" x-model="generic.domain">
+                    <option value="">— Select domain —</option>
+                    <template x-for="s in sites" :key="s.domain">
+                      <option :value="s.domain" x-text="s.domain"></option>
+                    </template>
+                  </select>
+                </div>
+                <button class="btn btn-primary" @click="applyNginxHeaders()" :disabled="!generic.domain">
+                  Apply Cache Headers
+                </button>
+                <div x-show="generic.applyResult" style="margin-top:10px">
+                  <div style="font-size:11px;color:var(--green);margin-bottom:6px">✓ Headers applied to Nginx and reloaded</div>
+                  <pre style="font-size:10px;background:var(--bg-raised);padding:8px;border-radius:4px;overflow-x:auto;color:var(--text-secondary)" x-text="generic.applyResult"></pre>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:14px;background:var(--bg-raised);border-radius:8px;padding:14px;font-size:12px;color:var(--text-muted)">
+              <div style="font-weight:600;margin-bottom:8px;color:var(--text-secondary)">📖 Setup Guide for <span x-text="selectedProvider?.name"></span></div>
+              <div style="line-height:1.8">
+                1. Create a pull zone in your <a :href="selectedProvider?.setup_url" target="_blank" style="color:var(--accent)" x-text="selectedProvider?.name+' dashboard'"></a><br>
+                2. Set your server IP as the <strong>origin server</strong><br>
+                3. Point your domain's CNAME to the CDN hostname<br>
+                4. Apply Nginx cache headers above to maximize hit rates<br>
+                5. Test connection to verify CDN is active
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+<!-- SETTINGS -->
+      <div x-show="page==='settings'" x-data="settingsPage()">
+        <div class="page-header"><div><div class="page-title">Settings</div><div class="page-sub">Panel configuration</div></div></div>
+
+        <div class="tabs" style="margin-bottom:16px">
+          <div class="tab" :class="{active:stab==='general'}" @click="stab='general'">General</div>
+          <div class="tab" :class="{active:stab==='ai'}" @click="stab='ai';loadAiConfig()">✦ AI Assistant</div>
+          <div class="tab" :class="{active:stab==='security'}" @click="stab='security'">🔐 Security</div>
+        </div>
+
+        <!-- General -->
+        <div x-show="stab==='general'" style="max-width:500px">
           <div class="card">
-            <div class="card-hd"><div class="card-title">Open Listening Ports</div><button class="btn btn-ghost btn-sm" @click="loadPorts()">↻</button></div>
-            <div class="code-block" x-text="portsOutput||'Loading…'"></div>
+            <div class="card-hd"><div class="card-title">Panel Information</div></div>
+            <div style="font-size:13px;line-height:2">
+              <div style="display:flex;gap:8px"><span style="color:var(--text-muted);width:120px">Version</span><span x-text="panelVersion||'v3.0.0'"></span></div>
+              <div style="display:flex;gap:8px"><span style="color:var(--text-muted);width:120px">Username</span><span x-text="username||'admin'"></span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI tab -->
+        <div x-show="stab==='ai'" style="max-width:600px">
+          <div style="background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.1));border:1px solid rgba(88,101,242,.3);border-radius:12px;padding:20px;margin-bottom:20px;display:flex;align-items:center;gap:16px">
+            <div style="width:48px;height:48px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">✦</div>
+            <div>
+              <div style="font-weight:700;font-size:16px;margin-bottom:3px">NeonCodex AI</div>
+              <div style="font-size:12px;color:var(--text-secondary)">Integrate your NeonCodex AI models directly into VortexPanel for server management, code review, config generation and diagnostics.</div>
+              <a href="https://neoncodex.io" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none;margin-top:4px;display:inline-block">Get API key at neoncodex.io →</a>
+            </div>
+          </div>
+          <div class="card">
+            <div class="form-group">
+              <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+                <span>Enable AI Assistant</span>
+                <div style="width:40px;height:22px;border-radius:11px;cursor:pointer;position:relative;transition:.2s"
+                     :style="'background:'+(aiConfig.enabled?'var(--accent)':'var(--border)')"
+                     @click="aiConfig.enabled=!aiConfig.enabled">
+                  <div style="width:18px;height:18px;background:white;border-radius:50%;position:absolute;top:2px;transition:.2s"
+                       :style="'left:'+(aiConfig.enabled?'20px':'2px')"></div>
+                </div>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="form-label">NeonCodex API Key</label>
+              <div style="position:relative">
+                <input class="form-input" :type="showApiKey?'text':'password'" x-model="aiConfig.api_key" placeholder="nc_sk_...">
+                <button style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px" @click="showApiKey=!showApiKey" x-text="showApiKey?'🙈':'👁'"></button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">API Base URL</label>
+              <input class="form-input" x-model="aiConfig.base_url" placeholder="https://neoncodex.io/api/v1">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Model</label>
+              <div style="display:flex;gap:8px">
+                <select class="form-input" x-model="aiConfig.model" style="flex:1">
+                  <option value="neoncodex-default">NeonCodex Default</option>
+                  <template x-for="m in aiModels" :key="m.id||m">
+                    <option :value="m.id||m" x-text="m.name||m.id||m"></option>
+                  </template>
+                </select>
+                <button class="btn btn-ghost btn-sm" @click="fetchModels()">↻ Fetch</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Max Tokens</label>
+              <input class="form-input" type="number" x-model.number="aiConfig.max_tokens" min="256" max="8192" style="width:140px">
+            </div>
+            <div style="display:flex;gap:10px;margin-bottom:12px">
+              <button class="btn btn-ghost" @click="testAiConnection()" :disabled="aiTesting">
+                <span x-show="aiTesting" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                <span x-text="aiTesting?'Testing…':'Test Connection'"></span>
+              </button>
+              <button class="btn btn-primary" @click="saveAiConfig()">Save</button>
+            </div>
+            <div x-show="aiTestResult" style="padding:10px 12px;border-radius:6px;font-size:12px"
+                 :style="aiTestOk?'background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:var(--green)':'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:var(--red)'"
+                 x-text="aiTestResult"></div>
+          </div>
+          <!-- Feature list -->
+          <div class="card" style="margin-top:12px">
+            <div style="font-size:12px;font-weight:600;margin-bottom:10px">What NeonCodex AI does inside VortexPanel</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+              <div x-for="f in [{i:'🔍',l:'Server Diagnostics'},{i:'⚙',l:'Config Generator'},{i:'🐘',l:'PHP Code Review'},{i:'🔐',l:'Security Audit'},{i:'📋',l:'Log Analysis'},{i:'🗄',l:'SQL Optimizer'}]" :key="f.l"
+                   style="display:flex;gap:6px;padding:6px;background:var(--bg-raised);border-radius:6px">
+                <span x-text="f.i"></span><span x-text="f.l" style="color:var(--text-secondary)"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Security tab -->
+        <div x-show="stab==='security'" style="max-width:480px">
+          <div class="card">
+            <div class="card-hd"><div class="card-title">Change Panel Password</div></div>
+            <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="pwForm.current"></div>
+            <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwForm.newpw"></div>
+            <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="pwForm.confirm"></div>
+            <button class="btn btn-primary" @click="changePw()">Change Password</button>
           </div>
         </div>
       </div>
@@ -1633,5 +2913,258 @@
 
 <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 <script src="/static/js/app.js"></script>
+
+  <!-- ── PANEL UPDATE MODAL ─────────────────────────────────────────────── -->
+  <div class="modal-overlay" x-show="updateModal.show" style="z-index:500" @click.self="updateModal.show=false">
+    <div class="modal" style="max-width:600px" x-data="updateModalData()">
+
+      <!-- Header -->
+      <div class="modal-hd" style="border-bottom:1px solid var(--border);padding-bottom:16px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:40px;height:40px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">⚡</div>
+          <div>
+            <div class="modal-title">VortexPanel Update</div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:1px">
+              Current: <span style="font-family:var(--font-mono);color:var(--accent)" x-text="updateModal.current"></span>
+            </div>
+          </div>
+        </div>
+        <button class="modal-close" @click="updateModal.show=false" x-show="!updating">×</button>
+      </div>
+
+      <!-- Checking state -->
+      <div x-show="checkState==='checking'" style="text-align:center;padding:32px">
+        <div class="loading-spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 14px"></div>
+        <div style="font-size:14px;color:var(--text-secondary)">Checking for updates...</div>
+      </div>
+
+      <!-- Up to date -->
+      <div x-show="checkState==='uptodate'" style="text-align:center;padding:32px">
+        <div style="font-size:40px;margin-bottom:12px">✅</div>
+        <div style="font-size:16px;font-weight:600;margin-bottom:6px">You are up to date!</div>
+        <div style="font-size:13px;color:var(--text-muted)" x-text="'VortexPanel '+updateModal.current+' is the latest version'"></div>
+      </div>
+
+      <!-- Update available -->
+      <div x-show="checkState==='available'">
+        <!-- New version banner -->
+        <div style="background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.1));border:1px solid rgba(88,101,242,.3);border-radius:8px;padding:14px 16px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:3px">New version available</div>
+              <div style="font-size:22px;font-weight:700;color:var(--accent)" x-text="updateModal.latest"></div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:11px;color:var(--text-muted)">Released</div>
+              <div style="font-size:12px;font-weight:500" x-text="updateModal.published ? new Date(updateModal.published).toLocaleDateString() : ''"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Release notes -->
+        <div x-show="updateModal.body" style="margin-bottom:16px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">📋 What's New</div>
+          <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;max-height:200px;overflow-y:auto;font-size:12px;color:var(--text-secondary);line-height:1.7;white-space:pre-wrap"
+               x-text="updateModal.body"></div>
+        </div>
+
+        <!-- Warning -->
+        <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:var(--yellow)">
+          ⚠ The panel service will restart after the update. Your server and websites will continue running — only the panel UI will briefly reload.
+        </div>
+
+        <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:14px;padding:12px" @click="startUpdate()">
+          ⬆ Update to <span x-text="updateModal.latest" style="margin-left:4px"></span>
+        </button>
+      </div>
+
+      <!-- Error state -->
+      <div x-show="checkState==='error'" style="padding:20px">
+        <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:12px;font-size:12px;color:var(--red)">
+          ✗ <span x-text="updateModal.error||'Could not check for updates. Check your internet connection.'"></span>
+        </div>
+        <div style="margin-top:12px;text-align:center">
+          <button class="btn btn-ghost" @click="checkForUpdates()">Try Again</button>
+        </div>
+      </div>
+
+      <!-- UPDATING STATE — progress terminal -->
+      <div x-show="updating">
+        <div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div style="font-size:12px;font-weight:600" x-text="updateDone?( updateSuccess?'✓ Update complete!':'✗ Update failed'):'Updating VortexPanel...'"></div>
+            <div style="font-size:11px;color:var(--text-muted)" x-text="updateDone?'':(Math.min(95,updateProgress)+'%')"></div>
+          </div>
+          <!-- Progress bar -->
+          <div style="height:6px;background:var(--bg-raised);border-radius:3px;overflow:hidden" x-show="!updateDone">
+            <div style="height:100%;border-radius:3px;transition:width .4s ease;background:linear-gradient(90deg,var(--accent),var(--accent-2))"
+                 :style="'width:'+Math.min(95,updateProgress)+'%'"></div>
+          </div>
+          <div style="height:6px;background:var(--bg-raised);border-radius:3px;overflow:hidden" x-show="updateDone">
+            <div style="height:100%;border-radius:3px;width:100%"
+                 :style="'background:'+(updateSuccess?'var(--green)':'var(--red)')"></div>
+          </div>
+        </div>
+
+        <!-- Live terminal output -->
+        <div class="terminal-out" style="max-height:260px;min-height:120px" x-ref="terminal">
+          <template x-for="(line,i) in updateLines" :key="i">
+            <div :style="line.startsWith('✅')||line.startsWith('✓')?'color:var(--green)':
+                          line.startsWith('✗')||line.startsWith('⚠')?'color:var(--yellow)':
+                          line.startsWith('ERROR')?'color:var(--red)':''"
+                 x-text="line||''"></div>
+          </template>
+        </div>
+
+        <div class="modal-ft" style="margin-top:12px">
+          <div x-show="updateDone && updateSuccess" style="font-size:13px;color:var(--green);font-weight:600">
+            ✅ Update successful — reload the page to see the new version
+          </div>
+          <div x-show="updateDone && !updateSuccess" style="font-size:12px;color:var(--red)" x-text="'✗ '+updateError"></div>
+          <div style="flex:1"></div>
+          <button class="btn btn-ghost" @click="updateModal.show=false" x-show="!updateDone">Running...</button>
+          <button class="btn btn-primary" @click="location.reload()" x-show="updateDone && updateSuccess">🔄 Reload Page</button>
+          <button class="btn btn-ghost" @click="updateModal.show=false" x-show="updateDone && !updateSuccess">Close</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ── NEONCODEX AI ASSISTANT ──────────────────────────────────────────── -->
+  <div x-data="aiAssistant()" @keydown.escape.window="if(open) open=false">
+
+    <!-- Floating trigger button -->
+    <button @click="open=!open"
+            style="position:fixed;bottom:24px;right:24px;z-index:400;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#5865f2,#06b6d4);border:none;cursor:pointer;box-shadow:0 4px 20px rgba(88,101,242,.5);display:flex;align-items:center;justify-content:center;font-size:22px;transition:.2s"
+            :style="open?'transform:scale(.9)':'transform:scale(1)'"
+            title="NeonCodex AI Assistant">
+      <span x-text="open?'✕':'✦'"></span>
+    </button>
+
+    <!-- Unread badge -->
+    <div x-show="!open && unread>0"
+         style="position:fixed;bottom:64px;right:20px;z-index:401;background:var(--red);color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700"
+         x-text="unread"></div>
+
+    <!-- AI Panel -->
+    <div x-show="open"
+         style="position:fixed;bottom:88px;right:24px;z-index:399;width:420px;max-width:calc(100vw - 32px);height:580px;max-height:calc(100vh - 100px);background:var(--bg-card);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 48px rgba(0,0,0,.6)"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 translate-y-4"
+         x-transition:enter-end="opacity-100 translate-y-0">
+
+      <!-- Header -->
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.08))">
+        <div style="width:32px;height:32px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">✦</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px">NeonCodex AI</div>
+          <div style="font-size:10px;color:var(--text-muted)" x-text="configured?'Powered by NeonCodex · '+modelName:'⚠ API key not set'"></div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:3px 7px;border-radius:4px;border:1px solid var(--border)" @click="clearChat()" title="Clear conversation">Clear</button>
+          <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px" @click="open=false">✕</button>
+        </div>
+      </div>
+
+      <!-- Quick action chips -->
+      <div x-show="messages.length===0" style="padding:10px 12px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);flex-shrink:0">
+        <template x-for="q in quickActions" :key="q.label">
+          <button style="font-size:11px;padding:4px 10px;border-radius:12px;background:var(--bg-raised);border:1px solid var(--border);cursor:pointer;color:var(--text-secondary);transition:.1s;white-space:nowrap"
+                  @mouseenter="$el.style.borderColor='var(--accent)';$el.style.color='var(--accent)'"
+                  @mouseleave="$el.style.borderColor='var(--border)';$el.style.color='var(--text-secondary)'"
+                  @click="sendQuick(q)" x-text="q.icon+' '+q.label"></button>
+        </template>
+      </div>
+
+      <!-- Chat messages -->
+      <div x-ref="chatBox" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px">
+
+        <!-- Welcome message -->
+        <template x-if="messages.length===0">
+          <div style="text-align:center;padding:20px 12px;color:var(--text-muted)">
+            <div style="font-size:32px;margin-bottom:8px">✦</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">NeonCodex AI Assistant</div>
+            <div style="font-size:12px;line-height:1.6">Ask me anything about your server.<br>I can help with configs, errors, code, and more.</div>
+          </div>
+        </template>
+
+        <template x-for="(msg,i) in messages" :key="i">
+          <div :style="'display:flex;gap:8px;'+(msg.role==='user'?'flex-direction:row-reverse':'flex-direction:row')">
+            <!-- Avatar -->
+            <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0"
+                 :style="msg.role==='user'?'background:var(--accent);color:white':'background:linear-gradient(135deg,#5865f2,#06b6d4);color:white'">
+              <span x-text="msg.role==='user'?'U':'✦'"></span>
+            </div>
+            <!-- Bubble -->
+            <div style="max-width:82%;border-radius:12px;padding:9px 12px;font-size:13px;line-height:1.6"
+                 :style="msg.role==='user'?
+                   'background:var(--accent);color:white;border-bottom-right-radius:3px':
+                   'background:var(--bg-raised);border:1px solid var(--border);border-bottom-left-radius:3px;color:var(--text-primary)'">
+              <!-- Render markdown-ish formatting for assistant messages -->
+              <template x-if="msg.role==='assistant'">
+                <div x-html="formatMsg(msg.content)"></div>
+              </template>
+              <template x-if="msg.role==='user'">
+                <div x-text="msg.content"></div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Thinking indicator -->
+        <div x-show="thinking" style="display:flex;gap:8px;align-items:center">
+          <div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#5865f2,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:13px;color:white">✦</div>
+          <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:12px;border-bottom-left-radius:3px;padding:10px 14px">
+            <div style="display:flex;gap:4px;align-items:center">
+              <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:bounce 1.2s infinite"></div>
+              <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:bounce 1.2s infinite .2s"></div>
+              <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:bounce 1.2s infinite .4s"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Context selector (inject server info) -->
+      <div style="padding:6px 12px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:6px;align-items:center">
+        <span style="font-size:11px;color:var(--text-muted)">Context:</span>
+        <template x-for="ctx in contextOptions" :key="ctx.id">
+          <button style="font-size:10px;padding:3px 8px;border-radius:10px;cursor:pointer;transition:.1s"
+                  :style="activeContexts.includes(ctx.id)?'background:rgba(88,101,242,.2);border:1px solid rgba(88,101,242,.4);color:var(--accent)':'background:var(--bg-raised);border:1px solid var(--border);color:var(--text-muted)'"
+                  @click="toggleContext(ctx.id)" x-text="ctx.icon+' '+ctx.label"></button>
+        </template>
+      </div>
+
+      <!-- Input area -->
+      <div style="padding:10px 12px;border-top:1px solid var(--border);flex-shrink:0">
+        <div style="display:flex;gap:8px;align-items:flex-end;background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;padding:8px 10px;transition:.15s"
+             :style="inputFocus?'border-color:var(--accent)':' '">
+          <textarea x-model="input" x-ref="chatInput"
+                    style="flex:1;background:none;border:none;outline:none;resize:none;font-size:13px;color:var(--text-primary);line-height:1.5;max-height:100px;min-height:20px"
+                    placeholder="Ask anything about your server..."
+                    @keydown.enter.prevent="if(!$event.shiftKey)send();else input+='\n'"
+                    @focus="inputFocus=true" @blur="inputFocus=false"
+                    rows="1"
+                    @input="$el.style.height='auto';$el.style.height=$el.scrollHeight+'px'"></textarea>
+          <button style="background:linear-gradient(135deg,#5865f2,#06b6d4);border:none;border-radius:7px;width:32px;height:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white;font-size:14px;flex-shrink:0;transition:.15s"
+                  :disabled="thinking || !input.trim()"
+                  :style="(thinking||!input.trim())?'opacity:.4':' '"
+                  @click="send()" title="Send (Enter)">➤</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:5px;text-align:center">
+          Enter to send · Shift+Enter for new line · Powered by <a href="https://neoncodex.io" target="_blank" style="color:var(--accent);text-decoration:none">NeonCodex</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes bounce {
+      0%,60%,100% { transform: translateY(0); }
+      30% { transform: translateY(-6px); }
+    }
+  </style>
+
 </body>
 </html>

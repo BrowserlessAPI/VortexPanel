@@ -19,11 +19,15 @@ from panel.routes.mail      import mail_bp
 from panel.routes.ftp       import ftp_bp
 from panel.routes.cron      import cron_bp
 from panel.routes.docker    import docker_bp
+from panel.routes.update    import update_bp
+from panel.routes.ai        import ai_bp
 from panel.routes.monitoring import monitoring_bp
 from panel.routes.settings  import settings_bp
 from panel.routes.main      import main_bp
 from panel.routes.modules   import modules_bp
 from panel.routes.security  import security_bp
+from panel.routes.caddy     import caddy_bp
+from panel.routes.cdn       import cdn_bp
 from panel.routes.bandwidth import bandwidth_bp
 
 def create_app():
@@ -33,12 +37,22 @@ def create_app():
     for bp in [auth_bp, dashboard_bp, websites_bp, databases_bp, files_bp,
                php_bp, services_bp, firewall_bp, terminal_bp, backups_bp,
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
-               settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp]:
+               settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp, caddy_bp, cdn_bp, update_bp, ai_bp]:
         app.register_blueprint(bp)
 
     return app
 
 if __name__ == '__main__':
-    app = create_app()
+    app  = create_app()
     port = int(os.environ.get('PORT', 8888))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # '::' binds to all IPv6 + IPv4 on dual-stack systems (covers 0.0.0.0 too)
+    # Falls back to 0.0.0.0 if IPv6 not available
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        s.close()
+        host = '::'   # dual-stack: covers IPv4 + IPv6
+    except Exception:
+        host = '0.0.0.0'  # IPv4 only fallback
+    app.run(host=host, port=port, debug=False)

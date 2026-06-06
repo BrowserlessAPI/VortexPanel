@@ -190,3 +190,41 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 /* RESPONSIVE */
 @media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr)}.grid-3{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:640px){.sidebar{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);transition:transform .25s;z-index:200}.sidebar.open{transform:translateX(0)}.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}.form-row-2{grid-template-columns:1fr}}
+
+/* ── FILE MANAGER ─────────────────────────────────────────────────────────── */
+.ctx-item {
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: .1s;
+}
+.ctx-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ctx-item.ctx-danger { color: var(--red); }
+.ctx-item.ctx-danger:hover { background: rgba(239,68,68,.1); }
+.ctx-sep { height: 1px; background: var(--border); margin: 3px 6px; }
+
+/* Editor buttons */
+.editor-btn {
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: .1s;
+  white-space: nowrap;
+}
+.editor-btn:hover { background: rgba(255,255,255,.1); color: #e2e8f0; }
+.editor-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* File type icons in table */
+.fm-row:hover { background: var(--bg-hover); }
+
+/* Editor font size CSS variable */
+:root { --ed-fs: 13px; }

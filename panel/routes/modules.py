@@ -13,7 +13,8 @@ def sh(c, t=10):
 
 def get_version(mod_id):
     cmds = {
-        'nginx':        "nginx -v 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
+        'caddy':        "caddy version 2>/dev/null | grep -oP 'v[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'nginx':        "nginx -v 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'apache2':      "apache2 -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
         'mysql':        "mysql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
@@ -55,8 +56,8 @@ MODULES = [
         'desc':'High-performance HTTP & reverse proxy server',
         'check':'which nginx 2>/dev/null',
         'versions':[
-            {'label':'1.26.3 (Stable)',   'value':'stable'},
-            {'label':'1.27.5 (Mainline)', 'value':'mainline'},
+            {'label':'1.30.2 (Stable)',   'value':'stable'},
+            {'label':'1.31.1 (Mainline)', 'value':'mainline'},
         ],
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
@@ -71,7 +72,7 @@ apt-get update -q && apt-get install -y nginx && systemctl enable nginx && syste
         'desc':'Apache HTTP Server — widely-used web server',
         'check':'which apache2 2>/dev/null',
         'versions':[
-            {'label':'2.4.63 (Latest Stable)', 'value':'2.4'},
+            {'label':'2.4.67 (Latest Stable)', 'value':'2.4'},
         ],
         'install':'apt-get install -y apache2 && systemctl enable apache2 && systemctl start apache2',
         'uninstall':'apt-get remove -y --purge apache2 apache2-utils apache2-bin && apt-get autoremove -y',
@@ -97,6 +98,35 @@ systemctl enable lsws && systemctl start lsws''',
         'service':'lsws', 'manage':True,
     },
     # ── Databases ────────────────────────────────────────────────────────────
+    {
+        'id':'caddy', 'name':'Caddy', 'icon':'🟩', 'category':'Web Server',
+        'desc':'Auto-HTTPS web server — HTTP/3, zero-config TLS via Lets Encrypt',
+        'check':'which caddy 2>/dev/null',
+        'versions':[
+            {'label':'v2.11.3 (Latest Stable)', 'value':'2.11.3'},
+            {'label':'v2.11.2 (Stable)',         'value':'2.11.2'},
+        ],
+        'install_tpl':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+  gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+  tee /etc/apt/sources.list.d/caddy-stable.list && \
+chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
+chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
+apt-get update -q && apt-get install -y caddy && \
+systemctl enable caddy && systemctl start caddy''',
+        'install':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+  gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+  tee /etc/apt/sources.list.d/caddy-stable.list && \
+chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
+chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
+apt-get update -q && apt-get install -y caddy && \
+systemctl enable caddy && systemctl start caddy''',
+        'uninstall':'apt-get remove -y --purge caddy && apt-get autoremove -y && rm -rf /etc/caddy',
+        'service':'caddy', 'manage':True,
+    },
     {
         'id':'mysql', 'name':'MySQL', 'icon':'🐬', 'category':'Database',
         'desc':'The world\'s most popular open source database',
@@ -171,11 +201,11 @@ apt-get update -q && apt-get install -y postgresql-{ver} && systemctl enable pos
         'desc':'PHP-FPM — multiple versions supported side by side',
         'check':'which php 2>/dev/null',
         'versions':[
-            {'label':'7.4 (Legacy)', 'value':'7.4'},
-            {'label':'8.1 (Security)', 'value':'8.1'},
-            {'label':'8.2 (Active)',   'value':'8.2'},
-            {'label':'8.3 (Active)',   'value':'8.3'},
-            {'label':'8.4 (Latest)',   'value':'8.4'},
+            {'label':'7.4 (Legacy)',    'value':'7.4'},
+            {'label':'8.1 (Security)',  'value':'8.1'},
+            {'label':'8.2 (Active)',    'value':'8.2'},
+            {'label':'8.3 (Active)',    'value':'8.3'},
+            {'label':'8.4 (Latest)',    'value':'8.4'},
         ],
         'install_tpl':'''apt-get install -y software-properties-common && \
 add-apt-repository -y ppa:ondrej/php && apt-get update -q && \
@@ -184,8 +214,17 @@ php{ver}-curl php{ver}-gd php{ver}-mbstring php{ver}-zip php{ver}-bcmath php{ver
 php{ver}-soap php{ver}-cli php{ver}-readline && \
 systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm''',
         'install':'',
-        'uninstall_tpl':'apt-get remove -y --purge php{ver} php{ver}-* && apt-get autoremove -y',
-        'uninstall':'',
+        'uninstall_tpl':'''systemctl stop php{ver}-fpm 2>/dev/null || true && \
+systemctl disable php{ver}-fpm 2>/dev/null || true && \
+apt-get remove -y --purge php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql \
+php{ver}-xml php{ver}-curl php{ver}-gd php{ver}-mbstring php{ver}-zip php{ver}-bcmath \
+php{ver}-intl php{ver}-soap php{ver}-cli php{ver}-readline php{ver}-* 2>/dev/null || true && \
+apt-get autoremove -y 2>/dev/null || true''',
+        'uninstall':'''for ver in 7.4 8.1 8.2 8.3 8.4; do
+  systemctl stop php$ver-fpm 2>/dev/null || true
+  apt-get remove -y --purge php$ver php$ver-* 2>/dev/null || true
+done
+apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
     },
     # ── FTP ──────────────────────────────────────────────────────────────────
@@ -273,9 +312,9 @@ mkdir -p /usr/share/phpmyadmin && tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyad
         'desc':'JavaScript runtime built on Chrome V8 engine',
         'check':'which node 2>/dev/null || which nodejs 2>/dev/null',
         'versions':[
-            {'label':'18.20 LTS', 'value':'18'},
-            {'label':'20.18 LTS', 'value':'20'},
-            {'label':'22.13 LTS', 'value':'22'},
+            {'label':'v22 LTS  (Jod)',     'value':'22'},
+            {'label':'v24 LTS  (Krypton)', 'value':'24'},
+            {'label':'v26 Current',        'value':'26'},
         ],
         'install_tpl':'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && apt-get install -y nodejs',
         'install':'curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs',
@@ -297,8 +336,14 @@ add-apt-repository -y ppa:deadsnakes/ppa && apt-get update -q && \
 apt-get install -y python{ver} python{ver}-venv python{ver}-dev && \
 curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true''',
         'install':'apt-get install -y python3 python3-pip python3-venv python3-dev',
-        'uninstall_tpl':'apt-get remove -y --purge python{ver} python{ver}-* && apt-get autoremove -y',
-        'uninstall':'',
+        'uninstall_tpl':'''apt-get remove -y --purge python{ver} python{ver}-venv python{ver}-dev \
+python{ver}-distutils python{ver}-lib2to3 2>/dev/null || true && \
+apt-get autoremove -y 2>/dev/null || true && \
+update-alternatives --remove python /usr/bin/python{ver} 2>/dev/null || true''',
+        'uninstall':'''for ver in 3.10 3.11 3.12 3.13; do
+  apt-get remove -y --purge python$ver python$ver-* 2>/dev/null || true
+done
+apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
     },
     # ── Containers ───────────────────────────────────────────────────────────
@@ -307,7 +352,9 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true'
         'desc':'Container platform — build, ship, run anywhere',
         'check':'which docker 2>/dev/null',
         'versions':[
-            {'label':'27.5 CE (Latest Stable)', 'value':'latest'},
+            {'label':'v27 CE (Stable)',  'value':'27'},
+            {'label':'v28 CE (Stable)',  'value':'28'},
+            {'label':'v29 CE (Latest)',  'value':'29'},
         ],
         'install':'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker',
         'uninstall':'apt-get remove -y --purge docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && apt-get autoremove -y',
@@ -355,22 +402,132 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true'
         'desc':'Process control — keep programs running',
         'check':'which supervisord 2>/dev/null',
         'versions':[
-            {'label':'4.2.5 (Latest Stable)', 'value':'latest'},
+            {'label':'4.3.0 (Latest Stable)', 'value':'latest'},
         ],
         'install':'apt-get install -y supervisor && systemctl enable supervisor && systemctl start supervisor',
         'uninstall':'apt-get remove -y --purge supervisor && apt-get autoremove -y',
         'service':'supervisor', 'manage':True,
     },
-    # ── Mail ─────────────────────────────────────────────────────────────────
+    # ── Webmail ───────────────────────────────────────────────────────────────
     {
-        'id':'opendkim', 'name':'OpenDKIM', 'icon':'✍', 'category':'Mail',
-        'desc':'DKIM email signing & verification middleware',
-        'check':'which opendkim 2>/dev/null',
+        'id':'roundcube', 'name':'Roundcube', 'icon':'📨', 'category':'Mail',
+        'desc':'Modern web-based IMAP email client',
+        'check':'test -d /var/www/roundcube && echo found',
         'versions':[
-            {'label':'2.11.0 (Latest Stable)', 'value':'latest'},
+            {'label':'1.6.16 (LTS)',    'value':'1.6.16'},
+            {'label':'1.7.1  (Latest)', 'value':'1.7.1'},
         ],
-        'install':'apt-get install -y opendkim opendkim-tools',
-        'uninstall':'apt-get remove -y --purge opendkim opendkim-tools && apt-get autoremove -y',
+        'install_tpl':'''apt-get install -y wget php php-mysql php-curl php-json php-mbstring \
+php-intl php-imagick php-xml php-zip php-gd && \
+mkdir -p /var/www/roundcube && \
+wget -q https://github.com/roundcube/roundcubemail/releases/download/{ver}/roundcubemail-{ver}-complete.tar.gz \
+  -O /tmp/roundcube.tar.gz && \
+tar -xzf /tmp/roundcube.tar.gz -C /var/www/roundcube --strip-components=1 && \
+cp /var/www/roundcube/config/config.inc.php.sample /var/www/roundcube/config/config.inc.php && \
+chown -R www-data:www-data /var/www/roundcube/''',
+        'install':'',
+        'uninstall':'rm -rf /var/www/roundcube',
+        'manage':False,
+    },
+    # ── WAF / Security ────────────────────────────────────────────────────────
+    {
+        'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'🔥', 'category':'Security',
+        'desc':'OWASP Web Application Firewall for Nginx/Apache (v3)',
+        'check':'dpkg -l libmodsecurity3 2>/dev/null | grep -c "^ii"',
+        'versions':[
+            {'label':'v3 + OWASP CRS (Recommended)', 'value':'3'},
+            {'label':'v2 (Apache legacy)',            'value':'2'},
+        ],
+        'install_tpl':'''apt-get install -y libmodsecurity3 libmodsecurity-dev && \
+apt-get install -y libnginx-mod-http-modsecurity 2>/dev/null || true && \
+mkdir -p /etc/nginx/modsec && \
+wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended \
+  -O /etc/nginx/modsec/modsecurity.conf && \
+sed -i 's/SecRuleEngine DetectionOnly/SecRuleEngine On/' /etc/nginx/modsec/modsecurity.conf && \
+wget -q https://github.com/coreruleset/coreruleset/archive/refs/tags/v4.0.0.tar.gz -O /tmp/crs.tar.gz && \
+mkdir -p /etc/nginx/modsec/crs && \
+tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 && \
+cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf && \
+echo "Include /etc/nginx/modsec/modsecurity.conf" > /etc/nginx/modsec/main.conf && \
+echo "Include /etc/nginx/modsec/crs/crs-setup.conf" >> /etc/nginx/modsec/main.conf && \
+echo "Include /etc/nginx/modsec/crs/rules/*.conf"   >> /etc/nginx/modsec/main.conf && \
+systemctl reload nginx 2>/dev/null || true''',
+        'install':'apt-get install -y libmodsecurity3 libnginx-mod-http-modsecurity 2>/dev/null || true',
+        'uninstall':'apt-get remove -y --purge libmodsecurity3 libnginx-mod-http-modsecurity && apt-get autoremove -y && rm -rf /etc/nginx/modsec',
+        'manage':False,
+    },
+    # ── Load Balancer ─────────────────────────────────────────────────────────
+    {
+        'id':'nginx-lb', 'name':'Nginx Load Balancer', 'icon':'⚖', 'category':'Web Server',
+        'desc':'Configure Nginx upstream load balancing (Round Robin, Least Conn, IP Hash)',
+        'check':'test -f /etc/nginx/conf.d/loadbalancer.conf && echo found',
+        'versions':[
+            {'label':'Round Robin (Default)', 'value':'roundrobin'},
+            {'label':'Least Connections',     'value':'leastconn'},
+            {'label':'IP Hash (Sticky)',       'value':'iphash'},
+        ],
+        'install_tpl':'''# Create Nginx load balancer config with {ver} method
+mkdir -p /etc/nginx/conf.d/
+cat > /etc/nginx/conf.d/loadbalancer.conf << 'LBEOF'
+# VortexPanel Load Balancer Configuration
+# Method: {ver}
+# Edit upstream servers below to match your backend servers
+
+upstream vortex_backend {{
+    # {ver} load balancing
+    # Add/remove servers as needed
+    server 127.0.0.1:8001 weight=1;
+    server 127.0.0.1:8002 weight=1;
+    server 127.0.0.1:8003 weight=1;
+
+    # Health check - mark server down if it fails
+    # server 127.0.0.1:8004 down;
+
+    # Keepalive connections to upstream
+    keepalive 32;
+}}
+
+# Uncomment to use Least Connections:
+# upstream vortex_backend {{ least_conn; server ...; }}
+
+# Uncomment to use IP Hash (sticky sessions):
+# upstream vortex_backend {{ ip_hash; server ...; }}
+
+server {{
+    listen 80;
+    server_name _;
+
+    location / {{
+        proxy_pass http://vortex_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503;
+    }}
+}}
+LBEOF
+nginx -t && systemctl reload nginx''',
+        'install':'',
+        'uninstall':'rm -f /etc/nginx/conf.d/loadbalancer.conf && systemctl reload nginx 2>/dev/null || true',
+        'manage':False,
+    },
+
+    # ── CDN ───────────────────────────────────────────────────────────────────
+    {
+        'id':'cdn', 'name':'CDN Manager', 'icon':'⚡', 'category':'Network',
+        'desc':'Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri — HOT MODULE',
+        'check':'test -f /opt/vortexpanel/cdn_config.json && echo found',
+        'versions':[
+            {'label':'Latest (Built-in)', 'value':'latest'},
+        ],
+        'install':'mkdir -p /opt/vortexpanel && echo "{}" > /opt/vortexpanel/cdn_config.json',
+        'uninstall':'rm -f /opt/vortexpanel/cdn_config.json',
         'manage':False,
     },
 ]
@@ -467,9 +624,19 @@ def uninstall_module(mod_id):
         for line in proc.stdout:
             _jobs[job_id]['lines'].append(line.rstrip())
         proc.wait()
-        still_installed = is_installed(mod['check'])
+        # For versioned modules (PHP, Python), check version-specific binary
+        if ver and mod_id in ('php','python'):
+            ver_binary = f'php{ver}' if mod_id=='php' else f'python{ver}'
+            still_installed = bool(sh(f'which {ver_binary} 2>/dev/null'))
+        else:
+            still_installed = is_installed(mod['check'])
         removed = not still_installed
-        _jobs[job_id].update({'installed':still_installed,'done':True,'success':removed,'status':'done'})
+        # For PHP: overall 'installed' = any PHP still present
+        if mod_id == 'php':
+            any_php = is_installed(mod['check'])
+            _jobs[job_id].update({'installed':any_php,'done':True,'success':removed,'status':'done'})
+        else:
+            _jobs[job_id].update({'installed':still_installed,'done':True,'success':removed,'status':'done'})
         _jobs[job_id]['lines'].append(
             f'[VortexPanel] {"✓ Removed successfully!" if removed else "⚠ May not be fully removed — check output above."}'
         )

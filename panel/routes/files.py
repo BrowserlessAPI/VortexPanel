@@ -107,3 +107,165 @@ def upload_file():
     dest = os.path.join(path, f.filename)
     f.save(dest)
     return jsonify({'ok':True,'path':dest})
+
+import subprocess, fnmatch, time, urllib.request, threading
+
+@files_bp.route('/api/files/copy', methods=['POST'])
+def copy_file():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    src = safe_path(d.get('src',''))
+    dst = safe_path(d.get('dst',''))
+    try:
+        if os.path.isdir(src): shutil.copytree(src, dst)
+        else: shutil.copy2(src, dst)
+        return jsonify({'ok':True})
+    except Exception as e: return jsonify({'ok':False,'error':str(e)}),500
+
+@files_bp.route('/api/files/move', methods=['POST'])
+def move_file():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    src = safe_path(d.get('src',''))
+    dst = safe_path(d.get('dst',''))
+    try:
+        shutil.move(src, dst)
+        return jsonify({'ok':True})
+    except Exception as e: return jsonify({'ok':False,'error':str(e)}),500
+
+@files_bp.route('/api/files/compress', methods=['POST'])
+def compress_file():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    paths  = [safe_path(p) for p in d.get('paths',[])]
+    output = safe_path(d.get('output',''))
+    fmt    = d.get('format','zip')
+    if not paths or not output: return jsonify({'ok':False,'error':'paths and output required'}),400
+    try:
+        parent = os.path.dirname(paths[0])
+        names  = ' '.join(f'"{os.path.relpath(p, parent)}"' for p in paths)
+        if fmt == 'zip':
+            r = subprocess.run(f'cd "{parent}" && zip -r "{output}" {names}', shell=True, capture_output=True, text=True)
+        else:
+            r = subprocess.run(f'cd "{parent}" && tar -czf "{output}" {names}', shell=True, capture_output=True, text=True)
+        if r.returncode != 0: return jsonify({'ok':False,'error':r.stderr}),500
+        return jsonify({'ok':True,'output':output})
+    except Exception as e: return jsonify({'ok':False,'error':str(e)}),500
+
+@files_bp.route('/api/files/extract', methods=['POST'])
+def extract_file():
+    if not req(): return jsonify({'ok':False}),401
+    d   = request.get_json() or {}
+    src = safe_path(d.get('path',''))
+    dst = safe_path(d.get('dest', os.path.dirname(src)))
+    os.makedirs(dst, exist_ok=True)
+    try:
+        if src.endswith('.zip'):
+            r = subprocess.run(f'unzip -o "{src}" -d "{dst}"', shell=True, capture_output=True, text=True)
+        else:
+            r = subprocess.run(f'tar -xzf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+        return jsonify({'ok': r.returncode==0, 'error': r.stderr[:300] if r.returncode!=0 else ''})
+    except Exception as e: return jsonify({'ok':False,'error':str(e)}),500
+
+@files_bp.route('/api/files/search')
+def search_files():
+    if not req(): return jsonify({'ok':False}),401
+    path    = safe_path(request.args.get('path', get_webroot()))
+    keyword = request.args.get('q','').strip()
+    in_file = request.args.get('content','false') == 'true'
+    if not keyword: return jsonify({'ok':True,'results':[]})
+    results = []
+    try:
+        if in_file:
+            out = subprocess.run(f'grep -r -l --include="*" -m 1 "{keyword}" "{path}" 2>/dev/null | head -50',
+                                  shell=True, capture_output=True, text=True, timeout=15).stdout
+            for line in out.strip().split('\n'):
+                if line.strip(): results.append({'path':line.strip(),'type':'file','name':os.path.basename(line.strip())})
+        else:
+            out = subprocess.run(f'find "{path}" -maxdepth 6 -iname "*{keyword}*" 2>/dev/null | head -100',
+                                  shell=True, capture_output=True, text=True, timeout=10).stdout
+            for line in out.strip().split('\n'):
+                if line.strip():
+                    fp = line.strip()
+                    results.append({'path':fp,'type':'dir' if os.path.isdir(fp) else 'file','name':os.path.basename(fp)})
+    except Exception as e: pass
+    return jsonify({'ok':True,'results':results})
+
+@files_bp.route('/api/files/size')
+def calc_size():
+    if not req(): return jsonify({'ok':False}),401
+    path = safe_path(request.args.get('path',''))
+    try:
+        if os.path.isfile(path): return jsonify({'ok':True,'size':os.path.getsize(path)})
+        out = subprocess.run(f'du -sb "{path}" 2>/dev/null | cut -f1', shell=True, capture_output=True, text=True).stdout.strip()
+        return jsonify({'ok':True,'size':int(out) if out else 0})
+    except: return jsonify({'ok':True,'size':0})
+
+@files_bp.route('/api/files/remote-download', methods=['POST'])
+def remote_download():
+    if not req(): return jsonify({'ok':False}),401
+    d    = request.get_json() or {}
+    url  = d.get('url','').strip()
+    dest = safe_path(d.get('dest', get_webroot()))
+    if not url: return jsonify({'ok':False,'error':'URL required'}),400
+    fname = url.split('/')[-1].split('?')[0] or 'download'
+    fpath = os.path.join(dest, fname)
+    def do_dl():
+        try:
+            urllib.request.urlretrieve(url, fpath)
+        except Exception as e:
+            pass
+    threading.Thread(target=do_dl, daemon=True).start()
+    return jsonify({'ok':True,'filename':fname,'path':fpath,'message':'Download started in background'})
+
+@files_bp.route('/api/files/properties')
+def file_properties():
+    if not req(): return jsonify({'ok':False}),401
+    path = safe_path(request.args.get('path',''))
+    if not os.path.exists(path): return jsonify({'ok':False,'error':'Not found'}),404
+    st = os.stat(path)
+    import pwd, grp, time as t
+    try: owner = pwd.getpwuid(st.st_uid).pw_name
+    except: owner = str(st.st_uid)
+    try: group = grp.getgrgid(st.st_gid).gr_name
+    except: group = str(st.st_gid)
+    size = 0
+    if os.path.isdir(path):
+        out = subprocess.run(f'du -sb "{path}" 2>/dev/null | cut -f1', shell=True, capture_output=True, text=True).stdout.strip()
+        size = int(out) if out.isdigit() else 0
+    else:
+        size = st.st_size
+    return jsonify({'ok':True,'props':{
+        'path':path,'name':os.path.basename(path),
+        'type':'directory' if os.path.isdir(path) else 'file',
+        'size':size,'perms':oct(st.st_mode)[-3:],
+        'owner':owner,'group':group,
+        'mtime':t.strftime('%Y-%m-%d %H:%M:%S', t.localtime(st.st_mtime)),
+        'atime':t.strftime('%Y-%m-%d %H:%M:%S', t.localtime(st.st_atime)),
+    }})
+
+@files_bp.route('/api/files/lint', methods=['POST'])
+def lint_file():
+    """Basic syntax check for PHP, Python, JS"""
+    if not req(): return jsonify({'ok':False}),401
+    d    = request.get_json() or {}
+    path = safe_path(d.get('path',''))
+    ext  = os.path.splitext(path)[1].lower()
+    errors = []
+    try:
+        if ext == '.php':
+            r = subprocess.run(f'php -l "{path}" 2>&1', shell=True, capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                for line in r.stdout.split('\n'):
+                    if 'error' in line.lower() or 'Parse' in line:
+                        errors.append(line.strip())
+        elif ext == '.py':
+            r = subprocess.run(f'python3 -m py_compile "{path}" 2>&1', shell=True, capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                errors.append(r.stderr.strip())
+        elif ext in ('.json',):
+            r = subprocess.run(f'python3 -c "import json,sys; json.load(open(sys.argv[1]))" "{path}" 2>&1', shell=True, capture_output=True, text=True)
+            if r.returncode != 0: errors.append(r.stdout.strip())
+    except Exception as e:
+        errors.append(str(e))
+    return jsonify({'ok':True,'errors':errors,'clean':len(errors)==0})
