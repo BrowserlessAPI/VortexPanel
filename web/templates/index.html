@@ -8,6 +8,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/theme.css">
   <style>[x-cloak]{display:none!important}</style>
+  <!-- app.js must load before Alpine so all function definitions exist -->
+  <script src="/static/js/app.js"></script>
+  <script src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body>
 
@@ -2923,8 +2926,6 @@
   </div><!-- main-area -->
 </div><!-- app-layout -->
 
-<script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-<script src="/static/js/app.js" defer></script>
 
   <!-- ── PANEL UPDATE MODAL ─────────────────────────────────────────────── -->
   <div class="modal-overlay" x-show="updateModal.show" style="z-index:500"
@@ -3059,7 +3060,7 @@
 
 
   <!-- ── NEONCODEX AI PANEL (inside main layout) ─────────────────────────── -->
-  <div x-data="aiAssistant()" style="position:relative">
+  <div x-show="loggedIn" x-data="aiAssistant()" style="position:relative">
 
     <!-- AI slide-in panel — appears from right edge inside the panel -->
     <div x-show="open"
