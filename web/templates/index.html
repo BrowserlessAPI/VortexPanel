@@ -2942,7 +2942,10 @@
       <div x-show="checkState==='uptodate'" style="text-align:center;padding:32px">
         <div style="font-size:40px;margin-bottom:12px">✅</div>
         <div style="font-size:16px;font-weight:600;margin-bottom:6px">You are up to date!</div>
-        <div style="font-size:13px;color:var(--text-muted)" x-text="'VortexPanel '+updateModal.current+' is the latest version'"></div>
+        <div style="font-size:13px;color:var(--text-muted)" x-text="'VortexPanel '+(updateModal.current||'v3.0.0')+' is the latest version'"></div>
+        <div style="margin-top:16px">
+          <a href="https://github.com/BrowserlessAPI/Vortexpanel/releases" target="_blank" style="font-size:12px;color:var(--accent);text-decoration:none">View all releases on GitHub ↗</a>
+        </div>
       </div>
 
       <!-- Update available -->
@@ -2980,11 +2983,17 @@
 
       <!-- Error state -->
       <div x-show="checkState==='error'" style="padding:20px">
-        <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:12px;font-size:12px;color:var(--red)">
-          ✗ <span x-text="updateModal.error||'Could not check for updates. Check your internet connection.'"></span>
+        <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:14px;font-size:13px;color:var(--red);line-height:1.6">
+          <div style="font-weight:600;margin-bottom:6px">✗ Could not check for updates</div>
+          <div style="font-size:12px;opacity:.85" x-text="errorMsg||'Cannot reach GitHub. Check your server internet connection.'"></div>
         </div>
-        <div style="margin-top:12px;text-align:center">
-          <button class="btn btn-ghost" @click="checkForUpdates()">Try Again</button>
+        <div style="margin-top:10px;background:rgba(0,0,0,.15);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--text-muted)">
+          <div style="margin-bottom:4px;font-weight:600">Manual update:</div>
+          <code style="font-family:var(--font-mono);color:var(--text-secondary)">cd /root/Vortexpanel && git pull && cp -r panel/ web/ app.py /opt/vortexpanel/ && systemctl restart vortexpanel</code>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
+          <button class="btn btn-ghost" @click="checkForUpdates()">↻ Try Again</button>
+          <a href="https://github.com/BrowserlessAPI/Vortexpanel/releases" target="_blank" class="btn btn-ghost">View Releases ↗</a>
         </div>
       </div>
 

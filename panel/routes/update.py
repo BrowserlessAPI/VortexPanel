@@ -14,8 +14,16 @@ _update_job = {'running': False, 'lines': [], 'done': False, 'success': False, '
 
 def get_current_version():
     if os.path.exists(VERSION_FILE):
-        with open(VERSION_FILE) as f:
-            return f.read().strip()
+        v = open(VERSION_FILE).read().strip()
+        if v: return v
+    # Also check git tag
+    try:
+        import subprocess
+        result = subprocess.run('cd /root/Vortexpanel && git describe --tags --abbrev=0 2>/dev/null || git log --oneline -1 2>/dev/null | cut -c1-7', 
+                               shell=True, capture_output=True, text=True, timeout=5)
+        tag = result.stdout.strip()
+        if tag: return tag
+    except: pass
     return CURRENT_VERSION
 
 def save_current_version(version):
@@ -51,29 +59,51 @@ def check_update():
         req2.add_header('Accept', 'application/vnd.github+json')
         req2.add_header('User-Agent', 'VortexPanel/3.0')
         req2.add_header('X-GitHub-Api-Version', '2022-11-28')
-        with urllib.request.urlopen(req2, timeout=8) as resp:
+        with urllib.request.urlopen(req2, timeout=10) as resp:
             data = json.loads(resp.read().decode())
 
-        latest_tag  = data.get('tag_name', '')
+        latest_tag   = data.get('tag_name', '')
         release_name = data.get('name', latest_tag)
-        body        = data.get('body', '')
-        published   = data.get('published_at', '')
-        html_url    = data.get('html_url', '')
-        has_update  = compare_versions(current, latest_tag)
+        body         = data.get('body', '')
+        published    = data.get('published_at', '')
+        html_url     = data.get('html_url', '')
 
+        # If no releases exist yet on GitHub, return current version
+        if not latest_tag:
+            return jsonify({
+                'ok': True, 'current': current, 'latest': current,
+                'name': 'VortexPanel', 'body': '',
+                'published': '', 'url': '', 'has_update': False,
+                'note': 'No releases found on GitHub yet.'
+            })
+
+        has_update = compare_versions(current, latest_tag)
         return jsonify({
-            'ok':          True,
-            'current':     current,
-            'latest':      latest_tag,
-            'name':        release_name,
-            'body':        body,
-            'published':   published,
-            'url':         html_url,
-            'has_update':  has_update,
+            'ok':         True,
+            'current':    current,
+            'latest':     latest_tag,
+            'name':       release_name,
+            'body':       body,
+            'published':  published,
+            'url':        html_url,
+            'has_update': has_update,
         })
+    except urllib.error.HTTPError as e:
+        # 404 = no releases yet on repo, not a real error
+        if e.code == 404:
+            return jsonify({
+                'ok': True, 'current': current, 'latest': current,
+                'has_update': False, 'name': 'VortexPanel',
+                'body': '', 'published': '', 'url': '',
+                'note': 'No releases published on GitHub yet.'
+            })
+        return jsonify({'ok': True, 'current': current, 'latest': current,
+                       'has_update': False,
+                       'error': f'GitHub API error {e.code}: {str(e.reason)}'})
     except urllib.error.URLError as e:
         return jsonify({'ok': True, 'current': current, 'latest': current,
-                       'has_update': False, 'error': f'GitHub unreachable: {str(e)}'})
+                       'has_update': False,
+                       'error': f'Cannot reach GitHub: {str(e.reason)}'})
     except Exception as e:
         return jsonify({'ok': True, 'current': current, 'latest': current,
                        'has_update': False, 'error': str(e)})

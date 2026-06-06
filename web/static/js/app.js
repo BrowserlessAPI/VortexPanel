@@ -1255,17 +1255,44 @@ function caddyPage() {
 function updateModalData() {
   return {
     checkState:'checking',updating:false,updateDone:false,updateSuccess:false,
-    updateError:'',updateLines:[],updateProgress:0,_pollTimer:null,
+    updateError:'',updateLines:[],updateProgress:0,_pollTimer:null,errorMsg:'',
     async init(){document.addEventListener('vortex-check-update',()=>this.checkForUpdates());await this.checkForUpdates();},
     async checkForUpdates(){
-      this.checkState='checking';this.updating=false;
-      try{
-        const r=await get('/api/update/check');
-        if(!r.ok){this.checkState='error';return;}
-        try{const app=Alpine.$data(document.querySelector('[x-data^="panelApp"]')||document.querySelector('[x-data="panelApp()"]'));if(app&&r.has_update)app.updateAvailable=true;if(app&&r.current)app.updateModal.current=r.current;}catch{}
-        this.checkState=r.has_update?'available':'uptodate';
-        if(r.error&&!r.has_update)this.checkState='error';
-      }catch{this.checkState='error';}
+      this.checkState='checking'; this.updating=false;
+      try {
+        const r = await get('/api/update/check');
+        // Update parent panelApp state
+        try {
+          const appEl = document.querySelector('[x-data="panelApp()"]');
+          const app   = appEl ? Alpine.$data(appEl) : null;
+          if (app) {
+            if (r.current) {
+              app.updateModal.current   = r.current;
+              app.updateModal.latest    = r.latest  || r.current;
+              app.updateModal.name      = r.name    || 'VortexPanel';
+              app.updateModal.body      = r.body    || '';
+              app.updateModal.published = r.published || '';
+              app.updateModal.error     = r.error   || '';
+            }
+            if (r.has_update) app.updateAvailable = true;
+          }
+        } catch(e) {}
+
+        if (!r.ok) {
+          this.errorMsg = r.error || 'Failed to check for updates';
+          this.checkState = 'error';
+          return;
+        }
+        if (r.error && !r.has_update) {
+          this.errorMsg = r.error;
+          this.checkState = 'error';
+          return;
+        }
+        this.checkState = r.has_update ? 'available' : 'uptodate';
+      } catch(e) {
+        this.errorMsg = e.message || 'Network error — cannot reach update server';
+        this.checkState = 'error';
+      }
     },
     async startUpdate(){
       try{const app=Alpine.$data(document.querySelector('[x-data^="panelApp"]')||document.body);var version=app?app.updateModal.latest:'';}catch{var version='';}
