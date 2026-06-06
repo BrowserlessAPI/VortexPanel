@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, session
-import subprocess, re
+import subprocess, re, re
 
 firewall_bp = Blueprint('firewall', __name__)
 def req(): return 'user' in session
@@ -62,3 +62,28 @@ def apply_preset():
     for cmd in presets.get(preset,[]):
         sh(cmd)
     return jsonify({'ok':True})
+
+@firewall_bp.route('/api/firewall')
+def firewall_overview():
+    """Aggregator: returns rules + status in one call for firewallPage.load()"""
+    if not req(): return jsonify({'ok': False}), 401
+    # Get rules
+    out_rules, _, _ = sh('ufw status numbered 2>/dev/null')
+    rules = []
+    for line in out_rules.split('\n'):
+        m = re.match(r'\[\s*(\d+)\]\s+(.+?)\s+(ALLOW|DENY|REJECT|LIMIT)(\s+IN|\s+OUT)?\s+(.*)', line)
+        if m:
+            rules.append({'num':int(m.group(1)), 'to':m.group(2).strip(),
+                         'action':m.group(3), 'from':m.group(5).strip()})
+    # Get status
+    out_st, _, _ = sh('ufw status 2>/dev/null')
+    status = 'active' if 'Status: active' in out_st else 'inactive'
+    return jsonify({'ok': True, 'rules': rules, 'status': status})
+
+@firewall_bp.route('/api/firewall/toggle', methods=['POST'])
+def toggle_ufw():
+    if not req(): return jsonify({'ok': False}), 401
+    enable = (request.get_json() or {}).get('enable', True)
+    action = 'enable' if enable else 'disable'
+    out, err, rc = sh(f'echo "y" | ufw {action} 2>&1')
+    return jsonify({'ok': rc == 0, 'output': out or err, 'enabled': enable})

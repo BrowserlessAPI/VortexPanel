@@ -57,3 +57,73 @@ def fail2ban():
     if not req(): return jsonify({'ok':False}),401
     raw = sh('fail2ban-client status 2>/dev/null')
     return jsonify({'ok':True,'output':raw})
+
+@monitoring_bp.route('/api/monitoring')
+def monitoring_overview():
+    """Aggregator endpoint for monitoringPage.load()"""
+    if not req(): return jsonify({'ok': False}), 401
+    import subprocess, re as _re
+
+    # CPU
+    try:
+        cpu_out = subprocess.run("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'",
+                                  shell=True, capture_output=True, text=True).stdout.strip()
+        cpu = float(cpu_out) if cpu_out else 0.0
+    except: cpu = 0.0
+
+    # RAM
+    try:
+        mem_out = subprocess.run("free -m | awk 'NR==2{print $2,$3}'",
+                                  shell=True, capture_output=True, text=True).stdout.strip().split()
+        ram_total = int(mem_out[0]) if len(mem_out)>0 else 0
+        ram_used  = int(mem_out[1]) if len(mem_out)>1 else 0
+        ram_pct   = round(ram_used/ram_total*100, 1) if ram_total else 0
+        ram_str   = f"{ram_used} MB / {ram_total} MB"
+    except: ram_pct=0; ram_str=''
+
+    # Disk
+    try:
+        disk_out = subprocess.run("df / | awk 'NR==2{print $5}'",
+                                   shell=True, capture_output=True, text=True).stdout.strip().rstrip('%')
+        disk = int(disk_out) if disk_out.isdigit() else 0
+    except: disk = 0
+
+    # Uptime
+    try:
+        uptime = subprocess.run("uptime -p", shell=True, capture_output=True, text=True).stdout.strip()
+    except: uptime = ''
+
+    # Load
+    try:
+        load = subprocess.run("cat /proc/loadavg", shell=True, capture_output=True, text=True).stdout.strip().split()
+        load_str = ' '.join(load[:3]) if load else ''
+    except: load_str = ''
+
+    # Top processes
+    processes = []
+    try:
+        proc_out = subprocess.run(
+            "ps aux --sort=-%cpu | head -11 | tail -10",
+            shell=True, capture_output=True, text=True).stdout.strip()
+        for line in proc_out.split('\n'):
+            parts = line.split(None, 10)
+            if len(parts) >= 11:
+                processes.append({
+                    'pid':    parts[1],
+                    'cpu':    parts[2]+'%',
+                    'mem':    parts[3]+'%',
+                    'status': parts[7],
+                    'name':   parts[10][:40],
+                })
+    except: pass
+
+    return jsonify({
+        'ok':        True,
+        'cpu':       cpu,
+        'ram':       ram_str,
+        'ram_pct':   ram_pct,
+        'disk':      disk,
+        'uptime':    uptime,
+        'load':      load_str,
+        'processes': processes,
+    })

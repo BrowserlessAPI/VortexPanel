@@ -45,6 +45,13 @@ def save_credentials(creds):
     with open(CREDS_FILE, 'w') as f:
         json.dump(creds, f, indent=2)
 
+
+@auth_bp.route('/api/auth/check')
+def check_session():
+    if 'user' in session:
+        return jsonify({'ok': True, 'logged_in': True, 'username': session.get('user','admin')})
+    return jsonify({'ok': True, 'logged_in': False})
+
 @auth_bp.route('/api/auth/login', methods=['POST'])
 def login():
     data     = request.get_json() or {}

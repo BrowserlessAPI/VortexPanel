@@ -7,14 +7,18 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/theme.css">
+  <style>[x-cloak]{display:none!important}</style>
 </head>
 <body>
 
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
+<!-- ROOT ALPINE SCOPE -->
+<div id="vortex-root" x-data="rootApp()">
+
 <!-- LOGIN PAGE -->
-<div id="login-page" x-data="loginApp()" x-show="!loggedIn">
+<div id="login-page" x-show="!loggedIn" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg-base)">
   <div class="login-box">
     <div class="login-logo">
       <div class="logo-icon">⚡</div>
@@ -25,25 +29,25 @@
     </div>
     <div class="form-group">
       <label class="form-label">Username</label>
-      <input class="form-input" type="text" x-model="username" placeholder="admin" @keydown.enter="doLogin">
+      <input class="form-input" type="text" x-model="loginUser" placeholder="admin" @keydown.enter="doLogin" x-ref="loginInput">
     </div>
     <div class="form-group">
       <label class="form-label">Password</label>
-      <input class="form-input" type="password" x-model="password" placeholder="••••••••" @keydown.enter="doLogin">
+      <input class="form-input" type="password" x-model="loginPass" placeholder="••••••••" @keydown.enter="doLogin">
     </div>
-    <template x-if="error">
-      <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:8px 12px;font-size:12px;color:#fca5a5;margin-bottom:14px" x-text="error"></div>
+    <template x-if="loginErr">
+      <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:8px 12px;font-size:12px;color:#fca5a5;margin-bottom:14px" x-text="loginErr"></div>
     </template>
-    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px" @click="doLogin" :disabled="loading">
-      <span x-show="loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
-      <span x-text="loading?'Signing in…':'Sign In'"></span>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px" @click="doLogin" :disabled="loginLoading">
+      <span x-show="loginLoading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+      <span x-text="loginLoading?'Signing in…':'Sign In'"></span>
     </button>
     <div style="margin-top:16px;font-size:11px;color:var(--text-muted);text-align:center">Default: admin / admin123</div>
   </div>
 </div>
 
 <!-- MAIN APP -->
-<div class="app-layout" x-data="panelApp()" x-show="loggedIn" x-cloak>
+<div class="app-layout" x-show="loggedIn" x-cloak>
 
   <!-- SIDEBAR -->
   <nav class="sidebar" :class="{open:sidebarOpen}">
@@ -1021,7 +1025,7 @@
             <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="cmd" placeholder="Enter command…" @keydown.enter="run()" :disabled="loading">
             <input class="form-input" style="width:200px" x-model="cwd" placeholder="/working/dir">
             <button class="btn btn-primary" @click="run()" :disabled="loading">
-              <span x-show="loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+              <span x-show="loginLoading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
               <span x-show="!loading">Run</span>
             </button>
             <button class="btn btn-ghost" @click="output=''">Clear</button>
@@ -2920,7 +2924,7 @@
 </div><!-- app-layout -->
 
 <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js" defer></script>
 
   <!-- ── PANEL UPDATE MODAL ─────────────────────────────────────────────── -->
   <div class="modal-overlay" x-show="updateModal.show" style="z-index:500"
@@ -3161,5 +3165,6 @@
     }
   </style>
 
+</div><!-- end vortex-root -->
 </body>
 </html>

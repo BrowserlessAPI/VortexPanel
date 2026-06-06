@@ -119,3 +119,19 @@ def gen_dkim(domain):
     if os.path.exists(key_file):
         with open(key_file) as f: return jsonify({'ok':True,'record':f.read()})
     return jsonify({'ok':False,'error':'opendkim-genkey failed or not installed'})
+
+@mail_bp.route('/api/mail/control', methods=['POST'])
+def control_mail():
+    if not req(): return jsonify({'ok': False}), 401
+    d       = request.get_json() or {}
+    service = d.get('service', 'postfix')   # postfix | dovecot
+    action  = d.get('action', 'restart')    # start | stop | restart | reload
+    if action not in ('start','stop','restart','reload','status'):
+        return jsonify({'ok': False, 'error': 'Invalid action'}), 400
+    svc_map = {'postfix':'postfix', 'dovecot':'dovecot'}
+    svc = svc_map.get(service, service)
+    out, err, rc = sh(f'systemctl {action} {svc} 2>&1', t=15)
+    # Get new status
+    st_out, _, _ = sh(f'systemctl is-active {svc} 2>/dev/null')
+    return jsonify({'ok': rc==0 or action=='status', 'status': st_out.strip(),
+                    'output': out or err, 'error': err if rc!=0 else ''})
