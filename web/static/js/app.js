@@ -31,11 +31,36 @@ function fmtDate(ts) {
 }
 function fmtSize(bytes) { return fmtBytes(bytes); }
 
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+function loginApp() {
+  return {
+    username: '', password: '', error: '', loading: false,
+
+    async doLogin() {
+      if (!this.username || !this.password) {
+        this.error = 'Enter username and password'; return;
+      }
+      this.loading = true; this.error = '';
+      try {
+        const r = await post('/api/auth/login', {username:this.username, password:this.password});
+        if (r.ok) {
+          // Signal successful login to the main app
+          window.dispatchEvent(new CustomEvent('vortex-login', {detail:{username:this.username}}));
+        } else {
+          this.error = r.error || 'Invalid username or password';
+        }
+      } catch(e) {
+        this.error = 'Connection error — try again';
+      }
+      this.loading = false;
+    },
+  };
+}
 
 // ── PANEL APP ─────────────────────────────────────────────────────────────────
 function panelApp() {
   return {
-    username: '', page: 'dashboard',
+    loggedIn: false, username: '', page: 'dashboard',
     sidebarOpen: false,
     moduleStatus: {},
     updateAvailable: false,
@@ -1866,13 +1891,15 @@ function aiAssistant() {
     ],
 
     async init() {
-      const r = await get('/api/ai/config');
+      // Listen for sidebar button toggle
+      document.addEventListener('vortex-toggle-ai', () => {
+        this.open = !this.open;
+        if (this.open) { this.unread = 0; this.$nextTick(() => this.$refs.chatInput?.focus()); }
+      });
+      const r = await get('/api/ai/config').catch(()=>({ok:false}));
       if (r.ok) {
-        this.configured = r.config.enabled && !!r.config.api_key;
+        this.configured = r.config.enabled && !!r.config.api_key && r.config.api_key !== '***';
         this.modelName  = r.config.model || 'NeonCodex';
-        if (!r.config.api_key) {
-          this.configured = false;
-        }
       }
     },
 
@@ -1969,7 +1996,8 @@ function aiAssistant() {
       this.$nextTick(() => {
         const box = this.$refs.chatBox;
         if (box) box.scrollTop = box.scrollHeight;
-        if (this.open) this.unread = 0;
+        if (this.open) { this.unread = 0; }
+        else { this.unread++; }
       });
     },
 

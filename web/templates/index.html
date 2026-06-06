@@ -73,16 +73,24 @@
     </template>
 
     <div class="sidebar-footer" style="flex-direction:column;gap:8px;padding:12px">
+      <!-- AI Assistant button -->
+      <button onclick="document.dispatchEvent(new CustomEvent('vortex-toggle-ai'))"
+              style="width:100%;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.08));border:1px solid rgba(88,101,242,.3);cursor:pointer;transition:.15s"
+              @mouseenter="$el.style.background='linear-gradient(135deg,rgba(88,101,242,.25),rgba(6,182,212,.15))'"
+              @mouseleave="$el.style.background='linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.08))'">
+        <div style="width:24px;height:24px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">✦</div>
+        <span style="font-size:12px;font-weight:600;color:var(--accent);flex:1;text-align:left">NeonCodex AI</span>
+        <span style="font-size:10px;color:var(--text-muted)">Ask AI</span>
+      </button>
+      <!-- User info + logout -->
       <div style="display:flex;align-items:center;gap:10px;width:100%">
         <div class="user-avatar" x-text="(username||'A')[0].toUpperCase()"></div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="username"></div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="username||'admin'"></div>
           <div style="font-size:10px;color:var(--text-muted)">Administrator</div>
         </div>
+        <button style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text-muted);cursor:pointer;font-size:11px;transition:.1s" @click="logout()" title="Sign Out">⎋ Out</button>
       </div>
-      <button class="btn btn-ghost" style="width:100%;justify-content:center;gap:6px;font-size:12px;padding:6px" @click="logout()">
-        <span>⎋</span> Sign Out
-      </button>
     </div>
   </nav>
 
@@ -3043,92 +3051,70 @@
   </div>
 
 
-  <!-- ── NEONCODEX AI ASSISTANT ──────────────────────────────────────────── -->
-  <div x-data="aiAssistant()" @keydown.escape.window="if(open) open=false">
 
-    <!-- Floating trigger button -->
-    <button @click="open=!open"
-            style="position:fixed;bottom:24px;right:24px;z-index:400;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#5865f2,#06b6d4);border:none;cursor:pointer;box-shadow:0 4px 20px rgba(88,101,242,.5);display:flex;align-items:center;justify-content:center;font-size:22px;transition:.2s"
-            :style="open?'transform:scale(.9)':'transform:scale(1)'"
-            title="NeonCodex AI Assistant">
-      <span x-text="open?'✕':'✦'"></span>
-    </button>
 
-    <!-- Unread badge -->
-    <div x-show="!open && unread>0"
-         style="position:fixed;bottom:64px;right:20px;z-index:401;background:var(--red);color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700"
-         x-text="unread"></div>
 
-    <!-- AI Panel -->
+  <!-- ── NEONCODEX AI PANEL (inside main layout) ─────────────────────────── -->
+  <div x-data="aiAssistant()" style="position:relative">
+
+    <!-- AI slide-in panel — appears from right edge inside the panel -->
     <div x-show="open"
-         style="position:fixed;bottom:88px;right:24px;z-index:399;width:420px;max-width:calc(100vw - 32px);height:580px;max-height:calc(100vh - 100px);background:var(--bg-card);border:1px solid var(--border);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 48px rgba(0,0,0,.6)"
+         style="position:fixed;top:56px;right:0;bottom:0;z-index:300;width:400px;max-width:calc(100vw - 220px);background:var(--bg-card);border-left:1px solid var(--border);display:flex;flex-direction:column;box-shadow:-8px 0 32px rgba(0,0,0,.4)"
          x-transition:enter="transition ease-out duration-200"
-         x-transition:enter-start="opacity-0 translate-y-4"
-         x-transition:enter-end="opacity-100 translate-y-0">
+         x-transition:enter-start="transform translate-x-full"
+         x-transition:enter-end="transform translate-x-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="transform translate-x-0"
+         x-transition:leave-end="transform translate-x-full"
+         @keydown.escape.window="open=false">
 
-      <!-- Header -->
-      <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.08))">
+      <!-- AI Panel Header -->
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:linear-gradient(135deg,rgba(88,101,242,.12),rgba(6,182,212,.06))">
         <div style="width:32px;height:32px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">✦</div>
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:14px">NeonCodex AI</div>
-          <div style="font-size:10px;color:var(--text-muted)" x-text="configured?'Powered by NeonCodex · '+modelName:'⚠ API key not set'"></div>
+          <div style="font-size:10px;color:var(--text-muted)" x-text="configured?'Model: '+modelName:'⚠ API key not set — go to Settings'"></div>
         </div>
-        <div style="display:flex;gap:6px">
-          <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:3px 7px;border-radius:4px;border:1px solid var(--border)" @click="clearChat()" title="Clear conversation">Clear</button>
-          <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px" @click="open=false">✕</button>
-        </div>
+        <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--border)" @click="clearChat()" title="Clear">Clear</button>
+        <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:20px;line-height:1;padding:2px 6px" @click="open=false" title="Close (Esc)">×</button>
       </div>
 
-      <!-- Quick action chips -->
-      <div x-show="messages.length===0" style="padding:10px 12px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border);flex-shrink:0">
+      <!-- Quick actions -->
+      <div x-show="messages.length===0" style="padding:10px 12px;display:flex;gap:5px;flex-wrap:wrap;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg-raised)">
         <template x-for="q in quickActions" :key="q.label">
-          <button style="font-size:11px;padding:4px 10px;border-radius:12px;background:var(--bg-raised);border:1px solid var(--border);cursor:pointer;color:var(--text-secondary);transition:.1s;white-space:nowrap"
+          <button style="font-size:11px;padding:3px 9px;border-radius:10px;background:var(--bg-card);border:1px solid var(--border);cursor:pointer;color:var(--text-secondary);white-space:nowrap;transition:.1s"
                   @mouseenter="$el.style.borderColor='var(--accent)';$el.style.color='var(--accent)'"
                   @mouseleave="$el.style.borderColor='var(--border)';$el.style.color='var(--text-secondary)'"
                   @click="sendQuick(q)" x-text="q.icon+' '+q.label"></button>
         </template>
       </div>
 
-      <!-- Chat messages -->
+      <!-- Messages -->
       <div x-ref="chatBox" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px">
-
-        <!-- Welcome message -->
         <template x-if="messages.length===0">
-          <div style="text-align:center;padding:20px 12px;color:var(--text-muted)">
-            <div style="font-size:32px;margin-bottom:8px">✦</div>
+          <div style="text-align:center;padding:32px 16px;color:var(--text-muted)">
+            <div style="font-size:36px;margin-bottom:10px">✦</div>
             <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">NeonCodex AI Assistant</div>
-            <div style="font-size:12px;line-height:1.6">Ask me anything about your server.<br>I can help with configs, errors, code, and more.</div>
+            <div style="font-size:12px;line-height:1.6">Ask anything about your server.<br>Configs, errors, code review, and more.</div>
           </div>
         </template>
-
         <template x-for="(msg,i) in messages" :key="i">
           <div :style="'display:flex;gap:8px;'+(msg.role==='user'?'flex-direction:row-reverse':'flex-direction:row')">
-            <!-- Avatar -->
-            <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0"
+            <div style="width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0"
                  :style="msg.role==='user'?'background:var(--accent);color:white':'background:linear-gradient(135deg,#5865f2,#06b6d4);color:white'">
               <span x-text="msg.role==='user'?'U':'✦'"></span>
             </div>
-            <!-- Bubble -->
-            <div style="max-width:82%;border-radius:12px;padding:9px 12px;font-size:13px;line-height:1.6"
-                 :style="msg.role==='user'?
-                   'background:var(--accent);color:white;border-bottom-right-radius:3px':
-                   'background:var(--bg-raised);border:1px solid var(--border);border-bottom-left-radius:3px;color:var(--text-primary)'">
-              <!-- Render markdown-ish formatting for assistant messages -->
-              <template x-if="msg.role==='assistant'">
-                <div x-html="formatMsg(msg.content)"></div>
-              </template>
-              <template x-if="msg.role==='user'">
-                <div x-text="msg.content"></div>
-              </template>
+            <div style="max-width:84%;border-radius:10px;padding:8px 11px;font-size:12px;line-height:1.6"
+                 :style="msg.role==='user'?'background:var(--accent);color:white;border-bottom-right-radius:3px':'background:var(--bg-raised);border:1px solid var(--border);border-bottom-left-radius:3px'">
+              <div x-show="msg.role==='assistant'" x-html="formatMsg(msg.content)"></div>
+              <div x-show="msg.role==='user'" x-text="msg.content"></div>
             </div>
           </div>
         </template>
-
-        <!-- Thinking indicator -->
         <div x-show="thinking" style="display:flex;gap:8px;align-items:center">
-          <div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#5865f2,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:13px;color:white">✦</div>
-          <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:12px;border-bottom-left-radius:3px;padding:10px 14px">
-            <div style="display:flex;gap:4px;align-items:center">
+          <div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#5865f2,#06b6d4);display:flex;align-items:center;justify-content:center;font-size:12px;color:white">✦</div>
+          <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+            <div style="display:flex;gap:4px">
               <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:bounce 1.2s infinite"></div>
               <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:bounce 1.2s infinite .2s"></div>
               <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);animation:bounce 1.2s infinite .4s"></div>
@@ -3137,35 +3123,33 @@
         </div>
       </div>
 
-      <!-- Context selector (inject server info) -->
-      <div style="padding:6px 12px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:6px;align-items:center">
-        <span style="font-size:11px;color:var(--text-muted)">Context:</span>
+      <!-- Context pills -->
+      <div style="padding:6px 12px;border-top:1px solid var(--border);display:flex;gap:5px;align-items:center;flex-shrink:0;background:var(--bg-raised)">
+        <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">Context:</span>
         <template x-for="ctx in contextOptions" :key="ctx.id">
-          <button style="font-size:10px;padding:3px 8px;border-radius:10px;cursor:pointer;transition:.1s"
-                  :style="activeContexts.includes(ctx.id)?'background:rgba(88,101,242,.2);border:1px solid rgba(88,101,242,.4);color:var(--accent)':'background:var(--bg-raised);border:1px solid var(--border);color:var(--text-muted)'"
+          <button style="font-size:10px;padding:2px 8px;border-radius:8px;cursor:pointer;transition:.1s;border:1px solid"
+                  :style="activeContexts.includes(ctx.id)?'background:rgba(88,101,242,.15);border-color:rgba(88,101,242,.4);color:var(--accent)':'background:none;border-color:var(--border);color:var(--text-muted)'"
                   @click="toggleContext(ctx.id)" x-text="ctx.icon+' '+ctx.label"></button>
         </template>
       </div>
 
-      <!-- Input area -->
+      <!-- Input -->
       <div style="padding:10px 12px;border-top:1px solid var(--border);flex-shrink:0">
-        <div style="display:flex;gap:8px;align-items:flex-end;background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;padding:8px 10px;transition:.15s"
-             :style="inputFocus?'border-color:var(--accent)':' '">
+        <div style="display:flex;gap:8px;align-items:flex-end;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:8px 10px"
+             :style="inputFocus?'border-color:var(--accent)':''">
           <textarea x-model="input" x-ref="chatInput"
-                    style="flex:1;background:none;border:none;outline:none;resize:none;font-size:13px;color:var(--text-primary);line-height:1.5;max-height:100px;min-height:20px"
+                    style="flex:1;background:none;border:none;outline:none;resize:none;font-size:12px;color:var(--text-primary);line-height:1.5;max-height:80px;min-height:18px"
                     placeholder="Ask anything about your server..."
+                    rows="1"
                     @keydown.enter.prevent="if(!$event.shiftKey)send();else input+='\n'"
                     @focus="inputFocus=true" @blur="inputFocus=false"
-                    rows="1"
                     @input="$el.style.height='auto';$el.style.height=$el.scrollHeight+'px'"></textarea>
-          <button style="background:linear-gradient(135deg,#5865f2,#06b6d4);border:none;border-radius:7px;width:32px;height:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white;font-size:14px;flex-shrink:0;transition:.15s"
-                  :disabled="thinking || !input.trim()"
+          <button style="background:linear-gradient(135deg,#5865f2,#06b6d4);border:none;border-radius:6px;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white;font-size:13px;flex-shrink:0"
+                  :disabled="thinking||!input.trim()"
                   :style="(thinking||!input.trim())?'opacity:.4':' '"
-                  @click="send()" title="Send (Enter)">➤</button>
+                  @click="send()">➤</button>
         </div>
-        <div style="font-size:10px;color:var(--text-dim);margin-top:5px;text-align:center">
-          Enter to send · Shift+Enter for new line · Powered by <a href="https://neoncodex.io" target="_blank" style="color:var(--accent);text-decoration:none">NeonCodex</a>
-        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px;text-align:center">Enter to send · Shift+Enter new line · <a href="https://neoncodex.io" target="_blank" style="color:var(--accent);text-decoration:none">NeonCodex</a></div>
       </div>
     </div>
   </div>
