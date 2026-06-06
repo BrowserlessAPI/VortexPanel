@@ -1387,11 +1387,24 @@ function filesPage() {
     },
 
     async init() {
-      for (const p of ['/www/wwwroot', '/var/www/html', '/var/www']) {
+      // Find first accessible webroot silently
+      for (const p of ['/www/wwwroot', '/var/www/html', '/var/www', '/root', '/tmp']) {
         const r = await get('/api/files/list?path=' + encodeURIComponent(p));
-        if (r.ok) { this.webroot = p; break; }
+        if (r.ok) { this.webroot = p; await this.loadDir(p); return; }
       }
-      await this.loadDir(this.webroot);
+      // Fallback: load root without toast error
+      await this.loadDirSilent('/');
+    },
+
+    async loadDirSilent(p) {
+      this.loading = true;
+      const r = await get('/api/files/list?path=' + encodeURIComponent(p));
+      this.loading = false;
+      if (r.ok) {
+        this.path  = r.path;
+        this.items = r.items.map(i => ({ ...i, _more: false, calcSize: null }));
+      }
+      // No toast on silent load
     },
 
     async loadDir(p) {
@@ -1399,12 +1412,16 @@ function filesPage() {
       const r = await get('/api/files/list?path=' + encodeURIComponent(p));
       this.loading = false;
       if (r.ok) {
-        this.path = r.path;
-        this.items = r.items.map(i => ({ ...i, _more: false, calcSize: null }));
-        this.selected = [];
+        this.path       = r.path;
+        this.items      = r.items.map(i => ({ ...i, _more: false, calcSize: null }));
+        this.selected   = [];
         this.remoteDest = r.path;
+        this.searchResults = [];
       } else {
-        toast(r.error || 'Cannot open directory', 'error');
+        // Only show error if user explicitly navigated, not on auto-init
+        if (p !== this.webroot) {
+          toast(r.error || 'Cannot open directory', 'error');
+        }
       }
     },
 

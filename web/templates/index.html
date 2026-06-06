@@ -2915,8 +2915,10 @@
 <script src="/static/js/app.js"></script>
 
   <!-- ── PANEL UPDATE MODAL ─────────────────────────────────────────────── -->
-  <div class="modal-overlay" x-show="updateModal.show" style="z-index:500" @click.self="updateModal.show=false">
-    <div class="modal" style="max-width:600px" x-data="updateModalData()">
+  <div class="modal-overlay" x-show="updateModal.show" style="z-index:500"
+       x-data="updateModalData()"
+       @click.self="updateModal.show=false">
+    <div class="modal" style="max-width:600px">
 
       <!-- Header -->
       <div class="modal-hd" style="border-bottom:1px solid var(--border);padding-bottom:16px">
@@ -2929,7 +2931,7 @@
             </div>
           </div>
         </div>
-        <button class="modal-close" @click="updateModal.show=false" x-show="!updating">×</button>
+        <button class="modal-close" @click="updateModal.show=false">×</button>
       </div>
 
       <!-- Checking state -->
