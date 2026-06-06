@@ -140,94 +140,6 @@ function dashboardPage() {
   };
 }
 
-// ── WEBSITES ──────────────────────────────────────────────────────────────────
-function websitesPage() {
-  return {
-    sites: [], showAdd: false, addTab: 'create',
-    sslModal: {show:false,domain:'',tab:'letsencrypt',email:'',key:'',cert:'',output:'',loading:false,info:''},
-    form: { domain:'', path:'', php:'8.3', type:'PHP', createDb:false, createFtp:false, deploy:'' },
-    confModal: { show:false, domain:'', content:'', path:'' },
-    batchDomains: '',
-    webroot: '/www/wwwroot',
-    oneClickApps: [
-      {name:'WordPress', icon:'📝', desc:'PHP CMS platform'},
-      {name:'Nextcloud', icon:'☁', desc:'Self-hosted cloud'},
-      {name:'Gitea',     icon:'🐱', desc:'Git server'},
-      {name:'Ghost',     icon:'👻', desc:'Blogging platform'},
-      {name:'Discourse', icon:'💬', desc:'Community forum'},
-      {name:'Mautic',    icon:'📈', desc:'Marketing automation'},
-    ],
-    async init() {
-      // detect webroot for path auto-fill
-      const s = await get('/api/settings').catch(()=>({}));
-      if (s.ok && s.system) {
-        // use /www/wwwroot if exists, else /var/www/html
-        this.webroot = '/www/wwwroot';
-      }
-      this.form.path = '';
-      await this.load();
-    },
-    async load() {
-      const r = await get('/api/websites'); if (r.ok) this.sites = r.sites;
-    },
-    async create() {
-      const r = await post('/api/websites', this.form);
-      if (r.ok) { toast('Site created: '+r.domain, 'success'); this.showAdd=false; await this.load(); }
-      else toast(r.error||'Failed', 'error');
-    },
-    async del(domain) {
-      if (!confirm('Delete '+domain+'?')) return;
-      const r = await del('/api/websites/'+domain);
-      if (r.ok) { toast('Deleted', 'success'); await this.load(); }
-    },
-    async issueSSL(s) {
-      toast('Issuing SSL for '+s.domain+'…', 'info');
-      const r = await post(`/api/websites/${s.domain}/ssl`, {});
-      toast(r.ok?'SSL issued!':'SSL failed: '+(r.error||''), r.ok?'success':'error');
-      await this.load();
-    },
-    async editConf(s) {
-      const r = await get(`/api/websites/${s.domain}/config`);
-      if (r.ok) { this.confModal = {show:true, domain:s.domain, content:r.content, path:r.path}; }
-      else toast('Config not found', 'error');
-    },
-    async saveConf() {
-      const r = await put(`/api/websites/${this.confModal.domain}/config`, {content:this.confModal.content});
-      if (r.ok) { toast('Config saved & Nginx reloaded', 'success'); this.confModal.show=false; }
-      else toast('Save failed', 'error');
-    },
-
-    openSSL(s) {
-      this.sslModal = {show:true, domain:s.domain, tab:'letsencrypt',
-        email:'', key:'', cert:'', output:'', loading:false, info:''};
-      this.loadSSLInfo(s.domain);
-    },
-
-    async loadSSLInfo(domain) {
-      const r = await get(`/api/websites/${domain}/ssl/info`);
-      if (r.ok) this.sslModal.info = r.info;
-    },
-
-    async issueLetsEncrypt() {
-      this.sslModal.loading=true; this.sslModal.output='Contacting Let\'s Encrypt...\n';
-      const r = await post(`/api/websites/${this.sslModal.domain}/ssl/letsencrypt`,{email:this.sslModal.email});
-      this.sslModal.loading=false;
-      this.sslModal.output = r.output||'';
-      if (r.ok) { toast('SSL issued successfully!','success'); await this.load(); }
-      else toast('SSL failed — check output','error');
-    },
-
-    async saveManualSSL() {
-      if (!this.sslModal.key || !this.sslModal.cert) { toast('Key and certificate required','error'); return; }
-      this.sslModal.loading=true;
-      const r = await post(`/api/websites/${this.sslModal.domain}/ssl/manual`,
-                           {key:this.sslModal.key, cert:this.sslModal.cert});
-      this.sslModal.loading=false;
-      if (r.ok) { toast('SSL installed!','success'); this.sslModal.show=false; await this.load(); }
-      else toast(r.error||'Failed','error');
-    }
-  };
-}
 
 // ── DATABASES ────────────────────────────────────────────────────────────────
 function databasesPage() {
@@ -342,7 +254,7 @@ function phpPage() {
       if (!this.selVer) return;
       if (this.selTab === 'extensions') {
         const r = await get('/api/php/'+this.selVer+'/extensions');
-        if (r.ok) this.extensions = r.extensions;
+        if (r.ok) this.extensions = r.extensions.map(e=>({...e,loading:false}));
       } else if (this.selTab === 'config') {
         const r = await get('/api/php/'+this.selVer+'/config');
         if (r.ok) this.config = r.config;
@@ -658,7 +570,7 @@ function monitoringPage() {
 function modulesPage() {
   return {
     modules: [], cat: '',
-    jobModal: { show:false, title:'', lines:[], done:false, installed:false, installedVer:'' },
+    jobModal: { show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:'' },
 
     async init() { await this.load(); },
     async load() {
@@ -697,12 +609,14 @@ function modulesPage() {
         if (d.line) this.jobModal.lines.push(d.line);
         if (d.done) {
           es.close(); m.loading=false;
-          m.installed=d.installed;
-          if (d.installedVer) m.installedVer=d.installedVer;
-          this.jobModal.done=true;
-          this.jobModal.installed=d.installed;
-          this.jobModal.installedVer=d.installedVer||'';
-          setTimeout(()=>this.load(), 1000);
+          m.installed = d.installed;
+          if (d.installedVer) m.installedVer = d.installedVer;
+          // success = true means the action completed OK (install->installed, uninstall->removed)
+          this.jobModal.done     = true;
+          this.jobModal.success  = d.success;   // action-specific success flag
+          this.jobModal.action   = action;
+          this.jobModal.installedVer = d.installedVer || '';
+          setTimeout(()=>this.load(), 1200);
         }
         if (d.error) { es.close(); m.loading=false; toast(d.error,'error'); }
         this.$nextTick(()=>{ const t=document.querySelector('.job-terminal'); if(t) t.scrollTop=t.scrollHeight; });
@@ -749,5 +663,283 @@ function settingsPage() {
       toast('Server rebooting in 3 seconds…', 'info');
       await post('/api/settings/reboot');
     }
+  };
+}
+
+// ── WEBSITES (full drawer version) ───────────────────────────────────────────
+function websitesPage() {
+  return {
+    sites: [], showAdd: false, addTab: 'create', webroot: '/www/wwwroot',
+    form: { domain:'', path:'', php:'8.3', type:'PHP', createDb:false, createFtp:false, path_edited:false },
+    batchDomains: '', deployApps: [], deployApp: '', deployDomain: '',
+    drawer: {
+      show:false, site:null, tab:'config',
+      confContent:'', confPath:'',
+      sslTab:'le', sslEmail:'', sslKey:'', sslCert:'', sslOutput:'', sslInfo:'',
+      phpVer:'8.3',
+      proxies:[], showAddProxy:false,
+      proxyForm:{ name:'', path:'/', target:'', sent_domain:'$host' },
+      redirectForm:{ target:'', mode:'301', keep_uri:'true' },
+      nodejsEnabled:false, nodejsForm:{ app_path:'', startup:'index.js', port:'3000' },
+      maintEnabled:false, maintMessage:'We are performing scheduled maintenance. Please check back soon.',
+      loading:false,
+    },
+    drawerTabs: [
+      {id:'config',      label:'⚙ Config'},
+      {id:'ssl',         label:'🔒 SSL'},
+      {id:'php',         label:'🐘 PHP Version'},
+      {id:'proxy',       label:'🔀 Reverse Proxy'},
+      {id:'redirect',    label:'↪ Redirect'},
+      {id:'nodejs',      label:'🟢 Node.js'},
+      {id:'maintenance', label:'🔧 Maintenance'},
+    ],
+
+    async init() {
+      const wr = await get('/api/websites/webroot').catch(()=>({ok:false}));
+      if (wr.ok) this.webroot = wr.path;
+      await this.load();
+    },
+    async load() { const r = await get('/api/websites'); if (r.ok) this.sites = r.sites; },
+
+    async create() {
+      const r = await post('/api/websites', this.form);
+      if (r.ok) { toast('Site created: '+r.domain,'success'); this.showAdd=false; await this.load(); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async del(domain) {
+      if (!confirm('Delete '+domain+'?')) return;
+      const r = await del('/api/websites/'+domain);
+      if (r.ok) { toast('Deleted','success'); await this.load(); }
+    },
+
+    async loadDeployApps() {
+      const r = await get('/api/websites/deploy-apps');
+      if (r.ok) {
+        const emojis = {wordpress:'📝',drupal:'🔵',joomla:'🔴',laravel:'🔶',opencart:'🛒'};
+        this.deployApps = r.apps.map(a=>({...a, emoji:emojis[a.id]||'📦'}));
+        if (!this.deployApp && this.deployApps.length) this.deployApp = this.deployApps[0].id;
+      }
+    },
+
+    async deployNow() {
+      if (!this.deployDomain) { toast('Enter a domain first','error'); return; }
+      if (!this.deployApp) { toast('Select an app','error'); return; }
+      toast('Deploying '+this.deployApp+'…','info');
+      const r = await post(`/api/websites/${this.deployDomain}/deploy`, {app:this.deployApp});
+      if (r.ok) { toast('Deployed successfully!','success'); this.showAdd=false; await this.load(); }
+      else toast(r.error||'Deploy failed','error');
+    },
+
+    openDrawer(s) {
+      this.drawer = {...this.drawer, show:true, site:s, tab:'config', loading:false,
+        sslEmail:'', sslKey:'', sslCert:'', sslOutput:'', sslInfo:'',
+        phpVer: s.php || '8.3',
+        proxies:[], showAddProxy:false,
+        proxyForm:{ name:'', path:'/', target:'', sent_domain:'$host' },
+        redirectForm:{ target:'', mode:'301', keep_uri:'true' },
+        nodejsEnabled:false, nodejsForm:{ app_path:s.path||'', startup:'index.js', port:'3000' },
+        maintEnabled:false, maintMessage:'We are performing scheduled maintenance. Please check back soon.',
+      };
+      this.loadDrawerTab();
+    },
+
+    async loadDrawerTab() {
+      const d = this.drawer; const domain = d.site?.domain;
+      if (!domain) return;
+      if (d.tab==='config') {
+        const r = await get(`/api/websites/${domain}/config`);
+        if (r.ok) { d.confContent=r.content; d.confPath=r.path; }
+      } else if (d.tab==='ssl') {
+        const r = await get(`/api/websites/${domain}/ssl/info`);
+        if (r.ok) d.sslInfo = r.info;
+      } else if (d.tab==='proxy') {
+        const r = await get(`/api/websites/${domain}/proxy`);
+        if (r.ok) d.proxies = r.proxies;
+      } else if (d.tab==='nodejs') {
+        const r = await get(`/api/websites/${domain}/nodejs`);
+        if (r.ok) { d.nodejsEnabled=r.enabled; if(r.port) d.nodejsForm.port=r.port; }
+      } else if (d.tab==='maintenance') {
+        const r = await get(`/api/websites/${domain}/maintenance`);
+        if (r.ok) d.maintEnabled = r.enabled;
+      }
+    },
+
+    async saveConf() {
+      const domain = this.drawer.site?.domain;
+      const r = await put(`/api/websites/${domain}/config`, {content:this.drawer.confContent});
+      toast(r.ok?'Saved & Nginx reloaded':'Save failed', r.ok?'success':'error');
+    },
+
+    async issueLetsEncrypt() {
+      this.drawer.loading=true; this.drawer.sslOutput='Contacting Let\'s Encrypt...\n';
+      const domain = this.drawer.site?.domain;
+      const r = await post(`/api/websites/${domain}/ssl/letsencrypt`, {email:this.drawer.sslEmail});
+      this.drawer.loading=false; this.drawer.sslOutput = r.output||'';
+      toast(r.ok?'SSL issued!':'Failed — check output', r.ok?'success':'error');
+      if(r.ok) await this.load();
+    },
+
+    async saveManualSSL() {
+      if (!this.drawer.sslKey || !this.drawer.sslCert) { toast('Key and certificate required','error'); return; }
+      this.drawer.loading=true;
+      const domain = this.drawer.site?.domain;
+      const r = await post(`/api/websites/${domain}/ssl/manual`, {key:this.drawer.sslKey, cert:this.drawer.sslCert});
+      this.drawer.loading=false;
+      toast(r.ok?'SSL installed!':r.error||'Failed', r.ok?'success':'error');
+      if(r.ok) { this.drawer.show=false; await this.load(); }
+    },
+
+    async savePhpVer() {
+      const domain = this.drawer.site?.domain;
+      const r = await put(`/api/websites/${domain}/php`, {version:this.drawer.phpVer});
+      toast(r.ok?`PHP ${this.drawer.phpVer} applied to ${domain}`:'Failed', r.ok?'success':'error');
+      if(r.ok) await this.load();
+    },
+
+    async addProxy() {
+      const domain = this.drawer.site?.domain;
+      const r = await post(`/api/websites/${domain}/proxy`, this.drawer.proxyForm);
+      if (r.ok) { toast('Proxy added','success'); this.drawer.showAddProxy=false; await this.loadDrawerTab(); }
+      else toast(r.error||'Failed','error');
+    },
+
+    async delProxy(name) {
+      const domain = this.drawer.site?.domain;
+      const r = await del(`/api/websites/${domain}/proxy/${name}`);
+      if (r.ok) { toast('Removed','success'); await this.loadDrawerTab(); }
+    },
+
+    async saveRedirect() {
+      const domain = this.drawer.site?.domain;
+      const form = {...this.drawer.redirectForm, keep_uri: this.drawer.redirectForm.keep_uri==='true'};
+      const r = await post(`/api/websites/${domain}/redirect`, form);
+      toast(r.ok?'Redirect set':'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    async delRedirect() {
+      const domain = this.drawer.site?.domain;
+      const r = await del(`/api/websites/${domain}/redirect`);
+      toast(r.ok?'Redirect removed':'Failed', r.ok?'success':'error');
+    },
+
+    async enableNodejs() {
+      const domain = this.drawer.site?.domain;
+      const r = await post(`/api/websites/${domain}/nodejs`, {...this.drawer.nodejsForm, enable:true});
+      toast(r.ok?`Node.js enabled on port ${r.port}`:'Failed: '+(r.error||''), r.ok?'success':'error');
+      if(r.ok) { this.drawer.nodejsEnabled=true; await this.load(); }
+    },
+
+    async disableNodejs() {
+      const domain = this.drawer.site?.domain;
+      const r = await post(`/api/websites/${domain}/nodejs`, {enable:false});
+      if(r.ok) { toast('Node.js disabled','success'); this.drawer.nodejsEnabled=false; await this.load(); }
+    },
+
+    async toggleMaintenance(enable) {
+      const domain = this.drawer.site?.domain;
+      const r = await post(`/api/websites/${domain}/maintenance`, {enable, message:this.drawer.maintMessage});
+      toast(r.ok?(enable?'Maintenance mode ON':'Site is now LIVE'):'Failed', r.ok?'success':'error');
+      if(r.ok) this.drawer.maintEnabled = enable;
+    },
+  };
+}
+
+// ── BANDWIDTH ─────────────────────────────────────────────────────────────────
+function bandwidthPage() {
+  return {
+    summary:{interface:'',total_rx:0,total_tx:0,daily:[],monthly:[]},
+    rt:{rx_per_sec:0,tx_per_sec:0},
+    domains:[], hasVnstat:false, fmtBytes,
+
+    async init() {
+      await this.loadSummary();
+      await this.loadDomains();
+      await this.loadRealtime();
+      setInterval(()=>this.loadRealtime(), 3000);
+    },
+
+    async loadSummary() {
+      const r = await get('/api/bandwidth/summary');
+      if (r.ok) { this.summary=r; this.hasVnstat = r.source==='vnstat'; }
+    },
+
+    async loadRealtime() {
+      const r = await get('/api/bandwidth/realtime');
+      if (r.ok) this.rt = r;
+    },
+
+    async loadDomains() {
+      const r = await get('/api/bandwidth/domains');
+      if (r.ok) this.domains = r.domains;
+    },
+
+    async installVnstat() {
+      toast('Installing vnstat…','info');
+      const r = await post('/api/bandwidth/install-vnstat');
+      toast(r.ok?'vnstat installed!':'Install failed','success');
+      if(r.ok) await this.loadSummary();
+    },
+  };
+}
+
+// ── SECURITY ──────────────────────────────────────────────────────────────────
+function securityPage() {
+  return {
+    tab: 'ssh',
+    score: 0, checks: [],
+    ssh: {port:'22',password_auth:'yes',root_login:'yes',pubkey_auth:'yes',max_auth_tries:'6'},
+    f2bJails: [],
+    attempts: [],
+    portsOutput: '',
+
+    async init() {
+      await Promise.all([this.loadScore(), this.loadSSH()]);
+    },
+
+    async loadScore() {
+      const r = await get('/api/security/score');
+      if (r.ok) { this.score=r.score; this.checks=r.checks; }
+    },
+
+    async loadSSH() {
+      const r = await get('/api/security/ssh');
+      if (r.ok) this.ssh = r.config;
+    },
+
+    async saveSSH() {
+      const r = await put('/api/security/ssh', this.ssh);
+      toast(r.ok?'SSH config saved & reloaded':'Failed', r.ok?'success':'error');
+      if(r.ok) await this.loadScore();
+    },
+
+    async loadFail2ban() {
+      const r = await get('/api/security/fail2ban');
+      if (r.ok) this.f2bJails = r.jails.map(j=>({...j,banInput:''}));
+      else toast(r.error||'Fail2ban not running','error');
+    },
+
+    async unbanIP(ip, jail) {
+      const r = await post('/api/security/fail2ban/unban', {ip, jail});
+      toast(r.ok?`Unbanned ${ip}`:'Failed', r.ok?'success':'error');
+      if(r.ok) await this.loadFail2ban();
+    },
+
+    async banIP(ip, jail) {
+      if(!ip) return;
+      const r = await post('/api/security/fail2ban/ban', {ip, jail});
+      toast(r.ok?`Banned ${ip}`:'Failed', r.ok?'success':'error');
+      if(r.ok) await this.loadFail2ban();
+    },
+
+    async loadAttempts() {
+      const r = await get('/api/security/login-attempts');
+      if (r.ok) this.attempts = r.attempts;
+    },
+
+    async loadPorts() {
+      const r = await get('/api/security/ports');
+      if (r.ok) this.portsOutput = r.output;
+    },
   };
 }

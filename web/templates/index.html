@@ -166,15 +166,14 @@
             <tbody>
               <template x-for="s in sites" :key="s.domain">
                 <tr>
-                  <td x-text="s.domain"></td>
-                  <td style="font-size:11px;color:var(--text-muted)" x-text="s.path"></td>
+                  <td style="font-weight:600" x-text="s.domain"></td>
+                  <td style="font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="s.path"></td>
                   <td><span class="badge badge-blue" x-text="s.php"></span></td>
                   <td><span :class="'badge badge-'+(s.ssl?'green':'gray')" x-text="s.ssl?'✓ SSL':'No SSL'"></span></td>
                   <td><span :class="'badge badge-'+(s.enabled?'green':'gray')" x-text="s.enabled?'Active':'Disabled'"></span></td>
                   <td>
-                    <div style="display:flex;gap:6px">
-                      <button class="btn btn-ghost btn-xs" @click="editConf(s)">Config</button>
-                      <button class="btn btn-success btn-xs" @click="openSSL(s)">SSL</button>
+                    <div style="display:flex;gap:5px">
+                      <button class="btn btn-ghost btn-xs" @click="openDrawer(s)">⚙ Manage</button>
                       <button class="btn btn-danger btn-xs" @click="del(s.domain)">✕</button>
                     </div>
                   </td>
@@ -183,21 +182,22 @@
             </tbody>
           </table>
         </div>
+
         <!-- Add Site Modal -->
         <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
           <div class="modal">
             <div class="modal-hd"><div class="modal-title">Add Site</div><button class="modal-close" @click="showAdd=false">×</button></div>
             <div class="tabs">
               <div class="tab" :class="{active:addTab==='create'}" @click="addTab='create'">Create Site</div>
-              <div class="tab" :class="{active:addTab==='deploy'}" @click="addTab='deploy'">One-click Deploy</div>
+              <div class="tab" :class="{active:addTab==='deploy'}" @click="addTab='deploy';loadDeployApps()">One-click Deploy</div>
               <div class="tab" :class="{active:addTab==='batch'}" @click="addTab='batch'">Batch Create</div>
             </div>
             <template x-if="addTab==='create'">
               <div>
                 <div class="form-group">
                   <label class="form-label">Domain Name</label>
-                  <input class="form-input" x-model="form.domain" placeholder="example.com — one domain"
-                    @input="if(form.domain && !form.path_edited) form.path = (webroot||'/www/wwwroot') + '/' + form.domain.split(':')[0].replace(/^\*\./, '')">
+                  <input class="form-input" x-model="form.domain" placeholder="example.com"
+                    @input="if(form.domain&&!form.path_edited) form.path=(webroot||'/www/wwwroot')+'/'+form.domain.split(':')[0].replace(/^\*\./,'')">
                   <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Wildcard: *.example.com · Custom port: domain.com:8080</div>
                 </div>
                 <div class="form-group">
@@ -209,6 +209,7 @@
                     <label class="form-label">PHP Version</label>
                     <select class="form-input" x-model="form.php">
                       <option value="Static">Static (No PHP)</option>
+                      <option value="8.4">PHP 8.4</option>
                       <option value="8.3">PHP 8.3</option>
                       <option value="8.2">PHP 8.2</option>
                       <option value="8.1">PHP 8.1</option>
@@ -218,29 +219,41 @@
                   <div class="form-group">
                     <label class="form-label">Site Type</label>
                     <select class="form-input" x-model="form.type">
-                      <option>PHP</option><option>HTML/Static</option><option>Node.js</option><option>Python</option><option>Proxy</option>
+                      <option>PHP</option><option>HTML/Static</option><option>Node.js</option><option>Proxy</option>
                     </select>
                   </div>
                 </div>
                 <div class="form-row form-row-2">
-                  <label class="form-check"><input type="checkbox" x-model="form.createDb"><span>Create Database (MySQL/PostgreSQL)</span></label>
-                  <label class="form-check"><input type="checkbox" x-model="form.createFtp"><span>Create FTP (FTP/SFTP access)</span></label>
+                  <label class="form-check"><input type="checkbox" x-model="form.createDb"><span>Create Database</span></label>
+                  <label class="form-check"><input type="checkbox" x-model="form.createFtp"><span>Create FTP</span></label>
                 </div>
               </div>
             </template>
+
+            <!-- One-Click Deploy -->
             <template x-if="addTab==='deploy'">
               <div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-                  <template x-for="app in oneClickApps" :key="app.name">
-                    <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;cursor:pointer;transition:.12s" @click="form.deploy=app.name" :style="form.deploy===app.name?'border-color:var(--accent);background:var(--bg-hover)':''">
-                      <div style="font-size:22px;margin-bottom:6px" x-text="app.icon"></div>
-                      <div style="font-size:13px;font-weight:600" x-text="app.name"></div>
-                      <div style="font-size:11px;color:var(--text-muted)" x-text="app.desc"></div>
+                <div class="form-group">
+                  <label class="form-label">Domain</label>
+                  <input class="form-input" x-model="deployDomain" placeholder="example.com">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+                  <template x-for="app in deployApps" :key="app.id">
+                    <div style="border:2px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:.12s;display:flex;gap:12px;align-items:center"
+                         :style="deployApp===app.id?'border-color:var(--accent);background:var(--bg-hover)':''"
+                         @click="deployApp=app.id">
+                      <div style="width:40px;height:40px;background:var(--bg-raised);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:20px" x-text="app.emoji"></div>
+                      <div>
+                        <div style="font-weight:700;font-size:13px" x-text="app.name"></div>
+                        <div style="font-size:10px;color:var(--accent);font-family:var(--font-mono)" x-text="'v'+app.version"></div>
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:2px" x-text="app.desc"></div>
+                      </div>
                     </div>
                   </template>
                 </div>
               </div>
             </template>
+
             <template x-if="addTab==='batch'">
               <div>
                 <div class="form-group">
@@ -249,86 +262,243 @@
                 </div>
               </div>
             </template>
+
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="showAdd=false">Cancel</button>
-              <button class="btn btn-primary" @click="create()">Confirm</button>
-            </div>
-          </div>
-        </div>
-        <!-- Config editor modal -->
-        <div class="modal-overlay" x-show="confModal.show" @click.self="confModal.show=false">
-          <div class="modal" style="max-width:700px">
-            <div class="modal-hd"><div class="modal-title" x-text="'Config: '+confModal.domain"></div><button class="modal-close" @click="confModal.show=false">×</button></div>
-            <textarea class="form-input" style="min-height:300px;font-family:var(--font-mono);font-size:12px" x-model="confModal.content"></textarea>
-            <div class="modal-ft">
-              <button class="btn btn-ghost" @click="confModal.show=false">Cancel</button>
-              <button class="btn btn-primary" @click="saveConf()">Save & Reload Nginx</button>
+              <button class="btn btn-primary" @click="addTab==='deploy'?deployNow():create()">Confirm</button>
             </div>
           </div>
         </div>
 
-        <!-- SSL Modal — aaPanel style -->
-        <div class="modal-overlay" x-show="sslModal.show" @click.self="sslModal.show=false">
-          <div class="modal" style="max-width:700px">
-            <div class="modal-hd">
-              <div>
-                <div class="modal-title">SSL Certificate — <span x-text="sslModal.domain"></span></div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:3px" x-show="sslModal.info" x-text="sslModal.info"></div>
+        <!-- SITE MANAGEMENT DRAWER (right panel) -->
+        <div x-show="drawer.show" style="position:fixed;inset:0;z-index:150;display:flex">
+          <!-- Backdrop -->
+          <div style="flex:1;background:rgba(0,0,0,0.5);backdrop-filter:blur(2px)" @click="drawer.show=false"></div>
+          <!-- Drawer panel -->
+          <div style="width:680px;background:var(--bg-card);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden">
+            <!-- Drawer header -->
+            <div style="padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0">
+              <div style="flex:1">
+                <div style="font-weight:700;font-size:16px" x-text="drawer.site?.domain"></div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px" x-text="drawer.site?.path"></div>
               </div>
-              <button class="modal-close" @click="sslModal.show=false">×</button>
+              <span :class="'badge badge-'+(drawer.site?.enabled?'green':'gray')" x-text="drawer.site?.enabled?'Active':'Disabled'"></span>
+              <button class="modal-close" @click="drawer.show=false" style="width:32px;height:32px;font-size:20px">×</button>
             </div>
-            <!-- Tabs -->
-            <div class="tabs">
-              <div class="tab" :class="{active:sslModal.tab==='letsencrypt'}" @click="sslModal.tab='letsencrypt'">Let's Encrypt (Free)</div>
-              <div class="tab" :class="{active:sslModal.tab==='manual'}" @click="sslModal.tab='manual'">Business / Third-party</div>
+            <!-- Drawer tabs -->
+            <div style="display:flex;border-bottom:1px solid var(--border);background:var(--bg-raised);overflow-x:auto;flex-shrink:0">
+              <template x-for="t in drawerTabs" :key="t.id">
+                <div style="padding:10px 16px;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;transition:.12s"
+                     :style="drawer.tab===t.id?'border-bottom-color:var(--accent);color:var(--accent);background:var(--bg-card)':{color:'var(--text-muted)'}"
+                     @click="drawer.tab=t.id;loadDrawerTab()"
+                     x-text="t.label"></div>
+              </template>
             </div>
+            <!-- Drawer content -->
+            <div style="flex:1;overflow-y:auto;padding:20px">
 
-            <!-- Let's Encrypt tab -->
-            <div x-show="sslModal.tab==='letsencrypt'">
-              <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:14px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
-                <div style="font-weight:600;color:var(--green);margin-bottom:6px">🔒 Let's Encrypt Free SSL</div>
-                <div>• Free certificate issued automatically via Certbot</div>
-                <div>• Valid for 90 days, auto-renews</div>
-                <div>• Domain must point to this server's IP</div>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Email Address (for renewal notifications)</label>
-                <input class="form-input" x-model="sslModal.email" :placeholder="'admin@'+sslModal.domain">
-              </div>
-              <div x-show="sslModal.output" class="terminal-out" style="min-height:80px;max-height:200px;margin-bottom:14px" x-text="sslModal.output"></div>
-              <button class="btn btn-success" style="width:100%;justify-content:center" @click="issueLetsEncrypt()" :disabled="sslModal.loading">
-                <span x-show="sslModal.loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
-                <span x-text="sslModal.loading?'Issuing SSL Certificate…':'Issue Let\'s Encrypt Certificate'"></span>
-              </button>
-            </div>
-
-            <!-- Manual/Business tab — exactly like aaPanel -->
-            <div x-show="sslModal.tab==='manual'">
-              <div style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
-                <div>• Paste your KEY and CRT/PEM content below, then click Save</div>
-                <div>• PEM format = domain certificate (.crt) + intermediate/root bundle</div>
-                <div>• If browser shows incomplete chain, ensure you included the full chain</div>
-              </div>
-              <div class="form-row form-row-2" style="align-items:flex-start">
-                <div class="form-group">
-                  <label class="form-label">Private Key (KEY)</label>
-                  <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:11px" x-model="sslModal.key" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
+              <!-- Config tab -->
+              <div x-show="drawer.tab==='config'">
+                <div class="form-group"><label class="form-label">Nginx Configuration</label>
+                  <textarea class="form-input" style="min-height:360px;font-family:var(--font-mono);font-size:12px" x-model="drawer.confContent"></textarea>
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Certificate (CRT/PEM)</label>
-                  <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:11px" x-model="sslModal.cert" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+                <button class="btn btn-primary" @click="saveConf()">Save & Reload Nginx</button>
+              </div>
+
+              <!-- SSL tab -->
+              <div x-show="drawer.tab==='ssl'">
+                <div x-show="drawer.sslInfo" class="card-sm" style="margin-bottom:16px;background:rgba(16,185,129,.05);border-color:rgba(16,185,129,.2)">
+                  <div style="font-size:12px;color:var(--text-secondary)" x-text="drawer.sslInfo"></div>
+                </div>
+                <div class="tabs">
+                  <div class="tab" :class="{active:drawer.sslTab==='le'}" @click="drawer.sslTab='le'">Let's Encrypt (Free)</div>
+                  <div class="tab" :class="{active:drawer.sslTab==='manual'}" @click="drawer.sslTab='manual'">Business / Third-party</div>
+                </div>
+                <div x-show="drawer.sslTab==='le'">
+                  <div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;color:var(--text-secondary)">
+                    🔒 Free 90-day certificate via Let's Encrypt. Domain must point to this server.
+                  </div>
+                  <div class="form-group"><label class="form-label">Email for renewal alerts</label>
+                    <input class="form-input" x-model="drawer.sslEmail" :placeholder="'admin@'+drawer.site?.domain">
+                  </div>
+                  <div x-show="drawer.sslOutput" class="terminal-out" style="max-height:160px;margin-bottom:12px" x-text="drawer.sslOutput"></div>
+                  <button class="btn btn-success" style="width:100%;justify-content:center" @click="issueLetsEncrypt()" :disabled="drawer.loading">
+                    <span x-show="drawer.loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+                    <span x-text="drawer.loading?'Issuing…':'Issue Free SSL Certificate'"></span>
+                  </button>
+                </div>
+                <div x-show="drawer.sslTab==='manual'">
+                  <div class="form-row form-row-2">
+                    <div class="form-group"><label class="form-label">Private Key (KEY)</label>
+                      <textarea class="form-input" style="min-height:180px;font-family:var(--font-mono);font-size:11px" x-model="drawer.sslKey" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                    </div>
+                    <div class="form-group"><label class="form-label">Certificate (CRT/PEM)</label>
+                      <textarea class="form-input" style="min-height:180px;font-family:var(--font-mono);font-size:11px" x-model="drawer.sslCert" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                    </div>
+                  </div>
+                  <button class="btn btn-primary" @click="saveManualSSL()" :disabled="drawer.loading">
+                    <span x-show="drawer.loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+                    Save & Enable SSL
+                  </button>
                 </div>
               </div>
-              <div class="modal-ft" style="margin-top:0">
-                <button class="btn btn-ghost" @click="sslModal.show=false">Cancel</button>
-                <button class="btn btn-primary" @click="saveManualSSL()" :disabled="sslModal.loading">
-                  <span x-show="sslModal.loading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
-                  <span x-text="sslModal.loading?'Saving…':'Save & Enable SSL'"></span>
-                </button>
+
+              <!-- PHP Version tab -->
+              <div x-show="drawer.tab==='php'">
+                <div class="form-group"><label class="form-label">Select PHP Version for this domain</label>
+                  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px">
+                    <template x-for="v in ['8.4','8.3','8.2','8.1','7.4','Static']" :key="v">
+                      <div style="padding:10px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid transparent;font-weight:600;font-size:13px;transition:.12s"
+                           :style="drawer.phpVer===v?'border-color:var(--accent);background:var(--bg-hover);color:var(--accent)':{borderColor:'var(--border)',background:'var(--bg-raised)',color:'var(--text-secondary)'}"
+                           @click="drawer.phpVer=v" x-text="v==='Static'?'Static':'PHP '+v"></div>
+                    </template>
+                  </div>
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">PHP version must be installed via Modules first.</div>
+                <button class="btn btn-primary" @click="savePhpVer()">Apply PHP Version</button>
               </div>
+
+              <!-- Reverse Proxy tab -->
+              <div x-show="drawer.tab==='proxy'">
+                <div class="section-hd" style="margin-bottom:14px">
+                  <div class="section-title">Reverse Proxies</div>
+                  <button class="btn btn-primary btn-sm" @click="drawer.showAddProxy=true">+ Add Proxy</button>
+                </div>
+                <template x-if="drawer.proxies && drawer.proxies.length===0">
+                  <div class="empty-state"><div class="empty-icon">🔀</div><div class="empty-text">No reverse proxies configured</div></div>
+                </template>
+                <template x-for="p in (drawer.proxies||[])" :key="p.name">
+                  <div class="card-sm" style="margin-bottom:8px;display:flex;align-items:center;gap:10px">
+                    <div style="flex:1">
+                      <div style="font-weight:600;font-size:13px" x-text="p.name"></div>
+                      <div style="font-size:11px;color:var(--text-muted)"><span x-text="p.path"></span> → <span x-text="p.target"></span></div>
+                    </div>
+                    <button class="btn btn-danger btn-xs" @click="delProxy(p.name)">✕</button>
+                  </div>
+                </template>
+                <div x-show="drawer.showAddProxy" class="card" style="margin-top:14px">
+                  <div style="font-weight:600;margin-bottom:12px">Add Reverse Proxy</div>
+                  <div class="form-group"><label class="form-label">Proxy Name</label><input class="form-input" x-model="drawer.proxyForm.name" placeholder="my_api"></div>
+                  <div class="form-row form-row-2">
+                    <div class="form-group"><label class="form-label">Proxy Directory</label><input class="form-input" x-model="drawer.proxyForm.path" placeholder="/api"></div>
+                    <div class="form-group"><label class="form-label">Target URL</label><input class="form-input" x-model="drawer.proxyForm.target" placeholder="http://127.0.0.1:3000"></div>
+                  </div>
+                  <div class="form-group"><label class="form-label">Sent Domain Header</label><input class="form-input" x-model="drawer.proxyForm.sent_domain" placeholder="$host"></div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Proxy dir: when accessing this path, traffic is forwarded to Target URL</div>
+                  <div style="display:flex;gap:8px">
+                    <button class="btn btn-ghost" @click="drawer.showAddProxy=false">Cancel</button>
+                    <button class="btn btn-primary" @click="addProxy()">Confirm</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Redirect tab -->
+              <div x-show="drawer.tab==='redirect'">
+                <div class="card" style="margin-bottom:16px">
+                  <div style="font-weight:600;margin-bottom:14px">URL Redirect</div>
+                  <div class="form-row form-row-2">
+                    <div class="form-group"><label class="form-label">Mode</label>
+                      <select class="form-input" x-model="drawer.redirectForm.mode">
+                        <option value="301">301 — Permanent</option>
+                        <option value="302">302 — Temporary</option>
+                      </select>
+                    </div>
+                    <div class="form-group"><label class="form-label">Keep URI Parameters</label>
+                      <select class="form-input" x-model="drawer.redirectForm.keep_uri">
+                        <option value="true">Yes — http://b.com/page → http://a.com/page</option>
+                        <option value="false">No — http://b.com/page → http://a.com</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="form-group"><label class="form-label">Target URL</label>
+                    <input class="form-input" x-model="drawer.redirectForm.target" placeholder="https://newdomain.com">
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">
+                    All requests to <strong x-text="drawer.site?.domain"></strong> will be redirected to the target URL.
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <button class="btn btn-primary" @click="saveRedirect()">Enable Redirect</button>
+                    <button class="btn btn-danger" @click="delRedirect()">Remove Redirect</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Node.js tab -->
+              <div x-show="drawer.tab==='nodejs'">
+                <div class="card" style="margin-bottom:14px">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                    <span style="font-size:24px">🟢</span>
+                    <div>
+                      <div style="font-weight:600">Node.js Hosting</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Nginx proxies domain traffic to your Node.js app via PM2</div>
+                    </div>
+                    <div style="flex:1"></div>
+                    <span :class="'badge badge-'+(drawer.nodejsEnabled?'green':'gray')" x-text="drawer.nodejsEnabled?'Running':'Not Active'"></span>
+                  </div>
+                  <div class="form-row form-row-2">
+                    <div class="form-group"><label class="form-label">App Directory</label>
+                      <input class="form-input" x-model="drawer.nodejsForm.app_path" :placeholder="drawer.site?.path">
+                    </div>
+                    <div class="form-group"><label class="form-label">Startup File</label>
+                      <input class="form-input" x-model="drawer.nodejsForm.startup" placeholder="index.js"></div>
+                  </div>
+                  <div class="form-group"><label class="form-label">App Port (Node listens on this port)</label>
+                    <input class="form-input" x-model="drawer.nodejsForm.port" placeholder="3000" style="width:160px">
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">
+                    Nginx will forward all requests for <strong x-text="drawer.site?.domain"></strong> to <code>http://127.0.0.1:<span x-text="drawer.nodejsForm.port||'3000'"></span></code> via PM2.
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <button class="btn btn-primary" @click="enableNodejs()">
+                      <span x-text="drawer.nodejsEnabled?'Update Config':'Enable Node.js'"></span>
+                    </button>
+                    <button class="btn btn-danger" x-show="drawer.nodejsEnabled" @click="disableNodejs()">Disable</button>
+                  </div>
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);padding:10px;background:var(--bg-raised);border-radius:6px">
+                  ⚡ PM2 will manage your Node.js process. Make sure Node.js is installed via Modules first.
+                  After enabling, your app must be running on the specified port.
+                </div>
+              </div>
+
+              <!-- Maintenance tab -->
+              <div x-show="drawer.tab==='maintenance'">
+                <div class="card" style="margin-bottom:16px">
+                  <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
+                    <div style="font-size:32px">🔧</div>
+                    <div>
+                      <div style="font-weight:600;font-size:15px">Maintenance Mode</div>
+                      <div style="font-size:11px;color:var(--text-muted)">Show a maintenance page to all visitors while you work</div>
+                    </div>
+                    <div style="flex:1"></div>
+                    <span :class="'badge badge-'+(drawer.maintEnabled?'yellow':'gray')" x-text="drawer.maintEnabled?'ON':'OFF'"></span>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Maintenance Message</label>
+                    <textarea class="form-input" x-model="drawer.maintMessage" style="min-height:80px" placeholder="We are currently performing scheduled maintenance. Please check back soon."></textarea>
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <button class="btn btn-warn" @click="toggleMaintenance(true)">
+                      🔧 Enable Maintenance Mode
+                    </button>
+                    <button class="btn btn-success" x-show="drawer.maintEnabled" @click="toggleMaintenance(false)">
+                      ✓ Disable — Go Live
+                    </button>
+                  </div>
+                </div>
+                <!-- Preview -->
+                <div class="card" style="background:#0d0f14;text-align:center;padding:32px">
+                  <div style="width:48px;height:48px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 14px">⚡</div>
+                  <div style="font-weight:700;font-size:18px;margin-bottom:8px">Under Maintenance</div>
+                  <div style="color:var(--text-muted);font-size:13px" x-text="drawer.maintMessage||'We are performing scheduled maintenance...'"></div>
+                  <div style="display:inline-block;background:rgba(245,158,11,.12);color:#f59e0b;border:1px solid rgba(245,158,11,.2);padding:5px 16px;border-radius:20px;font-size:12px;margin-top:14px">🔧 We'll be back shortly</div>
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
+
       </div>
 
       <!-- DATABASES -->
@@ -1196,12 +1366,19 @@
               </template>
             </div>
             <div class="modal-ft">
-              <div x-show="jobModal.done && jobModal.installed" style="color:var(--green);font-size:13px;font-weight:600">✓ Installation successful</div>
-              <div x-show="jobModal.done && !jobModal.installed" style="color:var(--yellow);font-size:13px">⚠ Check output above for errors</div>
+              <!-- Install success -->
+              <div x-show="jobModal.done && jobModal.success && jobModal.action==='install'" style="display:flex;align-items:center;gap:8px;color:var(--green);font-size:13px;font-weight:600">
+                <span>✓ Installed successfully</span>
+                <span x-show="jobModal.installedVer" style="font-family:var(--font-mono);background:rgba(16,185,129,.12);padding:2px 8px;border-radius:4px;font-size:11px" x-text="'v'+jobModal.installedVer"></span>
+              </div>
+              <!-- Uninstall success -->
+              <div x-show="jobModal.done && jobModal.success && jobModal.action==='uninstall'" style="color:var(--green);font-size:13px;font-weight:600">✓ Removed successfully</div>
+              <!-- Any failure -->
+              <div x-show="jobModal.done && !jobModal.success" style="color:var(--yellow);font-size:13px">⚠ Check output above for errors</div>
               <div style="flex:1"></div>
               <button class="btn btn-primary" @click="jobModal.show=false" :disabled="!jobModal.done">
                 <span x-show="!jobModal.done" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
-                <span x-text="jobModal.done?'Close':'Installing…'"></span>
+                <span x-text="jobModal.done?'Close':(jobModal.action==='uninstall'?'Removing…':'Installing…')"></span>
               </button>
             </div>
           </div>
@@ -1259,6 +1436,193 @@
                 <button class="btn btn-danger" @click="if(confirm('Reboot server?'))sysReboot()">↻ Reboot Server</button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+
+      <!-- BANDWIDTH -->
+      <div x-show="page==='bandwidth'" x-data="bandwidthPage()">
+        <div class="page-header">
+          <div><div class="page-title">Bandwidth</div><div class="page-sub">Server & domain traffic monitoring</div></div>
+          <button class="btn btn-ghost" @click="installVnstat()" x-show="!hasVnstat">Install vnstat</button>
+        </div>
+        <!-- Real-time -->
+        <div class="grid-4" style="margin-bottom:16px">
+          <div class="stat-card">
+            <div class="stat-label">Interface</div>
+            <div class="stat-value" style="font-size:16px;padding-top:4px" x-text="summary.interface||'—'"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">↓ Download (live)</div>
+            <div class="stat-value" style="color:var(--accent-3)" x-text="fmtBytes(rt.rx_per_sec)+'/s'">0 B/s</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">↑ Upload (live)</div>
+            <div class="stat-value" style="color:var(--accent)" x-text="fmtBytes(rt.tx_per_sec)+'/s'">0 B/s</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Traffic</div>
+            <div class="stat-value" style="font-size:16px" x-text="fmtBytes((summary.total_rx||0)+(summary.total_tx||0))"></div>
+            <div class="stat-sub">↓ <span x-text="fmtBytes(summary.total_rx||0)"></span> ↑ <span x-text="fmtBytes(summary.total_tx||0)"></span></div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-bottom:16px">
+          <!-- Daily usage -->
+          <div class="card">
+            <div class="card-hd"><div class="card-title">Daily Usage (last 7 days)</div></div>
+            <template x-if="summary.daily && summary.daily.length===0">
+              <div class="empty-state"><div class="empty-icon">📊</div><div class="empty-text" x-text="hasVnstat?'vnstat is collecting data — check back in a few minutes':'Install vnstat for historical data'"></div></div>
+            </template>
+            <table class="data-table" x-show="summary.daily && summary.daily.length>0">
+              <thead><tr><th>Date</th><th>↓ RX</th><th>↑ TX</th><th>Total</th></tr></thead>
+              <tbody>
+                <template x-for="d in (summary.daily||[])" :key="d.date">
+                  <tr>
+                    <td x-text="d.date"></td>
+                    <td style="color:var(--accent-3)" x-text="fmtBytes(d.rx)"></td>
+                    <td style="color:var(--accent)" x-text="fmtBytes(d.tx)"></td>
+                    <td x-text="fmtBytes(d.rx+d.tx)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <!-- Per-domain bandwidth -->
+          <div class="card">
+            <div class="card-hd"><div class="card-title">Per-Domain Traffic (Nginx logs)</div><button class="btn btn-ghost btn-sm" @click="loadDomains()">↻</button></div>
+            <template x-if="domains.length===0">
+              <div class="empty-state"><div class="empty-icon">🌐</div><div class="empty-text">No Nginx access logs found</div></div>
+            </template>
+            <table class="data-table" x-show="domains.length>0">
+              <thead><tr><th>Domain</th><th>Requests</th><th>Data Sent</th></tr></thead>
+              <tbody>
+                <template x-for="d in domains" :key="d.domain">
+                  <tr>
+                    <td x-text="d.domain"></td>
+                    <td x-text="d.requests.toLocaleString()"></td>
+                    <td x-text="fmtBytes(d.bytes)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECURITY -->
+      <div x-show="page==='security'" x-data="securityPage()">
+        <div class="page-header"><div><div class="page-title">Security</div><div class="page-sub">Server hardening & intrusion prevention</div></div></div>
+
+        <!-- Security Score -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-hd">
+            <div class="card-title">Security Score</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="font-size:28px;font-weight:700" :style="'color:'+(score>=80?'var(--green)':score>=50?'var(--yellow)':'var(--red)')" x-text="score+'%'"></div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <template x-for="c in checks" :key="c.label">
+              <div style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:6px"
+                   :style="c.pass?'background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.15)':'background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15)'">
+                <span x-text="c.pass?'✓':'✗'" :style="'font-size:16px;color:'+(c.pass?'var(--green)':'var(--red)')"></span>
+                <div>
+                  <div style="font-size:12px;font-weight:500" x-text="c.label"></div>
+                  <div style="font-size:10px" :style="'color:'+(c.severity==='high'?'var(--red)':c.severity==='medium'?'var(--yellow)':'var(--text-muted)')" x-text="c.severity.toUpperCase()"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <div class="tab" :class="{active:tab==='ssh'}" @click="tab='ssh'">SSH</div>
+          <div class="tab" :class="{active:tab==='fail2ban'}" @click="tab='fail2ban';loadFail2ban()">Fail2ban</div>
+          <div class="tab" :class="{active:tab==='attempts'}" @click="tab='attempts';loadAttempts()">Login Attempts</div>
+          <div class="tab" :class="{active:tab==='ports'}" @click="tab='ports';loadPorts()">Open Ports</div>
+        </div>
+
+        <!-- SSH -->
+        <div x-show="tab==='ssh'" class="card" style="max-width:600px">
+          <div class="card-hd"><div class="card-title">SSH Configuration</div></div>
+          <div class="form-row form-row-2" style="margin-bottom:14px">
+            <div class="form-group"><label class="form-label">SSH Port</label><input class="form-input" x-model="ssh.port" placeholder="22"></div>
+            <div class="form-group"><label class="form-label">Max Auth Tries</label><input class="form-input" x-model="ssh.max_auth_tries" placeholder="6"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+            <label class="form-check">
+              <input type="checkbox" :checked="ssh.root_login==='yes' || ssh.root_login==='without-password'" @change="ssh.root_login=$event.target.checked?'yes':'no'">
+              <div><div style="font-size:13px;font-weight:500">Allow Root Login</div><div style="font-size:11px;color:var(--text-muted)">Disable for better security</div></div>
+            </label>
+            <label class="form-check">
+              <input type="checkbox" :checked="ssh.password_auth==='yes'" @change="ssh.password_auth=$event.target.checked?'yes':'no'">
+              <div><div style="font-size:13px;font-weight:500">Password Authentication</div><div style="font-size:11px;color:var(--text-muted)">Disable if using SSH keys only</div></div>
+            </label>
+            <label class="form-check">
+              <input type="checkbox" :checked="ssh.pubkey_auth==='yes'" @change="ssh.pubkey_auth=$event.target.checked?'yes':'no'">
+              <div><div style="font-size:13px;font-weight:500">Public Key Authentication</div><div style="font-size:11px;color:var(--text-muted)">Recommended — keep enabled</div></div>
+            </label>
+          </div>
+          <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:10px;font-size:11px;color:var(--yellow);margin-bottom:14px">
+            ⚠ Changing SSH port or disabling password auth may lock you out if misconfigured. Ensure you have SSH key access before disabling passwords.
+          </div>
+          <button class="btn btn-primary" @click="saveSSH()">Save SSH Config</button>
+        </div>
+
+        <!-- Fail2ban -->
+        <div x-show="tab==='fail2ban'">
+          <template x-if="!f2bJails || f2bJails.length===0">
+            <div class="card"><div class="empty-state"><div class="empty-icon">🛡</div><div class="empty-text">Fail2ban is not running or not installed</div></div></div>
+          </template>
+          <template x-for="jail in f2bJails" :key="jail.name">
+            <div class="card" style="margin-bottom:12px">
+              <div class="card-hd">
+                <div>
+                  <div class="card-title" x-text="jail.name"></div>
+                  <div class="card-sub">Currently banned: <span x-text="jail.currently"></span> · Total: <span x-text="jail.total"></span></div>
+                </div>
+              </div>
+              <div x-show="jail.banned_ips && jail.banned_ips.length>0" style="display:flex;flex-wrap:wrap;gap:6px">
+                <template x-for="ip in jail.banned_ips" :key="ip">
+                  <div style="display:flex;align-items:center;gap:5px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:4px 10px;font-family:var(--font-mono);font-size:12px">
+                    <span x-text="ip"></span>
+                    <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;line-height:1" @click="unbanIP(ip,jail.name)" title="Unban">×</button>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!jail.banned_ips || jail.banned_ips.length===0" style="color:var(--text-muted);font-size:12px">No IPs currently banned in this jail</div>
+              <!-- Manual ban -->
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <input class="form-input" x-model="jail.banInput" placeholder="IP to ban manually" style="max-width:200px;font-family:var(--font-mono)">
+                <button class="btn btn-danger btn-sm" @click="banIP(jail.banInput,jail.name);jail.banInput=''">Ban IP</button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Login Attempts -->
+        <div x-show="tab==='attempts'">
+          <div class="card">
+            <div class="card-hd"><div class="card-title">Recent Failed Login Attempts</div><button class="btn btn-ghost btn-sm" @click="loadAttempts()">↻</button></div>
+            <template x-for="a in attempts" :key="a.log">
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px" x-text="a.log"></div>
+                <div class="terminal-out" style="max-height:300px" x-text="a.content"></div>
+              </div>
+            </template>
+            <template x-if="attempts.length===0">
+              <div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">No auth logs found</div></div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Open Ports -->
+        <div x-show="tab==='ports'">
+          <div class="card">
+            <div class="card-hd"><div class="card-title">Open Listening Ports</div><button class="btn btn-ghost btn-sm" @click="loadPorts()">↻</button></div>
+            <div class="code-block" x-text="portsOutput||'Loading…'"></div>
           </div>
         </div>
       </div>
