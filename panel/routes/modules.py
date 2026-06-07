@@ -62,8 +62,8 @@ MODULES = [
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
-apt-get update -q && apt-get install -y nginx && systemctl enable --now nginx''',
-        'install':'apt-get install -y nginx && systemctl enable --now nginx',
+apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; apt-get install -y nginx && systemctl enable --now nginx''',
+        'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
         'uninstall':'apt-get remove -y --purge nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
         'service':'nginx', 'manage':True,
     },
@@ -88,11 +88,11 @@ apt-get update -q && apt-get install -y nginx && systemctl enable --now nginx'''
             {'label':'1.9.0 (Latest)',  'value':'1.9.0'},
         ],
         'install_tpl':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
-apt-get update -q && apt-get install -y openlitespeed={ver} 2>/dev/null || \
+(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed={ver} 2>/dev/null || \
 apt-get install -y openlitespeed && \
 systemctl enable lsws && systemctl start lsws''',
         'install':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
-apt-get update -q && apt-get install -y openlitespeed && \
+(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed && \
 systemctl enable lsws && systemctl start lsws''',
         'uninstall':'/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; apt-get remove -y openlitespeed 2>/dev/null; rm -rf /usr/local/lsws',
         'service':'lsws', 'manage':True,
@@ -113,7 +113,7 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
   tee /etc/apt/sources.list.d/caddy-stable.list && \
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
-apt-get update -q && apt-get install -y caddy && \
+(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && \
 systemctl enable caddy && systemctl start caddy''',
         'install':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
@@ -122,7 +122,7 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
   tee /etc/apt/sources.list.d/caddy-stable.list && \
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
-apt-get update -q && apt-get install -y caddy && \
+(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && \
 systemctl enable caddy && systemctl start caddy''',
         'uninstall':'apt-get remove -y --purge caddy && apt-get autoremove -y && rm -rf /etc/caddy',
         'service':'caddy', 'manage':True,
@@ -175,7 +175,7 @@ systemctl enable --now mariadb''',
         'install_tpl':'''apt-get install -y gnupg curl && \
 curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc | gpg -o /usr/share/keyrings/mongodb-server-{ver}.gpg --dearmor 2>/dev/null && \
 echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" | tee /etc/apt/sources.list.d/mongodb-org-{ver}.list && \
-apt-get update -q && apt-get install -y mongodb-org && systemctl enable mongod && systemctl start mongod''',
+(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y mongodb-org && systemctl enable mongod && systemctl start mongod''',
         'install':'',  # always uses install_tpl
         'uninstall':'apt-get remove -y --purge mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb',
         'service':'mongod', 'manage':True,
@@ -192,7 +192,7 @@ apt-get update -q && apt-get install -y mongodb-org && systemctl enable mongod &
         'install_tpl':'''apt-get install -y gnupg2 curl lsb-release && \
 curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | tee /etc/apt/sources.list.d/pgdg.list && \
-apt-get update -q && apt-get install -y postgresql-{ver} && systemctl enable postgresql && systemctl start postgresql''',
+(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y postgresql-{ver} && systemctl enable postgresql && systemctl start postgresql''',
         'install':'apt-get install -y postgresql postgresql-contrib && systemctl enable postgresql && systemctl start postgresql',
         'uninstall':'apt-get remove -y --purge postgresql postgresql-* && apt-get autoremove -y && rm -rf /etc/postgresql /var/lib/postgresql',
         'service':'postgresql', 'manage':True,
@@ -685,3 +685,252 @@ def control_module(mod_id):
                                 shell=True, capture_output=True, text=True).stdout.strip()
         return jsonify({'ok':True, 'status':status})
     return jsonify({'ok':False, 'error':'No service defined'})
+
+
+# ── App Settings Modal endpoints ─────────────────────────────────────────────
+
+@modules_bp.route('/api/modules/<mod_id>/settings')
+def get_module_settings(mod_id):
+    """Return app-specific settings for the settings modal."""
+    if not req(): return jsonify({'ok': False}), 401
+
+    def sh(cmd, t=15):
+        try:
+            return subprocess.check_output(cmd, shell=True, text=True,
+                                           stderr=subprocess.DEVNULL, timeout=t).strip()
+        except: return ''
+
+    import os
+
+    if mod_id == 'nginx':
+        status  = sh('systemctl is-active nginx 2>/dev/null') or 'inactive'
+        version = sh('nginx -v 2>&1 | grep -oP "[\\d.]+"') or ''
+        config_paths = ['/etc/nginx/nginx.conf', '/www/server/nginx/conf/nginx.conf']
+        conf_path = next((p for p in config_paths if os.path.exists(p)), '/etc/nginx/nginx.conf')
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        # Read error log (last 100 lines)
+        log_paths = ['/var/log/nginx/error.log', '/www/wwwlogs/nginx_error.log']
+        log_path = next((p for p in log_paths if os.path.exists(p)), '')
+        logs = sh(f'tail -100 {log_path} 2>/dev/null') if log_path else 'No error log found'
+        # Optimization values from config
+        worker_processes  = sh("grep -oP 'worker_processes\\s+\\K\\S+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or 'auto'
+        worker_connections = sh("grep -oP 'worker_connections\\s+\\K\\d+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or '1024'
+        keepalive_timeout = sh("grep -oP 'keepalive_timeout\\s+\\K\\d+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or '65'
+        client_max_body  = sh("grep -oP 'client_max_body_size\\s+\\K\\S+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or '50m'
+        return jsonify({
+            'ok': True, 'status': status, 'version': version,
+            'conf_path': conf_path, 'conf_content': conf_content,
+            'logs': logs, 'log_path': log_path,
+            'optimization': {
+                'worker_processes': worker_processes,
+                'worker_connections': worker_connections,
+                'keepalive_timeout': keepalive_timeout,
+                'client_max_body_size': client_max_body,
+            }
+        })
+
+    elif mod_id == 'apache2':
+        status  = sh('systemctl is-active apache2 2>/dev/null') or 'inactive'
+        version = sh('apache2 -v 2>/dev/null | grep -oP "[\\d.]+"') or ''
+        conf_paths = ['/etc/apache2/apache2.conf', '/etc/httpd/conf/httpd.conf']
+        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/apache2/apache2.conf')
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        log_path = '/var/log/apache2/error.log'
+        logs = sh(f'tail -100 {log_path} 2>/dev/null') or 'No error log found'
+        return jsonify({
+            'ok': True, 'status': status, 'version': version,
+            'conf_path': conf_path, 'conf_content': conf_content,
+            'logs': logs, 'log_path': log_path,
+        })
+
+    elif mod_id == 'mysql':
+        status  = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null') or 'inactive'
+        version = sh("mysql --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or ''
+        conf_paths = ['/etc/mysql/mysql.conf.d/mysqld.cnf', '/etc/mysql/my.cnf', '/etc/my.cnf']
+        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/mysql/my.cnf')
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        log_path = '/var/log/mysql/error.log'
+        logs = sh(f'tail -100 {log_path} 2>/dev/null') or sh('journalctl -u mysql -n 50 2>/dev/null') or 'No logs found'
+        # Port and max_connections
+        port = sh("mysql -e 'SHOW VARIABLES LIKE \"port\"' 2>/dev/null | awk 'NR==2{print $2}'") or '3306'
+        max_conn = sh("mysql -e 'SHOW VARIABLES LIKE \"max_connections\"' 2>/dev/null | awk 'NR==2{print $2}'") or '151'
+        return jsonify({
+            'ok': True, 'status': status, 'version': version,
+            'conf_path': conf_path, 'conf_content': conf_content,
+            'logs': logs, 'log_path': log_path,
+            'port': port, 'max_connections': max_conn,
+        })
+
+    elif mod_id == 'mariadb':
+        status  = sh('systemctl is-active mariadb 2>/dev/null') or 'inactive'
+        version = sh("mariadb --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or \
+                  sh("mysql --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or ''
+        conf_paths = ['/etc/mysql/mariadb.conf.d/50-server.cnf', '/etc/my.cnf', '/etc/mysql/my.cnf']
+        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/mysql/my.cnf')
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        logs = sh('journalctl -u mariadb -n 50 2>/dev/null') or 'No logs found'
+        return jsonify({'ok': True, 'status': status, 'version': version,
+                        'conf_path': conf_path, 'conf_content': conf_content, 'logs': logs})
+
+    elif mod_id == 'redis':
+        status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis 2>/dev/null') or 'inactive'
+        version = sh("redis-server --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or ''
+        conf_paths = ['/etc/redis/redis.conf', '/etc/redis.conf']
+        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/redis/redis.conf')
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        port = sh("redis-cli config get port 2>/dev/null | tail -1") or '6379'
+        maxmem = sh("redis-cli config get maxmemory 2>/dev/null | tail -1") or '0'
+        logs = sh('tail -100 /var/log/redis/redis-server.log 2>/dev/null') or \
+               sh('journalctl -u redis -n 50 2>/dev/null') or 'No logs found'
+        return jsonify({
+            'ok': True, 'status': status, 'version': version,
+            'conf_path': conf_path, 'conf_content': conf_content,
+            'logs': logs, 'port': port, 'maxmemory': maxmem,
+        })
+
+    elif mod_id == 'phpmyadmin':
+        # PMA is always accessible — find its port from nginx config
+        pma_conf = '/etc/nginx/conf.d/phpmyadmin.conf'
+        port = '8082'
+        if os.path.exists(pma_conf):
+            import re as _re
+            with open(pma_conf) as f: c = f.read()
+            m = _re.search(r'listen\s+(\d+)', c)
+            if m: port = m.group(1)
+        # Find installed PHP versions for version selector
+        php_versions = []
+        for v in ['8.4','8.3','8.2','8.1','8.0','7.4']:
+            if os.path.exists(f'/usr/bin/php{v}'):
+                php_versions.append(v)
+        # Current PHP version used by PMA
+        current_php = ''
+        if os.path.exists(pma_conf):
+            with open(pma_conf) as f: c = f.read()
+            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', c)
+            if m: current_php = m.group(1)
+        pma_dir = '/usr/share/phpmyadmin'
+        installed = os.path.isdir(pma_dir)
+        return jsonify({
+            'ok': True, 'installed': installed,
+            'port': port, 'url': f'http://YOUR-IP:{port}',
+            'php_versions': php_versions, 'current_php': current_php,
+            'conf_path': pma_conf,
+        })
+
+    elif mod_id in ('pure-ftpd', 'pure_ftpd'):
+        status = sh('systemctl is-active pure-ftpd 2>/dev/null') or 'inactive'
+        port   = sh("grep -r '^Bind' /etc/pure-ftpd/conf/ 2>/dev/null | head -1 | awk '{print $2}'") or '21'
+        return jsonify({'ok': True, 'status': status, 'port': port})
+
+    elif mod_id == 'docker':
+        status  = sh('systemctl is-active docker 2>/dev/null') or 'inactive'
+        version = sh('docker version --format "{{.Server.Version}}" 2>/dev/null') or ''
+        info    = sh('docker info 2>/dev/null | head -20') or ''
+        return jsonify({'ok': True, 'status': status, 'version': version, 'info': info})
+
+    # Generic fallback
+    mod = _get_mod(mod_id)
+    if not mod: return jsonify({'ok': False, 'error': 'Module not found'}), 404
+    svc  = mod.get('service', mod_id)
+    status = sh(f'systemctl is-active {svc} 2>/dev/null') or 'inactive'
+    version = sh(f'{svc} --version 2>/dev/null | head -1') or ''
+    return jsonify({'ok': True, 'status': status, 'version': version})
+
+
+@modules_bp.route('/api/modules/<mod_id>/settings', methods=['POST'])
+def save_module_settings(mod_id):
+    """Save app-specific settings."""
+    if not req(): return jsonify({'ok': False}), 401
+
+    import os
+    d = request.get_json() or {}
+    action = d.get('action', 'save_config')
+
+    def sh(cmd, t=30):
+        try:
+            return subprocess.check_output(cmd, shell=True, text=True,
+                                           stderr=subprocess.STDOUT, timeout=t).strip()
+        except subprocess.CalledProcessError as e:
+            return e.output or ''
+        except: return ''
+
+    if action == 'save_config':
+        conf_path = d.get('conf_path', '')
+        content   = d.get('content', '')
+        if not conf_path or not content:
+            return jsonify({'ok': False, 'error': 'Missing conf_path or content'})
+        try:
+            with open(conf_path, 'w') as f: f.write(content)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+        # Test and reload
+        if mod_id == 'nginx':
+            test = sh('nginx -t 2>&1')
+            if 'successful' not in test and 'ok' not in test.lower():
+                return jsonify({'ok': False, 'error': 'Config test failed: ' + test})
+            sh('systemctl reload nginx 2>&1')
+        elif mod_id == 'apache2':
+            test = sh('apache2ctl configtest 2>&1 || apachectl configtest 2>&1')
+            if 'Syntax OK' not in test:
+                return jsonify({'ok': False, 'error': 'Config test failed: ' + test})
+            sh('systemctl reload apache2 2>&1')
+        elif mod_id in ('mysql', 'mariadb'):
+            sh(f'systemctl restart {mod_id} 2>&1')
+        return jsonify({'ok': True, 'message': 'Configuration saved and service reloaded'})
+
+    elif action == 'save_optimization':
+        opts = d.get('optimization', {})
+        if mod_id == 'nginx':
+            conf = '/etc/nginx/nginx.conf'
+            try:
+                with open(conf) as f: content = f.read()
+                import re as _re
+                for key, val in opts.items():
+                    content = _re.sub(rf'(\s+{key}\s+)\S+;', rf'\g<1>{val};', content)
+                with open(conf, 'w') as f: f.write(content)
+                sh('nginx -t && systemctl reload nginx')
+                return jsonify({'ok': True})
+            except Exception as e:
+                return jsonify({'ok': False, 'error': str(e)})
+
+    elif action == 'switch_version':
+        ver = d.get('version', '')
+        if mod_id == 'nginx' and ver:
+            out = sh(f'apt-get install -y nginx={ver} 2>&1 || apt-get install -y nginx 2>&1')
+            return jsonify({'ok': True, 'output': out})
+
+    elif action == 'pma_set_port':
+        port = d.get('port', '8082')
+        conf = '/etc/nginx/conf.d/phpmyadmin.conf'
+        if os.path.exists(conf):
+            import re as _re
+            with open(conf) as f: c = f.read()
+            c = _re.sub(r'listen\s+\d+', f'listen {port}', c)
+            with open(conf, 'w') as f: f.write(c)
+            sh('nginx -t && systemctl reload nginx')
+            return jsonify({'ok': True, 'port': port})
+        return jsonify({'ok': False, 'error': 'phpMyAdmin nginx config not found'})
+
+    elif action == 'pma_set_php':
+        php_ver = d.get('php_version', '')
+        conf    = '/etc/nginx/conf.d/phpmyadmin.conf'
+        if os.path.exists(conf) and php_ver:
+            import re as _re
+            with open(conf) as f: c = f.read()
+            c = _re.sub(r'php[\d.]+\-fpm\.sock', f'php{php_ver}-fpm.sock', c)
+            with open(conf, 'w') as f: f.write(c)
+            sh('nginx -t && systemctl reload nginx')
+            return jsonify({'ok': True})
+        return jsonify({'ok': False, 'error': 'Config not found or PHP version missing'})
+
+    return jsonify({'ok': False, 'error': 'Unknown action'})

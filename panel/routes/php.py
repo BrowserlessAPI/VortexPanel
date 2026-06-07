@@ -176,9 +176,40 @@ def control_fpm(version):
     action = (request.get_json() or {}).get('action','status')
     if action not in ('start','stop','restart','reload','enable','disable'):
         return jsonify({'ok':False,'error':'Invalid action'}), 400
-    sh(f'systemctl {action} php{version}-fpm 2>/dev/null || true')
-    status = sh(f'systemctl is-active php{version}-fpm 2>/dev/null') or 'inactive'
-    return jsonify({'ok':True, 'status':status})
+
+    # Try both possible service names
+    svc_names = [f'php{version}-fpm', f'php-fpm{version}', 'php-fpm']
+    used_svc  = None
+    out_msg   = ''
+
+    for svc in svc_names:
+        # Check if this service exists first
+        exists_out = sh(f'systemctl list-unit-files {svc}.service 2>/dev/null | grep {svc}')
+        if not exists_out:
+            continue
+        used_svc = svc
+        out_msg  = sh(f'systemctl {action} {svc} 2>&1', t=15)
+        break
+
+    if not used_svc:
+        return jsonify({'ok':False, 'error':f'PHP {version} FPM service not found. Is php{version}-fpm installed?'})
+
+    # Give systemd a moment to update state
+    import time
+    time.sleep(1)
+    status  = sh(f'systemctl is-active {used_svc} 2>/dev/null') or 'inactive'
+    enabled = sh(f'systemctl is-enabled {used_svc} 2>/dev/null') == 'enabled'
+
+    success = (action in ('stop','disable')) or (status == 'active')
+
+    return jsonify({
+        'ok':      True,
+        'success': success,
+        'status':  status,
+        'enabled': enabled,
+        'service': used_svc,
+        'output':  out_msg[:300] if not success else '',
+    })
 
 @php_bp.route('/api/php/<version>/fpmprofile')
 def fpm_profile(version):

@@ -1132,12 +1132,27 @@ function phpPage() {
     // Called from HTML button: fpmAction('start') etc
     async fpmAction(action) {
       const r = await post(`/api/php/${this.selVer}/fpm`, {action});
-      if (r.ok) {
-        toast(action+' php'+this.selVer+'-fpm','success');
-        // Refresh version status
+      if (!r.ok) {
+        toast(r.error || `Failed to ${action} PHP ${this.selVer}-FPM`, 'error');
+        return;
+      }
+      // Update version status immediately from backend response
+      const v = this.versions.find(v => v.version === this.selVer);
+      if (v && r.status) v.status = r.status;
+
+      if (r.success) {
+        const statusLabel = r.status === 'active' ? 'running' : r.status;
+        toast(`PHP ${this.selVer}-FPM ${action}ed — ${statusLabel}`, 'success');
+      } else {
+        // Action ran but service still not in expected state
+        const errMsg = r.output
+          ? `${action} ran but PHP-FPM is ${r.status}. ${r.output}`
+          : `PHP-FPM is ${r.status} after ${action}. Check if the service exists.`;
+        toast(errMsg, 'error');
+        // Still refresh to get accurate state
         const vr = await get('/api/php/versions');
         if (vr.ok) this.versions = vr.versions;
-      } else toast(r.error||'Failed','error');
+      }
     },
 
     async loadLogs() {
@@ -1207,8 +1222,11 @@ function modulesPage() {
       const r = await get('/api/modules');
       if (r.ok) this.modules = r.modules.map(m=>({
         ...m,
-        loading: false,
-        selVer: m.versions?.length ? m.versions[Math.floor(m.versions.length/2)].value : '',
+        loading:   false,
+        // Normalize svcStatus: 'active (running)' → 'active'
+        svcStatus: m.svcStatus ? (m.svcStatus.startsWith('active') ? 'active' : m.svcStatus) : m.svcStatus,
+        // Pre-select the middle version in dropdown (best default)
+        selVer:    m.versions?.length ? m.versions[Math.floor(m.versions.length/2)].value : '',
       }));
     },
 
@@ -1227,12 +1245,13 @@ function modulesPage() {
     },
 
     async install(m) {
-      // For multi-version modules (PHP, Python, Node.js) — pick version first
-      if (m.versions?.length > 1) {
-        this.verModal = {show:true, mod:m, selVer:m.selVer||m.versions[0].value, action:'install'};
+      // If user already selected a version from the inline dropdown → install directly
+      // Only show the version picker modal if NO version is selected yet
+      if (m.versions?.length > 1 && !m.selVer) {
+        this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'install'};
         return;
       }
-      // Single-version or no version choice — install directly
+      // Use selected version directly (from dropdown or single-version)
       await this._startJob(m, 'install', m.selVer||'');
     },
 
@@ -1273,16 +1292,134 @@ function modulesPage() {
       if (r.ok) { m.svcStatus=r.status; toast(`${action} ${m.name}`,'success'); }
     },
 
-    openSettings(m) {
-      const map = {
-        nginx:'websites',apache2:'websites',openlitespeed:'websites',caddy:'caddy',
-        mysql:'databases',mariadb:'databases',postgresql:'databases',mongodb:'databases',
-        phpmyadmin:'databases',php:'php',fail2ban:'security',clamav:'security',
-        bind9:'dns','pure-ftpd':'ftp',nodejs:'terminal',docker:'docker',
-        redis:'services',postfix:'mail',roundcube:'mail',modsecurity:'security',
+    // ── App Settings Modal ────────────────────────────────────────────────────
+    settingsModal: {
+      show: false, mod: null, tab: 'service',
+      loading: false, saving: false,
+      status: '', version: '', confPath: '', confContent: '',
+      logs: '', logPath: '',
+      optimization: {},
+      port: '', maxConnections: '',
+      phpVersions: [], currentPhp: '',
+      pmaUrl: '',
+      dockerInfo: '',
+      confChanged: false,
+    },
+
+    async openSettings(m) {
+      // For pages that have dedicated full pages, navigate there
+      const fullPageMap = {
+        php:'php', fail2ban:'security', clamav:'security',
+        bind9:'dns', postfix:'mail', roundcube:'mail',
+        modsecurity:'security', docker:'docker',
+        'pure-ftpd':'ftp', nodejs:'terminal', python:'terminal',
       };
-      window.dispatchEvent(new CustomEvent('nav',{detail:{page:map[m.id]||'services'}}));
-      toast('Opening '+m.name+' settings','info');
+      if (fullPageMap[m.id]) {
+        window.dispatchEvent(new CustomEvent('nav',{detail:{page:fullPageMap[m.id]}}));
+        toast('Opening '+m.name+' settings','info');
+        return;
+      }
+      // For all other apps — show the settings modal
+      this.settingsModal = {
+        ...this.settingsModal,
+        show: true, mod: m, tab: 'service',
+        loading: true, confContent: '', logs: '', status: '',
+      };
+      const r = await get('/api/modules/'+m.id+'/settings');
+      this.settingsModal.loading = false;
+      if (r.ok) {
+        this.settingsModal.status         = r.status  || '';
+        this.settingsModal.version        = r.version || '';
+        this.settingsModal.confPath       = r.conf_path || '';
+        this.settingsModal.confContent    = r.conf_content || '';
+        this.settingsModal.logs           = r.logs    || '';
+        this.settingsModal.logPath        = r.log_path || '';
+        this.settingsModal.optimization   = r.optimization || {};
+        this.settingsModal.port           = r.port    || '';
+        this.settingsModal.maxConnections = r.max_connections || '';
+        this.settingsModal.phpVersions    = r.php_versions || [];
+        this.settingsModal.currentPhp     = r.current_php  || '';
+        this.settingsModal.pmaUrl         = r.url          || '';
+        this.settingsModal.dockerInfo     = r.info         || '';
+        this.settingsModal.confChanged    = false;
+      } else {
+        toast(r.error || 'Failed to load settings', 'error');
+      }
+    },
+
+    async settingsControl(action) {
+      const m = this.settingsModal.mod;
+      if (!m) return;
+      const r = await post('/api/modules/'+m.id+'/control', {action});
+      if (r.ok) {
+        this.settingsModal.status = r.status || '';
+        // Also update the modules list status
+        const mod = this.modules.find(x => x.id === m.id);
+        if (mod) mod.svcStatus = r.status || '';
+        toast(action+' '+m.name, 'success');
+      } else toast(r.error||'Failed','error');
+    },
+
+    async settingsSaveConfig() {
+      const sm = this.settingsModal;
+      if (!sm.confPath || !sm.confContent) return;
+      sm.saving = true;
+      const r = await post('/api/modules/'+sm.mod.id+'/settings', {
+        action: 'save_config',
+        conf_path: sm.confPath,
+        content: sm.confContent,
+      });
+      sm.saving = false;
+      if (r.ok) { sm.confChanged=false; toast('Saved & reloaded','success'); }
+      else toast(r.error||'Save failed','error');
+    },
+
+    async settingsSaveOptimization() {
+      const sm = this.settingsModal;
+      sm.saving = true;
+      const r = await post('/api/modules/'+sm.mod.id+'/settings', {
+        action: 'save_optimization',
+        optimization: sm.optimization,
+      });
+      sm.saving = false;
+      toast(r.ok?'Optimization saved':'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    async settingsPmaSetPort() {
+      const sm = this.settingsModal;
+      const r = await post('/api/modules/phpmyadmin/settings', {
+        action: 'pma_set_port', port: sm.port,
+      });
+      toast(r.ok?'Port updated. Access: http://YOUR-IP:'+sm.port:'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    async settingsPmaSetPhp() {
+      const sm = this.settingsModal;
+      const r = await post('/api/modules/phpmyadmin/settings', {
+        action: 'pma_set_php', php_version: sm.currentPhp,
+      });
+      toast(r.ok?'PHP version updated':'Failed: '+(r.error||''), r.ok?'success':'error');
+    },
+
+    settingsTabs(modId) {
+      const tabs = {
+        nginx:    ['service','config','optimization','logs'],
+        apache2:  ['service','config','logs'],
+        openlitespeed: ['service','logs'],
+        mysql:    ['service','config','logs'],
+        mariadb:  ['service','config','logs'],
+        postgresql:['service','logs'],
+        mongodb:  ['service','logs'],
+        redis:    ['service','config','logs'],
+        phpmyadmin:['service','php_version','security'],
+        docker:   ['service','info'],
+      };
+      const labels = {
+        service:'Service', config:'Config File', optimization:'Optimization',
+        logs:'Error Log', php_version:'PHP Version', security:'Security',
+        info:'Info',
+      };
+      return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t}));
     },
   };
 }

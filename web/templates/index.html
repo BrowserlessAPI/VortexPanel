@@ -702,7 +702,7 @@
         </div>
 
         <!-- Context menu -->
-        <div x-show="ctxMenu.show" @click.away="ctxMenu.show=false"
+        <div x-show="ctxMenu.show" @click.outside="ctxMenu.show=false"
              style="position:fixed;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:4px;z-index:500;min-width:180px;box-shadow:0 8px 32px rgba(0,0,0,.5)"
              :style="'left:'+ctxMenu.x+'px;top:'+ctxMenu.y+'px'">
           <div class="ctx-item" @click="ctxOpen()"><span>📂</span> Open</div>
@@ -1029,14 +1029,17 @@
                             x-text="'v'+m.installedVer"></span>
                       <!-- Service status -->
                       <div x-show="m.manage" style="display:flex;align-items:center;gap:5px">
-                        <span :class="'dot dot-'+(m.svcStatus==='active'?'green':'red')" style="flex-shrink:0"></span>
+                        <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus?'red':'gray')" style="flex-shrink:0"></span>
                         <span style="font-size:11px;color:var(--text-muted)" x-text="m.svcStatus||'unknown'"></span>
                       </div>
                       <!-- Quick start/stop for running services -->
                       <div x-show="m.manage" style="display:flex;gap:3px">
-                        <button class="btn btn-xs btn-success" @click.stop="control(m,'start')" x-show="m.svcStatus!=='active'" title="Start">▶</button>
-                        <button class="btn btn-xs btn-ghost" @click.stop="control(m,'restart')" x-show="m.svcStatus==='active'" title="Restart">↺</button>
-                        <button class="btn btn-xs btn-danger" @click.stop="control(m,'stop')" x-show="m.svcStatus==='active'" title="Stop">■</button>
+                        <button class="btn btn-xs btn-success" @click.stop="control(m,'start')"
+                                x-show="m.svcStatus && m.svcStatus!=='active'" title="Start">▶</button>
+                        <button class="btn btn-xs btn-ghost" @click.stop="control(m,'restart')"
+                                x-show="!m.svcStatus || m.svcStatus==='active'" title="Restart">↺</button>
+                        <button class="btn btn-xs btn-danger" @click.stop="control(m,'stop')"
+                                x-show="!m.svcStatus || m.svcStatus==='active'" title="Stop">■</button>
                       </div>
                     </div>
                     <span x-show="!m.installed" class="badge badge-gray" style="font-size:10px">Not Installed</span>
@@ -1108,6 +1111,177 @@
           </div>
         </div>
 
+        <!-- ══ APP SETTINGS MODAL (aaPanel-style left-sidebar tabs) ══════════════ -->
+        <div x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
+             style="position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:300;display:flex;align-items:center;justify-content:center"
+             @click.self="settingsModal.show=false">
+          <div style="width:min(860px,96vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+
+            <!-- Modal header -->
+            <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg-raised)">
+              <span style="font-size:22px" x-text="settingsModal.mod?.icon"></span>
+              <div style="flex:1">
+                <div style="font-weight:700;font-size:15px" x-text="settingsModal.mod?.name+' Settings'"></div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:1px" x-show="settingsModal.version" x-text="'Version: '+settingsModal.version"></div>
+              </div>
+              <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:22px;line-height:1;padding:2px 8px" @click="settingsModal.show=false">×</button>
+            </div>
+
+            <!-- Loading state -->
+            <div x-show="settingsModal.loading" style="flex:1;display:flex;align-items:center;justify-content:center;padding:40px">
+              <div class="loading-spinner" style="width:32px;height:32px;border-width:3px"></div>
+            </div>
+
+            <!-- Main content: left tabs + right panel -->
+            <div x-show="!settingsModal.loading" style="display:flex;flex:1;overflow:hidden;min-height:0">
+
+              <!-- Left sidebar tabs -->
+              <div style="width:160px;flex-shrink:0;border-right:1px solid var(--border);background:var(--bg-raised);overflow-y:auto">
+                <template x-for="t in settingsTabs(settingsModal.mod?.id)" :key="t.id">
+                  <div style="padding:11px 16px;font-size:13px;cursor:pointer;border-left:3px solid transparent;transition:.12s"
+                       :style="settingsModal.tab===t.id
+                         ? 'border-left-color:var(--accent);background:var(--bg-card);color:var(--text-primary);font-weight:600'
+                         : 'color:var(--text-secondary);border-left-color:transparent'"
+                       @click="settingsModal.tab=t.id" x-text="t.label"></div>
+                </template>
+              </div>
+
+              <!-- Right content panel -->
+              <div style="flex:1;overflow-y:auto;padding:20px">
+
+                <!-- SERVICE tab -->
+                <div x-show="settingsModal.tab==='service'">
+                  <div style="margin-bottom:20px">
+                    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px">Service Status</div>
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+                      <span :class="'dot dot-'+(settingsModal.status==='active'?'green':settingsModal.status?'red':'gray')"></span>
+                      <span style="font-size:14px;font-weight:600" x-text="settingsModal.status||'unknown'"></span>
+                      <span x-show="settingsModal.version" style="font-size:11px;font-family:var(--font-mono);background:rgba(88,101,242,.1);color:var(--accent);padding:1px 8px;border-radius:8px" x-text="'v'+settingsModal.version"></span>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap">
+                      <button class="btn btn-success btn-sm" @click="settingsControl('start')" x-show="settingsModal.status!=='active'">▶ Start</button>
+                      <button class="btn btn-danger btn-sm" @click="settingsControl('stop')" x-show="settingsModal.status==='active'">■ Stop</button>
+                      <button class="btn btn-ghost btn-sm" @click="settingsControl('restart')">↺ Restart</button>
+                      <button class="btn btn-ghost btn-sm" @click="settingsControl('reload')" x-show="settingsModal.mod?.id==='nginx'||settingsModal.mod?.id==='apache2'">⟳ Reload</button>
+                    </div>
+                  </div>
+                  <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text-secondary)">
+                    <div style="font-weight:600;color:var(--accent-warn);margin-bottom:4px">ℹ Service Info</div>
+                    <div x-text="'Service name: '+(settingsModal.mod?.service||settingsModal.mod?.id)"></div>
+                    <div x-show="settingsModal.confPath" x-text="'Config: '+settingsModal.confPath" style="margin-top:3px;font-family:var(--font-mono);font-size:11px"></div>
+                  </div>
+                </div>
+
+                <!-- CONFIG FILE tab -->
+                <div x-show="settingsModal.tab==='config'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div>
+                      <div style="font-weight:600;font-size:13px">Configuration File</div>
+                      <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);margin-top:2px" x-text="settingsModal.confPath"></div>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                      <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok){settingsModal.confContent=r.conf_content;settingsModal.confChanged=false;} }">↻ Reload</button>
+                      <button class="btn btn-primary btn-sm" @click="settingsSaveConfig()" :disabled="settingsModal.saving">
+                        <span x-show="settingsModal.saving" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                        <span x-text="settingsModal.saving?'Saving…':'💾 Save'"></span>
+                      </button>
+                    </div>
+                  </div>
+                  <div x-show="settingsModal.confChanged" style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:8px 12px;font-size:12px;color:var(--accent-warn);margin-bottom:10px">⚠ Unsaved changes — click Save to apply</div>
+                  <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);border-radius:6px;padding:8px 12px;font-size:11px;color:var(--text-muted);margin-bottom:10px">
+                    Tips: This is the main configuration file. Incorrect modification may cause the service to fail to start.
+                  </div>
+                  <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563;display:flex;justify-content:space-between">
+                      <span x-text="settingsModal.confPath"></span>
+                      <span>Ctrl+S to save</span>
+                    </div>
+                    <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
+                              x-model="settingsModal.confContent"
+                              @input="settingsModal.confChanged=true"
+                              @keydown.ctrl.s.prevent="settingsSaveConfig()"
+                              spellcheck="false"></textarea>
+                  </div>
+                </div>
+
+                <!-- OPTIMIZATION tab -->
+                <div x-show="settingsModal.tab==='optimization'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:16px">Performance Optimization</div>
+                  <div style="display:grid;gap:14px;max-width:500px">
+                    <template x-for="[key,val] in Object.entries(settingsModal.optimization)" :key="key">
+                      <div style="display:flex;align-items:center;gap:12px">
+                        <div style="width:220px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);flex-shrink:0" x-text="key"></div>
+                        <input class="form-input" style="flex:1" x-model="settingsModal.optimization[key]">
+                      </div>
+                    </template>
+                  </div>
+                  <div style="margin-top:20px;display:flex;gap:10px">
+                    <button class="btn btn-primary" @click="settingsSaveOptimization()" :disabled="settingsModal.saving">
+                      <span x-show="settingsModal.saving" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                      Save & Reload
+                    </button>
+                  </div>
+                  <div style="margin-top:12px;font-size:11px;color:var(--text-muted)">⚠ Optimize according to server hardware. Reserve some resources for other programs.</div>
+                </div>
+
+                <!-- ERROR LOGS tab -->
+                <div x-show="settingsModal.tab==='logs'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div>
+                      <div style="font-weight:600;font-size:13px">Error Log</div>
+                      <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.logPath"></div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok) settingsModal.logs=r.logs; }">↻ Refresh</button>
+                  </div>
+                  <div style="background:#080a0e;border:1px solid #1a1d28;border-radius:8px;padding:14px;font-family:var(--font-mono);font-size:11px;color:#86efac;white-space:pre-wrap;max-height:450px;overflow-y:auto;line-height:1.6" x-text="settingsModal.logs||'No logs found'"></div>
+                </div>
+
+                <!-- PHP VERSION tab (phpMyAdmin) -->
+                <div x-show="settingsModal.tab==='php_version'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:16px">PHP Version</div>
+                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+                    <label style="font-size:13px;color:var(--text-secondary);width:120px">PHP Version</label>
+                    <select class="form-input" style="max-width:200px" x-model="settingsModal.currentPhp">
+                      <template x-for="v in settingsModal.phpVersions" :key="v">
+                        <option :value="v" x-text="'PHP-'+v"></option>
+                      </template>
+                      <option value="" x-show="!settingsModal.phpVersions.length">No PHP installed</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" @click="settingsPmaSetPhp()">Save</button>
+                  </div>
+                  <div style="font-size:12px;color:var(--text-muted)">Select which PHP-FPM version processes phpMyAdmin requests.</div>
+                </div>
+
+                <!-- SECURITY tab (phpMyAdmin) -->
+                <div x-show="settingsModal.tab==='security'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:16px">Security Configuration</div>
+                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+                    <label style="font-size:13px;color:var(--text-secondary);width:120px">Access Port</label>
+                    <input class="form-input" style="max-width:160px;font-family:var(--font-mono)" x-model="settingsModal.port" placeholder="8082">
+                    <button class="btn btn-primary btn-sm" @click="settingsPmaSetPort()">Save</button>
+                  </div>
+                  <div x-show="settingsModal.pmaUrl" style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:8px;padding:12px 14px;font-size:12px;margin-bottom:16px">
+                    <div style="font-weight:600;color:var(--accent);margin-bottom:4px">Access URL</div>
+                    <a :href="settingsModal.pmaUrl.replace('YOUR-IP',window.location.hostname)" target="_blank" style="color:var(--accent);font-family:var(--font-mono);font-size:11px" x-text="settingsModal.pmaUrl"></a>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);line-height:1.6">
+                    • Enabling public access to phpMyAdmin may have security risks.<br>
+                    • Login with your MySQL root username and password.<br>
+                    • Consider setting up firewall rules to restrict access by IP.
+                  </div>
+                </div>
+
+                <!-- INFO tab (Docker) -->
+                <div x-show="settingsModal.tab==='info'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:12px">Docker System Info</div>
+                  <pre style="background:var(--bg-base);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;color:var(--text-secondary);overflow-x:auto;white-space:pre-wrap" x-text="settingsModal.dockerInfo||'Loading…'"></pre>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Job progress modal -->
         <div class="modal-overlay" x-show="jobModal.show">
           <div class="modal" style="max-width:620px">
@@ -1147,7 +1321,8 @@
         </div>
       </div>
 
-      x-show="page==='services'" x-data="servicesPage()">
+      <!-- SERVICES -->
+      <div x-show="page==='services'" x-data="servicesPage()">
         <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()">↻</button></div>
         <div class="card" style="padding:0;overflow:hidden">
           <table class="data-table">
