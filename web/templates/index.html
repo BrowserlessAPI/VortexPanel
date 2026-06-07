@@ -560,73 +560,289 @@
       <!-- FILES -->
       <div x-show="page==='files'" x-data="filesPage()">
         <div class="page-header">
-          <div><div class="page-title">File Manager</div><div class="page-sub" x-text="currentPath"></div></div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost" @click="goUp()">↑ Up</button>
-            <button class="btn btn-ghost" @click="showMkdir=true">+ Folder</button>
-            <button class="btn btn-primary" @click="$refs.uploader.click()">↑ Upload</button>
-            <input type="file" x-ref="uploader" style="display:none" multiple @change="uploadFiles($event)">
+          <div>
+            <div class="page-title">File Manager</div>
+            <!-- Breadcrumb -->
+            <div style="display:flex;align-items:center;gap:4px;margin-top:4px;flex-wrap:wrap">
+              <template x-for="(crumb,i) in breadcrumbs" :key="crumb.path">
+                <span style="display:flex;align-items:center;gap:4px">
+                  <span style="cursor:pointer;color:var(--accent);font-size:12px;font-weight:500" @click="loadDir(crumb.path)" x-text="crumb.name"></span>
+                  <span x-show="i<breadcrumbs.length-1" style="color:var(--text-muted);font-size:12px">/</span>
+                </span>
+              </template>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" @click="goUp()">↑ Up</button>
+            <button class="btn btn-ghost btn-sm" @click="doSearch()" x-show="showSearch" title="Search">🔍</button>
+            <button class="btn btn-ghost btn-sm" @click="showSearch=!showSearch">Search</button>
+            <button class="btn btn-ghost btn-sm" @click="openNewFolder()">+ Folder</button>
+            <button class="btn btn-ghost btn-sm" @click="openNewFile()">+ File</button>
+            <button class="btn btn-primary btn-sm" @click="showUpload=!showUpload">↑ Upload</button>
           </div>
         </div>
-        <!-- Breadcrumb -->
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:14px;flex-wrap:wrap">
-          <template x-for="(crumb,i) in breadcrumbs()" :key="i">
-            <span>
-              <span style="cursor:pointer;color:var(--accent);font-size:12px" @click="navigateTo(crumb.path)" x-text="crumb.name"></span>
-              <span style="color:var(--text-muted);font-size:12px" x-show="i<breadcrumbs().length-1"> / </span>
-            </span>
+
+        <!-- Search bar -->
+        <div x-show="showSearch" style="display:flex;gap:8px;margin-bottom:12px">
+          <input class="form-input" x-model="searchQuery" placeholder="Search files and folders..." @keydown.enter="doSearch()" style="flex:1">
+          <label class="form-check" style="white-space:nowrap"><input type="checkbox" x-model="searchInContent"><span>In content</span></label>
+          <button class="btn btn-primary btn-sm" @click="doSearch()" :disabled="searching">
+            <span x-show="searching" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+            Search
+          </button>
+        </div>
+
+        <!-- Upload panel -->
+        <div x-show="showUpload" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="file" multiple @change="handleFileUpload($event)" style="flex:1;min-width:200px;font-size:12px;color:var(--text-secondary)">
+            <button class="btn btn-primary btn-sm" @click="doUpload()" :disabled="!uploadQueue.length||uploading">
+              <span x-show="uploading" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+              <span x-text="uploading?'Uploading…':'Upload '+uploadQueue.length+' file(s)'"></span>
+            </button>
+            <button class="btn btn-ghost btn-sm" @click="showUpload=false">Cancel</button>
+          </div>
+          <template x-for="item in uploadQueue" :key="item.name">
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">
+              <span x-text="item.name" style="flex:1"></span>
+              <span x-text="fmtSize(item.size)" style="color:var(--text-muted)"></span>
+              <span x-show="item.status" :style="item.status==='done'?'color:var(--green)':'color:var(--red)'" x-text="item.status"></span>
+            </div>
           </template>
         </div>
+
+        <!-- Main file table -->
         <div class="card" style="padding:0;overflow:hidden">
+          <!-- Search results -->
+          <div x-show="searchResults.length>0" style="padding:12px 16px;background:rgba(88,101,242,.06);border-bottom:1px solid var(--border);font-size:12px;color:var(--accent)">
+            Found <strong x-text="searchResults.length"></strong> results
+            <button class="btn btn-ghost btn-xs" style="margin-left:8px" @click="searchResults=[];showSearch=false">Clear</button>
+          </div>
           <table class="data-table">
-            <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Perms</th><th>Actions</th></tr></thead>
+            <thead>
+              <tr>
+                <th style="width:32px"><input type="checkbox" @change="toggleAll($event)" style="accent-color:var(--accent)"></th>
+                <th style="cursor:pointer" @click="sortBy('name')">Name <span x-show="sortKey==='name'" x-text="sortDir===1?'↑':'↓'"></span></th>
+                <th style="cursor:pointer;width:90px" @click="sortBy('size')">Size</th>
+                <th style="width:150px">Modified</th>
+                <th style="width:70px">Perms</th>
+                <th style="width:160px">Actions</th>
+              </tr>
+            </thead>
             <tbody>
-              <template x-for="f in items" :key="f.name">
-                <tr>
-                  <td>
-                    <span style="cursor:pointer;display:flex;align-items:center;gap:8px" @click="f.type==='dir'?navigateTo(f.path):openFile(f)">
-                      <span x-text="f.type==='dir'?'📁':'📄'"></span>
-                      <span x-text="f.name"></span>
-                    </span>
-                  </td>
-                  <td x-text="f.type==='dir'?'—':fmtSize(f.size)" style="font-size:12px;color:var(--text-muted)"></td>
-                  <td style="font-size:12px;color:var(--text-muted)" x-text="fmtDate(f.mtime)"></td>
-                  <td><span class="badge badge-gray" x-text="f.perms" style="font-family:var(--font-mono)"></span></td>
-                  <td>
-                    <div style="display:flex;gap:5px">
-                      <button class="btn btn-ghost btn-xs" @click="openFile(f)" x-show="f.type==='file'">Edit</button>
-                      <button class="btn btn-danger btn-xs" @click="delFile(f)">✕</button>
-                    </div>
-                  </td>
-                </tr>
+              <!-- Search results mode -->
+              <template x-if="searchResults.length>0">
+                <template x-for="f in searchResults" :key="f.path">
+                  <tr class="fm-row">
+                    <td></td>
+                    <td>
+                      <span style="cursor:pointer;display:flex;align-items:center;gap:8px" @click="f.type==='dir'?loadDir(f.path):openEditor(f)">
+                        <span x-text="f.type==='dir'?'📁':getIcon(f.name)"></span>
+                        <span x-text="f.path" style="font-size:12px;color:var(--accent)"></span>
+                      </span>
+                    </td>
+                    <td style="font-size:12px;color:var(--text-muted)" x-text="f.type==='dir'?'—':fmtSize(f.size)"></td>
+                    <td style="font-size:11px;color:var(--text-muted)" x-text="fmtDate(f.mtime)"></td>
+                    <td></td>
+                    <td><button class="btn btn-ghost btn-xs" @click="loadDir(f.path.split('/').slice(0,-1).join('/')||'/')">Go to</button></td>
+                  </tr>
+                </template>
+              </template>
+              <!-- Normal file listing -->
+              <template x-if="searchResults.length===0">
+                <template x-for="f in sortedItems" :key="f.name">
+                  <tr class="fm-row" :class="{selected:selected.includes(f.path)}"
+                      @contextmenu.prevent="openCtx($event,f)"
+                      :style="selected.includes(f.path)?'background:rgba(88,101,242,.08)':''">
+                    <td><input type="checkbox" :checked="selected.includes(f.path)" @change="toggleSelect(f.path)" style="accent-color:var(--accent)"></td>
+                    <td>
+                      <span style="cursor:pointer;display:flex;align-items:center;gap:8px" @click="f.type==='dir'?loadDir(f.path):openEditor(f)" @dblclick="f.type==='dir'?loadDir(f.path):openEditor(f)">
+                        <span x-text="f.type==='dir'?'📁':getIcon(f.name)"></span>
+                        <span style="font-weight:500" x-text="f.name"></span>
+                        <span x-show="f.type!=='dir' && f.size" style="font-size:10px;color:var(--text-muted)" x-text="'('+getLang(f.name)+')'"></span>
+                      </span>
+                    </td>
+                    <td style="font-size:12px;color:var(--text-muted)">
+                      <span x-show="f.type==='dir'" style="cursor:pointer;color:var(--accent-2)" @click="calcSize(f)" x-text="f.calcSize||'—'"></span>
+                      <span x-show="f.type!=='dir'" x-text="fmtSize(f.size)"></span>
+                    </td>
+                    <td style="font-size:11px;color:var(--text-muted)" x-text="fmtDate(f.mtime)"></td>
+                    <td>
+                      <span class="badge badge-gray" style="font-family:var(--font-mono);font-size:10px;cursor:pointer" @click="chmodItem(f)" x-text="f.perms" title="Click to change permissions"></span>
+                    </td>
+                    <td>
+                      <div style="display:flex;gap:3px">
+                        <button class="btn btn-ghost btn-xs" @click="openEditor(f)" x-show="f.type==='file' && isEditable(f.name)" title="Edit">✏</button>
+                        <button class="btn btn-ghost btn-xs" @click="startRename(f)" title="Rename">🖊</button>
+                        <button class="btn btn-ghost btn-xs" @click="chmodItem(f)" title="Permissions">🔒</button>
+                        <button class="btn btn-ghost btn-xs" @click="compressItem(f)" x-show="f.type==='dir'" title="Compress">📦</button>
+                        <button class="btn btn-ghost btn-xs" @click="extractItem(f)" x-show="f.name.endsWith('.zip')||f.name.endsWith('.tar.gz')" title="Extract">📂</button>
+                        <button class="btn btn-danger btn-xs" @click="deleteItem(f)" title="Delete">✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
               </template>
             </tbody>
           </table>
+          <template x-if="sortedItems.length===0 && searchResults.length===0">
+            <div class="empty-state"><div class="empty-icon">📁</div><div class="empty-text">Empty directory</div></div>
+          </template>
         </div>
-        <!-- Editor Modal -->
-        <div class="modal-overlay" x-show="editor.show" @click.self="editor.show=false">
-          <div class="modal" style="max-width:800px">
-            <div class="modal-hd"><div class="modal-title" x-text="editor.path"></div><button class="modal-close" @click="editor.show=false">×</button></div>
-            <textarea class="form-input" style="min-height:360px;font-family:var(--font-mono);font-size:12px;line-height:1.5" x-model="editor.content"></textarea>
-            <div class="modal-ft">
-              <button class="btn btn-ghost" @click="editor.show=false">Cancel</button>
-              <button class="btn btn-primary" @click="saveFile()">Save</button>
+
+        <!-- Multi-select toolbar (shows when items selected) -->
+        <div x-show="selected.length>0" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--bg-card);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 24px rgba(0,0,0,.5);z-index:100">
+          <span style="font-size:13px;font-weight:600;color:var(--accent)" x-text="selected.length+' selected'"></span>
+          <button class="btn btn-ghost btn-sm" @click="copySelected()">Copy</button>
+          <button class="btn btn-ghost btn-sm" @click="cutSelected()">Cut</button>
+          <button class="btn btn-ghost btn-sm" @click="pasteHere()" x-show="clipboard">Paste</button>
+          <button class="btn btn-ghost btn-sm" @click="compressSelected()">Compress</button>
+          <button class="btn btn-danger btn-sm" @click="deleteSelected()">Delete</button>
+          <button class="btn btn-ghost btn-sm" @click="selected=[]">✕ Clear</button>
+        </div>
+
+        <!-- Context menu -->
+        <div x-show="ctxMenu.show" @click.away="ctxMenu.show=false"
+             style="position:fixed;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:4px;z-index:500;min-width:180px;box-shadow:0 8px 32px rgba(0,0,0,.5)"
+             :style="'left:'+ctxMenu.x+'px;top:'+ctxMenu.y+'px'">
+          <div class="ctx-item" @click="ctxOpen()"><span>📂</span> Open</div>
+          <div class="ctx-item" @click="ctxEdit()" x-show="ctxTarget?.type==='file'"><span>✏</span> Edit</div>
+          <div class="ctx-sep"></div>
+          <div class="ctx-item" @click="ctxCopy()"><span>📋</span> Copy</div>
+          <div class="ctx-item" @click="ctxCut()"><span>✂</span> Cut</div>
+          <div class="ctx-item" @click="pasteHere()" x-show="clipboard"><span>📌</span> Paste</div>
+          <div class="ctx-sep"></div>
+          <div class="ctx-item" @click="ctxRename()"><span>🖊</span> Rename</div>
+          <div class="ctx-item" @click="ctxChmod()"><span>🔒</span> Permissions</div>
+          <div class="ctx-item" @click="ctxCompress()" x-show="ctxTarget?.type==='dir'"><span>📦</span> Compress</div>
+          <div class="ctx-item" @click="ctxExtract()" x-show="ctxTarget?.name?.endsWith('.zip')"><span>📂</span> Extract</div>
+          <div class="ctx-item" @click="copyPath(ctxTarget)"><span>🔗</span> Copy Path</div>
+          <div class="ctx-item" @click="ctxProps()"><span>ℹ</span> Properties</div>
+          <div class="ctx-sep"></div>
+          <div class="ctx-item ctx-danger" @click="ctxDelete()"><span>🗑</span> Delete</div>
+        </div>
+
+        <!-- Code Editor (full screen overlay) -->
+        <div x-show="editorOpen" style="position:fixed;inset:0;z-index:400;background:var(--bg-base);display:flex;flex-direction:column">
+          <!-- Editor topbar -->
+          <div style="height:42px;background:#161722;border-bottom:1px solid #1e2030;display:flex;align-items:center;gap:8px;padding:0 12px;flex-shrink:0">
+            <button class="editor-btn" @click="editorOpen=false">← Back</button>
+            <!-- Tabs -->
+            <div style="display:flex;gap:2px;flex:1;overflow-x:auto">
+              <template x-for="tab in editorTabs" :key="tab.path">
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap"
+                     :style="activeTab===tab?'background:rgba(255,255,255,.1);color:#e2e8f0':'color:#94a3b8'"
+                     @click="switchTab(tab)">
+                  <span x-text="tab.name"></span>
+                  <span x-show="tab.modified" style="color:var(--accent-warn);font-size:10px">●</span>
+                  <span style="opacity:.6;font-size:14px" @click.stop="closeTab(tab)">×</span>
+                </div>
+              </template>
+            </div>
+            <!-- Editor toolbar -->
+            <div style="display:flex;gap:4px;flex-shrink:0">
+              <button class="editor-btn" @click="saveFile()" :disabled="!activeTab" title="Ctrl+S">💾 Save</button>
+              <button class="editor-btn" @click="saveAllFiles()" title="Save All">Save All</button>
+              <button class="editor-btn" @click="lintCurrentFile()" :disabled="!activeTab">🔍 Lint</button>
+              <button class="editor-btn" @click="editorSearch=!editorSearch">Find</button>
+              <button class="editor-btn" @click="cycleFontSize()">Aa</button>
             </div>
           </div>
+          <!-- Find/Replace bar -->
+          <div x-show="editorSearch" style="padding:6px 12px;background:#161722;border-bottom:1px solid #1e2030;display:flex;gap:8px;align-items:center">
+            <input style="background:#0d0e14;border:1px solid #2a2b3a;border-radius:4px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:180px;outline:none" x-model="findStr" placeholder="Find..." @keydown.enter="doFind()">
+            <input style="background:#0d0e14;border:1px solid #2a2b3a;border-radius:4px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:180px;outline:none" x-model="replaceStr" placeholder="Replace...">
+            <button class="editor-btn" @click="doFind()">Find</button>
+            <button class="editor-btn" @click="doReplace()">Replace</button>
+            <button class="editor-btn" @click="doReplaceAll()">Replace All</button>
+            <span x-show="findCount>0" style="font-size:11px;color:#94a3b8" x-text="(findIdx+1)+'/'+findCount"></span>
+          </div>
+          <!-- Lint errors -->
+          <div x-show="showLintPanel && lintErrors.length" style="background:#1a0808;border-bottom:1px solid #7f1d1d;padding:6px 12px;max-height:80px;overflow-y:auto">
+            <template x-for="err in lintErrors" :key="err.line">
+              <div style="font-size:11px;font-family:monospace;color:#fca5a5" x-text="'Line '+err.line+': '+err.message"></div>
+            </template>
+          </div>
+          <!-- Editor area -->
+          <div style="flex:1;display:flex;overflow:hidden">
+            <!-- Line numbers -->
+            <div x-ref="lineNums" style="background:#0d0e14;border-right:1px solid #1e2030;padding:12px 8px;font-family:monospace;font-size:var(--ed-fs);line-height:1.6;color:#4b5563;text-align:right;min-width:48px;overflow:hidden;user-select:none;flex-shrink:0">
+              <template x-for="n in lineCount" :key="n"><div x-text="n"></div></template>
+            </div>
+            <!-- Textarea -->
+            <textarea x-ref="editor"
+                      style="flex:1;background:#0d0e14;color:#e2e8f0;border:none;outline:none;padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:var(--ed-fs);line-height:1.6;resize:none;tab-size:4;white-space:pre"
+                      x-model="editorContent"
+                      @keydown.ctrl.s.prevent="saveFile()"
+                      @keydown.tab.prevent="insertTab()"
+                      @input="onEditorInput();syncScroll()"
+                      @scroll="syncScroll()"
+                      @keyup="updateCursor()"
+                      @click="updateCursor()"
+                      spellcheck="false"></textarea>
+          </div>
+          <!-- Status bar -->
+          <div style="height:24px;background:#161722;border-top:1px solid #1e2030;display:flex;align-items:center;padding:0 12px;gap:16px;font-size:11px;color:#64748b;flex-shrink:0">
+            <span x-text="activeTab?getLang(activeTab.name):'—'"></span>
+            <span x-text="'Ln '+cursorLine+', Col '+cursorCol"></span>
+            <span x-text="'UTF-8'"></span>
+            <span x-text="fontSize+'px'" style="cursor:pointer" @click="cycleFontSize()"></span>
+            <span x-show="activeTab?.modified" style="color:var(--accent-warn)">● Unsaved</span>
+          </div>
         </div>
-        <!-- Mkdir Modal -->
-        <div class="modal-overlay" x-show="showMkdir" @click.self="showMkdir=false">
+
+        <!-- New file/folder modal -->
+        <div class="modal-overlay" x-show="showNewFileModal" @click.self="showNewFileModal=false">
           <div class="modal" style="max-width:380px">
-            <div class="modal-hd"><div class="modal-title">New Folder</div><button class="modal-close" @click="showMkdir=false">×</button></div>
-            <div class="form-group"><label class="form-label">Folder Name</label><input class="form-input" x-model="mkdirName" placeholder="new-folder" @keydown.enter="mkdir()"></div>
-            <div class="modal-ft">
-              <button class="btn btn-ghost" @click="showMkdir=false">Cancel</button>
-              <button class="btn btn-primary" @click="mkdir()">Create</button>
-            </div>
+            <div class="modal-hd"><div class="modal-title" x-text="newFileIsFolder?'New Folder':'New File'"></div><button class="modal-close" @click="showNewFileModal=false">×</button></div>
+            <div class="form-group"><label class="form-label" x-text="newFileIsFolder?'Folder Name':'File Name'"></label><input class="form-input" x-model="newFileName" x-ref="newFileInput" @keydown.enter="createNew()"></div>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="showNewFileModal=false">Cancel</button><button class="btn btn-primary" @click="createNew()">Create</button></div>
           </div>
         </div>
+
+        <!-- Rename modal -->
+        <div class="modal-overlay" x-show="showRenameModal" @click.self="showRenameModal=false">
+          <div class="modal" style="max-width:380px">
+            <div class="modal-hd"><div class="modal-title">Rename</div><button class="modal-close" @click="showRenameModal=false">×</button></div>
+            <div class="form-group"><label class="form-label">New name</label><input class="form-input" x-model="renameValue" @keydown.enter="doRename()"></div>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="showRenameModal=false">Cancel</button><button class="btn btn-primary" @click="doRename()">Rename</button></div>
+          </div>
+        </div>
+
+        <!-- Chmod modal -->
+        <div class="modal-overlay" x-show="showChmodModal" @click.self="showChmodModal=false">
+          <div class="modal" style="max-width:360px">
+            <div class="modal-hd"><div class="modal-title">Change Permissions</div><button class="modal-close" @click="showChmodModal=false">×</button></div>
+            <div class="form-group"><label class="form-label">File</label><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)" x-text="chmodTarget?.path"></div></div>
+            <div class="form-group"><label class="form-label">Permissions (octal)</label>
+              <input class="form-input" style="font-family:var(--font-mono)" x-model="chmodValue" placeholder="755">
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Common: 755 (dirs), 644 (files), 600 (private), 777 (full access)</div>
+            </div>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="showChmodModal=false">Cancel</button><button class="btn btn-primary" @click="doChmod()">Apply</button></div>
+          </div>
+        </div>
+
+        <!-- Properties modal -->
+        <div class="modal-overlay" x-show="showPropsModal" @click.self="showPropsModal=false">
+          <div class="modal" style="max-width:400px">
+            <div class="modal-hd"><div class="modal-title">Properties</div><button class="modal-close" @click="showPropsModal=false">×</button></div>
+            <template x-if="props">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <template x-for="[k,v] in Object.entries(props)" :key="k">
+                  <div style="display:flex;gap:12px">
+                    <div style="width:110px;font-size:12px;color:var(--text-muted);flex-shrink:0" x-text="k"></div>
+                    <div style="font-size:12px;font-family:var(--font-mono);color:var(--text-primary);word-break:break-all" x-text="v"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div class="modal-ft"><button class="btn btn-primary" @click="showPropsModal=false">Close</button></div>
+          </div>
+        </div>
+
       </div>
 
+      <!-- PHP -->
       <!-- PHP -->
       <div x-show="page==='php'" x-data="phpPage()">
         <div class="page-header"><div><div class="page-title">PHP</div><div class="page-sub">Manage PHP versions, extensions and configuration</div></div></div>
@@ -766,128 +982,126 @@
       <!-- MODULES -->
       <div x-show="page==='modules'" x-data="modulesPage()">
         <div class="page-header">
-          <div><div class="page-title">Modules</div><div class="page-sub">Install and manage server software</div></div>
+          <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software</div></div>
         </div>
 
-        <!-- Category tabs (like aaPanel) -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:12px">
+        <!-- Category filter tabs -->
+        <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
           <button :class="'btn btn-sm '+(cat===''?'btn-primary':'btn-ghost')" @click="cat=''">All</button>
           <template x-for="ct in categories()" :key="ct">
             <button :class="'btn btn-sm '+(cat===ct?'btn-primary':'btn-ghost')" @click="cat=ct" x-text="ct"></button>
           </template>
         </div>
 
-        <!-- Module grid — aaPanel style cards -->
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">
-          <template x-for="m in filtered()" :key="m.id">
-            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:.15s"
-                 :style="m.installed?'border-color:rgba(16,185,129,.3);box-shadow:0 0 0 1px rgba(16,185,129,.1)':''"
-                 @mouseenter="$el.style.transform='translateY(-2px)';$el.style.boxShadow='0 8px 24px rgba(0,0,0,.3)'"
-                 @mouseleave="$el.style.transform='none';$el.style.boxShadow=m.installed?'0 0 0 1px rgba(16,185,129,.1)':'none'">
+        <!-- aaPanel-style table -->
+        <div class="card" style="padding:0;overflow:hidden">
+          <table class="data-table" style="table-layout:fixed">
+            <thead>
+              <tr>
+                <th style="width:46px"></th>
+                <th style="width:180px">Name</th>
+                <th>Description</th>
+                <th style="width:130px">Status / Version</th>
+                <th style="width:200px">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="m in filtered()" :key="m.id">
+                <tr :style="m.installed?'background:rgba(16,185,129,.03)':''">
+                  <!-- Icon -->
+                  <td style="text-align:center;font-size:22px;padding:10px 8px" x-text="m.icon"></td>
 
-              <!-- Card header -->
-              <div style="padding:16px 16px 12px;display:flex;align-items:flex-start;gap:12px">
-                <div style="width:44px;height:44px;background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0"
-                     x-text="m.icon"></div>
-                <div style="flex:1;min-width:0">
-                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                    <span style="font-weight:700;font-size:14px" x-text="m.name"></span>
-                    <!-- Version badge when installed -->
-                    <span x-show="m.installed && m.installedVer"
-                          style="font-size:10px;font-family:var(--font-mono);background:rgba(16,185,129,.12);color:var(--green);border:1px solid rgba(16,185,129,.25);padding:1px 7px;border-radius:10px;font-weight:600"
-                          x-text="'v'+m.installedVer"></span>
-                    <!-- Status badge -->
-                    <span :class="'badge badge-'+(m.installed?'green':'gray')" style="font-size:10px"
-                          x-text="m.installed?'Installed':'Not Installed'"></span>
-                  </div>
-                  <div style="font-size:11px;color:var(--text-muted);margin-top:2px;font-weight:500;text-transform:uppercase;letter-spacing:.3px" x-text="m.category"></div>
-                </div>
-              </div>
+                  <!-- Name + Category -->
+                  <td>
+                    <div style="font-weight:600;font-size:13px" x-text="m.name"></div>
+                    <div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);margin-top:1px" x-text="m.category"></div>
+                  </td>
 
-              <!-- Description -->
-              <div style="padding:0 16px 12px;font-size:12px;color:var(--text-secondary);line-height:1.5;min-height:36px" x-text="m.desc"></div>
+                  <!-- Description -->
+                  <td style="font-size:12px;color:var(--text-secondary);padding-right:8px" x-text="m.desc"></td>
 
-              <!-- Service status bar (installed + manageable) -->
-              <div x-show="m.installed && m.manage" style="padding:8px 16px;background:var(--bg-raised);border-top:1px solid var(--border);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
-                <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus==='inactive'?'red':'yellow')" style="flex-shrink:0"></span>
-                <span style="font-size:11px;color:var(--text-muted);flex:1" x-text="m.svcStatus||'unknown'"></span>
-                <!-- Quick service controls -->
-                <button class="btn btn-xs btn-success" @click.stop="control(m,'start')" x-show="m.svcStatus!=='active'" title="Start">▶</button>
-                <button class="btn btn-xs btn-ghost" @click.stop="control(m,'restart')" x-show="m.svcStatus==='active'" title="Restart">↺</button>
-                <button class="btn btn-xs btn-danger" @click.stop="control(m,'stop')" x-show="m.svcStatus==='active'" title="Stop">■</button>
-              </div>
+                  <!-- Status / Version -->
+                  <td>
+                    <div x-show="m.installed" style="display:flex;flex-direction:column;gap:4px">
+                      <!-- Version badge -->
+                      <span x-show="m.installedVer"
+                            style="font-size:11px;font-family:var(--font-mono);background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2);padding:1px 7px;border-radius:8px;font-weight:600;display:inline-block"
+                            x-text="'v'+m.installedVer"></span>
+                      <!-- Service status -->
+                      <div x-show="m.manage" style="display:flex;align-items:center;gap:5px">
+                        <span :class="'dot dot-'+(m.svcStatus==='active'?'green':'red')" style="flex-shrink:0"></span>
+                        <span style="font-size:11px;color:var(--text-muted)" x-text="m.svcStatus||'unknown'"></span>
+                      </div>
+                      <!-- Quick start/stop for running services -->
+                      <div x-show="m.manage" style="display:flex;gap:3px">
+                        <button class="btn btn-xs btn-success" @click.stop="control(m,'start')" x-show="m.svcStatus!=='active'" title="Start">▶</button>
+                        <button class="btn btn-xs btn-ghost" @click.stop="control(m,'restart')" x-show="m.svcStatus==='active'" title="Restart">↺</button>
+                        <button class="btn btn-xs btn-danger" @click.stop="control(m,'stop')" x-show="m.svcStatus==='active'" title="Stop">■</button>
+                      </div>
+                    </div>
+                    <span x-show="!m.installed" class="badge badge-gray" style="font-size:10px">Not Installed</span>
+                  </td>
 
-              <!-- Footer: version selector (not installed) or action buttons (installed) -->
-              <div style="padding:12px 16px">
-
-                <!-- NOT INSTALLED: version picker + Install button -->
-                <div x-show="!m.installed">
-                  <div x-show="m.versions && m.versions.length > 1" style="margin-bottom:10px">
-                    <label style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px">Version</label>
-                    <select class="form-input" style="font-size:12px;padding:5px 8px" x-model="m.selVer">
-                      <template x-for="v in m.versions" :key="v.value">
-                        <option :value="v.value" x-text="v.label"></option>
-                      </template>
-                    </select>
-                  </div>
-                  <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:13px" @click="install(m)" :disabled="m.loading">
-                    <span x-show="m.loading" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
-                    <span x-text="m.loading?'Installing…':'Install'"></span>
-                  </button>
-                </div>
-
-                <!-- INSTALLED: Setting + Uninstall row (aaPanel style) -->
-                <div x-show="m.installed" style="display:flex;gap:8px">
-                  <!-- Setting button (navigates to relevant page) -->
-                  <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center;gap:5px"
-                          @click="openSettings(m)"
-                          :title="'Configure '+m.name">
-                    <span>⚙</span> Setting
-                  </button>
-                  <!-- Uninstall button -->
-                  <button class="btn btn-danger btn-sm" style="flex:1;justify-content:center;gap:5px"
-                          @click="uninstall(m)" :disabled="m.loading">
-                    <span x-show="m.loading" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
-                    <span x-text="m.loading?'Removing…':'Uninstall'"></span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </template>
+                  <!-- Actions -->
+                  <td>
+                    <!-- INSTALLED -->
+                    <div x-show="m.installed" style="display:flex;gap:5px;flex-wrap:wrap">
+                      <button class="btn btn-ghost btn-xs" @click="openSettings(m)" style="gap:3px">
+                        <span style="font-size:11px">⚙</span> Setting
+                      </button>
+                      <button class="btn btn-danger btn-xs" @click="uninstall(m)" :disabled="m.loading">
+                        <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
+                        <span x-text="m.loading?'…':'Uninstall'"></span>
+                      </button>
+                    </div>
+                    <!-- NOT INSTALLED -->
+                    <div x-show="!m.installed" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                      <!-- Version selector (multi-version modules) -->
+                      <div x-show="m.versions && m.versions.length > 1" style="min-width:110px">
+                        <select class="form-input" style="font-size:11px;padding:3px 6px" x-model="m.selVer">
+                          <template x-for="v in m.versions" :key="v.value">
+                            <option :value="v.value" x-text="v.label"></option>
+                          </template>
+                        </select>
+                      </div>
+                      <button class="btn btn-primary btn-xs" @click="install(m)" :disabled="m.loading">
+                        <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
+                        <span x-text="m.loading?'Installing…':'Install'"></span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
         </div>
 
-        <!-- Version picker modal (PHP, Python — install specific version) -->
+        <!-- Version picker modal -->
         <div class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd">
               <div>
-                <div class="modal-title">
-                  <span x-text="verModal.action==='uninstall'?'Uninstall':'Install'"></span>
-                  <span x-text="' '+verModal.mod?.name"></span>
-                </div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:2px"
-                     x-text="verModal.action==='uninstall'?'Select version to remove':'Select version to install'"></div>
+                <div class="modal-title" x-text="(verModal.action==='uninstall'?'Uninstall':'Install')+' '+verModal.mod?.name"></div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px" x-text="verModal.action==='uninstall'?'Select version to remove':'Select version to install'"></div>
               </div>
               <button class="modal-close" @click="verModal.show=false">×</button>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">
               <template x-for="v in (verModal.mod?.versions||[])" :key="v.value">
-                <div style="padding:12px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid;transition:.12s"
-                     :style="verModal.selVer===v.value?'border-color:var(--accent);background:rgba(88,101,242,.1);color:var(--accent)':'border-color:var(--border);background:var(--bg-raised);color:var(--text-secondary)'"
+                <div style="padding:10px;text-align:center;border-radius:8px;cursor:pointer;transition:.1s"
+                     :style="'border:2px solid '+(verModal.selVer===v.value?'var(--accent)':'var(--border)')+';background:'+(verModal.selVer===v.value?'rgba(88,101,242,.1)':'var(--bg-raised)')+';color:'+(verModal.selVer===v.value?'var(--accent)':'var(--text-secondary)')"
                      @click="verModal.selVer=v.value">
                   <div style="font-weight:700;font-size:13px" x-text="v.value"></div>
-                  <div style="font-size:11px;margin-top:2px;opacity:.7" x-text="v.label.replace(v.value,'').replace('()','').trim()"></div>
+                  <div style="font-size:10px;margin-top:2px;opacity:.7" x-text="v.label.replace(v.value,'').replace('()','').trim()"></div>
                 </div>
               </template>
             </div>
-            <div x-show="verModal.action==='uninstall'"
-                 style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--red);margin-bottom:14px">
-              ⚠ This will permanently remove PHP <span x-text="verModal.selVer"></span> and all its extensions.
+            <div x-show="verModal.action==='uninstall'" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--red);margin-bottom:14px">
+              ⚠ This will permanently remove <span x-text="verModal.mod?.name+' v'+verModal.selVer"></span> and all its extensions.
             </div>
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="verModal.show=false">Cancel</button>
-              <button :class="'btn '+(verModal.action==='uninstall'?'btn-danger':'btn-primary')"
-                      @click="installWithVer()" :disabled="!verModal.selVer">
+              <button :class="'btn '+(verModal.action==='uninstall'?'btn-danger':'btn-primary')" @click="installWithVer()" :disabled="!verModal.selVer">
                 <span x-text="(verModal.action==='uninstall'?'Uninstall':'Install')+' v'+verModal.selVer"></span>
               </button>
             </div>
@@ -904,15 +1118,14 @@
                 <span x-show="jobModal.done && !jobModal.success" style="color:var(--yellow);font-size:20px">⚠</span>
                 <div>
                   <div class="modal-title" x-text="jobModal.title"></div>
-                  <div style="font-size:11px;color:var(--text-muted)" x-show="!jobModal.done">Installation in progress — do not close this window</div>
+                  <div x-show="!jobModal.done" style="font-size:11px;color:var(--text-muted)">Do not close this window</div>
                 </div>
               </div>
             </div>
-            <!-- Progress bar -->
             <div x-show="!jobModal.done" style="height:3px;background:var(--bg-raised);border-radius:2px;overflow:hidden;margin-bottom:12px">
               <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--green));animation:progress-anim 1.8s ease-in-out infinite;width:70%"></div>
             </div>
-            <div class="terminal-out job-terminal" style="max-height:340px;min-height:120px">
+            <div class="terminal-out job-terminal" style="max-height:340px;min-height:100px">
               <template x-for="(line,i) in jobModal.lines" :key="i">
                 <div :style="line.startsWith('[VortexPanel] ✓')?'color:var(--green)':line.startsWith('[VortexPanel] ⚠')?'color:var(--yellow)':line.startsWith('[VortexPanel]')?'color:var(--accent)':''" x-text="line"></div>
               </template>
@@ -920,22 +1133,21 @@
             <div class="modal-ft">
               <div x-show="jobModal.done">
                 <span x-show="jobModal.success" style="color:var(--green);font-size:13px;font-weight:600">
-                  ✓ <span x-text="jobModal.action==='install'?'Installed successfully':'Removed successfully'"></span>
-                  <span x-show="jobModal.installedVer" style="font-family:var(--font-mono);background:rgba(16,185,129,.12);padding:1px 7px;border-radius:4px;font-size:11px;margin-left:6px" x-text="'v'+jobModal.installedVer"></span>
+                  ✓ <span x-text="jobModal.action==='install'?'Installed':'Removed'"></span>
+                  <span x-show="jobModal.installedVer" style="font-family:var(--font-mono);font-size:11px;background:rgba(16,185,129,.12);padding:1px 7px;border-radius:4px;margin-left:6px" x-text="'v'+jobModal.installedVer"></span>
                 </span>
-                <span x-show="!jobModal.success" style="color:var(--yellow);font-size:13px">⚠ Check output above for details</span>
+                <span x-show="!jobModal.success" style="color:var(--yellow);font-size:13px">⚠ Check output above</span>
               </div>
               <div style="flex:1"></div>
               <button class="btn btn-primary" @click="jobModal.show=false;load()" :disabled="!jobModal.done">
-                <span x-text="jobModal.done?'Close':'Installing…'"></span>
+                <span x-text="jobModal.done?'Close':'Working…'"></span>
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- SERVICES -->
-      <div x-show="page==='services'" x-data="servicesPage()">
+      x-show="page==='services'" x-data="servicesPage()">
         <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()">↻</button></div>
         <div class="card" style="padding:0;overflow:hidden">
           <table class="data-table">
@@ -1210,8 +1422,8 @@
               <label class="form-label">Task Type</label>
               <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">
                 <template x-for="t in templates" :key="t.id">
-                  <div style="padding:8px 4px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid;transition:.12s" :style="form.type===t.id?'border-color:var(--accent);background:var(--bg-hover)':{'borderColor':'var(--border)','background':'var(--bg-raised)'}" @click="selectType(t)">
-                    <div style="font-size:18px" x-text="t.icon"></div><div style="font-size:10px;font-weight:500;color:var(--text-secondary);margin-top:2px" x-text="t.label"></div>
+                  <div style="padding:8px 4px;text-align:center;border-radius:8px;cursor:pointer;border:2px solid;transition:.12s" :style="'border-color:'+(form.type===t.id?'var(--accent)':'var(--border)')+';background:'+(form.type===t.id?'var(--bg-hover)':'var(--bg-raised)')" @click="selectType(t)">
+                    <div style="font-size:20px;height:28px;line-height:28px" x-text="t.icon"></div><div style="font-size:10px;font-weight:500;color:var(--text-secondary);margin-top:3px" x-text="t.label"></div>
                   </div>
                 </template>
               </div>
@@ -1246,14 +1458,48 @@
       <div x-show="page==='monitoring'" x-data="monitoringPage()">
         <div class="page-header"><div><div class="page-title">Monitoring</div><div class="page-sub">Real-time server performance</div></div></div>
         <div class="grid-4" style="margin-bottom:16px">
-          <div class="stat-card"><div class="stat-label">CPU Usage</div><div class="stat-value" x-text="(stats.cpu||0)+'%'"></div></div>
-          <div class="stat-card"><div class="stat-label">RAM</div><div class="stat-value" style="font-size:16px" x-text="stats.ram||'—'"></div></div>
-          <div class="stat-card"><div class="stat-label">Disk</div><div class="stat-value" x-text="(stats.disk||0)+'%'"></div></div>
-          <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value" style="font-size:14px" x-text="stats.uptime||'—'"></div></div>
+          <div class="stat-card">
+            <div class="stat-label">CPU Usage</div>
+            <div class="stat-value" x-text="(stats.cpu||0)+'%'"></div>
+            <div class="stat-bar"><div class="stat-fill cpu" :style="'width:'+Math.min(stats.cpu||0,100)+'%'"></div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">RAM</div>
+            <div style="font-size:15px;font-weight:700;line-height:1.2" x-text="stats.ram||'—'"></div>
+            <div class="stat-bar"><div class="stat-fill ram" :style="'width:'+(stats.ramPct||0)+'%'"></div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Disk</div>
+            <div class="stat-value" x-text="(stats.disk||0)+'%'"></div>
+            <div x-show="stats.diskStr" style="font-size:11px;color:var(--text-muted)" x-text="stats.diskStr"></div>
+            <div class="stat-bar"><div class="stat-fill disk" :style="'width:'+Math.min(stats.disk||0,100)+'%'"></div></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Uptime</div>
+            <div style="font-size:15px;font-weight:700;line-height:1.2" x-text="stats.uptime||'—'"></div>
+            <div x-show="stats.load" style="font-size:11px;color:var(--text-muted);margin-top:4px" x-text="'Load: '+stats.load"></div>
+          </div>
         </div>
-        <div class="card"><div class="card-hd"><div class="card-title">Running Processes</div></div>
-          <table class="data-table"><thead><tr><th>PID</th><th>Name</th><th>CPU%</th><th>Mem%</th><th>Status</th></tr></thead>
-            <tbody><template x-for="p in processes" :key="p.pid"><tr><td x-text="p.pid"></td><td x-text="p.name"></td><td x-text="p.cpu"></td><td x-text="p.mem"></td><td x-text="p.status"></td></tr></template></tbody>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div class="card-hd" style="padding:12px 16px">
+            <div class="card-title">Running Processes</div>
+            <button class="btn btn-ghost btn-xs" @click="load()">↻ Refresh</button>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>PID</th><th>User</th><th>Command</th><th>CPU%</th><th>Mem%</th></tr></thead>
+            <tbody>
+              <template x-for="p in processes" :key="p.pid">
+                <tr>
+                  <td style="font-family:var(--font-mono);font-size:12px" x-text="p.pid"></td>
+                  <td style="font-size:12px;color:var(--text-muted)" x-text="p.user||'—'"></td>
+                  <td style="font-family:var(--font-mono);font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="p.cmd||p.name||'—'"></td>
+                  <td>
+                    <span style="font-size:12px" x-text="p.cpu+'%'"></span>
+                  </td>
+                  <td style="font-size:12px" x-text="p.mem+'%'"></td>
+                </tr>
+              </template>
+            </tbody>
           </table>
         </div>
       </div>

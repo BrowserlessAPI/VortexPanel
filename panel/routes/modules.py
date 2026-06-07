@@ -531,9 +531,9 @@ nginx -t && systemctl reload nginx''',
     {
         'id':'cdn', 'name':'CDN Manager', 'icon':'⚡', 'category':'Network',
         'desc':'Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri — HOT MODULE',
-        'check':'test -f /opt/vortexpanel/cdn_config.json && echo found',
+        'check':'echo found',  # Always available — built-in panel feature
         'versions':[
-            {'label':'Latest (Built-in)', 'value':'latest'},
+            {'label':'Built-in', 'value':'builtin'},
         ],
         'install':'mkdir -p /opt/vortexpanel && echo "{}" > /opt/vortexpanel/cdn_config.json',
         'uninstall':'rm -f /opt/vortexpanel/cdn_config.json',

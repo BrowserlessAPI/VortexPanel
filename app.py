@@ -40,6 +40,17 @@ def create_app():
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp, caddy_bp, cdn_bp, update_bp, ai_bp]:
         app.register_blueprint(bp)
 
+    # Auto-init built-in features (create config files if missing)
+    try:
+        import os as _os
+        _os.makedirs('/opt/vortexpanel', exist_ok=True)
+        for _cfg in ['/opt/vortexpanel/cdn_config.json', '/opt/vortexpanel/ai_config.json']:
+            if not _os.path.exists(_cfg):
+                with open(_cfg, 'w') as _f:
+                    _f.write('{}')
+    except Exception:
+        pass
+
     return app
 
 if __name__ == '__main__':

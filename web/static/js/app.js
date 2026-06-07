@@ -61,8 +61,7 @@ function rootApp() {
       ]},
       { group: 'Server', items: [
         { id:'services',  icon:'⚙', label:'Services'    },
-        { id:'modules',   icon:'📦', label:'Modules'     },
-        { id:'caddy',     icon:'🟩', label:'Caddy'       },
+        { id:'modules',   icon:'📦', label:'App Store'   },
         { id:'docker',    icon:'🐋', label:'Docker'      },
         { id:'firewall',  icon:'🛡', label:'Firewall'    },
         { id:'terminal',  icon:'⌨', label:'Terminal'    },
@@ -222,7 +221,7 @@ function dashboardPage() {
       const r=await get('/api/services');
       if(r.ok) this.services=r.services.slice(0,8);
     },
-    go(page){ document.dispatchEvent(new CustomEvent('nav',{detail:{page}})); },
+    go(page){ window.dispatchEvent(new CustomEvent('nav',{detail:{page}})); },
   };
 }
 
@@ -1061,8 +1060,14 @@ function aiAssistant() {
 // ── PHP ───────────────────────────────────────────────────────────────────────
 function phpPage() {
   return {
-    versions:[], selVer:'', tab:'extensions',
-    extensions:[], ini:{}, logs:'', fpmStatus:'',
+    versions:[], selVer:'',
+    // selTab drives the right panel; also keep 'tab' as alias for HTML compatibility
+    selTab:'extensions', config:{}, fpmProfile:{}, logContent:'', phpinfo:'',
+    extensions:[],
+    iniModal:{show:false, version:'', content:''},
+
+    get tab() { return this.selTab; },
+    set tab(v) { this.selTab = v; },
 
     async init() {
       const r = await get('/api/php/versions');
@@ -1076,10 +1081,11 @@ function phpPage() {
     async selectVer(v) { this.selVer = v; await this.loadTab(); },
 
     async loadTab() {
-      if      (this.tab==='extensions') await this.loadExts();
-      else if (this.tab==='ini')        await this.loadIni();
-      else if (this.tab==='logs')       await this.loadLogs();
-      else if (this.tab==='fpm')        await this.loadFpm();
+      if      (this.selTab==='extensions')  await this.loadExts();
+      else if (this.selTab==='config')      await this.loadConfig();
+      else if (this.selTab==='fpm')         await this.loadFpm();
+      else if (this.selTab==='logs')        await this.loadLogs();
+      else if (this.selTab==='phpinfo')     await this.loadPhpinfo();
     },
 
     async loadExts() {
@@ -1087,39 +1093,79 @@ function phpPage() {
       if (r.ok) this.extensions = r.extensions.map(e=>({...e,loading:false}));
     },
 
-    async toggleExt(e) {
+    async installExt(e) {
       e.loading = true;
-      const action = e.installed ? 'uninstall' : 'install';
-      const r = await post(`/api/php/${this.selVer}/extensions/${e.name}/${action}`);
+      const r = await post(`/api/php/${this.selVer}/extensions/${e.name}/install`);
       e.loading = false;
-      if (r.ok) { e.installed = !e.installed; toast(`${e.name} ${action}ed`,'success'); }
+      if (r.ok) { e.installed = true; toast(e.name+' installed','success'); }
       else toast(r.error||'Failed','error');
     },
 
-    async loadIni() {
-      const r = await get(`/api/php/${this.selVer}/ini`);
-      if (r.ok) this.ini = r.config || r.ini || {};
+    async uninstallExt(e) {
+      if (!confirm('Uninstall '+e.name+'?')) return;
+      const r = await post(`/api/php/${this.selVer}/extensions/${e.name}/uninstall`);
+      if (r.ok) { e.installed = false; toast(e.name+' removed','success'); }
+      else toast(r.error||'Failed','error');
     },
 
-    async saveIni(key, val) {
-      const r = await post(`/api/php/${this.selVer}/ini`, {key, value:val});
-      toast(r.ok?'Saved':'Failed', r.ok?'success':'error');
+    async loadConfig() {
+      const r = await get(`/api/php/${this.selVer}/ini`);
+      if (r.ok) this.config = r.config || r.ini || {};
+    },
+
+    async saveConfig() {
+      const r = await post(`/api/php/${this.selVer}/ini`, {config: this.config});
+      if (r.ok) { toast('Saved & FPM reloaded','success'); }
+      else toast(r.error||'Failed','error');
     },
 
     async loadFpm() {
       const r = await get(`/api/php/${this.selVer}/fpm`);
-      if (r.ok) this.fpmStatus = r.status;
+      if (r.ok) {
+        this.fpmProfile = r.profile || {};
+        // Update the version status
+        const v = this.versions.find(v=>v.version===this.selVer);
+        if (v && r.status) v.status = r.status;
+      }
     },
 
-    async controlFpm(action) {
+    // Called from HTML button: fpmAction('start') etc
+    async fpmAction(action) {
       const r = await post(`/api/php/${this.selVer}/fpm`, {action});
-      if (r.ok) { toast(`${action} php${this.selVer}-fpm`,'success'); await this.loadFpm(); }
-      else toast(r.error||'Failed','error');
+      if (r.ok) {
+        toast(action+' php'+this.selVer+'-fpm','success');
+        // Refresh version status
+        const vr = await get('/api/php/versions');
+        if (vr.ok) this.versions = vr.versions;
+      } else toast(r.error||'Failed','error');
     },
 
     async loadLogs() {
       const r = await get(`/api/php/${this.selVer}/logs`);
-      if (r.ok) this.logs = r.logs;
+      if (r.ok) this.logContent = r.logs || r.content || '';
+    },
+
+    async loadPhpinfo() {
+      const r = await get(`/api/php/${this.selVer}/phpinfo`);
+      if (r.ok) this.phpinfo = r.output || '';
+    },
+
+    // Opens the raw php.ini editor modal
+    async openIni() {
+      const r = await get(`/api/php/${this.selVer}/ini/raw`);
+      if (r.ok) {
+        this.iniModal = {show:true, version:this.selVer, content: r.content||''};
+      } else {
+        // fallback: stringify config object
+        const entries = Object.entries(this.config).map(([k,v])=>k+' = '+v).join('\n');
+        this.iniModal = {show:true, version:this.selVer, content: entries};
+      }
+    },
+
+    async saveIni() {
+      const r = await post(`/api/php/${this.selVer}/ini/raw`, {content: this.iniModal.content});
+      if (r.ok) { toast('php.ini saved & FPM reloaded','success'); this.iniModal.show=false; }
+      else toast(r.error||'Failed','error');
     },
   };
 }
@@ -1235,7 +1281,7 @@ function modulesPage() {
         bind9:'dns','pure-ftpd':'ftp',nodejs:'terminal',docker:'docker',
         redis:'services',postfix:'mail',roundcube:'mail',modsecurity:'security',
       };
-      document.dispatchEvent(new CustomEvent('nav',{detail:{page:map[m.id]||'services'}}));
+      window.dispatchEvent(new CustomEvent('nav',{detail:{page:map[m.id]||'services'}}));
       toast('Opening '+m.name+' settings','info');
     },
   };
@@ -1630,29 +1676,42 @@ function settingsPage() {
 // ── MONITORING ────────────────────────────────────────────────────────────────
 function monitoringPage() {
   return {
-    stats: {cpu:0,ram:'',disk:0,uptime:'',load:''},
+    stats: {cpu:0,ram:'',ramPct:0,disk:0,diskStr:'',uptime:'',load:''},
     processes: [],
 
     async init() { await this.load(); setInterval(()=>this.load(), 5000); },
 
     async load() {
+      // Get processes
       const r = await get('/api/monitoring/processes');
-      if (r.ok) {
-        this.processes = r.processes || [];
-        if (r.cpu  !== undefined) this.stats.cpu    = r.cpu;
-        if (r.ram  !== undefined) this.stats.ram    = r.ram;
-        if (r.disk !== undefined) this.stats.disk   = r.disk;
-      }
-      // Also load overall stats from dashboard endpoint
+      if (r.ok) this.processes = r.processes || [];
+
+      // Get overall stats from dashboard
       const s = await get('/api/dashboard/stats');
       if (s.ok) {
-        this.stats = {
-          cpu:    s.cpu    || 0,
-          ram:    s.ram    || '',
-          disk:   s.disk   || 0,
-          uptime: s.uptime || '',
-          load:   s.load   || '',
-        };
+        this.stats.cpu    = s.cpu || 0;
+        this.stats.uptime = s.uptime || '';
+        this.stats.load   = Array.isArray(s.load) ? s.load.join(' ') : (s.load||'');
+        // ram comes as {used, total} — format as string
+        if (s.ram && typeof s.ram === 'object') {
+          const used  = s.ram.used  || 0;
+          const total = s.ram.total || 1;
+          this.stats.ramPct = Math.round(used/total*100);
+          this.stats.ram    = fmtBytes(used) + ' / ' + fmtBytes(total);
+        } else {
+          this.stats.ram    = s.ram || '—';
+          this.stats.ramPct = 0;
+        }
+        // disk comes as {used, total} — compute percentage
+        if (s.disk && typeof s.disk === 'object') {
+          const used  = s.disk.used  || 0;
+          const total = s.disk.total || 1;
+          this.stats.disk    = Math.round(used/total*100);
+          this.stats.diskStr = fmtBytes(used) + ' / ' + fmtBytes(total);
+        } else {
+          this.stats.disk    = s.disk || 0;
+          this.stats.diskStr = '';
+        }
       }
     },
   };
