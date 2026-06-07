@@ -14,7 +14,7 @@ echo ""
 
 # ── 1. Python deps ───────────────────────────────────────────────────────────
 echo -e "[1/5] Installing Python dependencies..."
-apt-get install -y python3-venv python3-full -qq 2>/dev/null || true
+apt-get update -qq && apt-get install -y git python3-venv python3-full -qq 2>/dev/null || true
 python3 -m venv "$PANEL_DIR/venv" --system-site-packages 2>/dev/null || python3 -m venv "$PANEL_DIR/venv"
 "$PANEL_DIR/venv/bin/pip" install flask -q
 

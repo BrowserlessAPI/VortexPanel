@@ -122,7 +122,16 @@ function rootApp() {
     },
 
     async _onLoggedIn() {
-      // Load module status for sidebar lock icons
+      // Restore page from URL hash (e.g. #files → go to files page)
+      const hash = window.location.hash.replace('#', '');
+      const validPages = ['dashboard','websites','databases','files','php','modules',
+                          'services','firewall','terminal','backups','dns','mail','ftp',
+                          'cron','monitoring','bandwidth','security','docker','caddy',
+                          'cdn','settings'];
+      if (hash && validPages.includes(hash)) {
+        this.page = hash;
+      }
+      // Load module status for sidebar indicators
       try {
         const r = await get('/api/modules');
         if (r.ok) r.modules.forEach(m => { this.moduleStatus[m.id] = m.installed; });
@@ -132,7 +141,14 @@ function rootApp() {
     },
 
     // ── Panel navigation ──────────────────────────────────────────────────────
-    go(id) { this.page = id; this.sidebarOpen = false; },
+    go(id) {
+      this.page = id;
+      this.sidebarOpen = false;
+      // Persist page in URL hash so refresh returns to same page
+      if (history.replaceState) {
+        history.replaceState(null, '', '#' + id);
+      }
+    },
 
     pageTitle() {
       for (const g of this.nav) {
@@ -1208,6 +1224,18 @@ function modulesPage() {
     async control(m, action) {
       const r = await post(`/api/modules/${m.id}/control`, {action});
       if (r.ok) { m.svcStatus=r.status; toast(`${action} ${m.name}`,'success'); }
+    },
+
+    openSettings(m) {
+      const map = {
+        nginx:'websites',apache2:'websites',openlitespeed:'websites',caddy:'caddy',
+        mysql:'databases',mariadb:'databases',postgresql:'databases',mongodb:'databases',
+        phpmyadmin:'databases',php:'php',fail2ban:'security',clamav:'security',
+        bind9:'dns','pure-ftpd':'ftp',nodejs:'terminal',docker:'docker',
+        redis:'services',postfix:'mail',roundcube:'mail',modsecurity:'security',
+      };
+      document.dispatchEvent(new CustomEvent('nav',{detail:{page:map[m.id]||'services'}}));
+      toast('Opening '+m.name+' settings','info');
     },
   };
 }
