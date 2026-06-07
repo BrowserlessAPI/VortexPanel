@@ -41,9 +41,10 @@ function rootApp() {
     loginErr:  '',
     loginLoading: false,
 
-    // Panel state (from panelApp)
+    // Panel state
     username: '', page: 'dashboard',
     sidebarOpen: false,
+    online: true,
     moduleStatus: {},
     updateAvailable: false,
     updateModal: {

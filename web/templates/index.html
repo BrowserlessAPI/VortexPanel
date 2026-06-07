@@ -111,9 +111,16 @@
       <button class="topbar-btn" @click="sidebarOpen=!sidebarOpen" style="display:none;padding:6px 8px">☰</button>
       <div class="topbar-title" x-text="pageTitle()"></div>
       <div class="topbar-spacer"></div>
-      <div class="status-pill online" x-show="online">● Live</div>
-      <div class="status-pill offline" x-show="!online">○ Offline</div>
-      <button class="topbar-btn" @click="refreshPage()">↻ Refresh</button>
+      <div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--green)">
+        <span class="dot dot-green"></span><span>Live</span>
+      </div>
+      <div style="position:relative;margin-left:8px">
+        <button class="btn btn-ghost btn-sm" @click="openUpdateModal()"
+                :style="updateAvailable?'border-color:rgba(88,101,242,.6);color:var(--accent)':''">
+          <span x-text="updateAvailable?'⬆ Update Available!':'⬆ Panel Update'"></span>
+          <span x-show="updateAvailable" style="position:absolute;top:-3px;right:-3px;width:8px;height:8px;background:var(--red);border-radius:50%;border:2px solid var(--bg-topbar)"></span>
+        </button>
+      </div>
     </div>
 
     <!-- PAGE CONTENT -->
@@ -492,7 +499,8 @@
 
       </div>
 
-x-show="page==='databases'" x-data="databasesPage()">
+      <!-- DATABASES -->
+      <div x-show="page==='databases'" x-data="databasesPage()">
         <div class="page-header">
           <div><div class="page-title">Databases</div><div class="page-sub">MySQL / MariaDB management</div></div>
           <button class="btn btn-primary" @click="showAdd=true">+ Create DB</button>
@@ -549,6 +557,7 @@ x-show="page==='databases'" x-data="databasesPage()">
       </div>
 
       <!-- FILE MANAGER -->
+      <!-- FILES -->
       <div x-show="page==='files'" x-data="filesPage()">
         <div class="page-header">
           <div><div class="page-title">File Manager</div><div class="page-sub" x-text="currentPath"></div></div>
@@ -1893,6 +1902,7 @@ x-show="page==='databases'" x-data="databasesPage()">
 
 
       <!-- CDN MANAGER -->
+      <!-- CDN -->
       <div x-show="page==='cdn'" x-data="cdnPage()">
         <div class="page-header">
           <div>
