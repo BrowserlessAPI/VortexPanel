@@ -1176,6 +1176,26 @@ def get_module_settings(mod_id):
         return jsonify({'ok':True,'status':'active' if node_path else 'inactive',
             'version':version,'info':info})
 
+    elif mod_id == 'ddns':
+        import json as _json
+        cfg_file = '/opt/vortexpanel/ddns_config.json'
+        cfg = {}
+        if os.path.exists(cfg_file):
+            try:
+                with open(cfg_file) as f: cfg = _json.load(f)
+            except: pass
+        log = ''
+        log_file = '/opt/vortexpanel/ddns.log'
+        if os.path.exists(log_file):
+            log = sh(f'tail -100 {log_file}') or ''
+        # Get current public IP
+        ip = sh("curl -s --max-time 5 https://api.ipify.org 2>/dev/null || curl -s --max-time 5 https://ifconfig.me/ip 2>/dev/null") or 'Unknown'
+        return jsonify({'ok':True, 'status':'active' if cfg.get('enabled') else 'inactive',
+            'version':'', 'domains': cfg.get('domains',[]),
+            'enabled': cfg.get('enabled', False),
+            'current_ip': ip, 'interval': cfg.get('interval', 300),
+            'log': log})
+
     # Generic fallback
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False,'error':'Module not found'}), 404

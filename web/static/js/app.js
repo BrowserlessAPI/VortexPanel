@@ -1387,6 +1387,11 @@ function modulesPage() {
         this.settingsModal.caddyOpts      = r.global_opts     || {};
         this.settingsModal.caddyCerts     = r.tls_certs       || '';
         this.settingsModal.phpServiceName  = m.id==='php' ? 'php'+(r.sel_ver||'')+ '-fpm' : '';
+        this.settingsModal.ddnsDomains     = r.domains        || [];
+        this.settingsModal.ddnsStatus      = {enabled:r.enabled||false,current_ip:r.current_ip||'',interval:r.interval||300};
+        this.settingsModal.ddnsLog         = r.log            || '';
+        this.settingsModal.showAddDomain   = false;
+        this.settingsModal.ddnsForm        = {provider:'cloudflare',email:'',domain:'',api_token:'',api_limit:false};
       } else {
         toast(r.error || 'Failed to load settings', 'error');
       }
@@ -1463,6 +1468,7 @@ function modulesPage() {
         fail2ban:   ['service','website_protection','server_protection','black_ip','white_ip','logs'],
         supervisor: ['service','config','logs'],
         clamav:     ['service','logs'],
+        ddns:       ['ddns_domains','ddns_server','ddns_log'],
         phpmyadmin: ['service','php_version','security'],
         docker:     ['service','info'],
       };
@@ -1475,6 +1481,7 @@ function modulesPage() {
         extensions:'Install Extensions', ini:'Configuration File',
         fpm:'FPM Profile', phpinfo:'phpinfo',
         caddyfile:'Caddyfile', global_opts:'Global Options', auto_https:'Auto HTTPS',
+        ddns_domains:'Domain List', ddns_server:'DDNS Server', ddns_log:'Log',
         upload_limit:'Limit of Upload', timeout_limit:'Limit of Timeout',
         disabled_functions:'Disabled Functions', load_average:'Load Average',
         session_config:'Session Config', slow_log:'Slow Log',
