@@ -1213,6 +1213,7 @@ function modulesPage() {
   return {
     modules: [], cat: '',
     verModal:  {show:false, mod:null, selVer:'', action:'install'},
+    phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
 
     async init() { await this.load(); },
@@ -1234,7 +1235,16 @@ function modulesPage() {
 
     async uninstall(m) {
       // For multi-version modules (PHP, Python), ask WHICH version to remove
-      if ((m.id==='php'||m.id==='python') && m.versions?.length) {
+      if (m.id==='php') {
+        // Fetch actually installed PHP versions from server
+        const r = await get('/api/modules/php/settings');
+        const installed = (r.php_versions||[]).map(v=>v.version);
+        if (installed.length > 0) {
+          this.phpUninstallModal = {show:true, versions:installed, selVer:installed[0]};
+          return;
+        }
+      }
+      if (m.id==='python' && m.versions?.length) {
         this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'uninstall'};
         return;
       }

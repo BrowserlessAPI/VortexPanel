@@ -976,6 +976,38 @@
           </div>
         </div>
 
+        <!-- ══ PHP UNINSTALL MODAL ══ -->
+        <div class="modal-overlay" x-show="phpUninstallModal.show" @click.self="phpUninstallModal.show=false">
+          <div class="modal" style="max-width:440px">
+            <div class="modal-hd">
+              <div>
+                <div class="modal-title">Uninstall PHP</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Select installed version to remove</div>
+              </div>
+              <button class="modal-close" @click="phpUninstallModal.show=false">×</button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px">
+              <template x-for="v in phpUninstallModal.versions" :key="v">
+                <div style="padding:10px;text-align:center;border-radius:8px;cursor:pointer;transition:.1s"
+                     :style="'border:2px solid '+(phpUninstallModal.selVer===v?'var(--accent)':'var(--border)')+';background:'+(phpUninstallModal.selVer===v?'rgba(88,101,242,.1)':'var(--bg-raised)')+';color:'+(phpUninstallModal.selVer===v?'var(--accent)':'var(--text-secondary)')"
+                     @click="phpUninstallModal.selVer=v">
+                  <div style="font-weight:700;font-size:15px" x-text="v"></div>
+                </div>
+              </template>
+            </div>
+            <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--red);margin-bottom:14px">
+              ⚠ This will permanently remove PHP <span x-text="phpUninstallModal.selVer"></span> and all its extensions.
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="phpUninstallModal.show=false">Cancel</button>
+              <button class="btn btn-danger" :disabled="!phpUninstallModal.selVer"
+                      @click="phpUninstallModal.show=false; _startJob(modules.find(m=>m.id==='php'), 'uninstall', phpUninstallModal.selVer)">
+                Uninstall v<span x-text="phpUninstallModal.selVer"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- ══ APP SETTINGS MODAL (aaPanel-style left-sidebar tabs) ══════════════ -->
         <div x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
              style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:99999;pointer-events:auto"

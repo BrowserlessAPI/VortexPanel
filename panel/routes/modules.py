@@ -21,7 +21,7 @@ def get_version(mod_id):
         'mariadb':      "mariadbd --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'mongodb':      "mongod --version 2>/dev/null | grep -oP 'v[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'postgresql':   "psql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+' | head -1",
-        'php':          "php -v 2>/dev/null | grep -oP 'PHP [0-9]+\\.[0-9]+\\.[0-9]+' | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
+        'php':          "for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do php$v --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1 && break; done",
         'redis':        "redis-server --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'nodejs':       "node --version 2>/dev/null | tr -d 'v'",
         'python':       "python3 --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
@@ -868,9 +868,9 @@ def get_module_settings(mod_id):
         logs = sh('tail -100 /var/log/php' + sel + '-fpm.log 2>/dev/null') or \
                sh('journalctl -u php' + sel + '-fpm -n 80') or 'No logs'
         def ini_get(key):
-            return sh('grep -oP "^' + key + '\\s*=\\s*\\K.+" ' + ini_path + ' 2>/dev/null | head -1').strip() or ''
+            return sh('grep -oP "^' + key + '\s*=\s*\K.*" ' + ini_path + ' 2>/dev/null | head -1').strip() or ''
         def fpm_get(key):
-            return sh('grep -oP "^' + key + '\\s*=\\s*\\K.+" ' + fpm_conf + ' 2>/dev/null | head -1').strip() or ''
+            return sh('grep -oP "^' + key + '\s*=\s*\K.*" ' + fpm_conf + ' 2>/dev/null | head -1').strip() or ''
         config = {
             'short_open_tag':      ini_get('short_open_tag') or 'On',
             'max_execution_time':  ini_get('max_execution_time') or '300',
