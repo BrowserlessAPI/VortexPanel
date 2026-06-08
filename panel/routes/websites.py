@@ -849,3 +849,67 @@ def get_rewrite_templates(domain):
             if fname.endswith('.conf'):
                 templates.append({'id':fname[:-5],'label':fname[:-5]})
     return jsonify({'ok':True,'templates':templates})
+
+@websites_bp.route('/api/websites/<domain>/limit-access/<name>', methods=['DELETE'])
+def delete_limit_access(domain, name):
+    if not req(): return jsonify({'ok':False}), 401
+    avail, _ = get_nginx_dirs()
+    conf_path = os.path.join(avail, f'{domain}.conf')
+    htpasswd = f'/etc/nginx/.htpasswd_{domain}_{name}'
+    try:
+        if os.path.exists(htpasswd): os.unlink(htpasswd)
+        if os.path.exists(conf_path):
+            with open(conf_path) as f: content = f.read()
+            import re as _re
+            content = _re.sub(rf'#LIMIT-{re.escape(name)}-START.*?#LIMIT-{re.escape(name)}-END\s*', '', content, flags=_re.DOTALL)
+            with open(conf_path,'w') as f: f.write(content)
+        reload_nginx()
+        return jsonify({'ok':True})
+    except Exception as e:
+        return jsonify({'ok':False,'error':str(e)})
+
+@websites_bp.route('/api/websites/<domain>/logs')
+def get_site_logs(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    access_log = f'/var/log/nginx/{domain}.access.log'
+    error_log  = f'/var/log/nginx/{domain}.error.log'
+    def read_log(p):
+        if not os.path.exists(p): return 'Log file not found'
+        return sh(f'tail -100 {p}') or 'Empty log'
+    return jsonify({'ok':True,
+        'access': read_log(access_log), 'access_path': access_log,
+        'error':  read_log(error_log),  'error_path':  error_log})
+
+@websites_bp.route('/api/websites/<domain>/directory')
+def get_directory(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    avail, _ = get_nginx_dirs()
+    conf_path = os.path.join(avail, f'{domain}.conf')
+    root_path = get_webroot() + '/' + domain
+    if os.path.exists(conf_path):
+        with open(conf_path) as f: content = f.read()
+        import re as _re
+        m = _re.search(r'root\s+([^;]+);', content)
+        if m: root_path = m.group(1).strip()
+    return jsonify({'ok':True,'path':root_path})
+
+@websites_bp.route('/api/websites/<domain>/directory', methods=['PUT'])
+def set_directory(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    new_path = d.get('path','').strip()
+    if not new_path: return jsonify({'ok':False,'error':'Path required'})
+    avail, _ = get_nginx_dirs()
+    conf_path = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(conf_path):
+        return jsonify({'ok':False,'error':'Config not found'})
+    import re as _re
+    with open(conf_path) as f: content = f.read()
+    content = _re.sub(r'root\s+[^;]+;', f'root {new_path};', content)
+    os.makedirs(new_path, exist_ok=True)
+    with open(conf_path,'w') as f: f.write(content)
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower():
+        return jsonify({'ok':False,'error':test})
+    reload_nginx()
+    return jsonify({'ok':True})

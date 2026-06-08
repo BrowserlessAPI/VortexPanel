@@ -193,21 +193,42 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 @media(max-width:640px){.sidebar{position:fixed;inset:0 auto 0 0;left:-220px;transition:left .25s;z-index:200}.sidebar.open{left:0}.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}.form-row-2{grid-template-columns:1fr}}
 
 /* ── FILE MANAGER ─────────────────────────────────────────────────────────── */
+.ctx-menu {
+  position: fixed;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 9999;
+  min-width: 190px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  user-select: none;
+}
 .ctx-item {
-  padding: 7px 14px;
+  padding: 8px 12px;
   font-size: 13px;
   cursor: pointer;
   border-radius: 5px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   transition: .1s;
+  white-space: nowrap;
 }
-.ctx-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ctx-item .ctx-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.ctx-item:hover { background: rgba(88,101,242,.12); color: var(--accent); }
 .ctx-item.ctx-danger { color: var(--red); }
-.ctx-item.ctx-danger:hover { background: rgba(239,68,68,.1); }
-.ctx-sep { height: 1px; background: var(--border); margin: 3px 6px; }
+.ctx-item.ctx-danger:hover { background: rgba(239,68,68,.1); color: var(--red); }
+.ctx-sep { height: 1px; background: var(--border); margin: 4px 4px; }
 
 /* Editor buttons */
 .editor-btn {
