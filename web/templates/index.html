@@ -1113,12 +1113,23 @@
 
         <!-- ══ APP SETTINGS MODAL (aaPanel-style left-sidebar tabs) ══════════════ -->
         <div x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
-             style="position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:300;display:flex;align-items:center;justify-content:center"
-             @click.self="settingsModal.show=false">
-          <div style="width:min(860px,96vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.6)">
+             style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:99999;pointer-events:auto"
+             @click.self="settingsModal.show=false"
+             x-init="$watch('settingsModal.show', v => { if(v){ $nextTick(()=>{ const el=document.getElementById('settings-modal-box'); el.style.left=Math.max(0,(window.innerWidth-el.offsetWidth)/2)+'px'; el.style.top=Math.max(10,(window.innerHeight-el.offsetHeight)/2-80)+'px'; }); } })">
+          <div id="settings-modal-box"
+               style="position:absolute;top:50px;left:50px;width:min(880px,92vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.7);cursor:default"
+               @mousedown.stop>
 
             <!-- Modal header -->
-            <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg-raised)">
+            <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg-raised);cursor:move;user-select:none"
+                 @mousedown="(function(e){
+                   const box=document.getElementById('settings-modal-box');
+                   const sx=e.clientX-box.offsetLeft, sy=e.clientY-box.offsetTop;
+                   const mm=function(e){ box.style.left=(e.clientX-sx)+'px'; box.style.top=(e.clientY-sy)+'px'; };
+                   const mu=function(){ document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu); };
+                   document.addEventListener('mousemove',mm);
+                   document.addEventListener('mouseup',mu);
+                 })(event)">
               <span style="font-size:22px" x-text="settingsModal.mod?.icon"></span>
               <div style="flex:1">
                 <div style="font-weight:700;font-size:15px" x-text="settingsModal.mod?.name+' Settings'"></div>
@@ -1136,11 +1147,11 @@
             <div x-show="!settingsModal.loading" style="display:flex;flex:1;overflow:hidden;min-height:0">
 
               <!-- Left sidebar tabs -->
-              <div style="width:160px;flex-shrink:0;border-right:1px solid var(--border);background:var(--bg-raised);overflow-y:auto">
+              <div style="width:160px;min-width:160px;flex-shrink:0;border-right:2px solid var(--border);background:#1a1b2e;overflow-y:auto;overflow-x:hidden;padding:6px 0">
                 <template x-for="t in settingsTabs(settingsModal.mod?.id)" :key="t.id">
-                  <div style="padding:11px 16px;font-size:13px;cursor:pointer;border-left:3px solid transparent;transition:.12s"
+                  <div style="padding:10px 18px;font-size:13px;cursor:pointer;border-left:3px solid transparent;transition:.1s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box;line-height:1.4"
                        :style="settingsModal.tab===t.id
-                         ? 'border-left-color:var(--accent);background:var(--bg-card);color:var(--text-primary);font-weight:600'
+                         ? 'border-left-color:var(--accent);color:var(--accent);font-weight:600;background:rgba(88,101,242,.08)'
                          : 'color:var(--text-secondary);border-left-color:transparent'"
                        @click="settingsModal.tab=t.id" x-text="t.label"></div>
                 </template>

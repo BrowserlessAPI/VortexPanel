@@ -599,3 +599,243 @@ def deploy_app(domain):
     out = sh(f'DEBIAN_FRONTEND=noninteractive {cmd} 2>&1', t=300)
     ok  = os.path.exists(path) and len(os.listdir(path)) > 2
     return jsonify({'ok':ok, 'output':out[-500:], 'path':path})
+
+# ── DOMAIN MANAGER ────────────────────────────────────────────────────────────
+@websites_bp.route('/api/websites/<domain>/domains')
+def get_domains(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':True,'domains':[]})
+    with open(fp) as f: content = f.read()
+    m = re.search(r'server_name\s+([^;]+);', content)
+    domains = []
+    if m:
+        for d in m.group(1).strip().split():
+            port = '80'
+            if ':' in d:
+                parts = d.rsplit(':',1); d=parts[0]; port=parts[1]
+            domains.append({'domain':d,'port':port})
+    return jsonify({'ok':True,'domains':domains})
+
+@websites_bp.route('/api/websites/<domain>/domains', methods=['POST'])
+def add_domain_binding(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    new_domain = d.get('domain','').strip()
+    if not new_domain: return jsonify({'ok':False,'error':'Domain required'}), 400
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':False,'error':'Site not found'}), 404
+    with open(fp) as f: content = f.read()
+    content = re.sub(r'(server_name\s+)([^;]+)(;)',
+        lambda m2: m2.group(1)+m2.group(2).strip()+' '+new_domain+m2.group(3), content, count=1)
+    with open(fp,'w') as f: f.write(content)
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower(): return jsonify({'ok':False,'error':test}), 400
+    reload_nginx()
+    return jsonify({'ok':True})
+
+@websites_bp.route('/api/websites/<domain>/domains/<target>', methods=['DELETE'])
+def remove_domain_binding(domain, target):
+    if not req(): return jsonify({'ok':False}), 401
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':False,'error':'Not found'}), 404
+    with open(fp) as f: content = f.read()
+    content = re.sub(r'\s+'+re.escape(target), '', content)
+    with open(fp,'w') as f: f.write(content)
+    reload_nginx()
+    return jsonify({'ok':True})
+
+# ── PHP VERSIONS FOR DOMAIN ───────────────────────────────────────────────────
+@websites_bp.route('/api/websites/<domain>/php-versions')
+def get_php_versions_for_domain(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    versions = []
+    for v in ['8.4','8.3','8.2','8.1','8.0','7.4','7.3','7.2']:
+        binary = f'/usr/bin/php{v}'
+        if os.path.exists(binary):
+            status = sh(f'systemctl is-active php{v}-fpm 2>/dev/null') or 'inactive'
+            versions.append({'version':v,'binary':binary,'sock':f'/run/php/php{v}-fpm.sock','status':status})
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    current = 'static'
+    if os.path.exists(fp):
+        with open(fp) as f: content = f.read()
+        m = re.search(r'fastcgi_pass.*?php([\d.]+).*?fpm', content)
+        if m: current = m.group(1)
+    return jsonify({'ok':True,'versions':versions,'current':current})
+
+# ── HOTLINK PROTECTION ────────────────────────────────────────────────────────
+@websites_bp.route('/api/websites/<domain>/hotlink')
+def get_hotlink(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':True,'enabled':False})
+    with open(fp) as f: content = f.read()
+    enabled = '#VP_HOTLINK' in content
+    suffixes='jpg,jpeg,gif,png,js,css'; access_domain=domain; allow_empty=False
+    if enabled:
+        m = re.search(r'#VP_HOTLINK_SUFFIXES:([^\n]+)', content)
+        if m: suffixes=m.group(1).strip()
+        m = re.search(r'#VP_HOTLINK_DOMAIN:([^\n]+)', content)
+        if m: access_domain=m.group(1).strip()
+        allow_empty='#VP_HOTLINK_ALLOW_EMPTY' in content
+    return jsonify({'ok':True,'enabled':enabled,'suffixes':suffixes,'access_domain':access_domain,'allow_empty':allow_empty})
+
+@websites_bp.route('/api/websites/<domain>/hotlink', methods=['POST'])
+def set_hotlink(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    enable        = d.get('enable', True)
+    suffixes      = d.get('suffixes', 'jpg,jpeg,gif,png,js,css').strip()
+    access_domain = d.get('access_domain', domain).strip()
+    allow_empty   = d.get('allow_empty', False)
+    response_code = d.get('response', '404')
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':False,'error':'Site not found'}), 404
+    with open(fp) as f: content = f.read()
+    content = re.sub(r'\s*#VP_HOTLINK.*?#VP_HOTLINK_END\n?', '\n', content, flags=re.DOTALL)
+    if enable:
+        ext_list    = '|'.join(e.strip() for e in suffixes.split(','))
+        empty_part  = 'none blocked ~' if allow_empty else 'none blocked'
+        empty_marker = '#VP_HOTLINK_ALLOW_EMPTY\n    ' if allow_empty else ''
+        block = (
+            '\n    #VP_HOTLINK'
+            '\n    #VP_HOTLINK_SUFFIXES:' + suffixes +
+            '\n    #VP_HOTLINK_DOMAIN:' + access_domain +
+            '\n    ' + empty_marker +
+            'location ~* \\.(' + ext_list + ')$ {'
+            '\n        valid_referers ' + empty_part + ' *.' + access_domain + ' ' + access_domain + ';'
+            '\n        if ($invalid_referer) {'
+            '\n            return ' + response_code + ';'
+            '\n        }'
+            '\n    }'
+            '\n    #VP_HOTLINK_END'
+        )
+        content = re.sub(r'(}\s*)$', block + '\n' + r'\1', content, count=1)
+    with open(fp,'w') as f: f.write(content)
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower(): return jsonify({'ok':False,'error':test}), 400
+    reload_nginx()
+    return jsonify({'ok':True,'enabled':enable})
+
+# ── LIMIT ACCESS ──────────────────────────────────────────────────────────────
+@websites_bp.route('/api/websites/<domain>/limit-access')
+def get_limit_access(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    rules = []; deny_ips = []
+    if os.path.exists(fp):
+        with open(fp) as f: content = f.read()
+        for m in re.finditer(r'#VP_LIMIT:([^|]+)\|([^\n]+)', content):
+            rules.append({'name':m.group(1).strip(),'path':m.group(2).strip()})
+        for m in re.finditer(r'#VP_DENY_IP:([^\n]+)', content):
+            deny_ips.append(m.group(1).strip())
+    return jsonify({'ok':True,'rules':rules,'deny_ips':deny_ips})
+
+@websites_bp.route('/api/websites/<domain>/limit-access', methods=['POST'])
+def manage_limit_access(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    action = d.get('action','add_rule')
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':False,'error':'Site not found'}), 404
+    with open(fp) as f: content = f.read()
+    if action == 'add_rule':
+        name     = d.get('name','').strip()
+        path     = d.get('path','/').strip()
+        password = d.get('password','changeme').strip()
+        if not name or not path: return jsonify({'ok':False,'error':'Name and path required'}), 400
+        htdir  = '/etc/nginx/htpasswd'
+        os.makedirs(htdir, exist_ok=True)
+        htfile = htdir + '/' + domain + '_' + name
+        sh('htpasswd -cb ' + htfile + ' "' + name + '" "' + password + '" 2>/dev/null || echo "' + name + ':$(openssl passwd -apr1 ' + password + ')" > ' + htfile)
+        block = (
+            '\n    #VP_LIMIT:' + name + '|' + path +
+            '\n    location ' + path + ' {'
+            '\n        auth_basic "Restricted";'
+            '\n        auth_basic_user_file ' + htfile + ';'
+            '\n        try_files $uri $uri/ /index.php?$query_string;'
+            '\n    }'
+        )
+        content = re.sub(r'(}\s*)$', block + '\n' + r'\1', content, count=1)
+    elif action == 'deny_ip':
+        ip = d.get('ip','').strip()
+        if not ip: return jsonify({'ok':False,'error':'IP required'}), 400
+        deny_line = '\n    #VP_DENY_IP:' + ip + '\n    deny ' + ip + ';'
+        content = re.sub(r'(server\s*\{[^\n]*\n)', r'\1' + deny_line + '\n', content, count=1)
+    elif action == 'remove_rule':
+        name = d.get('name','').strip()
+        path = d.get('path','').strip()
+        content = re.sub(r'\s*#VP_LIMIT:' + re.escape(name) + r'\|' + re.escape(path) + r'\n\s*location[^{]+\{[^}]+\}\n?', '\n', content)
+    elif action == 'remove_deny_ip':
+        ip = d.get('ip','').strip()
+        content = re.sub(r'\s*#VP_DENY_IP:' + re.escape(ip) + r'\n\s*deny ' + re.escape(ip) + r';', '', content)
+    with open(fp,'w') as f: f.write(content)
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower(): return jsonify({'ok':False,'error':test}), 400
+    reload_nginx()
+    return jsonify({'ok':True})
+
+# ── URL REWRITE ───────────────────────────────────────────────────────────────
+@websites_bp.route('/api/websites/<domain>/rewrite')
+def get_rewrite(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':True,'content':''})
+    with open(fp) as f: content = f.read()
+    m = re.search(r'#VP_REWRITE_START(.*?)#VP_REWRITE_END', content, re.DOTALL)
+    if m: return jsonify({'ok':True,'content':m.group(1).strip()})
+    m2 = re.search(r'location\s*/\s*\{([^}]+)\}', content)
+    default = m2.group(0) if m2 else 'location / {\n    try_files $uri $uri/ /index.php?$query_string;\n}'
+    return jsonify({'ok':True,'content':default})
+
+@websites_bp.route('/api/websites/<domain>/rewrite', methods=['POST'])
+def save_rewrite(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    rewrite_content  = d.get('content','').strip()
+    save_as_template = d.get('save_as_template', False)
+    template_name    = d.get('template_name', '')
+    avail, _ = get_nginx_dirs()
+    fp = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(fp): return jsonify({'ok':False,'error':'Site not found'}), 404
+    if save_as_template and template_name:
+        tdir = '/opt/vortexpanel/rewrite_templates'
+        os.makedirs(tdir, exist_ok=True)
+        with open(tdir + '/' + template_name + '.conf', 'w') as f2: f2.write(rewrite_content)
+    with open(fp) as f: content = f.read()
+    new_block = '#VP_REWRITE_START\n    ' + rewrite_content + '\n    #VP_REWRITE_END'
+    if '#VP_REWRITE_START' in content:
+        content = re.sub(r'#VP_REWRITE_START.*?#VP_REWRITE_END', new_block, content, flags=re.DOTALL)
+    else:
+        content = re.sub(r'location\s*/\s*\{[^}]+\}', new_block, content, count=1)
+    with open(fp,'w') as f: f.write(content)
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower(): return jsonify({'ok':False,'error':test}), 400
+    reload_nginx()
+    return jsonify({'ok':True})
+
+@websites_bp.route('/api/websites/<domain>/rewrite/templates')
+def get_rewrite_templates(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    templates = [
+        {'id':'current','label':'0.Current'},
+        {'id':'wordpress','label':'WordPress'},
+        {'id':'laravel','label':'Laravel'},
+        {'id':'codeigniter','label':'CodeIgniter'},
+        {'id':'thinkphp','label':'ThinkPHP'},
+    ]
+    tdir = '/opt/vortexpanel/rewrite_templates'
+    if os.path.isdir(tdir):
+        for fname in os.listdir(tdir):
+            if fname.endswith('.conf'):
+                templates.append({'id':fname[:-5],'label':fname[:-5]})
+    return jsonify({'ok':True,'templates':templates})

@@ -61,7 +61,7 @@ MODULES = [
         ],
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
-echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/{ver}/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; apt-get install -y nginx && systemctl enable --now nginx''',
         'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
         'uninstall':'apt-get remove -y --purge nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
@@ -401,6 +401,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'7.2.7 (Stable)', 'value':'7.2'},
             {'label':'8.0.2 (Latest)', 'value':'8.0'},
         ],
+        'install_tpl':'''apt-get install -y lsb-release curl gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; apt-get install -y redis-server={ver}.* 2>/dev/null || apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
         'install':'apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server',
         'uninstall':'apt-get remove -y --purge redis-server redis-tools && apt-get autoremove -y',
         'service':'redis-server', 'manage':True,
