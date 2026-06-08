@@ -1216,7 +1216,7 @@
                 </div>
 
                 <!-- OPTIMIZATION tab -->
-                <div x-show="settingsModal.tab==='optimization'">
+                <div x-show="settingsModal.tab==='optimization' && settingsModal.mod?.id!=='redis'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">Performance Optimization</div>
                   <div style="display:grid;gap:14px;max-width:500px">
                     <template x-for="[key,val] in Object.entries(settingsModal.optimization)" :key="key">
@@ -1287,6 +1287,411 @@
                   <div style="font-weight:600;font-size:13px;margin-bottom:12px">Docker System Info</div>
                   <pre style="background:var(--bg-base);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;color:var(--text-secondary);overflow-x:auto;white-space:pre-wrap" x-text="settingsModal.dockerInfo||'Loading…'"></pre>
                 </div>
+
+                <!-- ══ STORAGE LOCATION tab ══ -->
+                <div x-show="settingsModal.tab==='storage'">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:16px">Storage Location</div>
+                  <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px">
+                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Current data directory</div>
+                    <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-primary)" x-text="settingsModal.datadir||'/var/lib/mysql'"></div>
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:16px">
+                    <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.datadir" placeholder="/var/lib/mysql">
+                    <button class="btn btn-primary btn-sm" @click="toast('Data migration requires manual steps — backup first!','warn')">Move</button>
+                  </div>
+                  <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:12px;font-size:11px;color:var(--red);line-height:1.7">
+                    ⚠ Risk Warning: MySQL will stop running during the migration process.<br>
+                    ⚠ Please backup your data before proceeding.
+                  </div>
+                </div>
+
+                <!-- ══ PORT tab ══ -->
+                <div x-show="settingsModal.tab==='port'">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:16px">Port Configuration</div>
+                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+                    <label style="font-size:13px;color:var(--text-secondary);width:100px">MySQL Port</label>
+                    <input class="form-input" style="width:120px;font-family:var(--font-mono)" x-model="settingsModal.port" placeholder="3306">
+                    <button class="btn btn-primary btn-sm" @click="post('/api/modules/mysql/settings',{action:'save_optimization',optimization:{port:settingsModal.port}}).then(r=>toast(r.ok?'Port updated — restart required':'Failed',r.ok?'success':'error'))">Modify</button>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);line-height:1.7">
+                    ⚠ Changing the port requires a service restart.<br>
+                    ⚠ Update your firewall rules and application configs after changing.
+                  </div>
+                </div>
+
+                <!-- ══ CURRENT STATUS tab (MySQL) ══ -->
+                <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='mysql'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <div style="font-weight:600;font-size:14px">Current Status</div>
+                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">↻ Refresh</button>
+                  </div>
+                  <table class="data-table" style="margin-bottom:16px">
+                    <tbody>
+                      <tr>
+                        <td style="color:var(--text-muted);width:180px">Launch Time</td>
+                        <td x-text="settingsModal.currentStatus?.launch_time||'—'"></td>
+                        <td style="color:var(--text-muted);width:180px">Total Connections</td>
+                        <td x-text="settingsModal.currentStatus?.total_connections||'—'"></td>
+                      </tr>
+                      <tr>
+                        <td style="color:var(--text-muted)">Bytes Sent</td>
+                        <td x-text="settingsModal.currentStatus?.send||'—'"></td>
+                        <td style="color:var(--text-muted)">Bytes Received</td>
+                        <td x-text="settingsModal.currentStatus?.receive||'—'"></td>
+                      </tr>
+                      <tr>
+                        <td style="color:var(--text-muted)">Queries</td>
+                        <td x-text="settingsModal.currentStatus?.query_per_sec||'—'"></td>
+                        <td style="color:var(--text-muted)">Threads Connected</td>
+                        <td x-text="settingsModal.currentStatus?.threads_connected||'—'"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- ══ CURRENT STATUS tab (Redis) ══ -->
+                <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='redis'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <div style="font-weight:600;font-size:14px">Current Status</div>
+                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">↻ Refresh</button>
+                  </div>
+                  <table class="data-table">
+                    <thead><tr><th>Field</th><th>Value</th><th>Description</th></tr></thead>
+                    <tbody>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">uptime_in_days</td><td x-text="settingsModal.currentStatus?.uptime_in_days||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Days running</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">tcp_port</td><td x-text="settingsModal.currentStatus?.tcp_port||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Listening port</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">connected_clients</td><td x-text="settingsModal.currentStatus?.connected_clients||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Active connections</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">used_memory</td><td x-text="settingsModal.currentStatus?.used_memory_human||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Memory in use</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">mem_fragmentation_ratio</td><td x-text="settingsModal.currentStatus?.mem_fragmentation_ratio||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Fragmentation ratio</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">keyspace_hits</td><td x-text="settingsModal.currentStatus?.keyspace_hits||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Successful lookups</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">keyspace_misses</td><td x-text="settingsModal.currentStatus?.keyspace_misses||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Failed lookups</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- ══ SLOW LOG tab ══ -->
+                <div x-show="settingsModal.tab==='slow_log'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div style="font-weight:600;font-size:13px">Slow Query Log</div>
+                    <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok) settingsModal.slowLog=r.slow_log; }">↻ Refresh</button>
+                  </div>
+                  <div style="background:#080a0e;border:1px solid #1a1d28;border-radius:8px;padding:14px;font-family:var(--font-mono);font-size:11px;color:#fde68a;white-space:pre-wrap;max-height:450px;overflow-y:auto;line-height:1.6" x-text="settingsModal.slowLog||'Slow log not enabled or empty'"></div>
+                </div>
+
+                <!-- ══ SWITCH VERSION tab (Redis/FTP) ══ -->
+                <div x-show="settingsModal.tab==='switch_version'">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:16px">Switch Version</div>
+                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+                    <label style="font-size:13px;color:var(--text-secondary)">Target Version</label>
+                    <select class="form-input" style="width:220px" x-model="settingsModal.switchVer">
+                      <template x-for="v in (settingsModal.versions||[])" :key="v.value">
+                        <option :value="v.value" x-text="v.label"></option>
+                      </template>
+                    </select>
+                    <button class="btn btn-primary btn-sm"
+                            @click="post('/api/modules/'+settingsModal.mod.id+'/settings',{action:'switch_version',version:settingsModal.switchVer}).then(r=>{
+                              if(r.ok){toast('Version switch complete! New version: '+(r.version||settingsModal.switchVer),'success');settingsModal.version=r.version||settingsModal.version;}
+                              else toast(r.error||'Failed','error');
+                            })">Switch</button>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);line-height:1.7">
+                    ⚠ Switching version will restart the service.<br>
+                    ⚠ Ensure your applications are compatible with the new version.
+                  </div>
+                </div>
+
+                <!-- ══ SET PERSISTENCE tab (Redis) ══ -->
+                <div x-show="settingsModal.tab==='persistence'">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:16px">Set Persistence</div>
+                  <div class="card" style="margin-bottom:16px">
+                    <div style="font-weight:600;font-size:13px;margin-bottom:12px">Persistent File Storage Path</div>
+                    <div style="display:flex;gap:8px">
+                      <input class="form-input" style="flex:1;font-family:var(--font-mono)" :value="settingsModal.persistence?.dir||'/var/lib/redis'" placeholder="/var/lib/redis">
+                      <button class="btn btn-primary btn-sm">Save</button>
+                    </div>
+                  </div>
+                  <div class="card" style="margin-bottom:16px">
+                    <div style="font-weight:600;font-size:13px;margin-bottom:12px">AOF Persistence</div>
+                    <div style="display:flex;gap:16px;align-items:flex-end">
+                      <div class="form-group" style="flex:1;margin:0">
+                        <label class="form-label">Append only</label>
+                        <select class="form-input" :value="settingsModal.persistence?.aof_enabled||'no'">
+                          <option value="no">Close</option>
+                          <option value="yes">Open</option>
+                        </select>
+                      </div>
+                      <div class="form-group" style="flex:1;margin:0">
+                        <label class="form-label">Append fsync</label>
+                        <select class="form-input" :value="settingsModal.persistence?.appendfsync||'everysec'">
+                          <option value="always">always</option>
+                          <option value="everysec">everysec</option>
+                          <option value="no">no</option>
+                        </select>
+                      </div>
+                      <button class="btn btn-primary btn-sm" style="margin-bottom:1px">Save</button>
+                    </div>
+                  </div>
+                  <div class="card">
+                    <div style="font-weight:600;font-size:13px;margin-bottom:8px">RDB Persistence (snapshots)</div>
+                    <div style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.persistence?.rdb_saves||'save 900 1'"></div>
+                  </div>
+                </div>
+
+                <!-- ══ REDIS OPTIMIZATION tab ══ -->
+                <div x-show="settingsModal.tab==='optimization' && settingsModal.mod?.id==='redis'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:16px">Redis Optimization</div>
+                  <div style="display:grid;gap:12px;max-width:600px;margin-bottom:20px">
+                    <template x-for="[key,val] in Object.entries(settingsModal.optimization||{})" :key="key">
+                      <div style="display:flex;align-items:center;gap:12px">
+                        <div style="width:140px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);flex-shrink:0" x-text="key"></div>
+                        <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.optimization[key]">
+                        <div style="font-size:11px;color:var(--text-muted);width:160px" x-text="key==='bind'?'Binding IP':key==='port'?'Listen port':key==='maxclients'?'Max connections':key==='databases'?'Number of DBs':key==='maxmemory'?'Max RAM (0=unlimited)':key==='requirepass'?'Auth password':''"></div>
+                      </div>
+                    </template>
+                  </div>
+                  <div style="display:flex;gap:10px">
+                    <button class="btn btn-primary" @click="settingsSaveOptimization()">Save</button>
+                    <button class="btn btn-ghost btn-sm" @click="settingsControl('restart')">Restart Redis</button>
+                  </div>
+                  <div style="margin-top:12px;font-size:11px;color:var(--red)">
+                    ⚠ Warning: Do NOT enable Redis external network access — it is a serious security risk.
+                  </div>
+                </div>
+
+                <!-- ══ PHP EXTENSIONS tab ══ -->
+                <div x-show="settingsModal.tab==='extensions'">
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+                    PHP <span x-text="settingsModal.selPhpVer||settingsModal.version"></span> Extensions
+                  </div>
+                  <table class="data-table">
+                    <thead><tr><th>Name</th><th>Type</th><th>Description</th><th style="width:70px">Status</th><th style="width:110px">Action</th></tr></thead>
+                    <tbody>
+                      <template x-for="ext in (settingsModal.extensions||[])" :key="ext.name">
+                        <tr>
+                          <td style="font-family:var(--font-mono);font-size:12px;font-weight:600" x-text="ext.name"></td>
+                          <td><span class="badge badge-gray" style="font-size:10px" x-text="ext.type"></span></td>
+                          <td style="font-size:11px;color:var(--text-muted)" x-text="ext.desc"></td>
+                          <td>
+                            <span x-show="ext.installed" style="color:var(--green);font-size:13px">✓</span>
+                            <span x-show="!ext.installed" style="color:var(--text-muted);font-size:13px">—</span>
+                          </td>
+                          <td>
+                            <button class="btn btn-primary btn-xs" x-show="!ext.installed"
+                                    @click="post('/api/modules/php/settings',{action:'install_php_ext',version:settingsModal.selPhpVer||settingsModal.version,ext:ext.name}).then(r=>{if(r.ok){ext.installed=true;toast(ext.name+' installed','success');}else toast(r.error||'Failed','error');})">
+                              Install
+                            </button>
+                            <button class="btn btn-danger btn-xs" x-show="ext.installed"
+                                    @click="if(confirm('Uninstall '+ext.name+'?'))post('/api/modules/php/settings',{action:'uninstall_php_ext',version:settingsModal.selPhpVer||settingsModal.version,ext:ext.name}).then(r=>{if(r.ok){ext.installed=false;toast(ext.name+' removed','success');}})">
+                              Uninstall
+                            </button>
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                  <div style="margin-top:12px;font-size:11px;color:var(--text-muted)">
+                    • Only install extensions your application actually needs<br>
+                    • Install only ONE of: opcache/xcache/apcu at a time
+                  </div>
+                </div>
+
+                <!-- ══ PHP CONFIG tab ══ -->
+                <div x-show="settingsModal.tab==='config' && settingsModal.mod?.id==='php'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:16px">PHP Configuration</div>
+                  <div style="display:grid;gap:12px;max-width:600px;margin-bottom:16px">
+                    <template x-for="[key,val] in Object.entries(settingsModal.phpConfig||{})" :key="key">
+                      <div style="display:flex;align-items:center;gap:12px">
+                        <div style="width:220px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);flex-shrink:0" x-text="key"></div>
+                        <input class="form-input" style="flex:1" x-model="settingsModal.phpConfig[key]">
+                      </div>
+                    </template>
+                  </div>
+                  <button class="btn btn-primary"
+                          @click="post('/api/modules/php/settings',{action:'save_php_config',version:settingsModal.selPhpVer||settingsModal.version,config:settingsModal.phpConfig}).then(r=>toast(r.ok?'PHP config saved':'Failed',r.ok?'success':'error'))">
+                    Save & Reload FPM
+                  </button>
+                </div>
+
+                <!-- ══ PHP INI (Configuration File) tab ══ -->
+                <div x-show="settingsModal.tab==='ini'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div>
+                      <div style="font-weight:600;font-size:13px">php.ini</div>
+                      <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.iniPath"></div>
+                    </div>
+                    <button class="btn btn-primary btn-sm"
+                            @click="post('/api/modules/php/settings',{action:'save_config',conf_path:settingsModal.iniPath,content:settingsModal.iniContent,version:settingsModal.selPhpVer||settingsModal.version}).then(r=>toast(r.ok?'php.ini saved':'Failed',r.ok?'success':'error'))">
+                      💾 Save
+                    </button>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Tips: Ctrl+S to save · Do not edit if you don't understand the config rules</div>
+                  <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563;display:flex;justify-content:space-between">
+                      <span x-text="settingsModal.iniPath"></span><span>Ctrl+S to save</span>
+                    </div>
+                    <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
+                              x-model="settingsModal.iniContent"
+                              @keydown.ctrl.s.prevent="post('/api/modules/php/settings',{action:'save_config',conf_path:settingsModal.iniPath,content:settingsModal.iniContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))"
+                              spellcheck="false"></textarea>
+                  </div>
+                </div>
+
+                <!-- ══ FPM PROFILE tab ══ -->
+                <div x-show="settingsModal.tab==='fpm'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div>
+                      <div style="font-weight:600;font-size:13px">FPM Profile</div>
+                      <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.fpmConf"></div>
+                    </div>
+                    <button class="btn btn-primary btn-sm"
+                            @click="post('/api/modules/php/settings',{action:'save_fpm_profile',version:settingsModal.selPhpVer||settingsModal.version,fpm_profile:settingsModal.fpmProfile}).then(r=>toast(r.ok?'FPM profile saved':'Failed',r.ok?'success':'error'))">
+                      Save & Reload
+                    </button>
+                  </div>
+                  <div style="display:grid;gap:12px;max-width:600px;margin-bottom:16px">
+                    <template x-for="[key,val] in Object.entries(settingsModal.fpmProfile||{})" :key="key">
+                      <div style="display:flex;align-items:center;gap:12px">
+                        <div style="width:220px;font-size:12px;font-family:var(--font-mono);color:var(--text-secondary);flex-shrink:0" x-text="key"></div>
+                        <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.fpmProfile[key]">
+                      </div>
+                    </template>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted)">• Do not modify FPM config if you are unsure about the values</div>
+                </div>
+
+                <!-- ══ phpinfo tab ══ -->
+                <div x-show="settingsModal.tab==='phpinfo'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:16px">PHP Information</div>
+                  <div class="card" style="margin-bottom:12px">
+                    <table class="data-table">
+                      <tbody>
+                        <tr>
+                          <td style="color:var(--text-muted);width:160px">Version</td>
+                          <td x-text="settingsModal.phpinfo?.version||settingsModal.version"></td>
+                          <td style="color:var(--text-muted);width:160px">Install Path</td>
+                          <td x-text="settingsModal.phpinfo?.install_path||'/usr'"></td>
+                        </tr>
+                        <tr>
+                          <td style="color:var(--text-muted)">php.ini</td>
+                          <td colspan="3" style="font-family:var(--font-mono);font-size:11px" x-text="settingsModal.phpinfo?.ini_path||settingsModal.iniPath"></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Loaded Extensions</div>
+                  <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-base);padding:10px;border-radius:6px;max-height:120px;overflow-y:auto;line-height:1.8;white-space:pre-wrap" x-text="settingsModal.phpinfo?.loaded||'Loading…'"></div>
+                </div>
+
+                <!-- ══ FTP USER MANAGEMENT tab ══ -->
+                <div x-show="settingsModal.tab==='users'">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                    <div style="font-weight:600;font-size:13px">FTP Accounts</div>
+                    <button class="btn btn-primary btn-sm" @click="settingsModal.showFtpAdd=!settingsModal.showFtpAdd">Add FTP Account</button>
+                  </div>
+                  <div x-show="settingsModal.showFtpAdd" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+                    <div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="settingsModal.ftpUser" placeholder="ftpuser"></div>
+                    <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="settingsModal.ftpPass" placeholder="••••••••"></div>
+                    <div class="form-group"><label class="form-label">Home Directory</label><input class="form-input" x-model="settingsModal.ftpHome" placeholder="/www/wwwroot"></div>
+                    <div style="display:flex;gap:8px">
+                      <button class="btn btn-ghost btn-sm" @click="settingsModal.showFtpAdd=false">Cancel</button>
+                      <button class="btn btn-primary btn-sm"
+                              @click="post('/api/modules/pure-ftpd/settings',{action:'ftp_add_user',user:settingsModal.ftpUser,password:settingsModal.ftpPass,home:settingsModal.ftpHome||'/www/wwwroot'}).then(r=>{if(r.ok){toast('FTP user added','success');settingsModal.showFtpAdd=false;openSettings(settingsModal.mod);}else toast(r.error||'Failed','error');})">
+                        Confirm
+                      </button>
+                    </div>
+                  </div>
+                  <div class="card" style="padding:0;overflow:hidden">
+                    <table class="data-table">
+                      <thead><tr><th>Username</th><th>Home Directory</th><th>Status</th><th>Actions</th></tr></thead>
+                      <tbody>
+                        <template x-for="u in (settingsModal.ftpUsers||[])" :key="u.user">
+                          <tr>
+                            <td style="font-weight:600" x-text="u.user"></td>
+                            <td style="font-family:var(--font-mono);font-size:11px" x-text="u.home"></td>
+                            <td><span class="badge badge-green" style="font-size:10px">Active</span></td>
+                            <td>
+                              <button class="btn btn-danger btn-xs"
+                                      @click="if(confirm('Delete FTP user '+u.user+'?'))post('/api/modules/pure-ftpd/settings',{action:'ftp_del_user',user:u.user}).then(r=>{if(r.ok){toast('Deleted','success');openSettings(settingsModal.mod);}})">
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                    <template x-if="!settingsModal.ftpUsers?.length">
+                      <div class="empty-state" style="padding:24px">
+                        <div class="empty-icon">📂</div>
+                        <div class="empty-text">No FTP accounts yet</div>
+                      </div>
+                    </template>
+                  </div>
+                  <div x-show="settingsModal.ftpAddr" style="margin-top:12px;background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.2);border-radius:8px;padding:10px 14px;font-size:12px">
+                    FTP Address: <strong x-text="settingsModal.ftpAddr"></strong>
+                    <a href="https://filezilla-project.org/" target="_blank" style="color:var(--accent);margin-left:8px">Download FileZilla</a>
+                  </div>
+                </div>
+
+                <!-- ══ FAIL2BAN Website/Server Protection tab ══ -->
+                <div x-show="['website_protection','server_protection'].includes(settingsModal.tab)">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:14px" x-text="settingsModal.tab==='website_protection'?'Website Protection':'Server Protection'"></div>
+                  <div x-show="settingsModal.status!=='active'" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:14px;color:var(--red);font-size:13px;text-align:center">
+                    Please start the Fail2ban service first
+                  </div>
+                  <div x-show="settingsModal.status==='active'">
+                    <template x-for="jail in (settingsModal.jails||[])" :key="jail.name">
+                      <div class="card" style="margin-bottom:10px">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                          <div>
+                            <div style="font-weight:600;font-size:13px" x-text="jail.name"></div>
+                            <div style="font-size:11px;color:var(--text-muted)">Currently banned: <span x-text="jail.currently"></span></div>
+                          </div>
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;gap:6px">
+                          <template x-for="ip in jail.banned_ips" :key="ip">
+                            <div style="display:flex;align-items:center;gap:5px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:3px 10px;font-family:var(--font-mono);font-size:12px">
+                              <span x-text="ip"></span>
+                              <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0"
+                                      @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_unban_ip',ip:ip,jail:jail.name}).then(r=>{if(r.ok){toast('IP unbanned','success');jail.banned_ips=jail.banned_ips.filter(x=>x!==ip);}})">×</button>
+                            </div>
+                          </template>
+                          <span x-show="!jail.banned_ips?.length" style="font-size:12px;color:var(--text-muted)">No banned IPs</span>
+                        </div>
+                      </div>
+                    </template>
+                    <template x-if="!settingsModal.jails?.length">
+                      <div class="empty-state" style="padding:24px"><div class="empty-icon">🛡</div><div class="empty-text">No jails configured</div></div>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- ══ FAIL2BAN Black IP tab ══ -->
+                <div x-show="settingsModal.tab==='black_ip'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:12px">Black IP List</div>
+                  <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:12px"
+                            x-model="settingsModal.blackIps"
+                            placeholder="One IP per line&#10;e.g. 192.168.1.1&#10;192.168.0.0/24"></textarea>
+                  <button class="btn btn-primary btn-sm" style="margin-top:10px"
+                          @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_save_blacklist',ips:settingsModal.blackIps}).then(r=>toast(r.ok?'Blacklist saved':'Failed',r.ok?'success':'error'))">
+                    Save
+                  </button>
+                  <div style="margin-top:10px;font-size:11px;color:var(--text-muted)">One IP or CIDR range per line</div>
+                </div>
+
+                <!-- ══ FAIL2BAN White IP tab ══ -->
+                <div x-show="settingsModal.tab==='white_ip'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:12px">White IP List</div>
+                  <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:12px"
+                            x-model="settingsModal.whiteIps"
+                            placeholder="127.0.0.1/8"></textarea>
+                  <button class="btn btn-primary btn-sm" style="margin-top:10px"
+                          @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_save_whitelist',ips:settingsModal.whiteIps}).then(r=>toast(r.ok?'Whitelist saved':'Failed',r.ok?'success':'error'))">
+                    Save
+                  </button>
+                  <div style="margin-top:10px;font-size:11px;color:var(--text-muted)">Whitelisted IPs will never be banned. One per line.</div>
+                </div>
+
+
 
               </div>
             </div>

@@ -61,7 +61,7 @@ MODULES = [
         ],
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
-echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/{ver}/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; apt-get install -y nginx && systemctl enable --now nginx''',
         'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
         'uninstall':'apt-get remove -y --purge nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
@@ -207,7 +207,8 @@ echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.o
             {'label':'8.1 (Security)',  'value':'8.1'},
             {'label':'8.2 (Active)',    'value':'8.2'},
             {'label':'8.3 (Active)',    'value':'8.3'},
-            {'label':'8.4 (Latest)',    'value':'8.4'},
+            {'label':'8.4 (Current)',   'value':'8.4'},
+            {'label':'8.5 (Latest)',    'value':'8.5'},
         ],
         'install_tpl':'''apt-get install -y software-properties-common && \
 add-apt-repository -y ppa:ondrej/php && apt-get update -q && \
@@ -276,7 +277,12 @@ apt-get autoremove -y 2>/dev/null || true''',
         'versions':[
             {'label':'1.1.0 (Latest Stable)', 'value':'latest'},
         ],
-        'install':'apt-get install -y fail2ban && systemctl enable fail2ban && systemctl start fail2ban',
+        'install':'''apt-get install -y python3 python3-pip curl gzip && \
+F2B_VER=$(curl -s https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
+F2B_VER=${F2B_VER:-1.1.0} && \
+curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
+(dpkg -i /tmp/fail2ban.deb 2>/dev/null || apt-get install -y fail2ban) && \
+systemctl enable fail2ban && systemctl start fail2ban''',
         'uninstall':'apt-get remove -y --purge fail2ban && apt-get autoremove -y',
         'service':'fail2ban', 'manage':True,
     },
@@ -287,7 +293,14 @@ apt-get autoremove -y 2>/dev/null || true''',
         'versions':[
             {'label':'1.4.2 (Latest Stable)', 'value':'latest'},
         ],
-        'install':'apt-get install -y clamav clamav-daemon && systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl start clamav-daemon',
+        'install':'''apt-get install -y curl && \
+CLAM_VER=$(curl -s https://api.github.com/repos/Cisco-Talos/clamav/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
+CLAM_VER=${CLAM_VER:-clamav-1.4.2} && \
+CLAM_NUM=${CLAM_VER#clamav-} && \
+curl -fsSL https://www.clamav.net/downloads/production/clamav-${CLAM_NUM}.linux.x86_64.deb -o /tmp/clamav.deb 2>/dev/null && \
+(dpkg -i /tmp/clamav.deb 2>/dev/null || apt-get install -y clamav clamav-daemon) && \
+apt-get install -f -y && \
+systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl start clamav-daemon''',
         'uninstall':'apt-get remove -y --purge clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
         'service':'clamav-daemon', 'manage':True,
     },
@@ -401,8 +414,14 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'7.2.7 (Stable)', 'value':'7.2'},
             {'label':'8.0.2 (Latest)', 'value':'8.0'},
         ],
-        'install_tpl':'''apt-get install -y lsb-release curl gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; apt-get install -y redis-server={ver}.* 2>/dev/null || apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
-        'install':'apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server',
+        'install_tpl':'''curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
+apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
+apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
+        'install':'''curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
+apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
+apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
         'uninstall':'apt-get remove -y --purge redis-server redis-tools && apt-get autoremove -y',
         'service':'redis-server', 'manage':True,
     },
@@ -692,160 +711,358 @@ def control_module(mod_id):
 
 @modules_bp.route('/api/modules/<mod_id>/settings')
 def get_module_settings(mod_id):
-    """Return app-specific settings for the settings modal."""
     if not req(): return jsonify({'ok': False}), 401
-
+    import os, re as _re
     def sh(cmd, t=15):
-        try:
-            return subprocess.check_output(cmd, shell=True, text=True,
-                                           stderr=subprocess.DEVNULL, timeout=t).strip()
+        try: return subprocess.check_output(cmd,shell=True,text=True,stderr=subprocess.DEVNULL,timeout=t).strip()
         except: return ''
 
-    import os
-
     if mod_id == 'nginx':
-        status  = sh('systemctl is-active nginx 2>/dev/null') or 'inactive'
-        version = sh('nginx -v 2>&1 | grep -oP "[\\d.]+"') or ''
-        config_paths = ['/etc/nginx/nginx.conf', '/www/server/nginx/conf/nginx.conf']
-        conf_path = next((p for p in config_paths if os.path.exists(p)), '/etc/nginx/nginx.conf')
+        status  = sh('systemctl is-active nginx') or 'inactive'
+        version = sh('nginx -v 2>&1 | grep -oP "[0-9.]+"') or ''
+        paths   = ['/etc/nginx/nginx.conf','/www/server/nginx/conf/nginx.conf']
+        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/nginx/nginx.conf')
         try:
             with open(conf_path) as f: conf_content = f.read()
         except: conf_content = ''
-        # Read error log (last 100 lines)
-        log_paths = ['/var/log/nginx/error.log', '/www/wwwlogs/nginx_error.log']
-        log_path = next((p for p in log_paths if os.path.exists(p)), '')
-        logs = sh(f'tail -100 {log_path} 2>/dev/null') if log_path else 'No error log found'
-        # Optimization values from config
-        worker_processes  = sh("grep -oP 'worker_processes\\s+\\K\\S+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or 'auto'
-        worker_connections = sh("grep -oP 'worker_connections\\s+\\K\\d+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or '1024'
-        keepalive_timeout = sh("grep -oP 'keepalive_timeout\\s+\\K\\d+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or '65'
-        client_max_body  = sh("grep -oP 'client_max_body_size\\s+\\K\\S+' /etc/nginx/nginx.conf 2>/dev/null | head -1") or '50m'
-        return jsonify({
-            'ok': True, 'status': status, 'version': version,
-            'conf_path': conf_path, 'conf_content': conf_content,
-            'logs': logs, 'log_path': log_path,
-            'optimization': {
-                'worker_processes': worker_processes,
-                'worker_connections': worker_connections,
-                'keepalive_timeout': keepalive_timeout,
-                'client_max_body_size': client_max_body,
-            }
-        })
+        log_path = next((p for p in ['/var/log/nginx/error.log','/www/wwwlogs/nginx_error.log'] if os.path.exists(p)), '')
+        logs = sh('tail -100 ' + log_path) if log_path else 'No error log found'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'log_path':log_path,
+            'optimization':{
+                'worker_processes':    sh('grep -oP "worker_processes\\s+\\K\\S+" ' + conf_path + ' 2>/dev/null | head -1') or 'auto',
+                'worker_connections':  sh('grep -oP "worker_connections\\s+\\K[0-9]+" ' + conf_path + ' 2>/dev/null | head -1') or '1024',
+                'keepalive_timeout':   sh('grep -oP "keepalive_timeout\\s+\\K[0-9]+" ' + conf_path + ' 2>/dev/null | head -1') or '65',
+                'client_max_body_size':sh('grep -oP "client_max_body_size\\s+\\K\\S+" ' + conf_path + ' 2>/dev/null | head -1') or '50m',
+                'gzip':                sh('grep -oP "^\\s*gzip\\s+\\K\\S+" ' + conf_path + ' 2>/dev/null | head -1') or 'on',
+            }})
 
     elif mod_id == 'apache2':
-        status  = sh('systemctl is-active apache2 2>/dev/null') or 'inactive'
-        version = sh('apache2 -v 2>/dev/null | grep -oP "[\\d.]+"') or ''
-        conf_paths = ['/etc/apache2/apache2.conf', '/etc/httpd/conf/httpd.conf']
-        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/apache2/apache2.conf')
+        status  = sh('systemctl is-active apache2') or 'inactive'
+        version = sh('apache2 -v 2>/dev/null | grep -oP "[0-9.]+"') or ''
+        paths   = ['/etc/apache2/apache2.conf','/etc/httpd/conf/httpd.conf']
+        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/apache2/apache2.conf')
         try:
             with open(conf_path) as f: conf_content = f.read()
         except: conf_content = ''
-        log_path = '/var/log/apache2/error.log'
-        logs = sh(f'tail -100 {log_path} 2>/dev/null') or 'No error log found'
-        return jsonify({
-            'ok': True, 'status': status, 'version': version,
-            'conf_path': conf_path, 'conf_content': conf_content,
-            'logs': logs, 'log_path': log_path,
-        })
+        logs = sh('tail -100 /var/log/apache2/error.log') or sh('journalctl -u apache2 -n 80') or 'No logs'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
 
     elif mod_id == 'mysql':
-        status  = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null') or 'inactive'
-        version = sh("mysql --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or ''
-        conf_paths = ['/etc/mysql/mysql.conf.d/mysqld.cnf', '/etc/mysql/my.cnf', '/etc/my.cnf']
-        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/mysql/my.cnf')
+        status  = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld') or 'inactive'
+        version = (sh("mysql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'")+' ').split('\n')[0].strip() or ''
+        paths   = ['/etc/mysql/mysql.conf.d/mysqld.cnf','/etc/mysql/my.cnf','/etc/my.cnf']
+        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/mysql/my.cnf')
         try:
             with open(conf_path) as f: conf_content = f.read()
         except: conf_content = ''
         log_path = '/var/log/mysql/error.log'
-        logs = sh(f'tail -100 {log_path} 2>/dev/null') or sh('journalctl -u mysql -n 50 2>/dev/null') or 'No logs found'
-        # Port and max_connections
-        port = sh("mysql -e 'SHOW VARIABLES LIKE \"port\"' 2>/dev/null | awk 'NR==2{print $2}'") or '3306'
-        max_conn = sh("mysql -e 'SHOW VARIABLES LIKE \"max_connections\"' 2>/dev/null | awk 'NR==2{print $2}'") or '151'
-        return jsonify({
-            'ok': True, 'status': status, 'version': version,
-            'conf_path': conf_path, 'conf_content': conf_content,
-            'logs': logs, 'log_path': log_path,
-            'port': port, 'max_connections': max_conn,
-        })
+        logs     = sh('tail -100 ' + log_path) or sh('journalctl -u mysql -n 50') or 'No logs'
+        slow_log = sh('tail -80 /var/log/mysql/mysql-slow.log 2>/dev/null') or 'Slow log not enabled'
+        def mvar(var):
+            return sh("mysql -e 'SHOW VARIABLES LIKE \"" + var + "\"' 2>/dev/null | awk 'NR==2{print $2}'") or ''
+        def mstat(stat):
+            return sh("mysql -e 'SHOW STATUS LIKE \"" + stat + "\"' 2>/dev/null | awk 'NR==2{print $2}'") or ''
+        port    = mvar('port') or '3306'
+        datadir = mvar('datadir') or '/var/lib/mysql'
+        uptime  = mstat('Uptime') or '0'
+        launch_time = sh("date -d '@$(( $(date +%s) - " + uptime + " ))' '+%Y-%m-%d %H:%M:%S' 2>/dev/null") if uptime.isdigit() else ''
+        current_status = {
+            'launch_time':       launch_time,
+            'total_connections': mstat('Connections'),
+            'send':              mstat('Bytes_sent'),
+            'receive':           mstat('Bytes_received'),
+            'query_per_sec':     mstat('Questions'),
+            'threads_connected': mstat('Threads_connected'),
+        }
+        optimization = {
+            'key_buffer_size':         mvar('key_buffer_size') or '8M',
+            'tmp_table_size':          mvar('tmp_table_size') or '16M',
+            'innodb_buffer_pool_size': mvar('innodb_buffer_pool_size') or '128M',
+            'innodb_log_buffer_size':  mvar('innodb_log_buffer_size') or '8M',
+            'sort_buffer_size':        mvar('sort_buffer_size') or '2M',
+            'read_buffer_size':        mvar('read_buffer_size') or '128K',
+            'thread_cache_size':       mvar('thread_cache_size') or '10',
+            'max_connections':         mvar('max_connections') or '151',
+            'table_open_cache':        mvar('table_open_cache') or '2000',
+        }
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,
+            'logs':logs,'log_path':log_path,'slow_log':slow_log,
+            'port':port,'datadir':datadir,
+            'current_status':current_status,'optimization':optimization})
 
     elif mod_id == 'mariadb':
-        status  = sh('systemctl is-active mariadb 2>/dev/null') or 'inactive'
-        version = sh("mariadb --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or \
-                  sh("mysql --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or ''
-        conf_paths = ['/etc/mysql/mariadb.conf.d/50-server.cnf', '/etc/my.cnf', '/etc/mysql/my.cnf']
-        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/mysql/my.cnf')
+        status  = sh('systemctl is-active mariadb') or 'inactive'
+        version = sh("mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or \
+                  sh("mysql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
+        paths   = ['/etc/mysql/mariadb.conf.d/50-server.cnf','/etc/my.cnf','/etc/mysql/my.cnf']
+        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/mysql/my.cnf')
         try:
             with open(conf_path) as f: conf_content = f.read()
         except: conf_content = ''
-        logs = sh('journalctl -u mariadb -n 50 2>/dev/null') or 'No logs found'
-        return jsonify({'ok': True, 'status': status, 'version': version,
-                        'conf_path': conf_path, 'conf_content': conf_content, 'logs': logs})
+        logs = sh('journalctl -u mariadb -n 80') or 'No logs'
+        port = sh("mysql -e 'SHOW VARIABLES LIKE \"port\"' 2>/dev/null | awk 'NR==2{print $2}'") or '3306'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'port':port})
 
     elif mod_id == 'redis':
-        status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis 2>/dev/null') or 'inactive'
-        version = sh("redis-server --version 2>/dev/null | grep -oP '[\\d]+\\.[\\d]+\\.[\\d]+'") or ''
-        conf_paths = ['/etc/redis/redis.conf', '/etc/redis.conf']
-        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/redis/redis.conf')
+        status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis') or 'inactive'
+        version = sh("redis-server --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
+        paths   = ['/etc/redis/redis.conf','/etc/redis.conf']
+        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/redis/redis.conf')
         try:
             with open(conf_path) as f: conf_content = f.read()
         except: conf_content = ''
-        port = sh("redis-cli config get port 2>/dev/null | tail -1") or '6379'
-        maxmem = sh("redis-cli config get maxmemory 2>/dev/null | tail -1") or '0'
         logs = sh('tail -100 /var/log/redis/redis-server.log 2>/dev/null') or \
-               sh('journalctl -u redis -n 50 2>/dev/null') or 'No logs found'
-        return jsonify({
-            'ok': True, 'status': status, 'version': version,
-            'conf_path': conf_path, 'conf_content': conf_content,
-            'logs': logs, 'port': port, 'maxmemory': maxmem,
-        })
+               sh('journalctl -u redis -n 80') or 'No logs'
+        info = sh('redis-cli INFO 2>/dev/null') or ''
+        def rget(key):
+            for line in info.split('\n'):
+                if line.startswith(key + ':'): return line.split(':', 1)[1].strip()
+            return ''
+        def rcfg(key):
+            r = sh('redis-cli CONFIG GET ' + key + ' 2>/dev/null')
+            lines = r.split('\n')
+            return lines[1] if len(lines) > 1 else ''
+        current_status = {
+            'uptime_in_days':             rget('uptime_in_days'),
+            'tcp_port':                   rget('tcp_port'),
+            'connected_clients':          rget('connected_clients'),
+            'used_memory_human':          rget('used_memory_human'),
+            'used_memory_rss_human':      rget('used_memory_rss_human'),
+            'mem_fragmentation_ratio':    rget('mem_fragmentation_ratio'),
+            'total_connections_received': rget('total_connections_received'),
+            'total_commands_processed':   rget('total_commands_processed'),
+            'keyspace_hits':              rget('keyspace_hits'),
+            'keyspace_misses':            rget('keyspace_misses'),
+        }
+        optimization = {
+            'bind':        rcfg('bind') or '127.0.0.1',
+            'port':        rcfg('port') or '6379',
+            'timeout':     rcfg('timeout') or '0',
+            'maxclients':  rcfg('maxclients') or '10000',
+            'databases':   rcfg('databases') or '16',
+            'requirepass': rcfg('requirepass') or '',
+            'maxmemory':   rcfg('maxmemory') or '0',
+        }
+        persistence = {
+            'dir':         rcfg('dir') or '/var/lib/redis',
+            'aof_enabled': rcfg('appendonly') or 'no',
+            'appendfsync': rcfg('appendfsync') or 'everysec',
+            'rdb_saves':   sh('redis-cli CONFIG GET save 2>/dev/null | tail -1') or '',
+        }
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,
+            'current_status':current_status,'optimization':optimization,'persistence':persistence,
+            'versions':[{'label':'Redis 7.2 (Stable)','value':'7.2'},{'label':'Redis 8.0 (Latest)','value':'8.0'}]})
+
+    elif mod_id == 'php':
+        php_versions = []
+        for v in ['8.4','8.3','8.2','8.1','8.0','7.4','7.3','7.2']:
+            if os.path.exists('/usr/bin/php' + v):
+                php_versions.append({
+                    'version': v,
+                    'status':  sh('systemctl is-active php' + v + '-fpm') or 'inactive',
+                    'ini_path':'/etc/php/' + v + '/fpm/php.ini',
+                    'fpm_conf':'/etc/php/' + v + '/fpm/pool.d/www.conf',
+                })
+        sel = php_versions[0]['version'] if php_versions else '8.3'
+        ini_path = '/etc/php/' + sel + '/fpm/php.ini'
+        fpm_conf = '/etc/php/' + sel + '/fpm/pool.d/www.conf'
+        try:
+            with open(ini_path) as f: ini_content = f.read()
+        except: ini_content = ''
+        try:
+            with open(fpm_conf) as f: fpm_content = f.read()
+        except: fpm_content = ''
+        logs = sh('tail -100 /var/log/php' + sel + '-fpm.log 2>/dev/null') or \
+               sh('journalctl -u php' + sel + '-fpm -n 80') or 'No logs'
+        def ini_get(key):
+            return sh('grep -oP "^' + key + '\\s*=\\s*\\K.+" ' + ini_path + ' 2>/dev/null | head -1').strip() or ''
+        def fpm_get(key):
+            return sh('grep -oP "^' + key + '\\s*=\\s*\\K.+" ' + fpm_conf + ' 2>/dev/null | head -1').strip() or ''
+        config = {
+            'short_open_tag':      ini_get('short_open_tag') or 'On',
+            'max_execution_time':  ini_get('max_execution_time') or '300',
+            'memory_limit':        ini_get('memory_limit') or '128M',
+            'post_max_size':       ini_get('post_max_size') or '50M',
+            'upload_max_filesize': ini_get('upload_max_filesize') or '50M',
+            'max_file_uploads':    ini_get('max_file_uploads') or '20',
+            'display_errors':      ini_get('display_errors') or 'On',
+            'date.timezone':       ini_get('date.timezone') or 'UTC',
+        }
+        fpm_profile = {
+            'pm':                   fpm_get('pm') or 'dynamic',
+            'pm.max_children':      fpm_get('pm.max_children') or '50',
+            'pm.start_servers':     fpm_get('pm.start_servers') or '5',
+            'pm.min_spare_servers': fpm_get('pm.min_spare_servers') or '5',
+            'pm.max_spare_servers': fpm_get('pm.max_spare_servers') or '35',
+            'listen':               fpm_get('listen') or '/run/php/php' + sel + '-fpm.sock',
+        }
+        EXTS = [
+            {'name':'fileinfo','type':'Universal','desc':'Get file MIME type and encoding'},
+            {'name':'memcached','type':'Cache','desc':'Advanced distributed caching'},
+            {'name':'redis','type':'Cache','desc':'Redis key-value store client'},
+            {'name':'apcu','type':'Cache','desc':'PHP script bytecode cache'},
+            {'name':'imagick','type':'Universal','desc':'ImageMagick graphics library'},
+            {'name':'exif','type':'General','desc':'Read image EXIF information'},
+            {'name':'intl','type':'Universal','desc':'Internationalization support'},
+            {'name':'mbstring','type':'Universal','desc':'Multibyte string handling'},
+            {'name':'zip','type':'Universal','desc':'ZIP file support'},
+            {'name':'gd','type':'Universal','desc':'GD graphics library'},
+            {'name':'curl','type':'Universal','desc':'cURL HTTP client'},
+            {'name':'opcache','type':'Cache','desc':'PHP opcode cache'},
+            {'name':'xdebug','type':'Debug','desc':'Debugger and profiler'},
+            {'name':'sodium','type':'Security','desc':'Modern cryptography'},
+            {'name':'xml','type':'Universal','desc':'XML parsing'},
+        ]
+        extensions = []
+        for ext in EXTS:
+            installed = bool(sh('php' + sel + ' -m 2>/dev/null | grep -ix "' + ext['name'] + '"'))
+            extensions.append({**ext, 'installed': installed})
+        return jsonify({'ok':True,
+            'status':  sh('systemctl is-active php' + sel + '-fpm') or 'inactive',
+            'version': sh('php' + sel + ' --version 2>/dev/null | head -1 | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or sel,
+            'sel_ver': sel, 'php_versions': php_versions,
+            'ini_path': ini_path, 'ini_content': ini_content,
+            'fpm_conf': fpm_conf, 'fpm_content': fpm_content,
+            'config': config, 'fpm_profile': fpm_profile,
+            'extensions': extensions, 'logs': logs,
+            'phpinfo': {
+                'version': sel,
+                'install_path': sh('php' + sel + ' -r "echo PHP_PREFIX;" 2>/dev/null') or '/usr',
+                'ini_path': ini_path,
+                'loaded': sh('php' + sel + ' -m 2>/dev/null') or '',
+            }})
+
+    elif mod_id in ('pure-ftpd', 'pure_ftpd'):
+        status  = sh('systemctl is-active pure-ftpd') or 'inactive'
+        version = sh('pure-ftpd --version 2>/dev/null | head -1 | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
+        paths   = ['/etc/pure-ftpd/pure-ftpd.conf','/etc/pure-ftpd.conf']
+        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/pure-ftpd/pure-ftpd.conf')
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        port = sh("grep -r '^Bind' /etc/pure-ftpd/conf/ 2>/dev/null | head -1 | awk '{print $2}'") or '21'
+        users_raw = sh('pure-pw list 2>/dev/null') or ''
+        users = []
+        for line in users_raw.strip().split('\n'):
+            if line.strip():
+                parts = line.split()
+                if parts:
+                    users.append({'user': parts[0], 'home': parts[1] if len(parts) > 1 else '/www/wwwroot', 'status': 'active'})
+        logs = sh('journalctl -u pure-ftpd -n 80') or sh('tail -50 /var/log/syslog 2>/dev/null | grep pure') or 'No logs'
+        ftp_addr = sh("hostname -I 2>/dev/null | awk '{print $1}'") or 'YOUR-IP'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,
+            'port':port,'users':users,'logs':logs,
+            'ftp_addr':'ftp://' + ftp_addr + ':' + port,
+            'versions':[{'label':'1.0.49 (Stable)','value':'1.0.49'},{'label':'1.0.52 (Latest)','value':'1.0.52'}]})
+
+    elif mod_id == 'fail2ban':
+        status  = sh('systemctl is-active fail2ban') or 'inactive'
+        version = sh('fail2ban-client --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
+        try:
+            with open('/etc/fail2ban/ip.blacklist') as f: black_ips = f.read()
+        except: black_ips = ''
+        try:
+            with open('/etc/fail2ban/ip.whitelist') as f: white_ips = f.read()
+        except: white_ips = '127.0.0.1/8'
+        jails_raw = sh('fail2ban-client status 2>/dev/null') or ''
+        jail_line = _re.findall(r'Jail list:\s+(.+)', jails_raw)
+        jails = []
+        if jail_line:
+            for jail in jail_line[0].replace(' ', '').split(','):
+                if not jail: continue
+                jail_status = sh('fail2ban-client status ' + jail + ' 2>/dev/null') or ''
+                banned = _re.findall(r'Banned IP list:\s+(.+)', jail_status)
+                banned_ips = banned[0].split() if banned else []
+                currently  = _re.search(r'Currently banned:\s+(\d+)', jail_status)
+                jails.append({'name': jail, 'banned_ips': banned_ips,
+                              'currently': currently.group(1) if currently else '0'})
+        logs = sh('tail -80 /var/log/fail2ban.log 2>/dev/null') or \
+               sh('journalctl -u fail2ban -n 80') or 'No logs'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'jails':jails,'black_ips':black_ips,'white_ips':white_ips,'logs':logs})
+
+    elif mod_id == 'supervisor':
+        status  = sh('systemctl is-active supervisor') or 'inactive'
+        version = sh('supervisord --version 2>/dev/null') or ''
+        conf_path = '/etc/supervisor/supervisord.conf'
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        logs = sh('tail -80 /var/log/supervisor/supervisord.log 2>/dev/null') or \
+               sh('journalctl -u supervisor -n 80') or 'No logs'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
+
+    elif mod_id == 'clamav':
+        status  = sh('systemctl is-active clamav-daemon') or 'inactive'
+        version = sh('clamscan --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
+        logs    = sh('tail -80 /var/log/clamav/clamav.log 2>/dev/null') or \
+                  sh('journalctl -u clamav-daemon -n 80') or 'No logs'
+        return jsonify({'ok':True,'status':status,'version':version,'logs':logs})
+
+    elif mod_id == 'postgresql':
+        status  = sh('systemctl is-active postgresql') or 'inactive'
+        version = sh('psql --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+"') or ''
+        paths   = ['/etc/postgresql/16/main/postgresql.conf',
+                   '/etc/postgresql/15/main/postgresql.conf',
+                   '/etc/postgresql/14/main/postgresql.conf']
+        conf_path = next((p for p in paths if os.path.exists(p)), paths[0])
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        logs = sh('journalctl -u postgresql -n 80') or 'No logs'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
+
+    elif mod_id == 'mongodb':
+        status  = sh('systemctl is-active mongod') or 'inactive'
+        version = sh('mongod --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
+        conf_path = '/etc/mongod.conf'
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        logs = sh('tail -80 /var/log/mongodb/mongod.log 2>/dev/null') or \
+               sh('journalctl -u mongod -n 80') or 'No logs'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
 
     elif mod_id == 'phpmyadmin':
-        # PMA is always accessible — find its port from nginx config
         pma_conf = '/etc/nginx/conf.d/phpmyadmin.conf'
         port = '8082'
         if os.path.exists(pma_conf):
-            import re as _re
-            with open(pma_conf) as f: c = f.read()
-            m = _re.search(r'listen\s+(\d+)', c)
+            with open(pma_conf) as f: cc = f.read()
+            m = _re.search(r'listen\s+(\d+)', cc)
             if m: port = m.group(1)
-        # Find installed PHP versions for version selector
-        php_versions = []
-        for v in ['8.4','8.3','8.2','8.1','8.0','7.4']:
-            if os.path.exists(f'/usr/bin/php{v}'):
-                php_versions.append(v)
-        # Current PHP version used by PMA
+        php_versions = [v for v in ['8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists('/usr/bin/php' + v)]
         current_php = ''
         if os.path.exists(pma_conf):
-            with open(pma_conf) as f: c = f.read()
-            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', c)
+            with open(pma_conf) as f: cc = f.read()
+            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', cc)
             if m: current_php = m.group(1)
-        pma_dir = '/usr/share/phpmyadmin'
-        installed = os.path.isdir(pma_dir)
-        return jsonify({
-            'ok': True, 'installed': installed,
-            'port': port, 'url': f'http://YOUR-IP:{port}',
-            'php_versions': php_versions, 'current_php': current_php,
-            'conf_path': pma_conf,
-        })
-
-    elif mod_id in ('pure-ftpd', 'pure_ftpd'):
-        status = sh('systemctl is-active pure-ftpd 2>/dev/null') or 'inactive'
-        port   = sh("grep -r '^Bind' /etc/pure-ftpd/conf/ 2>/dev/null | head -1 | awk '{print $2}'") or '21'
-        return jsonify({'ok': True, 'status': status, 'port': port})
+        return jsonify({'ok':True,'installed':os.path.isdir('/usr/share/phpmyadmin'),
+            'port':port,'url':'http://YOUR-IP:' + port,
+            'php_versions':php_versions,'current_php':current_php,'conf_path':pma_conf})
 
     elif mod_id == 'docker':
-        status  = sh('systemctl is-active docker 2>/dev/null') or 'inactive'
+        status  = sh('systemctl is-active docker') or 'inactive'
         version = sh('docker version --format "{{.Server.Version}}" 2>/dev/null') or ''
-        info    = sh('docker info 2>/dev/null | head -20') or ''
-        return jsonify({'ok': True, 'status': status, 'version': version, 'info': info})
+        info    = sh('docker info 2>/dev/null | head -25') or ''
+        return jsonify({'ok':True,'status':status,'version':version,'info':info})
 
     # Generic fallback
     mod = _get_mod(mod_id)
-    if not mod: return jsonify({'ok': False, 'error': 'Module not found'}), 404
-    svc  = mod.get('service', mod_id)
-    status = sh(f'systemctl is-active {svc} 2>/dev/null') or 'inactive'
-    version = sh(f'{svc} --version 2>/dev/null | head -1') or ''
-    return jsonify({'ok': True, 'status': status, 'version': version})
+    if not mod: return jsonify({'ok':False,'error':'Module not found'}), 404
+    svc    = mod.get('service', mod_id)
+    status = sh('systemctl is-active ' + svc + ' 2>/dev/null') or 'inactive'
+    version= sh(svc + ' --version 2>/dev/null | head -1') or ''
+    return jsonify({'ok':True,'status':status,'version':version})
+
 
 
 @modules_bp.route('/api/modules/<mod_id>/settings', methods=['POST'])
@@ -906,9 +1123,27 @@ def save_module_settings(mod_id):
 
     elif action == 'switch_version':
         ver = d.get('version', '')
-        if mod_id == 'nginx' and ver:
-            out = sh(f'apt-get install -y nginx={ver} 2>&1 || apt-get install -y nginx 2>&1')
+        if mod_id == 'redis' and ver:
+            # Stop redis, install specific version from redis.io, restart
+            script = (
+                'systemctl stop redis-server 2>/dev/null || systemctl stop redis 2>/dev/null; '
+                'curl -fsSL https://packages.redis.io/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && '
+                'echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && '
+                'apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && '
+                'apt-get install -y --allow-downgrades redis-server=' + ver + '.* 2>/dev/null || '
+                'apt-get install -y redis-server && '
+                'systemctl start redis-server 2>/dev/null || systemctl start redis'
+            )
+            out = sh(script, t=120)
+            new_ver = sh("redis-server --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+        elif mod_id in ('pure-ftpd', 'pure_ftpd') and ver:
+            out = sh('apt-get install -y pure-ftpd=' + ver + ' 2>/dev/null || apt-get install -y pure-ftpd 2>&1', t=60)
             return jsonify({'ok': True, 'output': out})
+        elif mod_id == 'nginx' and ver:
+            out = sh('apt-get install -y nginx=' + ver + ' 2>&1 || apt-get install -y nginx 2>&1')
+            return jsonify({'ok': True, 'output': out})
+        return jsonify({'ok': False, 'error': 'Version switch not supported for ' + mod_id})
 
     elif action == 'pma_set_port':
         port = d.get('port', '8082')

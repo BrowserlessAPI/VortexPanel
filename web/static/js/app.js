@@ -1341,6 +1341,24 @@ function modulesPage() {
         this.settingsModal.currentPhp     = r.current_php  || '';
         this.settingsModal.pmaUrl         = r.url          || '';
         this.settingsModal.dockerInfo     = r.info         || '';
+        this.settingsModal.versions       = r.versions       || [];
+        this.settingsModal.switchVer      = r.versions?.[0]?.value || '';
+        this.settingsModal.currentStatus  = r.current_status || {};
+        this.settingsModal.slowLog        = r.slow_log       || '';
+        this.settingsModal.persistence    = r.persistence    || {};
+        this.settingsModal.phpConfig      = r.config         || {};
+        this.settingsModal.fpmProfile     = r.fpm_profile    || {};
+        this.settingsModal.extensions     = r.extensions     || [];
+        this.settingsModal.iniContent     = r.ini_content    || '';
+        this.settingsModal.iniPath        = r.ini_path       || '';
+        this.settingsModal.fpmConf        = r.fpm_conf       || '';
+        this.settingsModal.selPhpVer      = r.sel_ver        || '';
+        this.settingsModal.phpinfo        = r.phpinfo        || {};
+        this.settingsModal.ftpUsers       = r.users          || [];
+        this.settingsModal.ftpAddr        = r.ftp_addr       || '';
+        this.settingsModal.jails          = r.jails          || [];
+        this.settingsModal.blackIps       = r.black_ips      || '';
+        this.settingsModal.whiteIps       = r.white_ips      || '';
         this.settingsModal.confChanged    = false;
       } else {
         toast(r.error || 'Failed to load settings', 'error');
@@ -1403,21 +1421,32 @@ function modulesPage() {
 
     settingsTabs(modId) {
       const tabs = {
-        nginx:    ['service','config','optimization','logs'],
-        apache2:  ['service','config','logs'],
-        openlitespeed: ['service','logs'],
-        mysql:    ['service','config','logs'],
-        mariadb:  ['service','config','logs'],
-        postgresql:['service','logs'],
-        mongodb:  ['service','logs'],
-        redis:    ['service','config','logs'],
-        phpmyadmin:['service','php_version','security'],
-        docker:   ['service','info'],
+        nginx:      ['service','config','optimization','logs'],
+        apache2:    ['service','config','logs'],
+        openlitespeed:['service','logs'],
+        mysql:      ['service','config','storage','port','current_status','optimization','logs','slow_log'],
+        mariadb:    ['service','config','port','logs'],
+        postgresql: ['service','config','logs'],
+        mongodb:    ['service','config','logs'],
+        redis:      ['service','switch_version','optimization','config','current_status','persistence','logs'],
+        php:        ['service','extensions','config','ini','fpm','logs','phpinfo'],
+        'pure-ftpd':['service','switch_version','users','port','config','logs'],
+        fail2ban:   ['service','website_protection','server_protection','black_ip','white_ip','logs'],
+        supervisor: ['service','config','logs'],
+        clamav:     ['service','logs'],
+        phpmyadmin: ['service','php_version','security'],
+        docker:     ['service','info'],
       };
       const labels = {
         service:'Service', config:'Config File', optimization:'Optimization',
         logs:'Error Log', php_version:'PHP Version', security:'Security',
-        info:'Info',
+        info:'Info', storage:'Storage Location', port:'Port',
+        current_status:'Current Status', slow_log:'Slow Log',
+        switch_version:'Switch Version', persistence:'Set Persistence',
+        extensions:'Install Extensions', ini:'Configuration File',
+        fpm:'FPM Profile', phpinfo:'phpinfo',
+        users:'User Management', website_protection:'Website Protection',
+        server_protection:'Server Protection', black_ip:'Black IP', white_ip:'White IP',
       };
       return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t}));
     },
