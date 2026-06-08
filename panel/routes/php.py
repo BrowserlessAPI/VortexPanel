@@ -78,6 +78,12 @@ def versions():
     if not req(): return jsonify({'ok':False}), 401
     return jsonify({'ok':True, 'versions': get_php_versions()})
 
+@php_bp.route('/api/php/installed')
+def installed_versions():
+    if not req(): return jsonify({'ok':False}), 401
+    versions = [v['version'] for v in get_php_versions()]
+    return jsonify({'ok':True, 'versions': versions})
+
 @php_bp.route('/api/php/<version>/extensions')
 def extensions(version):
     if not req(): return jsonify({'ok':False}), 401

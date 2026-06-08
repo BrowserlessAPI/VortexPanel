@@ -1001,7 +1001,7 @@
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="phpUninstallModal.show=false">Cancel</button>
               <button class="btn btn-danger" :disabled="!phpUninstallModal.selVer"
-                      @click="phpUninstallModal.show=false; _startJob(modules.find(m=>m.id==='php'), 'uninstall', phpUninstallModal.selVer)">
+                      @click="phpUninstallModal.show=false; $store && $store || true; let m=modules.find(x=>x.id==='php'); post('/api/modules/php/uninstall',{version:phpUninstallModal.selVer}).then(r=>{if(r.ok){let label='Removing: PHP v'+phpUninstallModal.selVer; jobModal={show:true,title:label,lines:[],done:false,success:false,action:'uninstall',installedVer:''}; const es=new EventSource('/api/modules/job/'+r.job_id); es.onmessage=(e)=>{const d=JSON.parse(e.data); if(d.line)jobModal.lines.push(d.line); if(d.done){es.close();m.installed=d.installed;jobModal.done=true;jobModal.success=d.success;setTimeout(()=>load(),1200);} if(d.error){es.close();toast(d.error,'error');}  $nextTick(()=>{const t=document.querySelector('.job-terminal');if(t)t.scrollTop=t.scrollHeight;});};}else toast(r.error||'Failed','error');})">
                 Uninstall v<span x-text="phpUninstallModal.selVer"></span>
               </button>
             </div>

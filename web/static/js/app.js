@@ -1236,9 +1236,8 @@ function modulesPage() {
     async uninstall(m) {
       // For multi-version modules (PHP, Python), ask WHICH version to remove
       if (m.id==='php') {
-        // Fetch actually installed PHP versions from server
-        const r = await get('/api/modules/php/settings');
-        const installed = (r.php_versions||[]).map(v=>v.version);
+        const r = await get('/api/php/installed');
+        const installed = r.versions || [];
         if (installed.length > 0) {
           this.phpUninstallModal = {show:true, versions:installed, selVer:installed[0]};
           return;
