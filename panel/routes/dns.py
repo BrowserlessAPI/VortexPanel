@@ -69,3 +69,64 @@ def get_records(domain):
         m = re.match(r'^(\S+)\s+(?:IN\s+)?(\w+)\s+(.+)$', line)
         if m: records.append({'host':m.group(1),'type':m.group(2),'value':m.group(3)})
     return jsonify({'ok':True,'records':records,'content':content})
+
+@dns_bp.route('/api/dns/zones/<domain>', methods=['DELETE'])
+def delete_zone(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    zone_file = f'{ZONES_DIR}/db.{domain}'
+    try:
+        if os.path.exists(zone_file): os.unlink(zone_file)
+        # Remove from named.conf.local
+        conf = '/etc/bind/named.conf.local'
+        if os.path.exists(conf):
+            with open(conf) as f: c = f.read()
+            import re as _re
+            c = _re.sub(rf'zone\s+"{re.escape(domain)}"[^}}]+}}\s*;?\s*', '', c, flags=_re.DOTALL)
+            with open(conf,'w') as f: f.write(c)
+        sh('rndc reload 2>/dev/null || systemctl reload bind9 2>/dev/null || systemctl reload named 2>/dev/null')
+        return jsonify({'ok':True})
+    except Exception as e:
+        return jsonify({'ok':False,'error':str(e)})
+
+@dns_bp.route('/api/dns/zones/<domain>/records', methods=['POST'])
+def add_record(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    host  = d.get('host','@')
+    rtype = d.get('type','A')
+    value = d.get('value','').strip()
+    ttl   = d.get('ttl','3600')
+    if not value: return jsonify({'ok':False,'error':'Value required'})
+    zone_file = f'{ZONES_DIR}/db.{domain}'
+    if not os.path.exists(zone_file):
+        return jsonify({'ok':False,'error':'Zone not found'})
+    # Update serial
+    import re as _re, time as _time
+    with open(zone_file) as f: content = f.read()
+    serial = str(int(_time.strftime('%Y%m%d')) * 100 + 1)
+    content = _re.sub(r'(\d{10})\s*;\s*Serial', serial + ' ; Serial', content)
+    # Add record
+    record_line = f'{host}\tIN\t{rtype}\t{value}\n'
+    if ttl and ttl != '3600':
+        record_line = f'{host}\t{ttl}\tIN\t{rtype}\t{value}\n'
+    content += record_line
+    with open(zone_file,'w') as f: f.write(content)
+    sh('rndc reload 2>/dev/null || systemctl reload bind9 2>/dev/null || systemctl reload named 2>/dev/null')
+    return jsonify({'ok':True})
+
+@dns_bp.route('/api/dns/zones/<domain>/records/delete', methods=['POST'])
+def delete_record(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    idx = d.get('index', -1)
+    zone_file = f'{ZONES_DIR}/db.{domain}'
+    if not os.path.exists(zone_file):
+        return jsonify({'ok':False,'error':'Zone not found'})
+    with open(zone_file) as f: lines = f.readlines()
+    # Find non-comment, non-directive records
+    record_lines = [i for i,l in enumerate(lines) if l.strip() and not l.strip().startswith(';') and not l.strip().startswith('$') and 'IN' in l and 'SOA' not in l]
+    if 0 <= idx < len(record_lines):
+        del lines[record_lines[idx]]
+        with open(zone_file,'w') as f: f.writelines(lines)
+        sh('rndc reload 2>/dev/null || systemctl reload bind9 2>/dev/null || systemctl reload named 2>/dev/null')
+    return jsonify({'ok':True})

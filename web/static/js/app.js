@@ -1343,9 +1343,10 @@ function modulesPage() {
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal
+      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service'}[m.id] : 'service';
       this.settingsModal = {
         ...this.settingsModal,
-        show: true, mod: m, tab: 'service',
+        show: true, mod: m, tab: defaultTab,
         loading: true, confContent: '', logs: '', status: '',
       };
       const r = await get('/api/modules/'+m.id+'/settings');
@@ -1388,6 +1389,13 @@ function modulesPage() {
         this.settingsModal.caddyCerts     = r.tls_certs       || '';
         this.settingsModal.phpServiceName  = m.id==='php' ? 'php'+(r.sel_ver||'')+ '-fpm' : '';
         this.settingsModal.ddnsDomains     = r.domains        || [];
+        this.settingsModal.dnsZones        = r.zones          || [];
+        this.settingsModal.dnsRecords      = r.records        || [];
+        this.settingsModal.dnsSelZone      = r.zones?.[0]?.domain || '';
+        this.settingsModal.showAddZone     = false;
+        this.settingsModal.showAddRecord   = false;
+        this.settingsModal.zoneForm        = {domain:'',ip:''};
+        this.settingsModal.recordForm      = {host:'@',type:'A',value:'',ttl:'3600'};
         this.settingsModal.ddnsStatus      = {enabled:r.enabled||false,current_ip:r.current_ip||'',interval:r.interval||300};
         this.settingsModal.ddnsLog         = r.log            || '';
         this.settingsModal.showAddDomain   = false;
@@ -1469,6 +1477,7 @@ function modulesPage() {
         supervisor: ['service','config','logs'],
         clamav:     ['service','logs'],
         ddns:       ['ddns_domains','ddns_server','ddns_log'],
+        bind9:      ['service','dns_zones','dns_records','dns_config','dns_private','logs'],
         phpmyadmin: ['service','php_version','security'],
         docker:     ['service','info'],
       };
@@ -1482,6 +1491,7 @@ function modulesPage() {
         fpm:'FPM Profile', phpinfo:'phpinfo',
         caddyfile:'Caddyfile', global_opts:'Global Options', auto_https:'Auto HTTPS',
         ddns_domains:'Domain List', ddns_server:'DDNS Server', ddns_log:'Log',
+        dns_zones:'Zone List', dns_records:'DNS Records', dns_config:'Config', dns_private:'Private DNS',
         upload_limit:'Limit of Upload', timeout_limit:'Limit of Timeout',
         disabled_functions:'Disabled Functions', load_average:'Load Average',
         session_config:'Session Config', slow_log:'Slow Log',

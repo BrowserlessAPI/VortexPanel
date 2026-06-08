@@ -376,17 +376,37 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         'uninstall':'apt-get remove -y --purge ddclient && apt-get autoremove -y',
         'manage':False,
     },
-    {
+        {
         'id':'bind9', 'name':'BIND9 DNS', 'icon':'🌐', 'category':'DNS',
         'desc':'Industry standard authoritative DNS server',
         'check':'which named 2>/dev/null',
         'versions':[
-            {'label':'9.18 (ESV/LTS)', 'value':'9.18'},
-            {'label':'9.20 (Latest)',  'value':'9.20'},
+            {'label':'9.18.x (ESV/LTS - Ubuntu repo)', 'value':'9.18'},
+            {'label':'9.20.x (Stable - ISC official)',  'value':'9.20'},
         ],
-        'install':'apt-get install -y bind9 bind9utils bind9-doc && systemctl enable bind9 && systemctl start bind9',
-        'uninstall':'apt-get remove -y --purge bind9 bind9utils && apt-get autoremove -y',
-        'service':'bind9', 'manage':True,
+        'install_tpl':(
+            'apt-get install -y software-properties-common && '
+            'if [ "{ver}" = "9.20" ]; then '
+            '  add-apt-repository -y ppa:isc/bind && apt-get update -q && '
+            '  apt-get install -y bind9 bind9utils bind9-doc; '
+            'else '
+            '  apt-get update -q && apt-get install -y bind9 bind9utils bind9-doc; '
+            'fi && '
+            'mkdir -p /etc/bind/zones && '
+            '(systemctl enable named 2>/dev/null || systemctl enable bind9 2>/dev/null) && '
+            '(systemctl start named 2>/dev/null || systemctl start bind9 2>/dev/null)'
+        ),
+        'install':(
+            'apt-get install -y bind9 bind9utils bind9-doc && '
+            'mkdir -p /etc/bind/zones && '
+            'systemctl enable bind9 && systemctl start bind9'
+        ),
+        'uninstall':(
+            'systemctl stop named 2>/dev/null; systemctl stop bind9 2>/dev/null; '
+            'apt-get remove -y --purge bind9 bind9utils bind9-doc && '
+            'apt-get autoremove -y && rm -rf /etc/bind/zones'
+        ),
+        'service':'named', 'manage':True,
     },
     # ── Runtimes ─────────────────────────────────────────────────────────────
     {
@@ -1176,6 +1196,40 @@ def get_module_settings(mod_id):
         return jsonify({'ok':True,'status':'active' if node_path else 'inactive',
             'version':version,'info':info})
 
+    elif mod_id == 'bind9':
+        status  = sh('systemctl is-active named 2>/dev/null || systemctl is-active bind9 2>/dev/null') or 'inactive'
+        version = sh("named -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+        zones_dir = '/etc/bind/zones'
+        named_conf = '/etc/bind/named.conf'
+        named_conf_local = '/etc/bind/named.conf.local'
+        os.makedirs(zones_dir, exist_ok=True)
+        # Read zones from named.conf.local
+        zones = []
+        import re as _re
+        for conf_file in [named_conf_local, named_conf]:
+            if os.path.exists(conf_file):
+                with open(conf_file) as f: raw = f.read()
+                for m in _re.finditer(r'zone\s+"([^"]+)"\s*\{[^}]*file\s+"([^"]+)"', raw, _re.DOTALL):
+                    domain, zone_file = m.group(1), m.group(2)
+                    if domain not in [z['domain'] for z in zones]:
+                        zones.append({'domain': domain, 'file': zone_file,
+                            'records': int(sh(f'grep -c "IN" {zone_file} 2>/dev/null') or 0)})
+        # Read zone files from zones dir
+        if os.path.isdir(zones_dir):
+            for f_name in os.listdir(zones_dir):
+                if f_name.startswith('db.'):
+                    domain = f_name[3:]
+                    if domain not in [z['domain'] for z in zones]:
+                        zones.append({'domain': domain, 'file': f'{zones_dir}/{f_name}',
+                            'records': int(sh(f'grep -c "IN" {zones_dir}/{f_name} 2>/dev/null') or 0)})
+        try:
+            with open(named_conf) as f: conf_content = f.read()
+        except: conf_content = ''
+        logs = sh('journalctl -u named -n 80 --no-pager 2>/dev/null') or                sh('journalctl -u bind9 -n 80 --no-pager 2>/dev/null') or 'No logs'
+        return jsonify({'ok':True, 'status':status, 'version':version,
+            'zones': zones, 'conf_path': named_conf, 'conf_content': conf_content,
+            'logs': logs, 'zones_dir': zones_dir})
+
     elif mod_id == 'ddns':
         import json as _json
         cfg_file = '/opt/vortexpanel/ddns_config.json'
@@ -1327,6 +1381,8 @@ def save_module_settings(mod_id):
             if 'Syntax OK' not in test:
                 return jsonify({'ok': False, 'error': 'Config test failed: ' + test})
             sh('systemctl reload apache2 2>&1')
+        elif mod_id == 'bind9':
+            sh('rndc reload 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null')
         elif mod_id == 'caddy':
             test = sh('caddy validate --config ' + conf_path + ' 2>&1')
             if 'Valid' not in test and 'valid' not in test.lower() and test:
@@ -1429,6 +1485,47 @@ def save_module_settings(mod_id):
             new_ver = sh("cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
             return jsonify({'ok': True, 'output': out, 'version': new_ver})
         return jsonify({'ok': False, 'error': 'Version switch not supported for ' + mod_id})
+
+    elif action == 'setup_private_dns':
+        networks = d.get('networks', '127.0.0.1;')
+        conf_local = '/etc/bind/named.conf.options'
+        acl_lines = chr(10).join(['        '+n.strip()+';' for n in networks.replace(chr(10),';').split(';') if n.strip()])
+        options_conf = 'options {' + chr(10)
+        options_conf += '    directory "/var/cache/bind";' + chr(10)
+        options_conf += '    recursion yes;' + chr(10)
+        options_conf += '    allow-query {' + chr(10)
+        options_conf += acl_lines + chr(10)
+        options_conf += '    };' + chr(10)
+        options_conf += '    allow-recursion {' + chr(10)
+        options_conf += acl_lines + chr(10)
+        options_conf += '    };' + chr(10)
+        options_conf += '    dnssec-validation auto;' + chr(10)
+        options_conf += '    listen-on { any; };' + chr(10)
+        options_conf += '};' + chr(10)
+        try:
+            with open(conf_local, 'w') as f: f.write(options_conf)
+            sh('rndc reload 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null')
+            return jsonify({'ok': True})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+
+    elif action == 'set_forwarders':
+        fwds = d.get('forwarders', '8.8.8.8; 1.1.1.1;')
+        conf_local = '/etc/bind/named.conf.options'
+        fwd_lines = chr(10).join(['        '+f.strip()+';' for f in fwds.replace(chr(10),';').split(';') if f.strip()])
+        try:
+            import re as _re
+            if os.path.exists(conf_local):
+                with open(conf_local) as f: c = f.read()
+                if 'forwarders' in c:
+                    c = _re.sub(r'forwarders\s*\{[^}]*\}', 'forwarders {' + chr(10) + fwd_lines + chr(10) + '    }', c)
+                else:
+                    c = c.replace('dnssec-validation auto;', 'forwarders {' + chr(10) + fwd_lines + chr(10) + '    };' + chr(10) + '    dnssec-validation auto;')
+                with open(conf_local,'w') as f: f.write(c)
+            sh('rndc reload 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null')
+            return jsonify({'ok': True})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
 
     elif action == 'save_global_opts':
         opts = d.get('opts', {})

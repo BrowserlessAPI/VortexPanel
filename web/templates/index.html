@@ -1219,7 +1219,7 @@
         <div x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
              class="modal-overlay" style="z-index:99999;padding:20px"
              @click.self="settingsModal.show=false">
-          <div style="width:min(880px,92vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.7);cursor:default"
+          <div style="width:min(980px,95vw);height:min(90vh,800px);background:var(--bg-card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,.6);cursor:default"
 >
 
             <!-- Modal header -->
@@ -1836,6 +1836,170 @@
                   </div>
                   <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Loaded Extensions</div>
                   <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-base);padding:10px;border-radius:6px;max-height:120px;overflow-y:auto;line-height:1.8;white-space:pre-wrap" x-text="settingsModal.phpinfo?.loaded||'Loading…'"></div>
+                </div>
+
+
+                <!-- ══ BIND9: ZONE LIST tab ══ -->
+                <div x-show="settingsModal.tab==='dns_zones'">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                    <div style="font-weight:600;font-size:13px">DNS Zones</div>
+                    <button class="btn btn-primary btn-sm" @click="settingsModal.showAddZone=true">+ Add Zone</button>
+                  </div>
+                  <!-- Add zone form -->
+                  <div x-show="settingsModal.showAddZone" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px">
+                    <div class="form-row form-row-2">
+                      <div class="form-group"><label class="form-label">Domain Name</label><input class="form-input" x-model="settingsModal.zoneForm.domain" placeholder="example.com"></div>
+                      <div class="form-group"><label class="form-label">Server IP</label><input class="form-input" x-model="settingsModal.zoneForm.ip" placeholder="1.2.3.4"></div>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                      <button class="btn btn-ghost btn-sm" @click="settingsModal.showAddZone=false">Cancel</button>
+                      <button class="btn btn-primary btn-sm" @click="post('/api/dns/zones',settingsModal.zoneForm).then(r=>{if(r.ok){toast('Zone created','success');settingsModal.showAddZone=false;openSettings(settingsModal.mod);}else toast(r.error||'Failed','error')})">Create Zone</button>
+                    </div>
+                  </div>
+                  <!-- Zone list -->
+                  <div class="card" style="padding:0;overflow:hidden">
+                    <table class="data-table">
+                      <thead><tr><th>Domain</th><th>Zone File</th><th>Records</th><th>Actions</th></tr></thead>
+                      <tbody>
+                        <template x-for="z in (settingsModal.dnsZones||[])" :key="z.domain">
+                          <tr>
+                            <td style="font-weight:600;color:var(--accent)" x-text="z.domain"></td>
+                            <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)" x-text="z.file"></td>
+                            <td x-text="z.records||0"></td>
+                            <td>
+                              <div style="display:flex;gap:6px">
+                                <button class="btn btn-ghost btn-xs" @click="settingsModal.dnsSelZone=z.domain;settingsModal.tab='dns_records';get('/api/dns/zones/'+z.domain+'/records').then(r=>{if(r.ok)settingsModal.dnsRecords=r.records||[];})">Records</button>
+                                <button class="btn btn-danger btn-xs" @click="if(confirm('Delete zone '+z.domain+'?'))del('/api/dns/zones/'+z.domain).then(r=>{if(r.ok){toast('Deleted','success');openSettings(settingsModal.mod);}})">Delete</button>
+                              </div>
+                            </td>
+                          </tr>
+                        </template>
+                        <template x-if="!settingsModal.dnsZones?.length">
+                          <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:20px">No zones configured. Add a zone to get started.</td></tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- ══ BIND9: DNS RECORDS tab ══ -->
+                <div x-show="settingsModal.tab==='dns_records'" x-init="$watch('$el.style.display', v => { if(v!=='none' && !settingsModal.dnsSelZone && settingsModal.dnsZones?.length) { settingsModal.dnsSelZone=settingsModal.dnsZones[0].domain; get('/api/dns/zones/'+settingsModal.dnsSelZone+'/records').then(r=>{if(r.ok)settingsModal.dnsRecords=r.records||[];}); } })">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                    <div>
+                      <div style="font-weight:600;font-size:13px">DNS Records</div>
+                      <div style="font-size:11px;color:var(--text-muted)" x-text="'Zone: '+settingsModal.dnsSelZone"></div>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                      <select class="form-input" style="font-size:12px;max-width:180px" x-model="settingsModal.dnsSelZone"
+                              @change="get('/api/dns/zones/'+settingsModal.dnsSelZone+'/records').then(r=>{if(r.ok)settingsModal.dnsRecords=r.records||[];})">
+                        <template x-for="z in (settingsModal.dnsZones||[])" :key="z.domain">
+                          <option :value="z.domain" x-text="z.domain"></option>
+                        </template>
+                      </select>
+                      <button class="btn btn-primary btn-sm" @click="settingsModal.showAddRecord=true">+ Add Record</button>
+                    </div>
+                  </div>
+                  <!-- Add record form -->
+                  <div x-show="settingsModal.showAddRecord" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+                      <div><label class="form-label">Host</label><input class="form-input" x-model="settingsModal.recordForm.host" placeholder="@ or www"></div>
+                      <div><label class="form-label">Type</label>
+                        <select class="form-input" x-model="settingsModal.recordForm.type">
+                          <option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option><option>NS</option><option>SRV</option><option>CAA</option>
+                        </select>
+                      </div>
+                      <div><label class="form-label">Value</label><input class="form-input" x-model="settingsModal.recordForm.value" placeholder="1.2.3.4"></div>
+                      <div><label class="form-label">TTL</label><input class="form-input" x-model="settingsModal.recordForm.ttl" placeholder="3600"></div>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                      <button class="btn btn-ghost btn-sm" @click="settingsModal.showAddRecord=false">Cancel</button>
+                      <button class="btn btn-primary btn-sm" @click="post('/api/dns/zones/'+settingsModal.dnsSelZone+'/records',settingsModal.recordForm).then(r=>{if(r.ok){toast('Record added','success');settingsModal.showAddRecord=false;get('/api/dns/zones/'+settingsModal.dnsSelZone+'/records').then(r2=>{if(r2.ok)settingsModal.dnsRecords=r2.records||[];});}else toast(r.error||'Failed','error')})">Add Record</button>
+                    </div>
+                  </div>
+                  <!-- Records table -->
+                  <div class="card" style="padding:0;overflow:hidden">
+                    <table class="data-table">
+                      <thead><tr><th>Host</th><th>Type</th><th>Value</th><th>TTL</th><th>Actions</th></tr></thead>
+                      <tbody>
+                        <template x-for="(r,i) in (settingsModal.dnsRecords||[])" :key="i">
+                          <tr>
+                            <td style="font-family:var(--font-mono);font-weight:600" x-text="r.host"></td>
+                            <td><span :class="'badge badge-'+(r.type==='A'?'blue':r.type==='MX'?'green':r.type==='TXT'?'gray':'blue')" x-text="r.type"></span></td>
+                            <td style="font-family:var(--font-mono);font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis" x-text="r.value"></td>
+                            <td style="color:var(--text-muted)" x-text="r.ttl||'3600'"></td>
+                            <td>
+                              <button class="btn btn-danger btn-xs" @click="if(confirm('Delete this record?'))post('/api/dns/zones/'+settingsModal.dnsSelZone+'/records/delete',{index:i}).then(r=>{if(r.ok){toast('Deleted','success');get('/api/dns/zones/'+settingsModal.dnsSelZone+'/records').then(r2=>{if(r2.ok)settingsModal.dnsRecords=r2.records||[];});}})">Delete</button>
+                            </td>
+                          </tr>
+                        </template>
+                        <template x-if="!settingsModal.dnsRecords?.length">
+                          <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px">No records. Select a zone and add records.</td></tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- ══ BIND9: CONFIG tab ══ -->
+                <div x-show="settingsModal.tab==='dns_config'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div>
+                      <div style="font-weight:600;font-size:13px">named.conf</div>
+                      <div style="font-size:11px;color:var(--text-muted)" x-text="settingsModal.confPath||'/etc/bind/named.conf'"></div>
+                    </div>
+                    <button class="btn btn-primary btn-sm"
+                            @click="post('/api/modules/bind9/settings',{action:'save_config',conf_path:settingsModal.confPath,content:settingsModal.confContent}).then(r=>toast(r.ok?'Saved & reloaded':'Failed: '+(r.error||''),r.ok?'success':'error'))">
+                      💾 Save & Reload
+                    </button>
+                  </div>
+                  <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563">
+                      /etc/bind/named.conf · Ctrl+S to save
+                    </div>
+                    <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical"
+                              x-model="settingsModal.confContent" spellcheck="false"></textarea>
+                  </div>
+                  <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">• Do not modify if you don't understand BIND configuration rules</div>
+                </div>
+
+                <!-- ══ BIND9: PRIVATE DNS tab ══ -->
+                <div x-show="settingsModal.tab==='dns_private'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px">Private DNS</div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px">Configure BIND9 as an internal/private DNS resolver for your network</div>
+                  <div style="display:grid;gap:14px;max-width:600px">
+                    <div style="padding:14px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px">
+                      <div style="font-weight:600;font-size:13px;margin-bottom:8px">🔒 Internal Resolver</div>
+                      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Allow only internal networks to use this DNS server for recursive queries</div>
+                      <div class="form-group"><label class="form-label">Allow Query Networks (one per line)</label>
+                        <textarea class="form-input" style="min-height:80px;font-family:var(--font-mono);font-size:12px"
+                                  x-model="settingsModal.dnsAllowNetworks" placeholder="127.0.0.1;
+192.168.0.0/16;
+10.0.0.0/8;"></textarea>
+                      </div>
+                      <button class="btn btn-primary btn-sm"
+                              @click="post('/api/modules/bind9/settings',{action:'setup_private_dns',networks:settingsModal.dnsAllowNetworks}).then(r=>toast(r.ok?'Private DNS configured':'Failed: '+(r.error||''),r.ok?'success':'error'))">
+                        Apply Private DNS Config
+                      </button>
+                    </div>
+                    <div style="padding:14px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px">
+                      <div style="font-weight:600;font-size:13px;margin-bottom:8px">🌐 Forwarders</div>
+                      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Forward unresolved queries to upstream DNS servers</div>
+                      <div class="form-group"><label class="form-label">Upstream DNS Servers</label>
+                        <input class="form-input" x-model="settingsModal.dnsForwarders" placeholder="8.8.8.8; 1.1.1.1;">
+                      </div>
+                      <button class="btn btn-primary btn-sm"
+                              @click="post('/api/modules/bind9/settings',{action:'set_forwarders',forwarders:settingsModal.dnsForwarders}).then(r=>toast(r.ok?'Forwarders set':'Failed: '+(r.error||''),r.ok?'success':'error'))">
+                        Save Forwarders
+                      </button>
+                    </div>
+                    <div style="padding:12px;background:rgba(88,101,242,.06);border:1px solid rgba(88,101,242,.15);border-radius:8px;font-size:11px;color:var(--text-muted);line-height:1.8">
+                      <div style="font-weight:600;color:var(--text-secondary);margin-bottom:4px">ℹ How Private DNS works</div>
+                      • BIND9 acts as a caching/recursive resolver for your internal network<br>
+                      • Devices on your network point to this server's IP as their DNS server<br>
+                      • Internal hostnames resolve locally, external queries are forwarded<br>
+                      • Useful for private network name resolution and split-horizon DNS
+                    </div>
+                  </div>
                 </div>
 
                 <!-- ══ DDNS: DOMAIN LIST tab ══ -->
