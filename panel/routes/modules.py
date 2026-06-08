@@ -13,7 +13,7 @@ def sh(c, t=10):
 
 def get_version(mod_id):
     cmds = {
-        'caddy':        "caddy version 2>/dev/null | grep -oP 'v[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'caddy':        "caddy version 2>/dev/null | awk '{print $1}' | tr -d v",
         'nginx':        "nginx -v 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'apache2':      "apache2 -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
@@ -732,7 +732,7 @@ def get_module_settings(mod_id):
 
     elif mod_id == 'apache2':
         status  = sh('systemctl is-active apache2') or 'inactive'
-        version = sh('apache2 -v 2>/dev/null | grep -oP "[0-9.]+"') or ''
+        version = sh("apache2 -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
         paths   = ['/etc/apache2/apache2.conf','/etc/httpd/conf/httpd.conf']
         conf_path = next((p for p in paths if os.path.exists(p)), '/etc/apache2/apache2.conf')
         try:
@@ -741,6 +741,35 @@ def get_module_settings(mod_id):
         logs = sh('tail -100 /var/log/apache2/error.log') or sh('journalctl -u apache2 -n 80') or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
+
+    elif mod_id == 'openlitespeed':
+        status   = sh('systemctl is-active lsws 2>/dev/null || systemctl is-active openlitespeed 2>/dev/null') or 'inactive'
+        version  = sh("cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+        conf_path = '/usr/local/lsws/conf/httpd_config.conf'
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        log_path = '/usr/local/lsws/logs/error.log'
+        logs = sh(f'tail -100 {log_path}') if os.path.exists(log_path) else 'No logs'
+        def lsget(key):
+            return sh(f"grep -oP '{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
+        optimization = {
+            'maxConnections':    lsget('maxConnections') or '10000',
+            'maxSSLConnections': lsget('maxSSLConnections') or '10000',
+            'connTimeout':       lsget('connTimeout') or '300',
+            'maxKeepAliveReq':   lsget('maxKeepAliveReq') or '10000',
+            'enableGzip':        lsget('enableGzip') or '1',
+            'gzipCompressLevel': lsget('gzipCompressLevel') or '6',
+        }
+        versions = [
+            {'label':'1.8.3','value':'1.8.3'},
+            {'label':'1.8.4','value':'1.8.4'},
+            {'label':'1.8.5 (Latest)','value':'1.8.5'},
+        ]
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,
+            'logs':logs,'log_path':log_path,
+            'optimization':optimization,'versions':versions})
 
     elif mod_id == 'mysql':
         status  = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld') or 'inactive'
@@ -1052,6 +1081,40 @@ def get_module_settings(mod_id):
         info    = sh('docker info 2>/dev/null | head -25') or ''
         return jsonify({'ok':True,'status':status,'version':version,'info':info})
 
+    elif mod_id == 'caddy':
+        status   = sh('systemctl is-active caddy') or 'inactive'
+        version  = sh("caddy version 2>/dev/null | awk '{print $1}' | tr -d v") or ''
+        conf_path = '/etc/caddy/Caddyfile'
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except: conf_content = ''
+        log_path = '/var/log/caddy/caddy.log'
+        logs = sh(f'tail -100 {log_path} 2>/dev/null') or sh('journalctl -u caddy -n 100 --no-pager') or 'No logs'
+        # Parse global options from Caddyfile
+        def cget(key):
+            return sh(f"grep -oP '^\s*{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
+        global_opts = {
+            'email':      cget('email') or '',
+            'http_port':  cget('http_port') or '80',
+            'https_port': cget('https_port') or '443',
+            'admin':      cget('admin') or 'localhost:2019',
+        }
+        # TLS cert info
+        tls_certs = sh("ls /var/lib/caddy/.local/share/certmagic/acme/acme-v02.api.letsencrypt.org/sites/ 2>/dev/null || ls /root/.local/share/caddy/certificates/ 2>/dev/null | head -20") or 'No certificates found'
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'log_path':log_path,
+            'global_opts':global_opts,'tls_certs':tls_certs})
+
+    elif mod_id == 'nodejs':
+        status  = sh('systemctl is-active nodejs 2>/dev/null') or 'inactive'
+        version = sh('node --version 2>/dev/null | tr -d v') or ''
+        npm_ver = sh('npm --version 2>/dev/null') or ''
+        node_path = sh('which node 2>/dev/null') or ''
+        npm_path  = sh('which npm 2>/dev/null') or ''
+        info = f'Node.js {version}\nnpm {npm_ver}\nnode: {node_path}\nnpm: {npm_path}'
+        return jsonify({'ok':True,'status':'active' if node_path else 'inactive',
+            'version':version,'info':info})
+
     # Generic fallback
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False,'error':'Module not found'}), 404
@@ -1112,13 +1175,51 @@ def save_module_settings(mod_id):
             if 'Syntax OK' not in test:
                 return jsonify({'ok': False, 'error': 'Config test failed: ' + test})
             sh('systemctl reload apache2 2>&1')
+        elif mod_id == 'caddy':
+            test = sh('caddy validate --config ' + conf_path + ' 2>&1')
+            if 'Valid' not in test and 'valid' not in test.lower() and test:
+                return jsonify({'ok': False, 'error': 'Caddyfile invalid: ' + test[:200]})
+            sh('systemctl reload caddy 2>/dev/null || caddy reload --config ' + conf_path + ' 2>/dev/null')
+        elif mod_id == 'openlitespeed':
+            sh('systemctl reload lsws 2>/dev/null || systemctl restart lsws 2>/dev/null')
         elif mod_id in ('mysql', 'mariadb'):
             sh(f'systemctl restart {mod_id} 2>&1')
         return jsonify({'ok': True, 'message': 'Configuration saved and service reloaded'})
 
     elif action == 'save_optimization':
         opts = d.get('optimization', {})
+        if mod_id == 'apache2':
+            conf = '/etc/apache2/apache2.conf'
+            mpm_conf = sh('find /etc/apache2/mods-enabled/ -name "mpm_*.conf" 2>/dev/null | head -1')
+            apache_keys = ['Timeout','KeepAlive','MaxKeepAliveRequests','KeepAliveTimeout']
+            mpm_keys = ['StartServers','MinSpareThreads','MaxSpareThreads','ThreadsPerChild','MaxRequestWorkers']
+            import re as _re
+            if os.path.exists(conf):
+                with open(conf) as f: c = f.read()
+                for k in apache_keys:
+                    if k in opts:
+                        c = _re.sub(rf'^(\s*{k}\s+)\S+', rf'\g<1>{opts[k]}', c, flags=_re.MULTILINE)
+                with open(conf,'w') as f: f.write(c)
+            if mpm_conf and os.path.exists(mpm_conf):
+                with open(mpm_conf) as f: c = f.read()
+                for k in mpm_keys:
+                    if k in opts:
+                        c = _re.sub(rf'^(\s*{k}\s+)\S+', rf'\g<1>{opts[k]}', c, flags=_re.MULTILINE)
+                with open(mpm_conf,'w') as f: f.write(c)
+            sh('apache2ctl configtest 2>&1 && systemctl reload apache2 2>&1')
+            return jsonify({'ok': True})
+        if mod_id == 'openlitespeed':
+            conf = '/usr/local/lsws/conf/httpd_config.conf'
+            import re as _re
+            if os.path.exists(conf):
+                with open(conf) as f: c = f.read()
+                for k,v in opts.items():
+                    c = _re.sub(rf'({k}\s+)\S+', rf'\g<1>{v}', c)
+                with open(conf,'w') as f: f.write(c)
+            sh('systemctl reload lsws 2>/dev/null || kill -USR1 $(cat /tmp/lshttpd/lshttpd.pid 2>/dev/null) 2>/dev/null')
+            return jsonify({'ok': True})
         if mod_id == 'nginx':
+
             conf = '/etc/nginx/nginx.conf'
             try:
                 with open(conf) as f: content = f.read()
@@ -1153,7 +1254,64 @@ def save_module_settings(mod_id):
         elif mod_id == 'nginx' and ver:
             out = sh('apt-get install -y nginx=' + ver + ' 2>&1 || apt-get install -y nginx 2>&1')
             return jsonify({'ok': True, 'output': out})
+        elif mod_id == 'openlitespeed' and ver:
+            script = (
+                'systemctl stop lsws 2>/dev/null; '
+                'wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && '
+                '(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && '
+                f'apt-get install -y --allow-downgrades openlitespeed={ver} 2>/dev/null || '
+                'apt-get install -y openlitespeed && '
+                'systemctl start lsws'
+            )
+            out = sh(script, t=120)
+            new_ver = sh("cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
         return jsonify({'ok': False, 'error': 'Version switch not supported for ' + mod_id})
+
+    elif action == 'save_global_opts':
+        opts = d.get('opts', {})
+        conf_path = d.get('conf_path', '/etc/caddy/Caddyfile')
+        if not os.path.exists(conf_path):
+            return jsonify({'ok': False, 'error': 'Caddyfile not found'})
+        import re as _re
+        with open(conf_path) as f: caddyfile = f.read()
+        # Update or insert global block
+        lines = ['{']
+        for k, v in opts.items():
+            if v: lines.append(f'\t{k} {v}')
+        lines.append('}')
+        global_block = '\n'.join(lines)
+        if _re.search(r'^\s*\{[^}]*\}', caddyfile, _re.MULTILINE | _re.DOTALL):
+            caddyfile = _re.sub(r'^\s*\{[^}]*\}', global_block, caddyfile, count=1, flags=_re.MULTILINE | _re.DOTALL)
+        else:
+            caddyfile = global_block + chr(10) + chr(10) + caddyfile
+        with open(conf_path, 'w') as f: f.write(caddyfile)
+        sh('systemctl reload caddy 2>/dev/null || caddy reload --config ' + conf_path + ' 2>/dev/null')
+        return jsonify({'ok': True})
+
+    elif action == 'export_certs':
+        # Export Caddy certs to /etc/ssl/vortexpanel/ for portability
+        cert_dirs = [
+            '/var/lib/caddy/.local/share/certmagic/acme/acme-v02.api.letsencrypt.org/sites',
+            '/root/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org',
+            '/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org',
+        ]
+        sh('mkdir -p /etc/ssl/vortexpanel')
+        exported = []
+        for base in cert_dirs:
+            if not os.path.exists(base): continue
+            domains = sh(f'ls {base} 2>/dev/null').split()
+            for domain in domains:
+                domain_dir = f'{base}/{domain}'
+                dest = f'/etc/ssl/vortexpanel/{domain}'
+                sh(f'mkdir -p {dest}')
+                # Copy cert and key files
+                for ext in ['.crt', '.key', '.pem']:
+                    sh(f'cp {domain_dir}/*{ext} {dest}/ 2>/dev/null || true')
+                exported.append(domain)
+        if exported:
+            return jsonify({'ok': True, 'exported': exported})
+        return jsonify({'ok': False, 'error': 'No certificates found to export'})
 
     elif action == 'pma_set_port':
         port = d.get('port', '8082')

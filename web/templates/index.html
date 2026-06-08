@@ -1616,6 +1616,115 @@
                   <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-base);padding:10px;border-radius:6px;max-height:120px;overflow-y:auto;line-height:1.8;white-space:pre-wrap" x-text="settingsModal.phpinfo?.loaded||'Loading…'"></div>
                 </div>
 
+                <!-- ══ CADDY: CADDYFILE tab ══ -->
+                <div x-show="settingsModal.tab==='caddyfile'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div>
+                      <div style="font-weight:600;font-size:13px">Caddyfile</div>
+                      <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.confPath"></div>
+                    </div>
+                    <button class="btn btn-primary btn-sm"
+                            @click="post('/api/modules/caddy/settings',{action:'save_config',conf_path:settingsModal.confPath,content:settingsModal.confContent}).then(r=>toast(r.ok?'Caddyfile saved & reloaded':'Failed: '+(r.error||''),r.ok?'success':'error'))">
+                      💾 Save & Reload
+                    </button>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Tips: Ctrl+S to save · Caddy reloads with zero downtime</div>
+                  <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563;display:flex;justify-content:space-between">
+                      <span x-text="settingsModal.confPath"></span><span>Ctrl+S to save</span>
+                    </div>
+                    <textarea style="width:100%;min-height:420px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
+                              x-model="settingsModal.confContent"
+                              @keydown.ctrl.s.prevent="post('/api/modules/caddy/settings',{action:'save_config',conf_path:settingsModal.confPath,content:settingsModal.confContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))"
+                              spellcheck="false"></textarea>
+                  </div>
+                </div>
+
+                <!-- ══ CADDY: GLOBAL OPTIONS tab ══ -->
+                <div x-show="settingsModal.tab==='global_opts'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px">Global Options</div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px">These are set in the <code style="font-size:11px;background:var(--bg-raised);padding:1px 5px;border-radius:3px">{global}</code> block of your Caddyfile</div>
+                  <div style="display:grid;gap:14px;max-width:560px">
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div style="width:160px;font-size:12px;color:var(--text-secondary);flex-shrink:0">
+                        email
+                        <div style="font-size:10px;color:var(--text-muted)">ACME/Let's Encrypt email</div>
+                      </div>
+                      <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.caddyOpts['email']" placeholder="admin@yourdomain.com">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div style="width:160px;font-size:12px;color:var(--text-secondary);flex-shrink:0">
+                        http_port
+                        <div style="font-size:10px;color:var(--text-muted)">Default: 80</div>
+                      </div>
+                      <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.caddyOpts['http_port']" placeholder="80">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div style="width:160px;font-size:12px;color:var(--text-secondary);flex-shrink:0">
+                        https_port
+                        <div style="font-size:10px;color:var(--text-muted)">Default: 443</div>
+                      </div>
+                      <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.caddyOpts['https_port']" placeholder="443">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div style="width:160px;font-size:12px;color:var(--text-secondary);flex-shrink:0">
+                        admin
+                        <div style="font-size:10px;color:var(--text-muted)">Admin API address</div>
+                      </div>
+                      <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.caddyOpts['admin']" placeholder="localhost:2019">
+                    </div>
+                  </div>
+                  <button class="btn btn-primary btn-sm" style="margin-top:20px"
+                          @click="post('/api/modules/caddy/settings',{action:'save_global_opts',opts:settingsModal.caddyOpts,conf_path:settingsModal.confPath}).then(r=>toast(r.ok?'Global options saved':'Failed: '+(r.error||''),r.ok?'success':'error'))">
+                    Save & Reload
+                  </button>
+                  <div style="margin-top:20px;padding:12px;background:rgba(88,101,242,.06);border:1px solid rgba(88,101,242,.15);border-radius:8px;font-size:11px;color:var(--text-muted);line-height:1.8">
+                    <div style="font-weight:600;color:var(--text-secondary);margin-bottom:4px">ℹ How global options work</div>
+                    These settings go inside a <code style="background:var(--bg-raised);padding:1px 4px;border-radius:3px">{</code> block at the top of your Caddyfile, before any site blocks.
+                    The <strong>email</strong> field is required for automatic HTTPS (Let's Encrypt certificates).
+                  </div>
+                </div>
+
+                <!-- ══ CADDY: AUTO HTTPS tab ══ -->
+                <div x-show="settingsModal.tab==='auto_https'">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px">Auto HTTPS</div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">Caddy automatically provisions and renews TLS certificates via Let's Encrypt / ZeroSSL</div>
+
+                  <!-- ACME Email status -->
+                  <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
+                    <span style="font-size:18px" x-text="settingsModal.caddyOpts?.email ? '✅' : '⚠️'"></span>
+                    <div>
+                      <div style="font-size:12px;font-weight:600" x-text="settingsModal.caddyOpts?.email ? 'ACME email configured: '+settingsModal.caddyOpts.email : 'No ACME email set — Auto HTTPS may not work'"></div>
+                      <div style="font-size:11px;color:var(--text-muted)">Set your email in Global Options to enable automatic certificate provisioning</div>
+                    </div>
+                  </div>
+
+                  <!-- Active certificates -->
+                  <div style="font-weight:600;font-size:12px;margin-bottom:8px">Active Certificates</div>
+                  <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#94a3b8;min-height:80px;white-space:pre-wrap;overflow-y:auto;max-height:200px;margin-bottom:16px"
+                       x-text="settingsModal.caddyCerts||'No certificates found'"></div>
+
+                  <!-- Export certs for portability -->
+                  <div style="padding:12px 14px;background:rgba(16,185,129,.05);border:1px solid rgba(16,185,129,.15);border-radius:8px;margin-bottom:16px">
+                    <div style="font-weight:600;font-size:12px;color:var(--green);margin-bottom:6px">🔒 SSL Portability</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Export Caddy-managed certificates to <code style="background:var(--bg-raised);padding:1px 4px;border-radius:3px">/etc/ssl/vortexpanel/</code> so they remain usable if you switch to Nginx or Apache.</div>
+                    <button class="btn btn-sm" style="background:rgba(16,185,129,.15);color:var(--green);border:1px solid rgba(16,185,129,.3)"
+                            @click="post('/api/modules/caddy/settings',{action:'export_certs'}).then(r=>toast(r.ok?'Certs exported to /etc/ssl/vortexpanel/':'Failed: '+(r.error||''),r.ok?'success':'error'))">
+                      Export Certs
+                    </button>
+                  </div>
+
+                  <!-- How Auto HTTPS works info -->
+                  <div style="padding:12px;background:rgba(88,101,242,.06);border:1px solid rgba(88,101,242,.15);border-radius:8px;font-size:11px;color:var(--text-muted);line-height:1.8">
+                    <div style="font-weight:600;color:var(--text-secondary);margin-bottom:4px">ℹ How Auto HTTPS works</div>
+                    • Caddy automatically gets certificates for any domain in your Caddyfile<br>
+                    • HTTP (port 80) is automatically redirected to HTTPS (port 443)<br>
+                    • Certificates are renewed automatically before expiry<br>
+                    • Uses Let's Encrypt by default, ZeroSSL as fallback<br>
+                    • Domain must point to this server's IP for certificate issuance
+                  </div>
+                </div>
+
                 <!-- ══ FTP USER MANAGEMENT tab ══ -->
                 <div x-show="settingsModal.tab==='users'">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">

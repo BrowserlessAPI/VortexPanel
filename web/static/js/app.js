@@ -1359,6 +1359,8 @@ function modulesPage() {
         this.settingsModal.blackIps       = r.black_ips      || '';
         this.settingsModal.whiteIps       = r.white_ips      || '';
         this.settingsModal.confChanged    = false;
+        this.settingsModal.caddyOpts      = r.global_opts     || {};
+        this.settingsModal.caddyCerts     = r.tls_certs       || '';
       } else {
         toast(r.error || 'Failed to load settings', 'error');
       }
@@ -1421,10 +1423,12 @@ function modulesPage() {
     settingsTabs(modId) {
       const tabs = {
         nginx:      ['service','config','optimization','logs'],
-        apache2:    ['service','config','logs'],
-        openlitespeed:['service','logs'],
+        caddy:      ['service','caddyfile','global_opts','auto_https','logs'],
+        nodejs:     ['service','info'],
+        apache2:    ['service','config','optimization','logs'],
+        openlitespeed:['service','config','optimization','switch_version','logs'],
         mysql:      ['service','config','storage','port','current_status','optimization','logs','slow_log'],
-        mariadb:    ['service','config','port','logs'],
+        mariadb:    ['service','config','port','optimization','logs','slow_log'],
         postgresql: ['service','config','logs'],
         mongodb:    ['service','config','logs'],
         redis:      ['service','switch_version','optimization','config','current_status','persistence','logs'],
@@ -1444,6 +1448,7 @@ function modulesPage() {
         switch_version:'Switch Version', persistence:'Set Persistence',
         extensions:'Install Extensions', ini:'Configuration File',
         fpm:'FPM Profile', phpinfo:'phpinfo',
+        caddyfile:'Caddyfile', global_opts:'Global Options', auto_https:'Auto HTTPS',
         upload_limit:'Limit of Upload', timeout_limit:'Limit of Timeout',
         disabled_functions:'Disabled Functions', load_average:'Load Average',
         session_config:'Session Config', slow_log:'Slow Log',
