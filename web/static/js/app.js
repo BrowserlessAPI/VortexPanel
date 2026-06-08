@@ -1253,6 +1253,12 @@ function modulesPage() {
     },
 
     async install(m) {
+      // PHP: always install directly with selected version (multi-version support)
+      if (m.id === 'php') {
+        if (!m.selVer) { toast('Select a PHP version first', 'error'); return; }
+        await this._startJob(m, 'install', m.selVer);
+        return;
+      }
       // If user already selected a version from the inline dropdown → install directly
       // Only show the version picker modal if NO version is selected yet
       if (m.versions?.length > 1 && !m.selVer) {

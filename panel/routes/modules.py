@@ -222,7 +222,13 @@ add-apt-repository -y ppa:ondrej/php && apt-get update -q && \
 apt-get install -y php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml \
 php{ver}-curl php{ver}-gd php{ver}-mbstring php{ver}-zip php{ver}-bcmath php{ver}-intl \
 php{ver}-soap php{ver}-cli php{ver}-readline && \
-systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm''',
+systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm && \
+WEB_USER=$(grep -oP '^user\\s+\\K\\S+' /etc/nginx/nginx.conf 2>/dev/null | tr -d ';' | head -1) && \
+WEB_USER=${WEB_USER:-www-data} && \
+POOL=/etc/php/{ver}/fpm/pool.d/www.conf && \
+grep -q '^listen.owner' $POOL && sed -i "s|^listen.owner.*|listen.owner = $WEB_USER|" $POOL || echo "listen.owner = $WEB_USER" >> $POOL && \
+grep -q '^listen.group' $POOL && sed -i "s|^listen.group.*|listen.group = $WEB_USER|" $POOL || echo "listen.group = $WEB_USER" >> $POOL && \
+systemctl restart php{ver}-fpm''',
         'install':'',
         'uninstall_tpl':'''systemctl stop php{ver}-fpm 2>/dev/null || true && \
 systemctl disable php{ver}-fpm 2>/dev/null || true && \
@@ -1183,6 +1189,76 @@ def save_module_settings(mod_id):
     import os
     d = request.get_json() or {}
     action = d.get('action', 'save_config')
+    ver = d.get('version', '')
+
+    if action == 'get_ver_data' and ver:
+        import os as _os
+        ini_path = f'/etc/php/{ver}/fpm/php.ini'
+        fpm_conf = f'/etc/php/{ver}/fpm/pool.d/www.conf'
+        try:
+            with open(ini_path) as f: ini_content = f.read()
+        except: ini_content = ''
+        try:
+            with open(fpm_conf) as f: fpm_content = f.read()
+        except: fpm_content = ''
+        def ini_get(key):
+            import re as _re
+            m = _re.search(rf'^{re.escape(key)}\s*=\s*(.+)', ini_content, _re.MULTILINE)
+            return m.group(1).strip() if m else ''
+        def fpm_get(key):
+            import re as _re
+            m = _re.search(rf'^{re.escape(key)}\s*=\s*(.+)', fpm_content, _re.MULTILINE)
+            return m.group(1).strip() if m else ''
+        import subprocess as _sp
+        def sh2(c):
+            try: return _sp.check_output(c,shell=True,text=True,stderr=_sp.DEVNULL,timeout=10).strip()
+            except: return ''
+        raw = sh2(f'php{ver} -m 2>/dev/null')
+        installed_exts = set(e.lower().strip() for e in raw.splitlines() if e.strip() and not e.startswith('['))
+        EXTS = [
+            {'name':'fileinfo','type':'Universal','desc':'Get file MIME type'},
+            {'name':'redis','type':'Cache','desc':'Redis client'},
+            {'name':'apcu','type':'Cache','desc':'PHP opcode cache'},
+            {'name':'imagick','type':'Universal','desc':'ImageMagick'},
+            {'name':'exif','type':'General','desc':'Read image EXIF'},
+            {'name':'intl','type':'Universal','desc':'Internationalization'},
+            {'name':'mbstring','type':'Universal','desc':'Multibyte strings'},
+            {'name':'zip','type':'Universal','desc':'ZIP support'},
+            {'name':'gd','type':'Universal','desc':'GD graphics'},
+            {'name':'curl','type':'Universal','desc':'cURL HTTP client'},
+            {'name':'opcache','type':'Cache','desc':'Opcode cache'},
+            {'name':'xdebug','type':'Debug','desc':'Debugger'},
+            {'name':'sodium','type':'Security','desc':'Cryptography'},
+            {'name':'xml','type':'Universal','desc':'XML parsing'},
+        ]
+        extensions = [{**e, 'installed': e['name'] in installed_exts} for e in EXTS]
+        config = {
+            'short_open_tag':         ini_get('short_open_tag') or 'On',
+            'max_execution_time':     ini_get('max_execution_time') or '300',
+            'memory_limit':           ini_get('memory_limit') or '128M',
+            'post_max_size':          ini_get('post_max_size') or '50M',
+            'upload_max_filesize':    ini_get('upload_max_filesize') or '50M',
+            'max_file_uploads':       ini_get('max_file_uploads') or '20',
+            'display_errors':         ini_get('display_errors') or 'Off',
+            'date.timezone':          ini_get('date.timezone') or 'UTC',
+            'max_input_time':         ini_get('max_input_time') or '60',
+            'disable_functions':      ini_get('disable_functions') or '',
+            'session.gc_maxlifetime': ini_get('session.gc_maxlifetime') or '1440',
+        }
+        fpm_profile = {
+            'pm':                   fpm_get('pm') or 'dynamic',
+            'pm.max_children':      fpm_get('pm.max_children') or '50',
+            'pm.start_servers':     fpm_get('pm.start_servers') or '5',
+            'pm.min_spare_servers': fpm_get('pm.min_spare_servers') or '5',
+            'pm.max_spare_servers': fpm_get('pm.max_spare_servers') or '35',
+            'listen':               fpm_get('listen') or f'/run/php/php{ver}-fpm.sock',
+            'request_slowlog_timeout': fpm_get('request_slowlog_timeout') or '0',
+        }
+        logs = sh2(f'tail -80 /var/log/php{ver}-fpm.log 2>/dev/null') or                sh2(f'journalctl -u php{ver}-fpm -n 50 --no-pager') or 'No logs'
+        version_full = sh2(f"php{ver} --version 2>/dev/null | head -1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ver
+        return jsonify({'ok':True,'version':version_full,'ini_path':ini_path,
+            'ini_content':ini_content,'fpm_conf':fpm_conf,'fpm_content':fpm_content,
+            'fpm_profile':fpm_profile,'config':config,'extensions':extensions,'logs':logs})
 
     def sh(cmd, t=30):
         try:
