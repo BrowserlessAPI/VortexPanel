@@ -1118,7 +1118,7 @@
              x-init="$watch('settingsModal.show', v => { if(v){ $nextTick(()=>{ const el=document.getElementById('settings-modal-box'); el.style.left=Math.max(0,(window.innerWidth-el.offsetWidth)/2)+'px'; el.style.top=Math.max(10,(window.innerHeight-el.offsetHeight)/2-80)+'px'; }); } })">
           <div id="settings-modal-box"
                style="position:absolute;top:50px;left:50px;width:min(880px,92vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.7);cursor:default"
-               @mousedown.stop>
+>
 
             <!-- Modal header -->
             <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg-raised);cursor:move;user-select:none"
