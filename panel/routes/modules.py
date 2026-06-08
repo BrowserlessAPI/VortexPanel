@@ -18,7 +18,7 @@ def get_version(mod_id):
         'apache2':      "apache2 -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
         'mysql':        "mysql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'mariadb':      "mariadbd --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'mariadb':      "mariadb --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || mysqld --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'mongodb':      "mongod --version 2>/dev/null | grep -oP 'v[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'postgresql':   "psql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+' | head -1",
         'php':          "for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if which php$v >/dev/null 2>&1; then php$v --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1; break; fi; done",
@@ -34,6 +34,11 @@ def get_version(mod_id):
         'supervisor':   "supervisord --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+'",
         'redis':        "redis-server --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'opendkim':     "opendkim --version 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'phpmyadmin':   "cat /usr/share/phpmyadmin/README 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || cat /usr/share/phpmyadmin/ChangeLog 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || grep -oP \"'PMA_VERSION','[^']+'\" /usr/share/phpmyadmin/libraries/classes/Config/Settings.php 2>/dev/null | grep -oP \"[0-9]+\\.[0-9]+\\.[0-9]+\" | head -1",
+        'mariadb':      "mysql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'pure-ftpd':    "pure-ftpd --help 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || dpkg -l pure-ftpd 2>/dev/null | grep '^ii' | awk '{print $3}' | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
+        'mongodb':      "mongod --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
     }
     cmd = cmds.get(mod_id, '')
     if not cmd: return ''
@@ -200,7 +205,7 @@ echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.o
     {
         'id':'php', 'name':'PHP', 'icon':'🐘', 'category':'PHP',
         'desc':'PHP-FPM — multiple versions supported side by side',
-        'check':'which php 2>/dev/null',
+        'check':'which php8.1 php8.2 php8.3 php8.4 php8.5 2>/dev/null | head -1',
         'versions':[
             {'label':'7.4 (Legacy)',    'value':'7.4'},
             {'label':'8.1 (Security)',  'value':'8.1'},
