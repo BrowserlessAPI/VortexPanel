@@ -26,7 +26,6 @@ def get_version(mod_id):
         'nodejs':       "node --version 2>/dev/null | tr -d 'v'",
         'python':       "python3 --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
         'docker':       "docker --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'git':          "git --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'composer':     "composer --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'fail2ban':     "fail2ban-client --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'pure-ftpd':    "pure-ftpd --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
@@ -383,17 +382,6 @@ apt-get autoremove -y 2>/dev/null || true''',
         'service':'docker', 'manage':True,
     },
     # ── Dev ──────────────────────────────────────────────────────────────────
-    {
-        'id':'git', 'name':'Git', 'icon':'📦', 'category':'Dev',
-        'desc':'Distributed version control system',
-        'check':'which git 2>/dev/null',
-        'versions':[
-            {'label':'2.48 (Latest Stable)', 'value':'latest'},
-        ],
-        'install':'apt-get install -y git',
-        'uninstall':'apt-get remove -y git && apt-get autoremove -y',
-        'manage':False,
-    },
     {
         'id':'composer', 'name':'Composer', 'icon':'🎼', 'category':'Dev',
         'desc':'PHP dependency & package manager',
