@@ -335,6 +335,170 @@
               <!-- Right content panel (scrollable) -->
               <div style="flex:1;overflow-y:auto;padding:20px">
 
+
+              <!-- ── DOMAIN MANAGER TAB ── -->
+              <div x-show="drawer.tab==='domains'">
+                <div style="font-weight:600;font-size:13px;margin-bottom:4px">Domain Manager</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">A domain per line, default port is 80. Wildcard: *.domain.com · Custom port: domain.com:8080</div>
+                <div style="display:flex;gap:8px;margin-bottom:16px">
+                  <input class="form-input" style="flex:1" x-model="drawer.domainInput" placeholder="example.com or *.example.com">
+                  <button class="btn btn-primary btn-sm" @click="post('/api/websites/'+drawer.site?.domain+'/domains',{domain:drawer.domainInput}).then(r=>{if(r.ok){toast('Domain added','success');drawer.domainInput='';loadDrawerTab();}else toast(r.error||'Failed','error')})">Add</button>
+                </div>
+                <div class="card" style="padding:0;overflow:hidden">
+                  <table class="data-table">
+                    <thead><tr><th>Domain name</th><th>Port</th><th>Operate</th></tr></thead>
+                    <tbody>
+                      <template x-for="d in drawer.domains" :key="d.domain">
+                        <tr>
+                          <td style="font-weight:600;color:var(--accent)" x-text="d.domain"></td>
+                          <td x-text="d.port||'80'"></td>
+                          <td><button class="btn btn-danger btn-xs" @click="del('/api/websites/'+drawer.site?.domain+'/domains/'+d.domain).then(r=>{if(r.ok){toast('Removed','success');loadDrawerTab();}})">Delete</button></td>
+                        </tr>
+                      </template>
+                      <template x-if="!drawer.domains?.length">
+                        <tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px">No additional domains</td></tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- ── DIRECTORY TAB ── -->
+              <div x-show="drawer.tab==='directory'">
+                <div style="font-weight:600;font-size:13px;margin-bottom:20px">Directory</div>
+                <div style="display:grid;gap:16px;max-width:560px">
+                  <div>
+                    <label class="form-label">Site directory</label>
+                    <div style="display:flex;gap:8px">
+                      <input class="form-input" style="flex:1" x-model="drawer.directory.path">
+                      <button class="btn btn-primary btn-sm" @click="put('/api/websites/'+drawer.site?.domain+'/config',{action:'set_root',path:drawer.directory.path}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Some programs need to specify a secondary directory as the working directory</div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--bg-raised);border-radius:8px;border:1px solid var(--border)">
+                    <div>
+                      <div style="font-size:13px;font-weight:500">Anti-XSS attack</div>
+                      <div style="font-size:11px;color:var(--text-muted)">(Base directory limit) (open basedir)</div>
+                    </div>
+                    <input type="checkbox" x-model="drawer.directory.antixss" style="width:18px;height:18px">
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--bg-raised);border-radius:8px;border:1px solid var(--border)">
+                    <div style="font-size:13px;font-weight:500">Write access log</div>
+                    <input type="checkbox" x-model="drawer.directory.accesslog" style="width:18px;height:18px">
+                  </div>
+                </div>
+              </div>
+
+              <!-- ── URL REWRITE TAB ── -->
+              <div x-show="drawer.tab==='rewrite'">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                  <div style="font-weight:600;font-size:13px">URL Rewrite</div>
+                  <select class="form-input" style="max-width:180px;font-size:12px" @change="post('/api/websites/'+drawer.site?.domain+'/rewrite',{template:$event.target.value}).then(r=>{if(r.ok)drawer.rewriteContent=r.content||''})">
+                    <option value="">Apply template...</option>
+                    <template x-for="t in drawer.rewriteTemplates" :key="t.id">
+                      <option :value="t.id" x-text="t.name"></option>
+                    </template>
+                  </select>
+                </div>
+                <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px">
+                  <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;color:#4b5563">Rewrite rules · Ctrl+S to save</div>
+                  <textarea style="width:100%;min-height:300px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical"
+                            x-model="drawer.rewriteContent"
+                            @keydown.ctrl.s.prevent="post('/api/websites/'+drawer.site?.domain+'/rewrite',{content:drawer.rewriteContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))"
+                            spellcheck="false"></textarea>
+                </div>
+                <button class="btn btn-primary btn-sm" @click="post('/api/websites/'+drawer.site?.domain+'/rewrite',{content:drawer.rewriteContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                <div style="margin-top:12px;font-size:11px;color:var(--text-muted);line-height:1.8">
+                  • If the site cannot be accessed after rewrite rules set, please try to reset to default<br>
+                  • You are able to modify rewrite rules, just save it after modification
+                </div>
+              </div>
+
+              <!-- ── DEFAULT DOCUMENT TAB ── -->
+              <div x-show="drawer.tab==='defaultdoc'">
+                <div style="font-weight:600;font-size:13px;margin-bottom:12px">Default Document</div>
+                <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:12px" x-model="drawer.defaultDoc" placeholder="index.php&#10;index.html&#10;index.htm"></textarea>
+                <div style="font-size:11px;color:var(--text-muted);margin:8px 0 12px">Default indexes, one per line, priority top-to-bottom.</div>
+                <button class="btn btn-primary btn-sm" @click="put('/api/websites/'+drawer.site?.domain+'/config',{action:'set_index',indexes:drawer.defaultDoc}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+              </div>
+
+              <!-- ── LIMIT ACCESS TAB ── -->
+              <div x-show="drawer.tab==='limit'">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                  <div style="font-weight:600;font-size:13px">Limit Access</div>
+                  <button class="btn btn-primary btn-sm" @click="drawer.showLimitAdd=true">Add limit access</button>
+                </div>
+                <div x-show="drawer.showLimitAdd" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+                  <div class="form-row form-row-2">
+                    <div class="form-group"><label class="form-label">Name</label><input class="form-input" x-model="drawer.limitForm.name" placeholder="admin"></div>
+                    <div class="form-group"><label class="form-label">Path</label><input class="form-input" x-model="drawer.limitForm.path" placeholder="/admin"></div>
+                  </div>
+                  <div class="form-row form-row-2">
+                    <div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="drawer.limitForm.user" placeholder="admin"></div>
+                    <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="drawer.limitForm.pass" placeholder="••••••••"></div>
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <button class="btn btn-ghost btn-sm" @click="drawer.showLimitAdd=false">Cancel</button>
+                    <button class="btn btn-primary btn-sm" @click="post('/api/websites/'+drawer.site?.domain+'/limit-access',drawer.limitForm).then(r=>{if(r.ok){toast('Added','success');drawer.showLimitAdd=false;loadDrawerTab();}else toast(r.error||'Failed','error')})">Save</button>
+                  </div>
+                </div>
+                <template x-if="!drawer.limitRules?.length">
+                  <div style="text-align:center;padding:30px;color:var(--text-muted)">No Data</div>
+                </template>
+                <template x-for="rule in drawer.limitRules" :key="rule.name">
+                  <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;margin-bottom:6px">
+                    <span style="font-weight:600;flex:1" x-text="rule.name"></span>
+                    <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)" x-text="rule.path"></span>
+                    <button class="btn btn-danger btn-xs" @click="del('/api/websites/'+drawer.site?.domain+'/limit-access/'+rule.name).then(r=>{if(r.ok){toast('Deleted','success');loadDrawerTab();}})">Delete</button>
+                  </div>
+                </template>
+                <div style="margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.8">
+                  • After setting, you need to enter the password to access it<br>
+                  • For example, if I set the limit path /test/, then I need to enter the account password to access http://domain.com/test/
+                </div>
+              </div>
+
+              <!-- ── HOTLINK PROTECTION TAB ── -->
+              <div x-show="drawer.tab==='hotlink'">
+                <div style="font-weight:600;font-size:13px;margin-bottom:20px">Hotlink Protection</div>
+                <div style="display:grid;gap:14px;max-width:560px">
+                  <div style="display:flex;align-items:center;justify-content:space-between">
+                    <span style="font-size:13px">Enable hotlink protection</span>
+                    <input type="checkbox" x-model="drawer.hotlink.enabled" style="width:18px;height:18px">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">URL suffix</label>
+                    <input class="form-input" x-model="drawer.hotlink.suffixes" placeholder="jpg,jpeg,gif,png,js,css">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Access domain</label>
+                    <textarea class="form-input" x-model="drawer.hotlink.domains" :placeholder="drawer.site?.domain" style="min-height:80px"></textarea>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Response</label>
+                    <input class="form-input" x-model="drawer.hotlink.response" placeholder="404">
+                  </div>
+                </div>
+                <button class="btn btn-primary btn-sm" style="margin-top:16px"
+                        @click="post('/api/websites/'+drawer.site?.domain+'/hotlink',drawer.hotlink).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                <div style="margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.8">
+                  • By default, resources are allowed to be accessed directly<br>
+                  • Multiple URL suffixes and domains should be separated by comma<br>
+                  • When hotlink protection is triggered, the 404 status is returned directly
+                </div>
+              </div>
+
+              <!-- ── RESPONSE LOG TAB ── -->
+              <div x-show="drawer.tab==='logs'">
+                <div style="display:flex;gap:8px;margin-bottom:16px">
+                  <button class="btn btn-sm" :class="drawer.logType==='access'?'btn-primary':'btn-ghost'" @click="drawer.logType='access'">Access log</button>
+                  <button class="btn btn-sm" :class="drawer.logType==='error'?'btn-primary':'btn-ghost'" @click="drawer.logType='error'">Error log</button>
+                  <button class="btn btn-ghost btn-sm" style="margin-left:auto" @click="loadDrawerTab()">↻ Refresh</button>
+                </div>
+                <div style="background:#0d0e18;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#94a3b8;min-height:300px;max-height:500px;overflow-y:auto;white-space:pre-wrap;line-height:1.6"
+                     x-text="drawer.logType==='access'?drawer.accessLog||'No access logs':drawer.errorLog||'No error logs'"></div>
+              </div>
+
               <!-- ── CONFIG TAB ── -->
               <div x-show="drawer.tab==='config'">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">

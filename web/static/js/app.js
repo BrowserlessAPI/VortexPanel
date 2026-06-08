@@ -243,10 +243,20 @@ function websitesPage() {
       loading:false,
     },
     drawerTabs:[
-      {id:'config',label:'⚙ Config'},{id:'ssl',label:'🔒 SSL'},
-      {id:'php',label:'🐘 PHP Version'},{id:'proxy',label:'🔀 Reverse Proxy'},
-      {id:'redirect',label:'↪ Redirect'},{id:'nodejs',label:'🟢 Node.js'},
+      {id:'domains',label:'🌐 Domain Manager'},
+      {id:'directory',label:'📁 Directory'},
+      {id:'config',label:'⚙ Config'},
+      {id:'ssl',label:'🔒 SSL'},
+      {id:'php',label:'🐘 PHP Version'},
+      {id:'rewrite',label:'🔁 URL Rewrite'},
+      {id:'proxy',label:'🔀 Reverse Proxy'},
+      {id:'redirect',label:'↪ Redirect'},
+      {id:'defaultdoc',label:'📄 Default Doc'},
+      {id:'limit',label:'🔐 Limit Access'},
+      {id:'hotlink',label:'🛡 Hotlink'},
+      {id:'nodejs',label:'🟢 Node.js'},
       {id:'maintenance',label:'🔧 Maintenance'},
+      {id:'logs',label:'📋 Response Log'},
     ],
     async init() {
       const wr=await get('/api/websites/webroot').catch(()=>({ok:false}));
@@ -301,6 +311,12 @@ function websitesPage() {
       else if(d.tab==='proxy'){const r=await get('/api/websites/'+domain+'/proxy');if(r.ok)d.proxies=r.proxies;}
       else if(d.tab==='nodejs'){const r=await get('/api/websites/'+domain+'/nodejs');if(r.ok){d.nodejsEnabled=r.enabled;if(r.port)d.nodejsForm.port=r.port;}}
       else if(d.tab==='maintenance'){const r=await get('/api/websites/'+domain+'/maintenance');if(r.ok)d.maintEnabled=r.enabled;}
+      else if(d.tab==='domains'){const r=await get('/api/websites/'+domain+'/domains');if(r.ok)d.domains=r.domains||[];}
+      else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/config');if(r.ok){const m=r.content?.match(/root\s+([^;]+);/);d.directory.path=m?m[1].trim():d.site?.path||'';}}
+      else if(d.tab==='rewrite'){const r=await get('/api/websites/'+domain+'/rewrite');if(r.ok)d.rewriteContent=r.content||'';const rt=await get('/api/websites/'+domain+'/rewrite/templates');if(rt.ok)d.rewriteTemplates=rt.templates||[];}
+      else if(d.tab==='hotlink'){const r=await get('/api/websites/'+domain+'/hotlink');if(r.ok){d.hotlink.enabled=r.enabled||false;d.hotlink.suffixes=r.suffixes||'jpg,jpeg,gif,png,js,css';d.hotlink.domains=r.domains||'';d.hotlink.response=r.response||'404';}}
+      else if(d.tab==='limit'){const r=await get('/api/websites/'+domain+'/limit-access');if(r.ok)d.limitRules=r.rules||[];}
+      else if(d.tab==='logs'){const r=await get('/api/websites/'+domain+'/config');if(r.ok){const am=r.content?.match(/access_log\s+([^;]+);/);const em=r.content?.match(/error_log\s+([^;]+);/);if(am){const lr=await get('/api/files/read?path='+encodeURIComponent(am[1].trim()+''));if(lr.ok)d.accessLog=lr.content||'No access logs';}if(em){const lr=await get('/api/files/read?path='+encodeURIComponent(em[1].trim()));if(lr.ok)d.errorLog=lr.content||'No error logs';}}}
     },
     async saveConf(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/config',{content:this.drawer.confContent});toast(r.ok?'Saved':'Failed',r.ok?'success':'error');},
     async issueLetsEncrypt(){
