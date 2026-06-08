@@ -880,6 +880,9 @@ def get_module_settings(mod_id):
             'max_file_uploads':    ini_get('max_file_uploads') or '20',
             'display_errors':      ini_get('display_errors') or 'On',
             'date.timezone':       ini_get('date.timezone') or 'UTC',
+            'max_input_time':      ini_get('max_input_time') or '60',
+            'disable_functions':   ini_get('disable_functions') or '',
+            'session.gc_maxlifetime': ini_get('session.gc_maxlifetime') or '1440',
         }
         fpm_profile = {
             'pm':                   fpm_get('pm') or 'dynamic',
@@ -888,6 +891,7 @@ def get_module_settings(mod_id):
             'pm.min_spare_servers': fpm_get('pm.min_spare_servers') or '5',
             'pm.max_spare_servers': fpm_get('pm.max_spare_servers') or '35',
             'listen':               fpm_get('listen') or '/run/php/php' + sel + '-fpm.sock',
+            'request_slowlog_timeout': fpm_get('request_slowlog_timeout') or '0',
         }
         EXTS = [
             {'name':'fileinfo','type':'Universal','desc':'Get file MIME type and encoding'},
@@ -1069,6 +1073,19 @@ def save_module_settings(mod_id):
         except subprocess.CalledProcessError as e:
             return e.output or ''
         except: return ''
+
+    if action == 'save_fpm_content':
+        conf_path = d.get('conf_path', '')
+        fpm_content = d.get('content', '')
+        version = d.get('version', '')
+        if not conf_path or not fpm_content:
+            return jsonify({'ok': False, 'error': 'Missing conf_path or content'})
+        try:
+            with open(conf_path, 'w') as f: f.write(fpm_content)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+        sh(f'systemctl reload php{version}-fpm 2>/dev/null || systemctl reload php-fpm 2>/dev/null')
+        return jsonify({'ok': True})
 
     if action == 'save_config':
         conf_path = d.get('conf_path', '')

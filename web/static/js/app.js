@@ -57,7 +57,6 @@ function rootApp() {
         { id:'websites',  icon:'🌐', label:'Websites'    },
         { id:'databases', icon:'🗄', label:'Databases'   },
         { id:'files',     icon:'📁', label:'File Manager'},
-        { id:'php',       icon:'🐘', label:'PHP'         },
       ]},
       { group: 'Server', items: [
         { id:'services',  icon:'⚙', label:'Services'    },
@@ -124,7 +123,7 @@ function rootApp() {
     async _onLoggedIn() {
       // Restore page from URL hash (e.g. #files → go to files page)
       const hash = window.location.hash.replace('#', '');
-      const validPages = ['dashboard','websites','databases','files','php','modules',
+      const validPages = ['dashboard','websites','databases','files','modules',
                           'services','firewall','terminal','backups','dns','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy',
                           'cdn','settings'];
@@ -1308,17 +1307,7 @@ function modulesPage() {
 
     async openSettings(m) {
       // For pages that have dedicated full pages, navigate there
-      const fullPageMap = {
-        php:'php', fail2ban:'security', clamav:'security',
-        bind9:'dns', postfix:'mail', roundcube:'mail',
-        modsecurity:'security', docker:'docker',
-        'pure-ftpd':'ftp', nodejs:'terminal', python:'terminal',
-      };
-      if (fullPageMap[m.id]) {
-        window.dispatchEvent(new CustomEvent('nav',{detail:{page:fullPageMap[m.id]}}));
-        toast('Opening '+m.name+' settings','info');
-        return;
-      }
+
       // For all other apps — show the settings modal
       this.settingsModal = {
         ...this.settingsModal,
@@ -1352,6 +1341,7 @@ function modulesPage() {
         this.settingsModal.iniContent     = r.ini_content    || '';
         this.settingsModal.iniPath        = r.ini_path       || '';
         this.settingsModal.fpmConf        = r.fpm_conf       || '';
+        this.settingsModal.fpmContent     = r.fpm_content    || '';
         this.settingsModal.selPhpVer      = r.sel_ver        || '';
         this.settingsModal.phpinfo        = r.phpinfo        || {};
         this.settingsModal.ftpUsers       = r.users          || [];
@@ -1429,7 +1419,7 @@ function modulesPage() {
         postgresql: ['service','config','logs'],
         mongodb:    ['service','config','logs'],
         redis:      ['service','switch_version','optimization','config','current_status','persistence','logs'],
-        php:        ['service','extensions','config','ini','fpm','logs','phpinfo'],
+        php:        ['service','extensions','config','ini','fpm','upload_limit','timeout_limit','disabled_functions','load_average','session_config','slow_log','logs','phpinfo'],
         'pure-ftpd':['service','switch_version','users','port','config','logs'],
         fail2ban:   ['service','website_protection','server_protection','black_ip','white_ip','logs'],
         supervisor: ['service','config','logs'],
@@ -1445,6 +1435,9 @@ function modulesPage() {
         switch_version:'Switch Version', persistence:'Set Persistence',
         extensions:'Install Extensions', ini:'Configuration File',
         fpm:'FPM Profile', phpinfo:'phpinfo',
+        upload_limit:'Limit of Upload', timeout_limit:'Limit of Timeout',
+        disabled_functions:'Disabled Functions', load_average:'Load Average',
+        session_config:'Session Config', slow_log:'Slow Log',
         users:'User Management', website_protection:'Website Protection',
         server_protection:'Server Protection', black_ip:'Black IP', white_ip:'White IP',
       };
