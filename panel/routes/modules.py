@@ -205,7 +205,7 @@ echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.o
     {
         'id':'php', 'name':'PHP', 'icon':'🐘', 'category':'PHP',
         'desc':'PHP-FPM — multiple versions supported side by side',
-        'check':'which php8.1 php8.2 php8.3 php8.4 php8.5 2>/dev/null | head -1',
+        'check':'which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 2>/dev/null | head -1',
         'versions':[
             {'label':'7.4 (Legacy)',    'value':'7.4'},
             {'label':'8.1 (Security)',  'value':'8.1'},
@@ -882,7 +882,7 @@ def get_module_settings(mod_id):
 
     elif mod_id == 'php':
         php_versions = []
-        for v in ['8.4','8.3','8.2','8.1','8.0','7.4','7.3','7.2']:
+        for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4','7.3','7.2']:
             if os.path.exists('/usr/bin/php' + v):
                 php_versions.append({
                     'version': v,
@@ -1065,7 +1065,7 @@ def get_module_settings(mod_id):
             with open(pma_conf) as f: cc = f.read()
             m = _re.search(r'listen\s+(\d+)', cc)
             if m: port = m.group(1)
-        php_versions = [v for v in ['8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists('/usr/bin/php' + v)]
+        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists('/usr/bin/php' + v)]
         current_php = ''
         if os.path.exists(pma_conf):
             with open(pma_conf) as f: cc = f.read()
