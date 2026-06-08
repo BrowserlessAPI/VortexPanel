@@ -65,8 +65,11 @@ MODULES = [
         ],
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
-echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
-apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; apt-get install -y nginx && systemctl enable --now nginx''',
+REPO="http://nginx.org/packages/{ver}/ubuntu" && \
+[ "{ver}" = "stable" ] && REPO="http://nginx.org/packages/ubuntu" || true && \
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] $REPO $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
+apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && \
+apt-get install -y nginx && systemctl enable --now nginx''',
         'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
         'uninstall':'apt-get remove -y --purge nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
         'service':'nginx', 'manage':True,
@@ -255,22 +258,69 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'5.2.2 (Latest)', 'value':'5.2.2'},
         ],
         'install':(
-            'DEBIAN_FRONTEND=noninteractive apt-get install -y '
-            'php-mbstring php-zip php-gd php-json php-curl php-cli wget && '
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y wget && '
             'wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.2/'
             'phpMyAdmin-5.2.2-all-languages.tar.gz -O /tmp/pma.tar.gz && '
             'mkdir -p /usr/share/phpmyadmin && '
             'tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 && '
             'cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php && '
-            'SOCK=$(ls /run/php/php8.*-fpm.sock 2>/dev/null | sort -r | head -1) && '
-            'SOCK=${SOCK:-/run/php/php8.3-fpm.sock} && '
-            'echo "server{listen 8082;server_name _;root /usr/share/phpmyadmin;index index.php;'
-            'location ~ [.]php${include snippets/fastcgi-php.conf;fastcgi_pass $SOCK;include fastcgi_params;}}" '
-            '> /etc/nginx/conf.d/phpmyadmin.conf && '
-            'nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true && '
+            # phpMyAdmin 5.2 supports PHP 7.2-8.4 only, prefer compatible version
+            'SOCK="" && '
+            'for v in 8.4 8.3 8.2 8.1 8.0 7.4 8.5; do '
+            '  if [ -S /run/php/php${v}-fpm.sock ]; then SOCK=/run/php/php${v}-fpm.sock; break; fi; '
+            'done && '
+            'SOCK=${SOCK:-/run/php/php8.5-fpm.sock} && '
+            # Detect active web server and configure
+            'if systemctl is-active nginx >/dev/null 2>&1; then '
+            '  NGINX_USER=$(grep -oP "^user\\s+\\K\\S+" /etc/nginx/nginx.conf 2>/dev/null | tr -d ";" | head -1) && '
+            '  NGINX_USER=${NGINX_USER:-www-data} && '
+            '  mkdir -p /etc/nginx/conf.d && '
+            '  printf "server {\\n  listen 8082;\\n  server_name _;\\n  root /usr/share/phpmyadmin;\\n  index index.php;\\n  location ~ \\\\.php$ {\\n    fastcgi_split_path_info ^(.+\\.php)(/.+)$;\\n    fastcgi_pass unix:$SOCK;\\n    fastcgi_index index.php;\\n    include fastcgi_params;\\n    fastcgi_param SCRIPT_FILENAME \\$document_root\\$fastcgi_script_name;\\n  }\\n}\\n" > /etc/nginx/conf.d/phpmyadmin.conf && '
+            '  for v in 8.4 8.3 8.2 8.1 8.0 7.4 8.5; do '
+            '    POOL=/etc/php/${v}/fpm/pool.d/www.conf; '
+            '    [ -f "$POOL" ] || continue; '
+            '    grep -q "^listen.owner" "$POOL" && sed -i "s|^listen.owner.*|listen.owner = $NGINX_USER|" "$POOL" || echo "listen.owner = $NGINX_USER" >> "$POOL"; '
+            '    grep -q "^listen.group" "$POOL" && sed -i "s|^listen.group.*|listen.group = $NGINX_USER|" "$POOL" || echo "listen.group = $NGINX_USER" >> "$POOL"; '
+            '    systemctl restart php${v}-fpm 2>/dev/null || true; '
+            '  done && '
+            '  nginx -t 2>/dev/null && systemctl reload nginx; '
+            'elif systemctl is-active caddy >/dev/null 2>&1; then '
+            '  printf "\n:8082 {\n  root * /usr/share/phpmyadmin\n  php_fastcgi unix/$SOCK\n  file_server\n}\n" >> /etc/caddy/Caddyfile && '
+            '  systemctl reload caddy; '
+            'elif systemctl is-active apache2 >/dev/null 2>&1; then '
+            '  a2enmod proxy_fcgi setenvif 2>/dev/null; '
+            '  cat > /etc/apache2/conf-available/phpmyadmin.conf << APACHEEOF\n'
+            'Listen 8082\n'
+            '<VirtualHost *:8082>\n'
+            '  DocumentRoot /usr/share/phpmyadmin\n'
+            '  <Directory /usr/share/phpmyadmin>\n'
+            '    Options FollowSymLinks\n'
+            '    DirectoryIndex index.php\n'
+            '    Require all granted\n'
+            '  </Directory>\n'
+            '  <FilesMatch \.php$>\n'
+            '    SetHandler "proxy:unix:$SOCK|fcgi://localhost"\n'
+            '  </FilesMatch>\n'
+            '</VirtualHost>\n'
+            'APACHEEOF\n'
+            '  a2enconf phpmyadmin && systemctl reload apache2; '
+            'elif systemctl is-active lsws >/dev/null 2>&1; then '
+            '  mkdir -p /usr/local/lsws/conf/vhosts/phpmyadmin && '
+            '  echo "docRoot /usr/share/phpmyadmin" > /usr/local/lsws/conf/vhosts/phpmyadmin/vhconf.conf && '
+            '  systemctl restart lsws; '
+            'fi && '
             'echo "[VortexPanel] phpMyAdmin ready at http://YOUR-SERVER-IP:8082"'
         ),
-        'uninstall':'rm -rf /usr/share/phpmyadmin /etc/nginx/conf.d/phpmyadmin.conf && systemctl reload nginx 2>/dev/null || true',
+        'uninstall':(
+            'rm -rf /usr/share/phpmyadmin && '
+            'rm -f /etc/nginx/conf.d/phpmyadmin.conf && '
+            'systemctl reload nginx 2>/dev/null || true && '
+            # Remove from Caddyfile
+            'sed -i "/:8082/,/^}/d" /etc/caddy/Caddyfile 2>/dev/null && '
+            'systemctl reload caddy 2>/dev/null || true && '
+            'rm -f /etc/apache2/conf-available/phpmyadmin.conf && '
+            'systemctl reload apache2 2>/dev/null || true'
+        ),
         'manage':False,
     },
     # ── Security ─────────────────────────────────────────────────────────────
@@ -1252,8 +1302,18 @@ def save_module_settings(mod_id):
             out = sh('apt-get install -y pure-ftpd=' + ver + ' 2>/dev/null || apt-get install -y pure-ftpd 2>&1', t=60)
             return jsonify({'ok': True, 'output': out})
         elif mod_id == 'nginx' and ver:
-            out = sh('apt-get install -y nginx=' + ver + ' 2>&1 || apt-get install -y nginx 2>&1')
-            return jsonify({'ok': True, 'output': out})
+            # Switch nginx repo based on channel (stable/mainline)
+            repo = 'http://nginx.org/packages/ubuntu' if ver == 'stable' else 'http://nginx.org/packages/mainline/ubuntu'
+            script = (
+                f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} $(lsb_release -cs) nginx" '
+                '> /etc/apt/sources.list.d/nginx.list && '
+                'apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && '
+                'apt-get install -y nginx && '
+                'systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null'
+            )
+            out = sh(script, t=120)
+            new_ver = sh("nginx -v 2>&1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
         elif mod_id == 'openlitespeed' and ver:
             script = (
                 'systemctl stop lsws 2>/dev/null; '

@@ -1147,17 +1147,24 @@
                 <!-- PHP VERSION tab (phpMyAdmin) -->
                 <div x-show="settingsModal.tab==='php_version'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">PHP Version</div>
-                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
                     <label style="font-size:13px;color:var(--text-secondary);width:120px">PHP Version</label>
-                    <select class="form-input" style="max-width:200px" x-model="settingsModal.currentPhp">
+                    <select class="form-input" style="max-width:240px" x-model="settingsModal.currentPhp">
                       <template x-for="v in settingsModal.phpVersions" :key="v">
-                        <option :value="v" x-text="'PHP-'+v"></option>
+                        <option :value="v" x-text="'PHP-'+v+(parseFloat(v)>8.4?' ⚠ Unsupported':parseFloat(v)<7.2?' ⚠ Too old':' ✓')"></option>
                       </template>
                       <option value="" x-show="!settingsModal.phpVersions.length">No PHP installed</option>
                     </select>
                     <button class="btn btn-primary btn-sm" @click="settingsPmaSetPhp()">Save</button>
                   </div>
-                  <div style="font-size:12px;color:var(--text-muted)">Select which PHP-FPM version processes phpMyAdmin requests.</div>
+                  <!-- Compatibility warning -->
+                  <div x-show="parseFloat(settingsModal.currentPhp)>8.4" style="padding:10px 12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;font-size:12px;color:var(--red);margin-bottom:10px">
+                    ⚠ PHP <span x-text="settingsModal.currentPhp"></span> is not supported by phpMyAdmin 5.2 (requires PHP 7.2–8.4). Install PHP 8.3 or 8.4 from the App Store for best compatibility.
+                  </div>
+                  <div x-show="settingsModal.currentPhp && parseFloat(settingsModal.currentPhp)<=8.4 && parseFloat(settingsModal.currentPhp)>=7.2" style="padding:10px 12px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2);border-radius:6px;font-size:12px;color:var(--green);margin-bottom:10px">
+                    ✓ PHP <span x-text="settingsModal.currentPhp"></span> is fully compatible with phpMyAdmin 5.2
+                  </div>
+                  <div style="font-size:12px;color:var(--text-muted)">phpMyAdmin 5.2 supports PHP 7.2–8.4. Each website can use a different PHP version independently.</div>
                 </div>
 
                 <!-- SECURITY tab (phpMyAdmin) -->

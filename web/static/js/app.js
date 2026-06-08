@@ -1422,7 +1422,7 @@ function modulesPage() {
 
     settingsTabs(modId) {
       const tabs = {
-        nginx:      ['service','config','optimization','logs'],
+        nginx:      ['service','config','optimization','switch_version','logs'],
         caddy:      ['service','caddyfile','global_opts','auto_https','logs'],
         nodejs:     ['service','info'],
         apache2:    ['service','config','optimization','logs'],
