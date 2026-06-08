@@ -1256,7 +1256,8 @@ def save_module_settings(mod_id):
         }
         logs = sh2(f'tail -80 /var/log/php{ver}-fpm.log 2>/dev/null') or                sh2(f'journalctl -u php{ver}-fpm -n 50 --no-pager') or 'No logs'
         version_full = sh2(f"php{ver} --version 2>/dev/null | head -1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ver
-        return jsonify({'ok':True,'version':version_full,'ini_path':ini_path,
+        status = sh2(f'systemctl is-active php{ver}-fpm 2>/dev/null') or 'inactive'
+        return jsonify({'ok':True,'version':version_full,'status':status,'ini_path':ini_path,
             'ini_content':ini_content,'fpm_conf':fpm_conf,'fpm_content':fpm_content,
             'fpm_profile':fpm_profile,'config':config,'extensions':extensions,'logs':logs})
 

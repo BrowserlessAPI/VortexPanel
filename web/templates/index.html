@@ -1050,7 +1050,7 @@
                 <!-- PHP version switcher -->
                 <div x-show="settingsModal.mod?.id==='php' && settingsModal.phpVersions?.length>0" style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                   <template x-for="pv in (settingsModal.phpVersions||[])" :key="pv.version">
-                    <div @click="settingsModal.selPhpVer=pv.version; post('/api/modules/php/settings',{action:'get_ver_data',version:pv.version}).then(r=>{if(r.ok){settingsModal.version=r.version;settingsModal.iniPath=r.ini_path;settingsModal.iniContent=r.ini_content;settingsModal.fpmConf=r.fpm_conf;settingsModal.fpmContent=r.fpm_content;settingsModal.fpmProfile=r.fpm_profile||{};settingsModal.phpConfig=r.config||{};settingsModal.extensions=r.extensions||[];settingsModal.logs=r.logs||'';}})"
+                    <div @click="settingsModal.selPhpVer=pv.version; post('/api/modules/php/settings',{action:'get_ver_data',version:pv.version}).then(r=>{if(r.ok){settingsModal.version=r.version;settingsModal.iniPath=r.ini_path;settingsModal.iniContent=r.ini_content;settingsModal.fpmConf=r.fpm_conf;settingsModal.fpmContent=r.fpm_content;settingsModal.fpmProfile=r.fpm_profile||{};settingsModal.phpConfig=r.config||{};settingsModal.extensions=r.extensions||[];settingsModal.logs=r.logs||'';settingsModal.status=r.status||'';settingsModal.phpServiceName='php'+pv.version+'-fpm';}else toast('Failed to load PHP '+pv.version,'error');})"
                          style="cursor:pointer;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;transition:.15s;border:1px solid"
                          :style="settingsModal.selPhpVer===pv.version ? 'background:var(--accent);color:#fff;border-color:var(--accent)' : 'background:var(--bg-raised);color:var(--text-secondary);border-color:var(--border)'"
                          x-text="'PHP '+pv.version+(pv.status==='active'?' ●':'')">
@@ -1101,7 +1101,7 @@
                   </div>
                   <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text-secondary)">
                     <div style="font-weight:600;color:var(--accent-warn);margin-bottom:4px">ℹ Service Info</div>
-                    <div x-text="'Service name: '+(settingsModal.mod?.service||settingsModal.mod?.id)"></div>
+                    <div x-text="'Service name: '+(settingsModal.mod?.id==='php'?(settingsModal.phpServiceName||'php'+settingsModal.selPhpVer+'-fpm'):(settingsModal.mod?.service||settingsModal.mod?.id))"></div>
                     <div x-show="settingsModal.confPath" x-text="'Config: '+settingsModal.confPath" style="margin-top:3px;font-family:var(--font-mono);font-size:11px"></div>
                   </div>
                 </div>

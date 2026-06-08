@@ -1367,6 +1367,7 @@ function modulesPage() {
         this.settingsModal.confChanged    = false;
         this.settingsModal.caddyOpts      = r.global_opts     || {};
         this.settingsModal.caddyCerts     = r.tls_certs       || '';
+        this.settingsModal.phpServiceName  = m.id==='php' ? 'php'+(r.sel_ver||'')+ '-fpm' : '';
       } else {
         toast(r.error || 'Failed to load settings', 'error');
       }
