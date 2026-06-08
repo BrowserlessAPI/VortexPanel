@@ -242,11 +242,9 @@
                     <label class="form-label">PHP Version</label>
                     <select class="form-input" x-model="form.php">
                       <option value="Static">Static (No PHP)</option>
-                      <option value="8.4">PHP 8.4</option>
-                      <option value="8.3">PHP 8.3</option>
-                      <option value="8.2">PHP 8.2</option>
-                      <option value="8.1">PHP 8.1</option>
-                      <option value="7.4">PHP 7.4</option>
+                      <template x-for="pv in phpVersions" :key="pv.version">
+                        <option :value="pv.version" x-text="'PHP '+pv.version+(pv.active?' (active)':'')"></option>
+                      </template>
                     </select>
                   </div>
                   <div class="form-group">
@@ -305,49 +303,37 @@
 
         <!-- SITE MANAGEMENT MODAL -->
         
-        <!-- ═══ SITE MANAGEMENT DRAWER (right slide-in) ═══ -->
-        <div x-show="drawer.show" style="position:fixed;inset:0;z-index:200;display:flex;pointer-events:none"
-             @keydown.escape.window="drawer.show=false">
-          <!-- Backdrop -->
-          <div style="flex:1;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);pointer-events:auto"
-               @click="drawer.show=false" x-show="drawer.show"
-               x-transition:enter="transition-opacity ease-out duration-200"
-               x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"></div>
-          <!-- Side panel -->
-          <div style="width:min(680px,95vw);height:100%;background:var(--bg-card);border-left:1px solid var(--border);display:flex;flex-direction:column;pointer-events:auto;box-shadow:-8px 0 40px rgba(0,0,0,.5)"
-               x-show="drawer.show"
-               x-transition:enter="transition ease-out duration-250"
-               x-transition:enter-start="transform translate-x-full"
-               x-transition:enter-end="transform translate-x-0"
-               x-transition:leave="transition ease-in duration-200"
-               x-transition:leave-start="transform translate-x-0"
-               x-transition:leave-end="transform translate-x-full">
+        <!-- ═══ SITE MANAGEMENT MODAL (aaPanel-style) ═══ -->
+        <div x-show="drawer.show" class="modal-overlay" style="z-index:200;padding:20px"
+             @keydown.escape.window="drawer.show=false"
+             @click.self="drawer.show=false">
+          <!-- Modal box -->
+          <div style="width:min(980px,95vw);height:min(90vh,800px);background:var(--bg-card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,.6)">
 
-            <!-- Drawer header -->
-            <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--bg-raised)">
+            <!-- Modal header -->
+            <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0">
               <div style="flex:1;min-width:0">
-                <div style="font-weight:700;font-size:16px;display:flex;align-items:center;gap:8px">
-                  <span x-text="drawer.site?.domain"></span>
-                  <span :class="'badge badge-'+(drawer.site?.status==='active'?'green':'red')" x-text="drawer.site?.status||'inactive'"></span>
-                </div>
+                <div style="font-weight:700;font-size:15px" x-text="'Site modification ['+drawer.site?.domain+']'"></div>
                 <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-top:2px" x-text="drawer.site?.path||'/www/wwwroot/'+drawer.site?.domain"></div>
               </div>
-              <!-- Quick actions in header -->
-              <a :href="'http://'+drawer.site?.domain" target="_blank" class="btn btn-ghost btn-sm" title="Open site in browser">↗ Visit</a>
-              <button class="btn btn-ghost btn-sm" style="padding:6px 8px;font-size:16px" @click="drawer.show=false" title="Close (Esc)">×</button>
+              <a :href="'http://'+drawer.site?.domain" target="_blank" class="btn btn-ghost btn-sm">↗ Visit</a>
+              <button style="background:none;border:1px solid var(--border);color:var(--text-muted);cursor:pointer;font-size:18px;line-height:1;padding:4px 10px;border-radius:50%" @click="drawer.show=false">×</button>
             </div>
 
-            <!-- Tab strip -->
-            <div style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto;background:var(--bg-raised)">
-              <template x-for="tab in drawerTabs" :key="tab.id">
-                <button style="padding:10px 16px;font-size:12px;font-weight:500;border:none;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;transition:.15s;background:none"
-                        :style="drawer.tab===tab.id?'color:var(--accent);border-bottom-color:var(--accent);background:var(--bg-card)':'color:var(--text-muted)'"
-                        @click="drawer.tab=tab.id;loadDrawerTab()" x-text="tab.label"></button>
-              </template>
-            </div>
+            <!-- Main content: left sidebar + right panel -->
+            <div style="display:flex;flex:1;overflow:hidden;min-height:0">
 
-            <!-- Tab content (scrollable) -->
-            <div style="flex:1;overflow-y:auto;padding:20px">
+              <!-- Left sidebar tabs -->
+              <div style="width:180px;min-width:180px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:8px 0">
+                <template x-for="tab in drawerTabs" :key="tab.id">
+                  <div style="padding:10px 18px;font-size:13px;cursor:pointer;border-left:3px solid transparent;transition:.1s;white-space:nowrap"
+                       :style="drawer.tab===tab.id ? 'border-left-color:var(--accent);color:var(--accent);font-weight:600;background:rgba(88,101,242,.08)' : 'color:var(--text-secondary);border-left-color:transparent'"
+                       @click="drawer.tab=tab.id;loadDrawerTab()" x-text="tab.label"></div>
+                </template>
+              </div>
+
+              <!-- Right content panel (scrollable) -->
+              <div style="flex:1;overflow-y:auto;padding:20px">
 
               <!-- ── CONFIG TAB ── -->
               <div x-show="drawer.tab==='config'">
@@ -491,6 +477,7 @@
                     <button class="btn btn-success btn-sm" x-show="drawer.maintEnabled" @click="toggleMaintenance(false)" style="flex:1;justify-content:center">Bring Site Back Online</button>
                   </div>
                 </div>
+              </div>
               </div>
             </div>
           </div>
@@ -1026,11 +1013,9 @@
 
         <!-- ══ APP SETTINGS MODAL (aaPanel-style left-sidebar tabs) ══════════════ -->
         <div x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
-             style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:99999;pointer-events:auto"
-             @click.self="settingsModal.show=false"
-             x-init="$watch('settingsModal.show', v => { if(v){ $nextTick(()=>{ const el=document.getElementById('settings-modal-box'); el.style.left=Math.max(0,(window.innerWidth-el.offsetWidth)/2)+'px'; el.style.top=Math.max(10,(window.innerHeight-el.offsetHeight)/2-80)+'px'; }); } })">
-          <div id="settings-modal-box"
-               style="position:absolute;top:50px;left:50px;width:min(880px,92vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.7);cursor:default"
+             class="modal-overlay" style="z-index:99999;padding:20px"
+             @click.self="settingsModal.show=false">
+          <div style="width:min(880px,92vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.7);cursor:default"
 >
 
             <!-- Modal header -->

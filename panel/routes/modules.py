@@ -776,8 +776,13 @@ def get_module_settings(mod_id):
         except: conf_content = ''
         log_path = next((p for p in ['/var/log/nginx/error.log','/www/wwwlogs/nginx_error.log'] if os.path.exists(p)), '')
         logs = sh('tail -100 ' + log_path) if log_path else 'No error log found'
+        nginx_versions = [
+            {'label':'1.30.2 (Stable)','value':'stable'},
+            {'label':'1.31.1 (Mainline)','value':'mainline'},
+        ]
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'log_path':log_path,
+            'versions':nginx_versions,
             'optimization':{
                 'worker_processes':    sh('grep -oP "worker_processes\\s+\\K\\S+" ' + conf_path + ' 2>/dev/null | head -1') or 'auto',
                 'worker_connections':  sh('grep -oP "worker_connections\\s+\\K[0-9]+" ' + conf_path + ' 2>/dev/null | head -1') or '1024',

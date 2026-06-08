@@ -227,7 +227,7 @@ function dashboardPage() {
 // ── WEBSITES ──────────────────────────────────────────────────────────────────
 function websitesPage() {
   return {
-    sites:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
+    sites:[], phpVersions:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
     form:{domain:'',path:'',php:'8.3',type:'PHP',createDb:false,createFtp:false,path_edited:false},
     batchDomains:'', deployApps:[], deployApp:'', deployDomain:'',
     drawer:{
@@ -251,6 +251,9 @@ function websitesPage() {
     async init() {
       const wr=await get('/api/websites/webroot').catch(()=>({ok:false}));
       if(wr.ok) this.webroot=wr.path;
+      const pv=await get('/api/websites/php-versions').catch(()=>({ok:false}));
+      if(pv.ok) this.phpVersions=pv.versions||[];
+      if(this.phpVersions.length) this.form.php=this.phpVersions[0].version;
       await this.load();
     },
     async load() { const r=await get('/api/websites'); if(r.ok) this.sites=r.sites; },

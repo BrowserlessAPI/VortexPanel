@@ -10,20 +10,18 @@ def sh(c, t=15):
     except: return ''
 
 def get_nginx_dirs():
-    """Return available nginx config dirs"""
-    candidates = [
-        ('/etc/nginx/sites-available', '/etc/nginx/sites-enabled'),
-        ('/etc/nginx/conf.d', '/etc/nginx/conf.d'),
-        ('/usr/local/nginx/conf/vhosts', '/usr/local/nginx/conf/vhosts'),
-        ('/www/server/panel/vhost/nginx', '/www/server/panel/vhost/nginx'),
-    ]
-    for avail, enabled in candidates:
-        if os.path.isdir(avail):
-            return avail, enabled
-    # None found — create the standard ones
-    os.makedirs('/etc/nginx/sites-available', exist_ok=True)
-    os.makedirs('/etc/nginx/sites-enabled', exist_ok=True)
-    return '/etc/nginx/sites-available', '/etc/nginx/sites-enabled'
+    """Return VortexPanel-managed nginx vhost directory"""
+    # VortexPanel uses its own directory to avoid conflicts with system configs
+    vortex_dir = '/etc/nginx/vortex'
+    os.makedirs(vortex_dir, exist_ok=True)
+    # Ensure nginx.conf includes this directory
+    nginx_conf = '/etc/nginx/nginx.conf'
+    if os.path.exists(nginx_conf):
+        with open(nginx_conf) as f: nc = f.read()
+        if 'vortex' not in nc:
+            import subprocess as _sp
+            _sp.run("sed -i 's|include /etc/nginx/conf.d/\*.conf;|include /etc/nginx/conf.d/*.conf;\n    include /etc/nginx/vortex/*.conf;|' " + nginx_conf, shell=True)
+    return vortex_dir, vortex_dir
 
 def get_webroot():
     for p in [WEBROOT, '/var/www/html', '/var/www', '/srv/www']:
@@ -59,6 +57,18 @@ def list_sites():
             sites.append({'domain':domain,'ssl':ssl,'php':php_v,'enabled':is_enabled,'path':path,'conf_file':f})
     except: pass
     return sites
+
+@websites_bp.route('/api/websites/php-versions')
+def get_php_versions():
+    if not req(): return jsonify({'ok':False}), 401
+    versions = []
+    for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4','7.3','7.2']:
+        import shutil
+        if shutil.which(f'php{v}'):
+            sock = f'/run/php/php{v}-fpm.sock'
+            active = os.path.exists(sock)
+            versions.append({'version':v,'active':active,'sock':sock})
+    return jsonify({'ok':True,'versions':versions})
 
 @websites_bp.route('/api/websites')
 def get_sites():
