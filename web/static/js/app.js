@@ -443,6 +443,8 @@ function filesPage() {
 
     // Context menu
     ctxMenu: { show: false, x: 0, y: 0, showFmt: false }, ctxTarget: null,
+    // Virus scan
+    showScanResult: false, scanLoading: false, scanResult: null, scanTarget: '',
 
     // ── EDITOR state ──────────────────────────────────────────────────────
     editorOpen: false,
@@ -924,6 +926,18 @@ function filesPage() {
     ctxCut()      { if (this.ctxTarget) this.cutItem(this.ctxTarget); this.ctxMenu.show = false; },
     ctxRename()   { if (this.ctxTarget) this.startRename(this.ctxTarget); this.ctxMenu.show = false; },
     ctxCompress() { if (this.ctxTarget) this.compressItem(this.ctxTarget); this.ctxMenu.show = false; },
+    async ctxScan() {
+      if (!this.ctxTarget) return;
+      this.ctxMenu.show = false;
+      this.scanTarget = this.ctxTarget.path;
+      this.showScanResult = true;
+      this.scanLoading = true;
+      this.scanResult = null;
+      const r = await post('/api/files/scan', {path: this.ctxTarget.path});
+      this.scanLoading = false;
+      this.scanResult = r;
+      if (!r.ok) toast(r.error || 'Scan failed', 'error');
+    },
     ctxExtract()  { if (this.ctxTarget) this.extractItem(this.ctxTarget); this.ctxMenu.show = false; },
     ctxChmod()    { if (this.ctxTarget) this.chmodItem(this.ctxTarget); this.ctxMenu.show = false; },
     ctxProps()    { if (this.ctxTarget) this.showProps(this.ctxTarget); this.ctxMenu.show = false; },

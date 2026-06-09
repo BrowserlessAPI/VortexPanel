@@ -1059,9 +1059,48 @@
           <div class="ctx-item" @click="ctxProps()">
             <span class="ctx-icon">ℹ️</span> Properties
           </div>
+          <div class="ctx-item" @click="ctxScan()">
+            <span class="ctx-icon">🦠</span> Scan for Viruses
+          </div>
           <div class="ctx-sep"></div>
           <div class="ctx-item ctx-danger" @click="ctxDelete()">
             <span class="ctx-icon">🗑️</span> Delete
+          </div>
+        </div>
+
+        <!-- Scan Result Modal -->
+        <div class="modal-overlay" x-show="showScanResult" @click.self="showScanResult=false" style="z-index:450">
+          <div class="modal" style="max-width:600px">
+            <div class="modal-hd">
+              <div>
+                <div class="modal-title">🦠 Virus Scan Result</div>
+                <div style="font-size:11px;color:var(--text-muted)" x-text="scanTarget"></div>
+              </div>
+              <button class="modal-close" @click="showScanResult=false">×</button>
+            </div>
+            <div x-show="scanLoading" style="text-align:center;padding:30px">
+              <div class="loading-spinner" style="width:32px;height:32px;margin:0 auto 12px"></div>
+              <div style="font-size:13px;color:var(--text-muted)">Scanning... this may take a few minutes</div>
+            </div>
+            <div x-show="!scanLoading">
+              <div x-show="scanResult?.clean" style="padding:16px;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+                <span style="font-size:24px">✅</span>
+                <div><div style="font-weight:600;color:var(--green)">No threats found</div><div style="font-size:12px;color:var(--text-muted)">The scanned path is clean</div></div>
+              </div>
+              <div x-show="!scanResult?.clean && scanResult" style="padding:16px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;margin-bottom:14px">
+                <div style="font-weight:600;color:var(--red);margin-bottom:8px">⚠ Threats detected: <span x-text="scanResult?.infected?.length"></span></div>
+                <template x-for="inf in (scanResult?.infected||[])" :key="inf.file">
+                  <div style="font-size:12px;font-family:var(--font-mono);padding:6px 8px;background:rgba(0,0,0,.2);border-radius:4px;margin-bottom:4px">
+                    <div style="color:var(--red)" x-text="inf.virus"></div>
+                    <div style="color:var(--text-muted)" x-text="inf.file"></div>
+                  </div>
+                </template>
+              </div>
+              <div style="background:#0d0e18;border-radius:6px;padding:10px;font-family:var(--font-mono);font-size:11px;color:#64748b;max-height:200px;overflow-y:auto;white-space:pre-wrap" x-text="scanResult?.output||''"></div>
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="showScanResult=false">Close</button>
+            </div>
           </div>
         </div>
 

@@ -269,3 +269,37 @@ def lint_file():
     except Exception as e:
         errors.append(str(e))
     return jsonify({'ok':True,'errors':errors,'clean':len(errors)==0})
+
+@files_bp.route('/api/files/scan', methods=['POST'])
+def scan_file():
+    from flask import session as _session
+    if 'user' not in _session: return jsonify({'ok':False}), 401
+    import subprocess, json as _json
+    d = request.get_json() or {}
+    path = d.get('path','').strip()
+    if not path or not os.path.exists(path):
+        return jsonify({'ok':False,'error':'Path not found'})
+    
+    # Use clamdscan if socket available, else clamscan
+    socket = '/var/run/clamav/clamd.sock'
+    if os.path.exists(socket):
+        cmd = f'clamdscan --config-file=/usr/local/etc/clamav/clamd.conf --no-summary "{path}" 2>&1'
+    else:
+        cmd = f'clamscan --database=/var/lib/clamav --recursive "{path}" 2>&1'
+    
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+        output = r.stdout + r.stderr
+        # Parse results
+        infected = []
+        for line in output.split('\n'):
+            if 'FOUND' in line:
+                parts = line.rsplit(':', 1)
+                if len(parts) == 2:
+                    infected.append({'file': parts[0].strip(), 'virus': parts[1].replace('FOUND','').strip()})
+        clean = r.returncode == 0
+        return jsonify({'ok':True, 'clean':clean, 'infected':infected, 'output':output, 'path':path})
+    except subprocess.TimeoutExpired:
+        return jsonify({'ok':False,'error':'Scan timed out (5 min limit)'})
+    except Exception as e:
+        return jsonify({'ok':False,'error':str(e)})
