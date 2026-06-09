@@ -115,7 +115,7 @@ systemctl enable lsws && systemctl start lsws''',
         ],
         'install_tpl':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
-  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
+  rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
   tee /etc/apt/sources.list.d/caddy-stable.list && \
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
@@ -124,7 +124,7 @@ chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
 systemctl enable caddy && systemctl start caddy''',
         'install':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
-  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
+  rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
   tee /etc/apt/sources.list.d/caddy-stable.list && \
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
@@ -180,7 +180,7 @@ systemctl enable --now mariadb''',
             {'label':'8.0 (Latest)', 'value':'8.0'},
         ],
         'install_tpl':'''apt-get install -y gnupg curl && \
-curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg --batch --no-tty 2>/dev/null && \
+curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc | rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg --batch --no-tty 2>/dev/null && \
 echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" | tee /etc/apt/sources.list.d/mongodb-org-{ver}.list && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y mongodb-org && systemctl enable mongod && systemctl start mongod''',
         'install':'',  # always uses install_tpl
@@ -196,12 +196,16 @@ echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.
             {'label':'16 (Stable)', 'value':'16'},
             {'label':'17 (Latest)', 'value':'17'},
         ],
-        'install_tpl':('apt-get install -y gnupg2 curl lsb-release && '
-            'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | '
-            'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg && '
+        'install_tpl':('export DEBIAN_FRONTEND=noninteractive && '
+            'apt-get install -y gnupg2 curl lsb-release && '
+            'rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
+            'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc '
+            '-o /tmp/pg.asc && '
+            'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
+            'rm -f /tmp/pg.asc && '
             'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] '
             'http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" '
-            '| tee /etc/apt/sources.list.d/pgdg.list && '
+            '> /etc/apt/sources.list.d/pgdg.list && '
             'apt-get update -qq && '
             'apt-get install -y postgresql-{ver} postgresql-contrib && '
             'systemctl enable postgresql && systemctl start postgresql'),
@@ -488,11 +492,11 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'7.2.7 (Stable)', 'value':'7.2'},
             {'label':'8.0.2 (Latest)', 'value':'8.0'},
         ],
-        'install_tpl':'''curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+        'install_tpl':'''curl -fsSL https://packages.redis.io/gpg | rm -f /usr/share/keyrings/redis-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
 apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
-        'install':'''curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+        'install':'''curl -fsSL https://packages.redis.io/gpg | rm -f /usr/share/keyrings/redis-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
 apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
