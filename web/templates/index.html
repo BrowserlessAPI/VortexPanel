@@ -719,7 +719,7 @@
                     </td>
                   </tr>
                 </template>
-                <template x-if="!filteredDbs.length && mysqlInstalled">
+                <template x-if="!filteredDbs.length && !noEngine">
                   <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px">No databases found. Create one to get started.</td></tr>
                 </template>
               </tbody>
@@ -748,7 +748,7 @@
                     </td>
                   </tr>
                 </template>
-                <template x-if="!users.length && mysqlInstalled">
+                <template x-if="!users.length && !noEngine">
                   <tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px">No users found.</td></tr>
                 </template>
               </tbody>

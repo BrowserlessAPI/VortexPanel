@@ -14,17 +14,19 @@ def sh(cmd, timeout=15):
 # ── Engine detection ──────────────────────────────────────────────────────────
 def detect_engines():
     engines = []
-    # MySQL
-    out, _, rc = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null')
-    if rc == 0 and out.strip() == 'active':
-        ver, _, _ = sh('mysql --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
-        engines.append({'id':'mysql','name':'MySQL','icon':'🐬','version':ver,'active':True})
-    # MariaDB
+    # MariaDB — check first, takes priority over mysql binary
     out, _, rc = sh('systemctl is-active mariadb 2>/dev/null')
-    if rc == 0 and out.strip() == 'active':
+    mariadb_active = rc == 0 and out.strip() == 'active'
+    if mariadb_active:
         ver, _, _ = sh('mariadbd --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
-        if not ver: ver, _, _ = sh('mysql --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
+        if not ver: ver, _, _ = sh('mariadb --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
         engines.append({'id':'mariadb','name':'MariaDB','icon':'🦭','version':ver,'active':True})
+    # MySQL — only if MariaDB is NOT active (avoid double detection)
+    if not mariadb_active:
+        out, _, rc = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null')
+        if rc == 0 and out.strip() == 'active':
+            ver, _, _ = sh('mysql --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
+            engines.append({'id':'mysql','name':'MySQL','icon':'🐬','version':ver,'active':True})
     # PostgreSQL
     out, _, rc = sh('systemctl is-active postgresql 2>/dev/null')
     if rc == 0 and out.strip() == 'active':
@@ -39,16 +41,26 @@ def detect_engines():
 
 # ── MySQL/MariaDB helpers ─────────────────────────────────────────────────────
 def mysql_cmd(query, db=None, timeout=15):
-    sockets = ['/var/run/mysqld/mysqld.sock', '/tmp/mysql.sock', '/run/mysqld/mysqld.sock']
-    cmds = [f'mysql -u root -e "{query}"']
+    import shutil as _sh, tempfile as _tmp
+    bin_name = 'mariadb' if _sh.which('mariadb') else 'mysql'
+    # Write query to temp file to avoid shell escaping issues
+    tf = _tmp.NamedTemporaryFile(mode='w', suffix='.sql', delete=False)
+    if db:
+        tf.write(f'USE `{db}`;\n')
+    tf.write(query + '\n')
+    tf.flush(); tf.close()
+    sockets = ['/run/mysqld/mysqld.sock', '/var/run/mysqld/mysqld.sock', '/tmp/mysql.sock']
+    cmds = []
     for sock in sockets:
         if os.path.exists(sock):
-            cmds.append(f'mysql -u root --socket={sock} -e "{query}"')
-    if db:
-        cmds = [c.replace('-e "', f'`{db}` -e "') for c in cmds]
+            cmds.append(f'{bin_name} -u root --socket={sock} < {tf.name}')
+    cmds.append(f'{bin_name} -u root < {tf.name}')
     for cmd in cmds:
         out, err, rc = sh(cmd, timeout)
-        if rc == 0: return out, None
+        if rc == 0:
+            os.unlink(tf.name)
+            return out, None
+    os.unlink(tf.name)
     return '', 'MySQL/MariaDB connection failed'
 
 def mysql_dbs():
@@ -246,7 +258,11 @@ def import_db(name):
 @databases_bp.route('/api/databases/users')
 def list_users():
     if not req(): return jsonify({'ok':False}), 401
-    engine = request.args.get('engine','mysql')
+    engine = request.args.get('engine','auto')
+    if engine == 'auto':
+        engines = detect_engines()
+        if not engines: return jsonify({'ok':True,'users':[]})
+        engine = engines[0]['id']
     if engine in ('mysql','mariadb'):
         raw, err = mysql_cmd("SELECT user,host FROM mysql.user WHERE user NOT IN ('root','mysql.sys','mysql.infoschema','mysql.session','') ORDER BY user;")
         if err: return jsonify({'ok':False,'error':err,'users':[]})
