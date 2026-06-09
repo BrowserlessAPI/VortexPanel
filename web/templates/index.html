@@ -660,17 +660,32 @@
           </div>
         </div>
 
-        <!-- MySQL not installed warning -->
-        <div x-show="!mysqlInstalled" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:16px;margin-bottom:16px;font-size:13px;color:var(--red)">
-          ⚠ MySQL/MariaDB is not installed or not running. Install it from the <strong>App Store</strong>.
+        <!-- No engine installed -->
+        <div x-show="noEngine" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:16px;margin-bottom:16px;font-size:13px;color:var(--red)">
+          ⚠ No database engine is installed or running. Install MySQL, MariaDB, PostgreSQL or MongoDB from the <strong>App Store</strong>.
+        </div>
+
+        <!-- Engine switcher -->
+        <div x-show="engines.length>0" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+          <template x-for="e in engines" :key="e.id">
+            <button @click="switchEngine(e.id)"
+                    :style="activeEngine===e.id?'background:var(--accent);color:#fff;border-color:var(--accent)':''"
+                    class="btn btn-ghost btn-sm" style="display:flex;align-items:center;gap:6px">
+              <span x-text="e.icon"></span>
+              <span x-text="e.name"></span>
+              <span style="font-size:10px;opacity:.7" x-text="e.version?'v'+e.version:''"></span>
+            </button>
+          </template>
         </div>
 
         <!-- DB Info bar -->
-        <div x-show="mysqlInstalled && dbInfo.version" style="display:flex;gap:16px;padding:12px 16px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;font-size:12px">
+        <div x-show="engines.length>0 && dbInfo.version" style="display:flex;gap:16px;padding:12px 16px;background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;margin-bottom:16px;font-size:12px;flex-wrap:wrap">
           <div><span style="color:var(--text-muted)">Version: </span><span style="font-weight:600;font-family:var(--font-mono)" x-text="dbInfo.version"></span></div>
           <div><span style="color:var(--text-muted)">Connections: </span><span style="font-weight:600" x-text="dbInfo.connections"></span></div>
-          <div><span style="color:var(--text-muted)">Total Size: </span><span style="font-weight:600" x-text="(dbInfo.total_size_mb||0)+'MB'"></span></div>
-          <div style="margin-left:auto"><a href="http://localhost:8082" target="_blank" class="btn btn-ghost btn-sm" style="font-size:11px">🔗 phpMyAdmin</a></div>
+          <div><span style="color:var(--text-muted)">Total Size: </span><span style="font-weight:600" x-text="(dbInfo.total_size_mb||0)+' MB'"></span></div>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <a x-show="activeEngine==='mysql'||activeEngine==='mariadb'" href="http://localhost:8082" target="_blank" class="btn btn-ghost btn-sm" style="font-size:11px">🔗 phpMyAdmin</a>
+          </div>
         </div>
 
         <!-- Tabs -->
@@ -698,7 +713,7 @@
                     <td>
                       <div style="display:flex;gap:5px">
                         <button class="btn btn-ghost btn-xs" @click="exportDb(db.name)" title="Export SQL">⬇ Export</button>
-                        <button class="btn btn-ghost btn-xs" @click="importDb=db.name;showImport=true">⬆ Import</button>
+                        <button class="btn btn-ghost btn-xs" @click="importTargetDb=db.name;showImport=true">⬆ Import</button>
                         <button class="btn btn-danger btn-xs" @click="drop(db.name)">Drop</button>
                       </div>
                     </td>
@@ -824,7 +839,7 @@
             <div class="modal-hd"><div class="modal-title">Import SQL</div><button class="modal-close" @click="showImport=false">×</button></div>
             <div class="form-group">
               <label class="form-label">Target Database</label>
-              <select class="form-input" x-model="importDb">
+              <select class="form-input" x-model="importTargetDb">
                 <option value="">Select database...</option>
                 <template x-for="db in dbs" :key="db.name">
                   <option :value="db.name" x-text="db.name"></option>
@@ -838,7 +853,7 @@
             <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Supported: .sql files</div>
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="showImport=false">Cancel</button>
-              <button class="btn btn-primary" @click="importDb()">Import</button>
+              <button class="btn btn-primary" @click="doImport()">Import</button>
             </div>
           </div>
         </div>

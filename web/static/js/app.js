@@ -347,65 +347,68 @@ function websitesPage() {
 function databasesPage() {
   return {
     dbs:[], users:[], tab:'dbs', showAdd:false, showAddUser:false,
-    mysqlInstalled:true, dbInfo:{},
+    engines:[], activeEngine:'mysql', dbInfo:{}, noEngine:false,
     form:{name:'',user:'',pass:'',charset:'utf8mb4'},
     userForm:{name:'',pass:'',host:'localhost'},
-    selDb:null, showDbDetail:false,
     selUser:null, showUserDetail:false, newPass:'', grantDb:'',
-    importFile:null, importDb:'', showImport:false,
+    importFile:null, importTargetDb:'', showImport:false,
     searchQuery:'',
-    get filteredDbs(){ return this.dbs.filter(d=>d.name.includes(this.searchQuery)); },
-    async init(){ await this.loadInfo(); await this.load(); },
-    async loadInfo(){
-      const r=await get('/api/databases/info');
-      if(r.ok) this.dbInfo=r; else this.mysqlInstalled=false;
-    },
+    get filteredDbs(){ return this.dbs.filter(d=>d.name.toLowerCase().includes(this.searchQuery.toLowerCase())); },
+    async init(){ await this.load(); },
     async load(){
-      const r=await get('/api/databases');
-      if(r.ok){this.dbs=r.databases||[];this.mysqlInstalled=r.mysql_installed!==false;}
-      else this.mysqlInstalled=false;
-      const u=await get('/api/databases/users');
-      if(u.ok) this.users=u.users||[];
+      const r=await get('/api/databases?engine='+this.activeEngine);
+      if(r.ok){
+        this.dbs=r.databases||[];
+        this.engines=r.engines||[];
+        this.noEngine=r.no_engine||false;
+        if(r.active_engine) this.activeEngine=r.active_engine;
+        if(r.info) this.dbInfo=r.info;
+        if(this.engines.length && !this.noEngine) {
+          const u=await get('/api/databases/users?engine='+this.activeEngine);
+          if(u.ok) this.users=u.users||[];
+        }
+      }
     },
+    async switchEngine(e){ this.activeEngine=e; this.dbs=[]; this.users=[]; await this.load(); },
     async create(){
-      const r=await post('/api/databases',this.form);
+      const r=await post('/api/databases',{...this.form,engine:this.activeEngine});
       if(r.ok){toast('Database created','success');this.showAdd=false;this.form={name:'',user:'',pass:'',charset:'utf8mb4'};await this.load();}
       else toast(r.error||'Failed','error');
     },
     async drop(db){
       if(!confirm('Drop database "'+db+'"? This cannot be undone.')) return;
-      const r=await del('/api/databases/'+db);
+      const r=await del('/api/databases/'+db+'?engine='+this.activeEngine);
       if(r.ok){toast('Dropped','success');await this.load();}
     },
-    exportDb(name){ window.open('/api/databases/'+name+'/export','_blank'); },
-    async importDb(){
-      if(!this.importFile||!this.importDb){toast('Select file and database','error');return;}
+    exportDb(name){ window.open('/api/databases/'+name+'/export?engine='+this.activeEngine,'_blank'); },
+    async doImport(){
+      if(!this.importFile||!this.importTargetDb){toast('Select file and database','error');return;}
       const fd=new FormData(); fd.append('file',this.importFile);
-      const r=await fetch('/api/databases/'+this.importDb+'/import',{method:'POST',body:fd});
+      const r=await fetch('/api/databases/'+this.importTargetDb+'/import?engine='+this.activeEngine,{method:'POST',body:fd});
       const j=await r.json();
       if(j.ok){toast('Imported successfully','success');this.showImport=false;await this.load();}
       else toast(j.error||'Import failed','error');
     },
     async createUser(){
-      const r=await post('/api/databases/users',{user:this.userForm.name,password:this.userForm.pass,host:this.userForm.host});
+      const r=await post('/api/databases/users',{user:this.userForm.name,password:this.userForm.pass,host:this.userForm.host,engine:this.activeEngine});
       if(r.ok){toast('User created','success');this.showAddUser=false;this.userForm={name:'',pass:'',host:'localhost'};await this.load();}
       else toast(r.error||'Failed','error');
     },
     async dropUser(u){
       if(!confirm('Drop user "'+u+'"?')) return;
-      const r=await del('/api/databases/users/'+u);
+      const r=await del('/api/databases/users/'+u+'?engine='+this.activeEngine);
       if(r.ok){toast('Dropped','success');await this.load();}
     },
     async changePass(user){
       if(!this.newPass){toast('Enter new password','error');return;}
-      const r=await fetch('/api/databases/users/'+user+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:this.newPass})});
+      const r=await fetch('/api/databases/users/'+user+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:this.newPass,engine:this.activeEngine,host:this.selUser?.host})});
       const j=await r.json();
       toast(j.ok?'Password changed':'Failed',j.ok?'success':'error');
       if(j.ok) this.newPass='';
     },
     async grantAccess(user){
       if(!this.grantDb){toast('Select database','error');return;}
-      const r=await post('/api/databases/users/'+user+'/grant',{database:this.grantDb,host:this.userForm.host||'localhost'});
+      const r=await post('/api/databases/users/'+user+'/grant',{database:this.grantDb,host:this.selUser?.host||'localhost',engine:this.activeEngine});
       toast(r.ok?'Access granted':'Failed',r.ok?'success':'error');
     },
   };
