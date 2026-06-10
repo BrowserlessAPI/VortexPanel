@@ -221,10 +221,20 @@ systemctl enable --now mariadb''',
             {'label':'7.0 (LTS)',    'value':'7.0'},
             {'label':'8.0 (Latest)', 'value':'8.0'},
         ],
-        'install_tpl':'''apt-get install -y gnupg curl && \
-curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc | rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg --batch --no-tty 2>/dev/null && \
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" | tee /etc/apt/sources.list.d/mongodb-org-{ver}.list && \
-(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y mongodb-org && systemctl enable mongod && systemctl start mongod''',
+        'install_tpl':(
+            'export DEBIAN_FRONTEND=noninteractive && '
+            'apt-get install -y gnupg curl && '
+            'rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
+            'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.key && '
+            'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.key && '
+            'rm -f /tmp/mongo.key && '
+            'echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] '
+            'https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" '
+            '> /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
+            'apt-get update -qq && '
+            'apt-get install -y mongodb-org && '
+            'systemctl enable mongod && systemctl start mongod'
+        ),
         'install':'',  # always uses install_tpl
         'uninstall':'apt-get remove -y --purge mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb',
         'service':'mongod', 'manage':True,
