@@ -24,27 +24,41 @@ def mysql_available():
     return rc == 0
 
 def get_databases():
-    out, _, rc = sh('mysql -u root -e "SHOW DATABASES;" 2>/dev/null | grep -vE "^(Database|information_schema|performance_schema|mysql|sys)$"', t=10)
-    if rc != 0: return []
-    return [d.strip() for d in out.strip().split('\n') if d.strip()]
+    dbs = []
+    import shutil as _sh2
+    bin_name = 'mariadb' if _sh2.which('mariadb') else 'mysql'
+    for svc in ['mariadb','mysql']:
+        out, _, rc = sh(f'systemctl is-active {svc} 2>/dev/null', t=3)
+        if rc == 0 and out.strip() == 'active':
+            out2, _, rc2 = sh(bin_name + ' -u root -e "SHOW DATABASES;" 2>/dev/null', t=10)
+            if rc2 == 0:
+                skip = {'information_schema','performance_schema','mysql','sys','Database'}
+                dbs += [d.strip() for d in out2.split('\n') if d.strip() and d.strip() not in skip]
+            break
+    out, _, rc = sh('systemctl is-active postgresql 2>/dev/null', t=3)
+    if rc == 0 and out.strip() == 'active':
+        out2, _, rc2 = sh('sudo -u postgres psql -t -c "SELECT datname FROM pg_database WHERE datistemplate=false;" 2>/dev/null', t=10)
+        if rc2 == 0:
+            dbs += [d.strip() for d in out2.split('\n') if d.strip() and d.strip() != 'postgres']
+    return list(set(dbs))
 
 def get_websites():
-    """Return list of {domain, path} from nginx configs"""
     sites = []
-    import re
-    for conf_dir in ['/etc/nginx/sites-available', '/etc/nginx/conf.d']:
+    import re as _re
+    for conf_dir in ['/etc/nginx/vortex', '/etc/nginx/sites-available', '/etc/nginx/conf.d']:
         if not os.path.isdir(conf_dir): continue
         for f in os.listdir(conf_dir):
             fp = os.path.join(conf_dir, f)
             if not os.path.isfile(fp): continue
             try:
-                with open(fp) as fh: content = fh.read()
-                domains = re.findall(r'server_name\s+([^;]+);', content)
+                with open(fp) as fh: c = fh.read()
+                domains = _re.findall(r'server_name\s+([^;]+);', c)
                 if not domains: continue
                 domain = domains[0].strip().split()[0]
-                path_m = re.search(r'root\s+([^;]+);', content)
-                path = path_m.group(1).strip() if path_m else f'{get_webroot()}/{domain}'
-                if os.path.isdir(path):
+                if domain in ('_', 'localhost', 'default'): continue
+                path_m = _re.search(r'root\s+([^;]+);', c)
+                path = path_m.group(1).strip() if path_m else get_webroot()+'/'+domain
+                if os.path.isdir(path) and not any(s['domain']==domain for s in sites):
                     sites.append({'domain': domain, 'path': path})
             except: pass
     return sites
