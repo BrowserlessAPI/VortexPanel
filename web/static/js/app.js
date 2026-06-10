@@ -1424,7 +1424,7 @@ function modulesPage() {
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal
-      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service'}[m.id] : 'service';
+      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service','roundcube':'rc_overview'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service'}[m.id] : 'service';
       this.settingsModal = {
         ...this.settingsModal,
         show: true, mod: m, tab: defaultTab,
@@ -1481,6 +1481,7 @@ function modulesPage() {
         this.settingsModal.ddnsLog         = r.log            || '';
         this.settingsModal.showAddDomain   = false;
         this.settingsModal.ddnsForm        = {provider:'cloudflare',email:'',domain:'',api_token:'',api_limit:false};
+        this.settingsModal.rcData          = {imap_host:r.imap_host||'',smtp_host:r.smtp_host||'',smtp_port:r.smtp_port||'587',skin:r.skin||'elastic',db_dsn:r.db_dsn||'',skins:r.skins||[],current_php:r.current_php||'',php_versions:r.php_versions||[],port:r.port||'8083',rc_dir:r.rc_dir||'',logs:r.logs||''};
       } else {
         toast(r.error || 'Failed to load settings', 'error');
       }
@@ -1560,6 +1561,7 @@ function modulesPage() {
         ddns:       ['ddns_domains','ddns_server','ddns_log'],
         bind9:      ['service','dns_zones','dns_records','dns_config','dns_private','switch_version','logs'],
         phpmyadmin: ['service','php_version','security'],
+        roundcube:  ['rc_overview','rc_config','rc_php','rc_logs'],
         docker:     ['service','info'],
       };
       const labels = {
@@ -1575,7 +1577,7 @@ function modulesPage() {
         dns_zones:'Zone List', dns_records:'DNS Records', dns_config:'Config', dns_private:'Private DNS',
         upload_limit:'Limit of Upload', timeout_limit:'Limit of Timeout',
         disabled_functions:'Disabled Functions', load_average:'Load Average',
-        session_config:'Session Config', users:'User Management',
+        session_config:'Session Config', users:'User Management', rc_overview:'Overview', rc_config:'Mail Config', rc_php:'PHP Version', rc_logs:'Logs',
         website_protection:'Website Protection',
         server_protection:'Server Protection', black_ip:'Black IP', white_ip:'White IP',
       };
@@ -1589,7 +1591,7 @@ function modulesPage() {
         ddns_domains:'🌍', ddns_server:'🖥️', ddns_log:'📋',
         dns_zones:'🗂️', dns_records:'📝', dns_config:'⚙️', dns_private:'🔏',
         upload_limit:'📤', timeout_limit:'⏱️', disabled_functions:'🚫',
-        load_average:'📈', session_config:'🔑', users:'👥',
+        load_average:'📈', session_config:'🔑', users:'👥', rc_overview:'🌐', rc_config:'📧', rc_php:'🐘', rc_logs:'📋',
         website_protection:'🛡️', server_protection:'🔰',
         black_ip:'⛔', white_ip:'✅',
       };

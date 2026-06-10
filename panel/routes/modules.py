@@ -604,7 +604,7 @@ cp /var/www/roundcube/config/config.inc.php.sample /var/www/roundcube/config/con
 chown -R www-data:www-data /var/www/roundcube/''',
         'install':'',
         'uninstall':'rm -rf /var/www/roundcube',
-        'manage':False,
+        'manage':True,
     },
     # ── WAF / Security ────────────────────────────────────────────────────────
     {
@@ -792,6 +792,50 @@ def install_module(mod_id):
     elif mod_id == 'postgresql': cmd = postgresql_install_script(ver or '17')
     elif mod_id == 'redis': cmd = redis_install_script()
     elif mod_id == 'mongodb': cmd = mongodb_install_script(ver or '8.0')
+    elif mod_id == 'roundcube':
+        rc_dir = '/var/www/roundcube'
+        rc_conf = rc_dir + '/config/config.inc.php'
+        nginx_conf = '/etc/nginx/conf.d/roundcube.conf'
+        # Read config values
+        def rc_get(key):
+            cmd = "grep -oP \"'" + key + "'\\] = '\\K[^']+\" " + rc_conf + " 2>/dev/null | head -1"
+            return sh(cmd) or ''
+            return sh(cmd) or ""
+        imap_host  = rc_get('imap_host') or 'localhost'
+        smtp_host  = rc_get('smtp_host') or 'localhost'
+        smtp_port  = rc_get('smtp_port') or '587'
+        skin       = rc_get('skin') or 'elastic'
+        db_dsn     = rc_get('db_dsnw') or ''
+        # Nginx port
+        port = '8083'
+        if os.path.exists(nginx_conf):
+            with open(nginx_conf) as f: cc = f.read()
+            m = _re.search(r'listen\s+(\d+)', cc)
+            if m: port = m.group(1)
+        # PHP version in use
+        current_php = ''
+        if os.path.exists(nginx_conf):
+            with open(nginx_conf) as f: cc = f.read()
+            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', cc)
+            if m: current_php = m.group(1)
+        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists(f'/run/php/php{v}-fpm.sock')]
+        # Available skins
+        skins = []
+        try: skins = [d for d in os.listdir(rc_dir+'/skins') if os.path.isdir(rc_dir+'/skins/'+d)]
+        except: pass
+        # Logs
+        logs = sh(f'tail -80 {rc_dir}/logs/errors.log 2>/dev/null') or                sh(f'tail -80 {rc_dir}/logs/errors 2>/dev/null') or 'No logs found'
+        # Conf content
+        try:
+            with open(rc_conf) as f: conf_content = f.read()
+        except: conf_content = '# Config file not found'
+        return jsonify({'ok':True,
+            'port':port, 'url': 'http://YOUR-IP:'+port,
+            'imap_host':imap_host, 'smtp_host':smtp_host, 'smtp_port':smtp_port,
+            'skin':skin, 'db_dsn':db_dsn,
+            'current_php':current_php, 'php_versions':php_versions,
+            'skins':skins, 'conf_path':rc_conf, 'conf_content':conf_content,
+            'logs':logs, 'rc_dir':rc_dir})
     elif mod_id == 'docker': cmd = docker_install_script()
     elif mod_id == 'nodejs': cmd = nodejs_install_script(ver or '22')
     elif mod_id == 'php': cmd = php_install_script(ver or '8.3')

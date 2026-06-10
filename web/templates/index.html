@@ -2122,6 +2122,106 @@
                   <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);background:var(--bg-base);padding:10px;border-radius:6px;max-height:120px;overflow-y:auto;line-height:1.8;white-space:pre-wrap" x-text="settingsModal.phpinfo?.loaded||'Loading…'"></div>
                 </div>
 
+                <!-- ROUNDCUBE: OVERVIEW -->
+                <div x-show="settingsModal.tab==='rc_overview'">
+                  <div style="margin-bottom:20px">
+                    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:.4px">Roundcube Webmail</div>
+                    <!-- Access URL card -->
+                    <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:14px">
+                      <span style="font-size:28px">📨</span>
+                      <div style="flex:1">
+                        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Webmail Access URL</div>
+                        <div style="font-size:12px;color:var(--text-muted)" x-text="'http://YOUR-IP:' + (settingsModal.rcData?.port||'8083')"></div>
+                      </div>
+                      <a :href="'http://'+location.hostname+':'+(settingsModal.rcData?.port||'8083')" target="_blank"
+                         style="padding:7px 16px;background:var(--accent);color:#fff;border-radius:7px;font-size:12px;font-weight:600;text-decoration:none">Open →</a>
+                    </div>
+                    <!-- Info grid -->
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                      <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px">
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">IMAP Server</div>
+                        <div style="font-size:13px;font-weight:600" x-text="settingsModal.rcData?.imap_host||'Not configured'"></div>
+                      </div>
+                      <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px">
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">SMTP Server</div>
+                        <div style="font-size:13px;font-weight:600" x-text="(settingsModal.rcData?.smtp_host||'Not configured')+':'+(settingsModal.rcData?.smtp_port||'')"></div>
+                      </div>
+                      <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px">
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Active Skin</div>
+                        <div style="font-size:13px;font-weight:600" x-text="settingsModal.rcData?.skin||'elastic'"></div>
+                      </div>
+                      <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px">
+                        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Install Path</div>
+                        <div style="font-size:12px;font-weight:600;font-family:monospace" x-text="settingsModal.rcData?.rc_dir||'/var/www/roundcube'"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- ROUNDCUBE: MAIL CONFIG -->
+                <div x-show="settingsModal.tab==='rc_config'">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:.4px">Mail Server Configuration</div>
+                  <div style="display:grid;gap:14px;max-width:520px">
+                    <div>
+                      <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:5px">IMAP Host</label>
+                      <input x-model="settingsModal.rcData.imap_host" style="width:100%;padding:8px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-size:13px;box-sizing:border-box" placeholder="localhost or ssl://mail.example.com">
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 120px;gap:10px">
+                      <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:5px">SMTP Host</label>
+                        <input x-model="settingsModal.rcData.smtp_host" style="width:100%;padding:8px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-size:13px;box-sizing:border-box" placeholder="localhost">
+                      </div>
+                      <div>
+                        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:5px">SMTP Port</label>
+                        <input x-model="settingsModal.rcData.smtp_port" style="width:100%;padding:8px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-size:13px;box-sizing:border-box" placeholder="587">
+                      </div>
+                    </div>
+                    <div>
+                      <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:5px">Skin</label>
+                      <select x-model="settingsModal.rcData.skin" style="width:100%;padding:8px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-size:13px">
+                        <template x-for="s in (settingsModal.rcData?.skins||['elastic','larry'])" :key="s">
+                          <option :value="s" x-text="s" :selected="s===settingsModal.rcData?.skin"></option>
+                        </template>
+                      </select>
+                    </div>
+                    <div>
+                      <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:5px">Database DSN</label>
+                      <input x-model="settingsModal.rcData.db_dsn" style="width:100%;padding:8px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:7px;color:var(--text-primary);font-size:13px;font-family:monospace;box-sizing:border-box" placeholder="mysql://user:pass@localhost/roundcube">
+                    </div>
+                    <button @click="post('/api/modules/roundcube/settings',{action:'save_config',imap_host:settingsModal.rcData.imap_host,smtp_host:settingsModal.rcData.smtp_host,smtp_port:settingsModal.rcData.smtp_port,skin:settingsModal.rcData.skin,db_dsn:settingsModal.rcData.db_dsn}).then(r=>r.ok?toast('Config saved','success'):toast(r.error||'Failed','error'))"
+                            style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;width:fit-content">
+                      💾 Save Config
+                    </button>
+                  </div>
+                </div>
+
+                <!-- ROUNDCUBE: PHP VERSION -->
+                <div x-show="settingsModal.tab==='rc_php'">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:.4px">PHP Version</div>
+                  <div style="max-width:480px">
+                    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">Select which PHP-FPM version serves Roundcube via Nginx.</p>
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">
+                      <template x-for="pv in (settingsModal.rcData?.php_versions||[])" :key="pv">
+                        <button @click="post('/api/modules/roundcube/settings',{action:'set_php',version:pv}).then(r=>{if(r.ok){settingsModal.rcData.current_php=pv;toast('PHP '+pv+' set','success')}else toast(r.error||'Failed','error')})"
+                                :style="settingsModal.rcData?.current_php===pv
+                                  ? 'display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;border:1.5px solid var(--accent);cursor:pointer;font-family:inherit;background:var(--accent);color:#fff;box-shadow:0 3px 10px rgba(88,101,242,.4)'
+                                  : 'display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;border:1.5px solid var(--border);cursor:pointer;font-family:inherit;background:var(--bg-raised);color:var(--text-secondary)'">
+                          <span>🐘</span><span x-text="'PHP '+pv"></span>
+                        </button>
+                      </template>
+                    </div>
+                    <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-size:12px;color:var(--text-muted)">
+                      ℹ️ Current: <strong x-text="'PHP '+(settingsModal.rcData?.current_php||'Not set')"></strong>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- ROUNDCUBE: LOGS -->
+                <div x-show="settingsModal.tab==='rc_logs'">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px">Roundcube Error Logs</div>
+                  <pre style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:11px;font-family:monospace;overflow:auto;max-height:420px;color:var(--text-secondary);white-space:pre-wrap;word-break:break-all" x-text="settingsModal.rcData?.logs||'No logs found'"></pre>
+                </div>
+
 
                 <!-- ══ BIND9: ZONE LIST tab ══ -->
                 <div x-show="settingsModal.tab==='dns_zones'">
