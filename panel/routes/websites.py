@@ -960,19 +960,20 @@ def run_composer(domain):
     if not os.path.exists(composer_bin):
         return jsonify({'ok':False,'error':'Composer not installed. Install it from App Store first.'})
 
-    # Build command
+    # Build command with HOME env set
+    env_prefix = 'export HOME=/root COMPOSER_HOME=/root/.composer COMPOSER_ALLOW_SUPERUSER=1 && '
     if action == 'create-project' and packages:
-        cmd = f'cd "{site_path}" && {php_bin} {composer_bin} create-project {packages} . --prefer-dist 2>&1'
+        cmd = f'{env_prefix}cd "{site_path}" && {php_bin} {composer_bin} create-project {packages} . --prefer-dist 2>&1'
     elif action == 'require' and packages:
-        cmd = f'cd "{site_path}" && {php_bin} {composer_bin} require {packages} 2>&1'
+        cmd = f'{env_prefix}cd "{site_path}" && {php_bin} {composer_bin} require {packages} 2>&1'
     elif action == 'remove' and packages:
-        cmd = f'cd "{site_path}" && {php_bin} {composer_bin} remove {packages} 2>&1'
+        cmd = f'{env_prefix}cd "{site_path}" && {php_bin} {composer_bin} remove {packages} 2>&1'
     elif action == 'update':
-        cmd = f'cd "{site_path}" && {php_bin} {composer_bin} update 2>&1'
+        cmd = f'{env_prefix}cd "{site_path}" && {php_bin} {composer_bin} update 2>&1'
     elif action == 'dump-autoload':
-        cmd = f'cd "{site_path}" && {php_bin} {composer_bin} dump-autoload 2>&1'
+        cmd = f'{env_prefix}cd "{site_path}" && {php_bin} {composer_bin} dump-autoload 2>&1'
     else:
-        cmd = f'cd "{site_path}" && {php_bin} {composer_bin} install 2>&1'
+        cmd = f'{env_prefix}cd "{site_path}" && {php_bin} {composer_bin} install 2>&1'
 
     job_id = str(uuid.uuid4())[:8]
     _composer_jobs = getattr(run_composer, '_jobs', {})
