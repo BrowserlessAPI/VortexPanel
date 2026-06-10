@@ -49,13 +49,13 @@ def sh(c, t=10):
 
 def get_version(mod_id):
     cmds = {
-        'caddy':        "caddy version 2>/dev/null | awk '{print $1}' | tr -d v",
         'nginx':        "nginx -v 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'apache2':      "apache2 -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
-        'mysql':        "mysql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'mariadb':      "mariadb --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || mysqld --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'mongodb':      "mongod --version 2>/dev/null | grep -oP 'v[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'apache2':      "apache2 -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || httpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'caddy':        "caddy version 2>/dev/null | awk '{print $1}' | tr -d v",
+        'mysql':        "mysqld --version 2>/dev/null | grep -iv mariadb | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'mariadb':      "mysqld --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || mariadbd --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'mongodb':      "mongod --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'postgresql':   "psql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+' | head -1",
         'php':          "for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if which php$v >/dev/null 2>&1; then php$v --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1; break; fi; done",
         'redis':        "redis-server --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
@@ -64,18 +64,15 @@ def get_version(mod_id):
         'docker':       "docker --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'composer':     "composer --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'fail2ban':     "fail2ban-client --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'pure-ftpd':    "pure-ftpd --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'pure-ftpd':    "pure-ftpd --help 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'clamav':       "clamscan --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'bind9':        "named -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'supervisor':   "supervisord --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+'",
-        'redis':        "redis-server --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'opendkim':     "opendkim --version 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'phpmyadmin':   "cat /usr/share/phpmyadmin/README 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || cat /usr/share/phpmyadmin/ChangeLog 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || grep -oP \"'PMA_VERSION','[^']+'\" /usr/share/phpmyadmin/libraries/classes/Config/Settings.php 2>/dev/null | grep -oP \"[0-9]+\\.[0-9]+\\.[0-9]+\" | head -1",
-        'mariadb':      "mysql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'pure-ftpd':    "pure-ftpd --help 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || dpkg -l pure-ftpd 2>/dev/null | grep '^ii' | awk '{print $3}' | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
-        'mongodb':      "mongod --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'phpmyadmin':   "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /usr/share/phpmyadmin/composer.json 2>/dev/null | head -1",
+        'roundcube':    "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /var/www/roundcube/composer.json 2>/dev/null | head -1",
+        'modsecurity':  "modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || dpkg -l libmodsecurity3 2>/dev/null | grep '^ii' | awk '{print $3}'",
     }
+
     cmd = cmds.get(mod_id, '')
     if not cmd: return ''
     v = sh(cmd)
@@ -181,7 +178,7 @@ systemctl enable caddy && systemctl start caddy''',
     {
         'id':'mysql', 'name':'MySQL', 'icon':'🐬', 'category':'Database',
         'desc':'The world\'s most popular open source database',
-        'check':'dpkg -l mysql-server 2>/dev/null | grep -c "^ii"',
+        'check':'systemctl is-active mysql 2>/dev/null | grep -q active && ! systemctl is-active mariadb 2>/dev/null | grep -q active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
         'versions':[
             {'label':'9.7.0 (LTS - Latest)', 'value':'9.7'},
             {'label':'8.4.4 (LTS)',          'value':'8.4'},
@@ -202,7 +199,7 @@ systemctl enable caddy && systemctl start caddy''',
     {
         'id':'mariadb', 'name':'MariaDB', 'icon':'🦭', 'category':'Database',
         'desc':'Community-developed MySQL fork by MariaDB Foundation',
-        'check':'dpkg -l mariadb-server 2>/dev/null | grep -c "^ii"',
+        'check':'systemctl is-active mariadb 2>/dev/null | grep -q "^active" && echo found || (which mariadbd 2>/dev/null && mariadbd --version 2>/dev/null | grep -c MariaDB)',
         'versions':[
             {'label':'10.11.11 (LTS)',  'value':'10.11'},
             {'label':'11.4.5 (LTS)',    'value':'11.4'},
@@ -421,8 +418,8 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
     # ── DNS ──────────────────────────────────────────────────────────────────
     {
         'id':'ddns', 'name':'DDNS Manager', 'icon':'🌍', 'category':'DNS',
-        'desc':'Dynamic DNS — automatic IP update service',
-        'check':'which ddclient 2>/dev/null',
+        'desc':'Dynamic DNS — automatic IP update service (Built-in)',
+        'check':'echo found',  # Built-in, always available
         'versions':[
             {'label':'3.11.2 (Latest)', 'value':'latest'},
         ],
@@ -524,7 +521,19 @@ apt-get autoremove -y 2>/dev/null || true''',
         'versions':[
             {'label':'2.8 (Latest Stable)', 'value':'2'},
         ],
-        'install':'curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && rm /tmp/composer-setup.php',
+        'install_tpl':(
+            'curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && '
+            'php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && '
+            'rm /tmp/composer-setup.php && '
+            'chmod +x /usr/local/bin/composer'
+        ),
+        'install':(
+            'curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && '
+            'php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && '
+            'rm /tmp/composer-setup.php && '
+            'chmod +x /usr/local/bin/composer'
+        ),
+        'uninstall':'rm -f /usr/local/bin/composer',
         'uninstall':'rm -f /usr/local/bin/composer',
         'manage':False,
     },
@@ -556,7 +565,13 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'versions':[
             {'label':'4.3.0 (Latest Stable)', 'value':'latest'},
         ],
-        'install':'apt-get install -y supervisor && systemctl enable supervisor && systemctl start supervisor',
+        'install_tpl':(
+            'export DEBIAN_FRONTEND=noninteractive && '
+            + ('apt-get install -y supervisor' if __import__("subprocess").run("which apt-get",shell=True,capture_output=True).returncode==0 else 'dnf install -y supervisor') +
+            ' && systemctl enable supervisord 2>/dev/null || systemctl enable supervisor && '
+            'systemctl start supervisord 2>/dev/null || systemctl start supervisor'
+        ),
+        'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable supervisor && systemctl start supervisor',
         'uninstall':'apt-get remove -y --purge supervisor && apt-get autoremove -y',
         'service':'supervisor', 'manage':True,
     },
@@ -585,7 +600,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
     {
         'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'🔥', 'category':'Security',
         'desc':'OWASP Web Application Firewall for Nginx/Apache (v3)',
-        'check':'dpkg -l libmodsecurity3 2>/dev/null | grep -c "^ii"',
+        'check':'which modsec_rules_check 2>/dev/null || test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 && echo found || test -f /usr/lib64/libmodsecurity.so.3 && echo found',
         'versions':[
             {'label':'v3 + OWASP CRS (Recommended)', 'value':'3'},
             {'label':'v2 (Apache legacy)',            'value':'2'},
@@ -687,6 +702,26 @@ nginx -t && systemctl reload nginx''',
 def _get_mod(mod_id):
     return next((m for m in MODULES if m['id'] == mod_id), None)
 
+
+# ── Conflict groups — only one from each group can be installed ──────────────
+CONFLICT_GROUPS = {
+    'webserver': ['nginx', 'apache2', 'openlitespeed', 'caddy'],
+    'database':  ['mysql', 'mariadb', 'mongodb', 'postgresql'],
+}
+
+def get_conflict(mod_id):
+    """Return (group, installed_member) if a conflicting app is installed"""
+    for group, members in CONFLICT_GROUPS.items():
+        if mod_id not in members:
+            continue
+        for member in members:
+            if member == mod_id:
+                continue
+            mod = _get_mod(member)
+            if mod and is_installed(mod['check']):
+                return group, member
+    return None, None
+
 @modules_bp.route('/api/modules')
 def list_modules():
     if not req(): return jsonify({'ok':False}), 401
@@ -709,6 +744,7 @@ def list_modules():
             'installedVer': installed_ver,
             'versions': m.get('versions', []),
             'manage': m.get('manage', False),
+            'conflict_group': next((g for g,ms in CONFLICT_GROUPS.items() if m['id'] in ms), None),
         })
     return jsonify({'ok':True, 'modules':result})
 
@@ -723,6 +759,11 @@ def install_module(mod_id):
 
     if mod.get('versions') and not ver:
         return jsonify({'ok':False, 'error':'Version required'}), 400
+    # Check for conflicts
+    conflict_group, conflict_mod = get_conflict(mod_id)
+    if conflict_group and conflict_mod:
+        conflict_name = next((m['name'] for m in MODULES if m['id']==conflict_mod), conflict_mod)
+        return jsonify({'ok':False, 'error':'Cannot install: '+conflict_name+' is already installed. Please uninstall it first before installing a different '+conflict_group+'.', 'conflict':conflict_mod, 'conflict_group':conflict_group}), 409
 
     # OS-aware install command selection
     _os = get_os()

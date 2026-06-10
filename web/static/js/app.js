@@ -1335,7 +1335,24 @@ function modulesPage() {
       await this._startJob(m, 'uninstall', '');
     },
 
+    getConflict(m) {
+      const groups = {
+        webserver: ['nginx','apache2','openlitespeed','caddy'],
+        database:  ['mysql','mariadb','mongodb','postgresql'],
+      };
+      for (const [group, members] of Object.entries(groups)) {
+        if (!members.includes(m.id)) continue;
+        const conflict = this.mods.find(x => x.id !== m.id && members.includes(x.id) && x.installed);
+        if (conflict) return {group, name: conflict.name, id: conflict.id};
+      }
+      return null;
+    },
     async install(m) {
+      const conflict = this.getConflict(m);
+      if (conflict) {
+        toast('Cannot install '+m.name+': '+conflict.name+' is already installed. Please uninstall it first.', 'error');
+        return;
+      }
       // PHP: always install directly with selected version (multi-version support)
       if (m.id === 'php') {
         if (!m.selVer) { toast('Select a PHP version first', 'error'); return; }
