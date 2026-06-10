@@ -1,5 +1,9 @@
 from flask import Blueprint, jsonify, request, session, Response
 import subprocess, os, threading, time, json, uuid, re
+try:
+    from panel.routes.os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script
+except ImportError:
+    from os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script
 
 modules_bp = Blueprint('modules', __name__)
 def req(): return 'user' in session
@@ -688,8 +692,26 @@ def install_module(mod_id):
     if mod.get('versions') and not ver:
         return jsonify({'ok':False, 'error':'Version required'}), 400
 
-    tpl = mod.get('install_tpl', mod.get('install',''))
-    cmd = tpl.replace('{ver}', ver) if ver and tpl else (mod.get('install', tpl) or tpl)
+    # OS-aware install command selection
+    _os = get_os()
+    _os_key = 'install_' + _os['family']  # e.g. install_rhel, install_fedora
+    # Priority: OS-specific > install_tpl > install
+    if _os['family'] != 'debian' and mod.get(_os_key):
+        tpl = mod[_os_key]
+    elif _os['family'] != 'debian' and mod.get('install_rhel') and _os['family'] == 'rhel':
+        tpl = mod['install_rhel']
+    else:
+        tpl = mod.get('install_tpl', mod.get('install',''))
+    cmd = tpl.replace('{ver}', ver).replace('{codename}', _os.get('codename','noble')) if tpl else ''
+    if not cmd: cmd = mod.get('install','')
+    if mod_id == 'nginx': cmd = nginx_install_script(ver or 'stable')
+    elif mod_id == 'mariadb': cmd = mariadb_install_script(ver or '11.7')
+    elif mod_id == 'postgresql': cmd = postgresql_install_script(ver or '17')
+    elif mod_id == 'redis': cmd = redis_install_script()
+    elif mod_id == 'mongodb': cmd = mongodb_install_script(ver or '8.0')
+    elif mod_id == 'docker': cmd = docker_install_script()
+    elif mod_id == 'nodejs': cmd = nodejs_install_script(ver or '22')
+    elif mod_id == 'php': cmd = php_install_script(ver or '8.3')
     if not cmd: return jsonify({'ok':False, 'error':'No install command defined'}), 400
 
     job_id = str(uuid.uuid4())[:8]
