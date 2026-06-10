@@ -488,6 +488,79 @@
                 </div>
               </div>
 
+              <!-- ── COMPOSER TAB ── -->
+              <div x-show="drawer.tab==='composer'">
+                <div style="font-weight:600;font-size:13px;margin-bottom:4px">Composer</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">PHP dependency manager — run Composer commands for <strong x-text="drawer.site?.domain"></strong></div>
+
+                <div style="display:grid;gap:14px;max-width:640px">
+                  <!-- Action selector -->
+                  <div class="form-group">
+                    <label class="form-label">Action</label>
+                    <select class="form-input" x-model="drawer.composerAction">
+                      <option value="install">install — Install dependencies from composer.json</option>
+                      <option value="update">update — Update all dependencies</option>
+                      <option value="require">require — Add new package</option>
+                      <option value="remove">remove — Remove package</option>
+                      <option value="dump-autoload">dump-autoload — Regenerate autoloader</option>
+                      <option value="create-project">create-project — Create new project</option>
+                    </select>
+                  </div>
+
+                  <!-- Package input -->
+                  <div class="form-group" x-show="['require','remove','create-project'].includes(drawer.composerAction)">
+                    <label class="form-label" x-text="drawer.composerAction==='create-project'?'Package (e.g. laravel/laravel)':'Package name(s)'"></label>
+                    <input class="form-input" x-model="drawer.composerPkg"
+                           :placeholder="drawer.composerAction==='create-project'?'laravel/laravel':'vendor/package:^1.0'">
+                  </div>
+
+                  <!-- PHP version -->
+                  <div class="form-group">
+                    <label class="form-label">PHP Version</label>
+                    <select class="form-input" x-model="drawer.composerPhp">
+                      <option value="">System default</option>
+                      <template x-for="pv in phpVersions" :key="pv.version">
+                        <option :value="pv.version" x-text="'PHP '+pv.version"></option>
+                      </template>
+                    </select>
+                  </div>
+
+                  <!-- Quick presets -->
+                  <div>
+                    <label class="form-label">Quick Presets</label>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px">
+                      <button class="btn btn-ghost btn-xs" @click="drawer.composerAction='create-project';drawer.composerPkg='laravel/laravel'">Laravel</button>
+                      <button class="btn btn-ghost btn-xs" @click="drawer.composerAction='create-project';drawer.composerPkg='symfony/skeleton'">Symfony</button>
+                      <button class="btn btn-ghost btn-xs" @click="drawer.composerAction='create-project';drawer.composerPkg='yiisoft/yii2-app-basic'">Yii2</button>
+                      <button class="btn btn-ghost btn-xs" @click="drawer.composerAction='create-project';drawer.composerPkg='codeigniter4/appstarter'">CodeIgniter4</button>
+                      <button class="btn btn-ghost btn-xs" @click="drawer.composerAction='install';drawer.composerPkg=''">Install deps</button>
+                      <button class="btn btn-ghost btn-xs" @click="drawer.composerAction='dump-autoload';drawer.composerPkg=''">Dump autoload</button>
+                    </div>
+                  </div>
+
+                  <!-- Run button -->
+                  <button class="btn btn-primary" @click="runComposer()" :disabled="drawer.composerRunning"
+                          style="display:flex;align-items:center;gap:8px;justify-content:center">
+                    <span x-show="drawer.composerRunning" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+                    <span x-text="drawer.composerRunning?'Running...':'▶ Run Composer'"></span>
+                  </button>
+
+                  <!-- Output -->
+                  <div x-show="drawer.composerOutput">
+                    <label class="form-label">Output</label>
+                    <div style="background:#0d0e18;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#94a3b8;min-height:120px;max-height:400px;overflow-y:auto;white-space:pre-wrap;line-height:1.6"
+                         x-text="drawer.composerOutput"></div>
+                  </div>
+
+                  <!-- Info -->
+                  <div style="padding:10px 12px;background:rgba(88,101,242,.06);border:1px solid rgba(88,101,242,.15);border-radius:8px;font-size:11px;color:var(--text-muted);line-height:1.8">
+                    • Composer must be installed via App Store first<br>
+                    • Commands run in the site root directory: <span style="font-family:var(--font-mono)" x-text="drawer.site?.path"></span><br>
+                    • create-project will install into the site root
+                  </div>
+                </div>
+              </div>
+
               <!-- ── RESPONSE LOG TAB ── -->
               <div x-show="drawer.tab==='logs'">
                 <div style="display:flex;gap:8px;margin-bottom:16px">

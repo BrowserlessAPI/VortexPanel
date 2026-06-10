@@ -256,6 +256,7 @@ function websitesPage() {
       {id:'hotlink',label:'🛡 Hotlink'},
       {id:'nodejs',label:'🟢 Node.js'},
       {id:'maintenance',label:'🔧 Maintenance'},
+      {id:'composer',label:'🎼 Composer'},
       {id:'logs',label:'📋 Response Log'},
     ],
     async init() {
@@ -339,6 +340,21 @@ function websitesPage() {
     async delRedirect(){const r=await del('/api/websites/'+this.drawer.site?.domain+'/redirect');toast(r.ok?'Removed':'Failed',r.ok?'success':'error');},
     async enableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{...this.drawer.nodejsForm,enable:true});toast(r.ok?'Node.js enabled':'Failed',r.ok?'success':'error');if(r.ok){this.drawer.nodejsEnabled=true;await this.load();}},
     async disableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{enable:false});if(r.ok){toast('Disabled','success');this.drawer.nodejsEnabled=false;await this.load();}},
+    async runComposer(){
+      const d=this.drawer;
+      if(d.composerRunning) return;
+      d.composerRunning=true; d.composerOutput='Running...';
+      const r=await post('/api/websites/'+d.site?.domain+'/composer',{
+        action:d.composerAction,packages:d.composerPkg,php_ver:d.composerPhp,work_dir:d.site?.path
+      });
+      if(!r.ok){toast(r.error||'Failed','error');d.composerRunning=false;return;}
+      d.composerJobId=r.job_id;
+      const poll=setInterval(async()=>{
+        const j=await get('/api/websites/'+d.site?.domain+'/composer/job/'+d.composerJobId);
+        if(j.ok){d.composerOutput=j.output||'';}
+        if(j.done||!j.ok){clearInterval(poll);d.composerRunning=false;toast(j.exit===0?'Done':'Failed',j.exit===0?'success':'error');}
+      },1000);
+    },
     async toggleMaintenance(enable){const r=await post('/api/websites/'+this.drawer.site?.domain+'/maintenance',{enable,message:this.drawer.maintMessage});toast(r.ok?(enable?'Maintenance ON':'Site LIVE'):'Failed',r.ok?'success':'error');if(r.ok)this.drawer.maintEnabled=enable;},
   };
 }

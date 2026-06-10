@@ -524,7 +524,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'versions':[
             {'label':'2.8 (Latest Stable)', 'value':'2'},
         ],
-        'install':'curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer',
+        'install':'curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && rm /tmp/composer-setup.php',
         'uninstall':'rm -f /usr/local/bin/composer',
         'manage':False,
     },
