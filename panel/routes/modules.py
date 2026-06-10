@@ -79,9 +79,17 @@ apt-get install -y nginx && systemctl enable --now nginx''',
         'desc':'Apache HTTP Server — widely-used web server',
         'check':'which apache2 2>/dev/null',
         'versions':[
-            {'label':'2.4.67 (Latest Stable)', 'value':'2.4'},
+            {'label':'2.4.68 (Latest Stable)', 'value':'2.4.68'},
+            {'label':'2.4.67 (Stable)',         'value':'2.4.67'},
         ],
-        'install':'apt-get install -y apache2 && systemctl enable apache2 && systemctl start apache2',
+        'install_tpl':(
+            'export DEBIAN_FRONTEND=noninteractive && '
+            'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
+            'apt-get update -qq && '
+            'apt-get install -y apache2={ver}.* 2>/dev/null || apt-get install -y apache2 && '
+            'systemctl enable apache2 && systemctl start apache2'
+        ),
+        'install':'export DEBIAN_FRONTEND=noninteractive && apt-get install -y apache2 && systemctl enable apache2 && systemctl start apache2',
         'uninstall':'apt-get remove -y --purge apache2 apache2-utils apache2-bin && apt-get autoremove -y',
         'service':'apache2', 'manage':True,
     },
@@ -90,9 +98,9 @@ apt-get install -y nginx && systemctl enable --now nginx''',
         'desc':'LiteSpeed open source web server',
         'check':'test -f /usr/local/lsws/bin/lshttpd && echo found',
         'versions':[
-            {'label':'1.8.4 (Stable)',  'value':'1.8.4'},
-            {'label':'1.8.5 (Stable)',  'value':'1.8.5'},
-            {'label':'1.9.0 (Latest)',  'value':'1.9.0'},
+            {'label':'1.9.x (Latest - Apr 2026)', 'value':'1.9'},
+            {'label':'1.8.5 (Stable - Jan 2026)', 'value':'1.8.5'},
+            {'label':'1.8.4 (Stable)',               'value':'1.8.4'},
         ],
         'install_tpl':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed={ver} 2>/dev/null || \
@@ -139,18 +147,19 @@ systemctl enable caddy && systemctl start caddy''',
         'desc':'The world\'s most popular open source database',
         'check':'dpkg -l mysql-server 2>/dev/null | grep -c "^ii"',
         'versions':[
-            {'label':'8.0.41 (LTS)',   'value':'8.0'},
-            {'label':'8.4.4 (LTS)',    'value':'8.4'},
-            {'label':'9.3.0 (Latest)', 'value':'9.0'},
+            {'label':'9.7.0 (LTS - Latest)', 'value':'9.7'},
+            {'label':'8.4.4 (LTS)',          'value':'8.4'},
+            {'label':'8.0.41 (LTS)',         'value':'8.0'},
         ],
-        'install_tpl':'''apt-get install -y wget lsb-release gnupg && \
-wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && \
-DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && \
-apt-get update -q && \
-DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server-{ver} 2>/dev/null || \
-DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server && \
-systemctl enable --now mysql''',
-        'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server && systemctl enable mysql && systemctl start mysql',
+        'install_tpl':(
+            'export DEBIAN_FRONTEND=noninteractive && '
+            'apt-get install -y wget lsb-release gnupg && '
+            'wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && '
+            'DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
+            'apt-get update -q && '
+            'apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server && '
+            'systemctl enable --now mysql'
+        ),
         'uninstall':'apt-get remove -y --purge mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
         'service':'mysql', 'manage':True,
     },
@@ -161,7 +170,7 @@ systemctl enable --now mysql''',
         'versions':[
             {'label':'10.11.11 (LTS)',  'value':'10.11'},
             {'label':'11.4.5 (LTS)',    'value':'11.4'},
-            {'label':'11.7.2 (Latest)', 'value':'11.7'},
+            {'label':'11.7.2 (Latest Stable)', 'value':'11.7'},
         ],
         'install_tpl':'''curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
 bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
@@ -903,7 +912,7 @@ def get_module_settings(mod_id):
             'conf_path':conf_path,'conf_content':conf_content,
             'logs':logs,'log_path':log_path,'slow_log':slow_log,
             'port':port,'datadir':datadir,
-            'current_status':current_status,'optimization':optimization})
+            'current_status':current_status,'optimization':optimization, 'versions': [{'label': '9.3 (Latest)', 'value': '9.3'}, {'label': '8.4 (LTS)', 'value': '8.4'}, {'label': '8.0 (LTS)', 'value': '8.0'}]})
 
     elif mod_id == 'mariadb':
         status  = sh('systemctl is-active mariadb') or 'inactive'
@@ -917,7 +926,7 @@ def get_module_settings(mod_id):
         logs = sh('journalctl -u mariadb -n 80') or 'No logs'
         port = sh("mysql -e 'SHOW VARIABLES LIKE \"port\"' 2>/dev/null | awk 'NR==2{print $2}'") or '3306'
         return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'port':port})
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'port':port, 'versions': [{'label': '11.7 (Latest)', 'value': '11.7'}, {'label': '11.4 (LTS)', 'value': '11.4'}, {'label': '10.11 (LTS)', 'value': '10.11'}, {'label': '10.6 (LTS)', 'value': '10.6'}]})
 
     elif mod_id == 'redis':
         status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis') or 'inactive'
@@ -1134,7 +1143,7 @@ def get_module_settings(mod_id):
         except: conf_content = ''
         logs = sh('journalctl -u postgresql -n 80') or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs, 'versions': [{'label': '17 (Latest)', 'value': '17'}, {'label': '16 (Stable)', 'value': '16'}, {'label': '15 (Stable)', 'value': '15'}]})
 
     elif mod_id == 'mongodb':
         status  = sh('systemctl is-active mongod') or 'inactive'
@@ -1146,7 +1155,7 @@ def get_module_settings(mod_id):
         logs = sh('tail -80 /var/log/mongodb/mongod.log 2>/dev/null') or \
                sh('journalctl -u mongod -n 80') or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs, 'versions': [{'label': '8.0 (Latest)', 'value': '8.0'}, {'label': '7.0 (Stable)', 'value': '7.0'}, {'label': '6.0 (LTS)', 'value': '6.0'}]})
 
     elif mod_id == 'phpmyadmin':
         pma_conf = '/etc/nginx/conf.d/phpmyadmin.conf'
@@ -1203,7 +1212,7 @@ def get_module_settings(mod_id):
         npm_path  = sh('which npm 2>/dev/null') or ''
         info = f'Node.js {version}\nnpm {npm_ver}\nnode: {node_path}\nnpm: {npm_path}'
         return jsonify({'ok':True,'status':'active' if node_path else 'inactive',
-            'version':version,'info':info})
+            'version':version,'info':info, 'versions': [{'label': 'v24 LTS (Jod)', 'value': '24'}, {'label': 'v22 LTS (Jod)', 'value': '22'}, {'label': 'v20 LTS (Iron)', 'value': '20'}, {'label': 'v18 LTS (Hydrogen)', 'value': '18'}]})
 
     elif mod_id == 'bind9':
         status  = sh('systemctl is-active named 2>/dev/null || systemctl is-active bind9 2>/dev/null') or 'inactive'
@@ -1237,7 +1246,7 @@ def get_module_settings(mod_id):
         logs = sh('journalctl -u named -n 80 --no-pager 2>/dev/null') or                sh('journalctl -u bind9 -n 80 --no-pager 2>/dev/null') or 'No logs'
         return jsonify({'ok':True, 'status':status, 'version':version,
             'zones': zones, 'conf_path': named_conf, 'conf_content': conf_content,
-            'logs': logs, 'zones_dir': zones_dir})
+            'logs': logs, 'zones_dir': zones_dir, 'versions': [{'label': '9.20.x (Stable - ISC)', 'value': '9.20'}, {'label': '9.18.x (ESV/LTS - Ubuntu)', 'value': '9.18'}]})
 
     elif mod_id == 'ddns':
         import json as _json
@@ -1468,6 +1477,84 @@ def save_module_settings(mod_id):
         elif mod_id in ('pure-ftpd', 'pure_ftpd') and ver:
             out = sh('apt-get install -y pure-ftpd=' + ver + ' 2>/dev/null || apt-get install -y pure-ftpd 2>&1', t=60)
             return jsonify({'ok': True, 'output': out})
+        elif mod_id == 'mariadb' and ver:
+            script = (
+                'export DEBIAN_FRONTEND=noninteractive && '
+                'systemctl stop mariadb 2>/dev/null; '
+                'curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version=' + ver + ' && '
+                'apt-get update -qq && '
+                'apt-get install -y mariadb-server && '
+                'systemctl start mariadb'
+            )
+            out = sh(script, t=300)
+            new_ver = sh("mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+
+        elif mod_id == 'postgresql' and ver:
+            script = (
+                'export DEBIAN_FRONTEND=noninteractive && '
+                'rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
+                'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
+                'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
+                'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && '
+                'apt-get update -qq && '
+                'apt-get install -y postgresql-' + ver + ' && '
+                'systemctl restart postgresql'
+            )
+            out = sh(script, t=300)
+            new_ver = sh("psql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+' | head -1") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+
+        elif mod_id == 'mongodb' and ver:
+            script = (
+                'export DEBIAN_FRONTEND=noninteractive && '
+                'systemctl stop mongod 2>/dev/null; '
+                'rm -f /usr/share/keyrings/mongodb-server-*.gpg /etc/apt/sources.list.d/mongodb*.list && '
+                'curl -fsSL https://www.mongodb.org/static/pgp/server-' + ver + '.asc -o /tmp/mongo.asc && '
+                'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-' + ver + '.gpg /tmp/mongo.asc && '
+                'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-' + ver + '.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/' + ver + ' multiverse" > /etc/apt/sources.list.d/mongodb-org-' + ver + '.list && '
+                'apt-get update -qq && '
+                'apt-get install -y mongodb-org && '
+                'systemctl start mongod'
+            )
+            out = sh(script, t=300)
+            new_ver = sh("mongod --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+
+        elif mod_id == 'apache2' and ver:
+            script = (
+                'export DEBIAN_FRONTEND=noninteractive && '
+                'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
+                'apt-get update -qq && '
+                'apt-get install -y --allow-downgrades apache2=' + ver + '-* 2>/dev/null || '
+                'apt-get install -y apache2 && '
+                'systemctl restart apache2'
+            )
+            out = sh(script, t=180)
+            new_ver = sh("apache2 -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+
+        elif mod_id == 'nodejs' and ver:
+            script = (
+                'export DEBIAN_FRONTEND=noninteractive && '
+                'curl -fsSL https://deb.nodesource.com/setup_' + ver + '.x | bash - && '
+                'apt-get install -y nodejs'
+            )
+            out = sh(script, t=180)
+            new_ver = sh("node --version 2>/dev/null") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+
+        elif mod_id == 'bind9' and ver:
+            script = (
+                'export DEBIAN_FRONTEND=noninteractive && '
+                + ('add-apt-repository -y ppa:isc/bind && apt-get update -qq && ' if ver == '9.20' else 'apt-get update -qq && ') +
+                'apt-get install -y bind9 bind9utils && '
+                '(systemctl restart named 2>/dev/null || systemctl restart bind9 2>/dev/null)'
+            )
+            out = sh(script, t=180)
+            new_ver = sh("named -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+
         elif mod_id == 'nginx' and ver:
             # Switch nginx repo based on channel (stable/mainline)
             repo = 'http://nginx.org/packages/ubuntu' if ver == 'stable' else 'http://nginx.org/packages/mainline/ubuntu'
