@@ -1,5 +1,16 @@
 from flask import Blueprint, jsonify, request, session
 import os, re, subprocess
+try:
+    from panel.routes.os_utils import get_os, pkg_install, pkg_update, pkg_remove
+except ImportError:
+    try:
+        from os_utils import get_os, pkg_install, pkg_update, pkg_remove
+    except ImportError:
+        def get_os(): return {'family':'debian','pkg':'apt','id':'ubuntu','codename':'noble'}
+        def pkg_install(p, f=''): return f'DEBIAN_FRONTEND=noninteractive apt-get install -y {f} {p}'
+        def pkg_update(): return 'apt-get update -qq'
+        def pkg_remove(p): return f'apt-get remove -y --purge {p} && apt-get autoremove -y'
+
 
 websites_bp = Blueprint('websites', __name__)
 WEBROOT = '/www/wwwroot'
@@ -11,11 +22,14 @@ def sh(c, t=15):
 
 def get_nginx_dirs():
     """Return VortexPanel-managed nginx vhost directory"""
-    # VortexPanel uses its own directory to avoid conflicts with system configs
     vortex_dir = '/etc/nginx/vortex'
     os.makedirs(vortex_dir, exist_ok=True)
-    # Ensure nginx.conf includes this directory
-    nginx_conf = '/etc/nginx/nginx.conf'
+    # Find nginx.conf - check multiple paths for different distros
+    nginx_conf_paths = [
+        '/etc/nginx/nginx.conf',
+        '/usr/local/nginx/conf/nginx.conf',
+    ]
+    nginx_conf = next((p for p in nginx_conf_paths if os.path.exists(p)), '/etc/nginx/nginx.conf')
     if os.path.exists(nginx_conf):
         with open(nginx_conf) as f: nc = f.read()
         if 'vortex' not in nc:
@@ -24,16 +38,15 @@ def get_nginx_dirs():
     return vortex_dir, vortex_dir
 
 def get_webroot():
-    for p in [WEBROOT, '/var/www/html', '/var/www', '/srv/www']:
+    for p in [WEBROOT, '/var/www/html', '/var/www', '/srv/www', '/usr/share/nginx/html']:
         if os.path.isdir(p): return p
     os.makedirs(WEBROOT, exist_ok=True)
     return WEBROOT
 
 def reload_nginx():
-    # Try different nginx reload methods
-    for cmd in ['systemctl reload nginx', 'nginx -s reload', 'service nginx reload']:
-        if sh(f'{cmd} 2>/dev/null') is not None:
-            break
+    for cmd in ['systemctl reload nginx', 'nginx -s reload', 'service nginx reload', 'systemctl reload nginx.service']:
+        out = sh(f'{cmd} 2>/dev/null; echo $?')
+        if out.strip() == '0': break
 
 def list_sites():
     sites = []
@@ -97,7 +110,8 @@ def create_site():
     php_sock = f'/run/php/php{php}-fpm.sock'
     # Check alternative socket paths
     for sock in [f'/run/php/php{php}-fpm.sock', f'/var/run/php/php{php}-fpm.sock',
-                 f'/tmp/php{php}-fpm.sock', f'/run/php-fpm/php{php}-fpm.sock']:
+                 f'/tmp/php{php}-fpm.sock', f'/run/php-fpm/php{php}-fpm.sock',
+                 f'/run/php-fpm/www.sock', f'/var/run/php-fpm/www.sock']:
         if os.path.exists(sock):
             php_sock = sock
             break

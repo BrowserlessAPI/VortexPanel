@@ -6,6 +6,38 @@ except ImportError:
     from os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script
 
 modules_bp = Blueprint('modules', __name__)
+
+def os_cmd(apt_cmd):
+    """Translate apt-get commands to the current OS package manager"""
+    _os = get_os()
+    if _os['family'] == 'debian':
+        return apt_cmd
+    # RHEL/Fedora/AlmaLinux/Rocky
+    cmd = apt_cmd
+    cmd = cmd.replace('DEBIAN_FRONTEND=noninteractive ', '')
+    cmd = cmd.replace('apt-get install -y', 'dnf install -y')
+    cmd = cmd.replace('apt-get update -qq', 'dnf check-update -q; true')
+    cmd = cmd.replace('apt-get update -q', 'dnf check-update -q; true')
+    cmd = cmd.replace('apt-get update', 'dnf check-update; true')
+    cmd = cmd.replace('apt-get remove -y --purge', 'dnf remove -y')
+    cmd = cmd.replace('apt-get autoremove -y', 'dnf autoremove -y')
+    cmd = cmd.replace('add-apt-repository -y', 'true #')
+    cmd = cmd.replace('add-apt-repository', 'true #')
+    cmd = cmd.replace('apt-get -y install', 'dnf install -y')
+    # Package name differences
+    cmd = cmd.replace('software-properties-common', 'dnf-plugins-core')
+    cmd = cmd.replace('python3-pip', 'python3-pip')
+    cmd = cmd.replace('apache2', 'httpd')
+    cmd = cmd.replace('apache2-utils', 'httpd-tools')
+    return cmd
+
+def translate_install_cmd(cmd):
+    """Translate install command for current OS"""
+    _os = get_os()
+    if _os['family'] == 'debian':
+        return cmd
+    return os_cmd(cmd)
+
 def req(): return 'user' in session
 _jobs = {}
 
@@ -719,7 +751,8 @@ def install_module(mod_id):
 
     def run_job():
         _jobs[job_id]['lines'].append(f'[VortexPanel] Installing {mod["name"]} {ver}...')
-        proc = subprocess.Popen(f'DEBIAN_FRONTEND=noninteractive {cmd} 2>&1',
+        _final_cmd = translate_install_cmd(cmd)
+        proc = subprocess.Popen(f'DEBIAN_FRONTEND=noninteractive {_final_cmd} 2>&1',
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in proc.stdout:
             _jobs[job_id]['lines'].append(line.rstrip())

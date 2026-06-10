@@ -1,5 +1,16 @@
 from flask import Blueprint, jsonify, request, session, Response
 import subprocess, os, json, threading, time, urllib.request, urllib.error
+try:
+    from panel.routes.os_utils import get_os, pkg_install, pkg_update, pkg_remove
+except ImportError:
+    try:
+        from os_utils import get_os, pkg_install, pkg_update, pkg_remove
+    except ImportError:
+        def get_os(): return {'family':'debian','pkg':'apt','id':'ubuntu','codename':'noble'}
+        def pkg_install(p, f=''): return f'DEBIAN_FRONTEND=noninteractive apt-get install -y {f} {p}'
+        def pkg_update(): return 'apt-get update -qq'
+        def pkg_remove(p): return f'apt-get remove -y --purge {p} && apt-get autoremove -y'
+
 
 update_bp = Blueprint('update', __name__)
 def req(): return 'user' in session
