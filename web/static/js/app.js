@@ -1575,11 +1575,25 @@ function modulesPage() {
         dns_zones:'Zone List', dns_records:'DNS Records', dns_config:'Config', dns_private:'Private DNS',
         upload_limit:'Limit of Upload', timeout_limit:'Limit of Timeout',
         disabled_functions:'Disabled Functions', load_average:'Load Average',
-        session_config:'Session Config', slow_log:'Slow Log',
-        users:'User Management', website_protection:'Website Protection',
+        session_config:'Session Config', users:'User Management',
+        website_protection:'Website Protection',
         server_protection:'Server Protection', black_ip:'Black IP', white_ip:'White IP',
       };
-      return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t}));
+      const icons = {
+        service:'🔧', config:'📄', optimization:'⚡', logs:'📋',
+        php_version:'🐘', security:'🔒', info:'ℹ️', storage:'💾',
+        port:'🔌', current_status:'📊', slow_log:'🐢',
+        switch_version:'🔄', persistence:'💿', extensions:'🧩',
+        ini:'⚙️', fpm:'🖥️', phpinfo:'📑',
+        caddyfile:'📄', global_opts:'🌐', auto_https:'🔐',
+        ddns_domains:'🌍', ddns_server:'🖥️', ddns_log:'📋',
+        dns_zones:'🗂️', dns_records:'📝', dns_config:'⚙️', dns_private:'🔏',
+        upload_limit:'📤', timeout_limit:'⏱️', disabled_functions:'🚫',
+        load_average:'📈', session_config:'🔑', users:'👥',
+        website_protection:'🛡️', server_protection:'🔰',
+        black_ip:'⛔', white_ip:'✅',
+      };
+      return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'⚙️'}));
     },
   };
 }
