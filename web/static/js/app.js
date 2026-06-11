@@ -1418,6 +1418,24 @@ function modulesPage() {
       pmaUrl: '',
       dockerInfo: '',
       confChanged: false,
+      phpConfig: {},
+      fpmProfile: {},
+      zoneForm: {domain:'',ip:''},
+      recordForm: {host:'@',type:'A',value:'',ttl:'3600'},
+      ddnsForm: {provider:'cloudflare',email:'',domain:'',api_token:'',api_limit:false},
+      caddyOpts: {email:'',http_port:'80',https_port:'443',admin:'localhost:2019'},
+      rcData: {},
+      versions: [], switchVer: '',
+      currentStatus: {}, slowLog: '',
+      persistence: {}, extensions: [],
+      iniContent: '', iniPath: '', fpmConf: '', fpmContent: '',
+      selPhpVer: '', phpinfo: {},
+      ftpUsers: [], ftpAddr: '',
+      jails: [], blackIps: '', whiteIps: '',
+      caddyCerts: '', ddnsDomains: [], dnsZones: [],
+      dnsRecords: [], dnsSelZone: '', showAddZone: false,
+      showAddRecord: false, ddnsStatus: {enabled:false,current_ip:'',interval:300},
+      ddnsLog: '', showAddDomain: false,
     },
 
     async openSettings(m) {
@@ -1427,7 +1445,7 @@ function modulesPage() {
       const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service','roundcube':'rc_overview'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service'}[m.id] : 'service';
       this.settingsModal = {
         ...this.settingsModal,
-        show: true, mod: m, tab: defaultTab,
+        show: true, mod: m, tab: defaultTab, rcData: {},
         loading: true, confContent: '', logs: '', status: '',
       };
       const r = await get('/api/modules/'+m.id+'/settings');
@@ -1609,12 +1627,11 @@ function firewallPage() {
     async init() { await this.load(); },
 
     async load() {
-      const [rs, st] = await Promise.all([
-        get('/api/firewall/rules'),
-        get('/api/firewall/status'),
-      ]);
-      if (rs.ok) this.rules  = rs.rules  || [];
-      if (st.ok) this.status = st.status || '';
+      const r = await get('/api/firewall');
+      if (r.ok) {
+        this.rules  = r.rules  || [];
+        this.status = r.status || '';
+      }
     },
 
     async add() {

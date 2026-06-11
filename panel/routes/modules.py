@@ -799,8 +799,7 @@ def install_module(mod_id):
         # Read config values
         def rc_get(key):
             cmd = "grep -oP \"'" + key + "'\\] = '\\K[^']+\" " + rc_conf + " 2>/dev/null | head -1"
-            return sh(cmd) or ''
-            return sh(cmd) or ""
+            return sh(cmd).strip().lstrip("'") or ''
         imap_host  = rc_get('imap_host') or 'localhost'
         smtp_host  = rc_get('smtp_host') or 'localhost'
         smtp_port  = rc_get('smtp_port') or '587'

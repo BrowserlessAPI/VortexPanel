@@ -2123,7 +2123,7 @@
                 </div>
 
                 <!-- ROUNDCUBE: OVERVIEW -->
-                <div x-show="settingsModal.tab==='rc_overview'">
+                <div x-show="settingsModal.tab==='rc_overview'" style="min-height:200px">
                   <div style="margin-bottom:20px">
                     <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:16px;text-transform:uppercase;letter-spacing:.4px">Roundcube Webmail</div>
                     <!-- Access URL card -->
@@ -2789,14 +2789,15 @@
         </div>
         <div class="card" style="padding:0;overflow:hidden">
           <table class="data-table">
-            <thead><tr><th>#</th><th>Rule</th><th>Action</th><th>From</th><th>Del</th></tr></thead>
+            <thead><tr><th>#</th><th>Port / To</th><th>Protocol</th><th>Action</th><th>From</th><th></th></tr></thead>
             <tbody>
               <template x-for="r in rules" :key="r.num">
                 <tr>
                   <td x-text="r.num"></td>
-                  <td style="font-family:var(--font-mono);font-size:12px" x-text="r.to"></td>
+                  <td style="font-family:var(--font-mono);font-size:12px" x-text="r.to.replace(/\/tcp|\/udp/,'')"></td>
+                  <td><span class="badge badge-gray" x-text="r.to.includes('udp')?'UDP':'TCP'"></span></td>
                   <td><span :class="'badge badge-'+(r.action==='ALLOW'?'green':'red')" x-text="r.action"></span></td>
-                  <td style="font-size:12px" x-text="r.from||'Anywhere'"></td>
+                  <td style="font-size:12px" x-text="(r.from||'Anywhere').replace(/ #.*$/,'')"></td>
                   <td><button class="btn btn-danger btn-xs" @click="del(r.num)">✕</button></td>
                 </tr>
               </template>
