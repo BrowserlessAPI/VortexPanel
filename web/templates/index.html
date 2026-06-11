@@ -2754,24 +2754,27 @@
 
       <!-- SERVICES -->
       <div x-show="page==='services'" x-data="servicesPage()">
-        <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()">↻</button></div>
-        <div class="card" style="padding:0;overflow:hidden">
-          <table class="data-table">
-            <thead><tr><th>Service</th><th>Status</th><th>Actions</th></tr></thead>
-            <tbody>
-              <template x-for="s in services" :key="s.name">
-                <tr>
-                  <td><div style="font-weight:600" x-text="s.name"></div></td>
-                  <td><span :class="'badge badge-'+(s.status==='active'?'green':s.status==='inactive'?'red':'yellow')" x-text="s.status"></span></td>
-                  <td><div style="display:flex;gap:4px">
-                    <button class="btn btn-success btn-xs" @click="control(s.name,'start')">Start</button>
-                    <button class="btn btn-ghost btn-xs" @click="control(s.name,'restart')">Restart</button>
-                    <button class="btn btn-danger btn-xs" @click="control(s.name,'stop')">Stop</button>
-                  </div></td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
+        <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
+          <template x-for="s in services" :key="s.name">
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div style="width:36px;height:36px;border-radius:9px;background:var(--bg-raised);display:flex;align-items:center;justify-content:center;font-size:18px" x-text="serviceIcon(s.name)"></div>
+                  <div>
+                    <div style="font-weight:700;font-size:14px" x-text="s.name"></div>
+                    <div style="font-size:11px;color:var(--text-muted)" x-text="s.description||'System service'"></div>
+                  </div>
+                </div>
+                <span :class="'badge badge-'+(s.status==='active'?'green':s.status==='inactive'?'red':'yellow')" x-text="s.status"></span>
+              </div>
+              <div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:12px">
+                <button class="btn btn-success btn-xs" style="flex:1" @click="control(s.name,'start')">▶ Start</button>
+                <button class="btn btn-ghost btn-xs" style="flex:1" @click="control(s.name,'restart')">↻ Restart</button>
+                <button class="btn btn-danger btn-xs" style="flex:1" @click="control(s.name,'stop')">■ Stop</button>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
 

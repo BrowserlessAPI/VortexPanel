@@ -1273,6 +1273,11 @@ function servicesPage() {
     services: [],
 
     async init() { await this.load(); },
+    serviceIcon(name) {
+      const m = {nginx:'🌐',apache2:'🌐',caddy:'🌐',mysql:'🗄️',mariadb:'🗄️',postgresql:'🐘',mongodb:'🍃',redis:'⚡',docker:'🐳',supervisor:'👁️',ufw:'🛡️',fail2ban:'🔒',clamav:'🦠',bind9:'📡',ssh:'🔑',sshd:'🔑',php:'🐘',vortexpanel:'🌀'};
+      for(const[k,v]of Object.entries(m)){if(name.toLowerCase().includes(k))return v;}
+      return '⚙️';
+    },
 
     async load() {
       const r = await get('/api/services');
