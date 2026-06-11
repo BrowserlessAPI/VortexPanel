@@ -2305,7 +2305,7 @@ function cronPage() {
   return {
     jobs: [], templates: [], schedulePresets: [],
     showForm: false, editTarget: null,
-    schedulePreset: '0 0 * * *', scheduleHuman: 'Daily at 00:00',
+    schedulePreset: '* * * * *', scheduleHuman: 'Every minute',
     showCustom: false, selectedTemplate: null,
     form: {name:'', schedule:'0 0 * * *', command:'', type:'shell', user:'root'},
     runModal: {show:false, name:'', cmd:'', lines:[], done:false, exit:null},
@@ -2332,7 +2332,7 @@ function cronPage() {
     openAdd() {
       this.editTarget=null;
       this.form={name:'',schedule:'0 0 * * *',command:'',type:'shell',user:'root'};
-      this.schedulePreset='0 0 * * *'; this.scheduleHuman='Daily at 00:00';
+      this.schedulePreset='0 0 * * *'; this.scheduleHuman='Daily at midnight';
       this.showCustom=false;
       this.selectedTemplate=this.templates.find(t=>t.id==='shell')||null;
       this.showForm=true;
