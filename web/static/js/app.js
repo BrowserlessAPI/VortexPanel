@@ -362,7 +362,7 @@ function websitesPage() {
 // ── DATABASES ─────────────────────────────────────────────────────────────────
 function databasesPage() {
   return {
-    dbs:[], users:[], tab:'dbs', showAdd:false, showAddUser:false,
+    dbs:[], users:[], showAdd:false, showAddUser:false,
     engines:[], activeEngine:'mysql', dbInfo:{}, noEngine:false,
     form:{name:'',user:'',pass:'',charset:'utf8mb4'},
     userForm:{name:'',pass:'',host:'localhost'},
@@ -370,6 +370,15 @@ function databasesPage() {
     importFile:null, importTargetDb:'', showImport:false,
     searchQuery:'',
     get filteredDbs(){ return this.dbs.filter(d=>d.name.toLowerCase().includes(this.searchQuery.toLowerCase())); },
+    get combined(){
+      const systemUsers=['mysql','mariadb.sys','postgres'];
+      const filtered=this.users.filter(u=>!systemUsers.includes(u.user));
+      return this.filteredDbs.map(db=>{
+        let user=filtered.find(u=>db.name.includes(u.user)||u.user.includes(db.name.replace('_db','').replace('_','')));
+        if(!user) user=filtered[0]||null;
+        return {db,user};
+      });
+    },
     async init(){ await this.load(); },
     async load(){
       const r=await get('/api/databases?engine='+this.activeEngine);
@@ -1660,45 +1669,75 @@ function firewallPage() {
   };
 }
 
-// ── TERMINAL ──────────────────────────────────────────────────────────────────
+// ── TERMINAL (xterm.js + WebSocket PTY) ─────────────────────────────────────
 function terminalPage() {
   return {
-    output: [], input: '', history: [], histIdx: -1, cwd: '/',
-
-    async init() {
-      this.output = [
-        {text: '╔═══════════════════════════════════╗', cls:'system'},
-        {text: '║  VortexPanel Terminal  v3.0       ║', cls:'system'},
-        {text: '╚═══════════════════════════════════╝', cls:'system'},
-        {text: 'Type commands below. Use ↑↓ for history.', cls:'system'},
-      ];
-    },
-
-    async run() {
-      const cmd = this.input.trim();
-      if (!cmd) return;
-      this.history.unshift(cmd);
-      this.histIdx = -1;
-      this.output.push({text: `[${this.cwd}]$ ${cmd}`, cls:'cmd'});
-      this.input = '';
-      if (cmd === 'clear') { this.output = []; return; }
-      const r = await post('/api/terminal/exec', {cmd, cwd: this.cwd});
-      if (r.ok) {
-        if (r.cwd)    this.cwd = r.cwd;
-        if (r.output) this.output.push({text: r.output, cls:'out'});
-        if (r.error)  this.output.push({text: r.error,  cls:'err'});
+    connected: false,
+    term: null, fitAddon: null, ws: null,
+    init() {
+      if (this.term) {
+        setTimeout(()=>this.fitAddon.fit(), 50);
+        setTimeout(()=>this.fitAddon.fit(), 300);
+        return;
       }
-      this.$nextTick(() => {
-        const t = this.$refs.term;
-        if (t) t.scrollTop = t.scrollHeight;
+      this.term = new Terminal({
+        cursorBlink: true,
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 13,
+        theme: { background: '#0d0e14', foreground: '#e2e8f0', cursor: '#7c8af7' },
+        scrollback: 5000,
       });
+      this.fitAddon = new FitAddon.FitAddon();
+      this.term.loadAddon(this.fitAddon);
+      this.term.open(this.$refs.term);
+      this.connect();
+      const doFit = () => {
+        try {
+          this.fitAddon.fit();
+          this.sendResize();
+        } catch(e) {}
+      };
+      // Refit repeatedly while layout settles
+      setTimeout(doFit, 50);
+      setTimeout(doFit, 200);
+      setTimeout(doFit, 500);
+      setTimeout(doFit, 1000);
+      // Refit whenever the terminal container resizes (e.g. tab switch, sidebar toggle)
+      const ro = new ResizeObserver(() => doFit());
+      ro.observe(this.$refs.term);
+      window.addEventListener('resize', doFit);
+      this.term.onData(data => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(data);
+      });
+      this.term.onResize(() => this.sendResize());
     },
-
-    keyUp()   { if (this.histIdx < this.history.length-1) { this.histIdx++; this.input=this.history[this.histIdx]; } },
-    keyDown() { if (this.histIdx > 0) { this.histIdx--; this.input=this.history[this.histIdx]; } else { this.histIdx=-1; this.input=''; } },
+    sendResize() {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN && this.term) {
+        const {cols, rows} = this.term;
+        this.ws.send('\x00RESIZE\x00' + cols + ',' + rows);
+      }
+    },
+    connect() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      this.ws = new WebSocket(`${proto}://${location.host}/ws/terminal`);
+      this.ws.onopen = () => {
+        this.connected = true;
+        setTimeout(() => this.sendResize(), 200);
+      };
+      this.ws.onmessage = (ev) => { if (this.term) this.term.write(ev.data); };
+      this.ws.onclose = () => {
+        this.connected = false;
+        if (this.term) this.term.write('\r\n\x1b[31m[Connection closed]\x1b[0m\r\n');
+      };
+      this.ws.onerror = () => { this.connected = false; };
+    },
+    reconnect() {
+      if (this.ws) { try { this.ws.close(); } catch(e){} }
+      if (this.term) this.term.clear();
+      this.connect();
+    },
   };
 }
-
 // ── BACKUPS ───────────────────────────────────────────────────────────────────
 function backupsPage() {
   return {

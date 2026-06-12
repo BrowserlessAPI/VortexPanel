@@ -7,6 +7,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/theme.css">
+<link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
+<script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
   <style>[x-cloak]{display:none!important}</style>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js"></script>
@@ -761,72 +764,45 @@
           </div>
         </div>
 
-        <!-- Tabs -->
-        <div class="tabs" style="margin-bottom:16px">
-          <div class="tab" :class="{active:tab==='dbs'}" @click="tab='dbs'">Databases (<span x-text="dbs.length"></span>)</div>
-          <div class="tab" :class="{active:tab==='users'}" @click="tab='users'">Users (<span x-text="users.length"></span>)</div>
+        <!-- COMBINED TABLE (Databases + Users in one view) -->
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+          <input class="form-input" style="max-width:280px" x-model="searchQuery" placeholder="🔍 Search databases...">
+          <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
+          <button class="btn btn-primary btn-sm" @click="showAddUser=true">+ Add User</button>
         </div>
-
-        <!-- DATABASES TAB -->
-        <div x-show="tab==='dbs'">
-          <div style="display:flex;gap:8px;margin-bottom:12px">
-            <input class="form-input" style="max-width:280px" x-model="searchQuery" placeholder="🔍 Search databases...">
-            <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
-          </div>
-          <div class="card" style="padding:0;overflow:hidden">
-            <table class="data-table">
-              <thead><tr><th>Database Name</th><th>Size</th><th>Tables</th><th>Charset</th><th>Actions</th></tr></thead>
-              <tbody>
-                <template x-for="db in filteredDbs" :key="db.name">
-                  <tr>
-                    <td style="font-weight:600;font-family:var(--font-mono)" x-text="db.name"></td>
-                    <td x-text="(db.size_mb||0)+' MB'"></td>
-                    <td x-text="db.tables||0"></td>
-                    <td><span class="badge badge-gray" style="font-size:10px">utf8mb4</span></td>
-                    <td>
-                      <div style="display:flex;gap:5px">
-                        <button class="btn btn-ghost btn-xs" @click="exportDb(db.name)" title="Export SQL">⬇ Export</button>
-                        <button class="btn btn-ghost btn-xs" @click="importTargetDb=db.name;showImport=true">⬆ Import</button>
-                        <button class="btn btn-danger btn-xs" @click="drop(db.name)">Drop</button>
-                      </div>
-                    </td>
-                  </tr>
-                </template>
-                <template x-if="!filteredDbs.length && !noEngine">
-                  <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px">No databases found. Create one to get started.</td></tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- USERS TAB -->
-        <div x-show="tab==='users'">
-          <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-            <button class="btn btn-primary btn-sm" @click="showAddUser=true">+ Add User</button>
-          </div>
-          <div class="card" style="padding:0;overflow:hidden">
-            <table class="data-table">
-              <thead><tr><th>Username</th><th>Host</th><th>Actions</th></tr></thead>
-              <tbody>
-                <template x-for="u in users" :key="u.user+'@'+u.host">
-                  <tr>
-                    <td style="font-weight:600;font-family:var(--font-mono)" x-text="u.user"></td>
-                    <td style="font-family:var(--font-mono);color:var(--text-muted)" x-text="u.host"></td>
-                    <td>
-                      <div style="display:flex;gap:5px">
-                        <button class="btn btn-ghost btn-xs" @click="selUser=u;showUserDetail=true;newPass='';grantDb=''">Manage</button>
-                        <button class="btn btn-danger btn-xs" @click="dropUser(u.user)">Drop</button>
-                      </div>
-                    </td>
-                  </tr>
-                </template>
-                <template x-if="!users.length && !noEngine">
-                  <tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px">No users found.</td></tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
+        <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+          <table class="data-table">
+            <thead><tr><th>Database</th><th>Username</th><th>Size</th><th>Tables</th><th>Charset</th><th>Actions</th></tr></thead>
+            <tbody>
+              <template x-for="row in combined" :key="row.db.name">
+                <tr>
+                  <td style="font-weight:600;font-family:var(--font-mono)" x-text="row.db.name"></td>
+                  <td style="font-family:var(--font-mono);color:var(--text-muted)">
+                    <span x-text="row.user?row.user.user+' ('+row.user.host+')':'—'"></span>
+                  </td>
+                  <td x-text="(row.db.size_mb||0)+' MB'"></td>
+                  <td x-text="row.db.tables||0"></td>
+                  <td><span class="badge badge-gray" style="font-size:10px">utf8mb4</span></td>
+                  <td style="min-width:240px">
+                    <div style="display:flex;gap:4px;flex-wrap:wrap">
+                      <button class="btn btn-ghost btn-xs" @click="exportDb(row.db.name)">Export</button>
+                      <button class="btn btn-ghost btn-xs" @click="importTargetDb=row.db.name;showImport=true">Import</button>
+                      <template x-if="row.user">
+                        <button class="btn btn-ghost btn-xs" @click="selUser=row.user;showUserDetail=true;newPass='';grantDb=''">Manage User</button>
+                      </template>
+                      <template x-if="!row.user">
+                        <button class="btn btn-ghost btn-xs" @click="showAddUser=true">Add User</button>
+                      </template>
+                      <button class="btn btn-danger btn-xs" @click="drop(row.db.name)">Drop DB</button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+              <template x-if="!combined.length && !noEngine">
+                <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px">No databases found. Create one to get started.</td></tr>
+              </template>
+            </tbody>
+          </table>
         </div>
 
         <!-- CREATE DB MODAL -->
@@ -2823,28 +2799,24 @@
       </div>
 
       <!-- TERMINAL -->
-      <div x-show="page==='terminal'" x-data="terminalPage()">
-        <div class="page-header"><div><div class="page-title">Terminal</div><div class="page-sub">Execute shell commands on your server</div></div></div>
-        <div style="background:#0d0e14;border:1px solid #1e2030;border-radius:12px;overflow:hidden;height:calc(100vh - 180px);display:flex;flex-direction:column">
+      <!-- TERMINAL -->
+      <div x-show="page==='terminal'" x-data="terminalPage()" x-init="init()" style="min-width:0;max-width:100%">
+        <div class="page-header"><div><div class="page-title">Terminal</div><div class="page-sub">Live shell — connected via WebSocket PTY</div></div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="badge" :class="connected?'badge-green':'badge-red'" x-text="connected?'Connected':'Disconnected'"></span>
+            <button class="btn btn-ghost btn-sm" @click="reconnect()">↻ Reconnect</button>
+          </div>
+        </div>
+        <div style="background:#0d0e14;border:1px solid #1e2030;border-radius:12px;overflow:hidden;height:calc(100vh - 180px);display:flex;flex-direction:column;width:100%;max-width:100%;min-width:0;box-sizing:border-box">
           <div style="padding:10px 16px;background:#161722;border-bottom:1px solid #1e2030;display:flex;align-items:center;gap:8px;flex-shrink:0">
             <div style="width:12px;height:12px;border-radius:50%;background:#ff5f57"></div>
             <div style="width:12px;height:12px;border-radius:50%;background:#febc2e"></div>
             <div style="width:12px;height:12px;border-radius:50%;background:#28c840"></div>
-            <span style="font-size:11px;font-family:monospace;color:#64748b;margin-left:8px" x-text="'root@vortex:'+cwd+'$'"></span>
+            <span style="font-size:11px;font-family:monospace;color:#64748b;margin-left:8px">VortexPanel Terminal — bash</span>
           </div>
-          <div x-ref="term" style="flex:1;overflow-y:auto;padding:14px;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.6">
-            <template x-for="(line,i) in output" :key="i">
-              <div :style="line.cls==='cmd'?'color:#7c8af7':line.cls==='err'?'color:#f87171':line.cls==='system'?'color:#64748b':'color:#e2e8f0'"
-                   style="white-space:pre-wrap" x-text="line.text"></div>
-            </template>
-          </div>
-          <div style="padding:10px 14px;border-top:1px solid #1e2030;display:flex;gap:10px;background:#161722;flex-shrink:0">
-            <span style="color:#7c8af7;font-family:monospace;font-size:13px;align-self:center" x-text="'['+cwd+']$'"></span>
-            <input style="flex:1;background:none;border:none;outline:none;color:#e2e8f0;font-family:'JetBrains Mono',monospace;font-size:13px"
-                   x-model="input" @keydown.enter="run()" @keydown.up.prevent="keyUp()" @keydown.down.prevent="keyDown()"
-                   placeholder="Type a command…" x-ref="termInput" @click="$refs.termInput.focus()">
-          </div>
+          <div x-ref="term" style="flex:1;width:100%;min-width:0;min-height:0;padding:6px 0 0 8px;overflow:hidden;box-sizing:border-box"></div>
         </div>
+      </div>
       </div>
 
       <!-- BACKUPS -->

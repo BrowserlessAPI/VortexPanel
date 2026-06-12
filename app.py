@@ -30,6 +30,7 @@ from panel.routes.security  import security_bp
 from panel.routes.caddy     import caddy_bp
 from panel.routes.cdn       import cdn_bp
 from panel.routes.bandwidth import bandwidth_bp
+from panel.routes.terminal_ws import sock as terminal_sock
 
 def create_app():
     app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
@@ -40,6 +41,7 @@ def create_app():
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp, caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp]:
         app.register_blueprint(bp)
+    terminal_sock.init_app(app)
 
     # Auto-init built-in features (create config files if missing)
     try:
