@@ -162,3 +162,72 @@ def control_mail():
         sh(f'systemctl {action} {svc} 2>&1')
     st_out = sh(f'systemctl is-active {svc} 2>/dev/null')
     return jsonify({'ok': True, 'status': st_out.strip()})
+
+VIRTUAL_ALIAS_FILE = '/etc/postfix/virtual_alias_maps'
+
+@mail_bp.route('/api/mail/forwarding')
+def list_forwarding():
+    if not req(): return jsonify({'ok':False}),401
+    domain = request.args.get('domain','')
+    rules = []
+    if os.path.exists(VIRTUAL_ALIAS_FILE):
+        with open(VIRTUAL_ALIAS_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'): continue
+                parts = line.split(None, 1)
+                if len(parts) != 2: continue
+                source, dest = parts
+                if domain and not source.endswith('@'+domain): continue
+                rules.append({'source':source, 'destination':dest})
+    return jsonify({'ok':True, 'rules':rules})
+
+@mail_bp.route('/api/mail/forwarding', methods=['POST'])
+def add_forwarding():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    source = (d.get('source') or '').strip().lower()
+    dest   = (d.get('destination') or '').strip().lower()
+    if not source or not dest or '@' not in source or '@' not in dest:
+        return jsonify({'ok':False,'error':'Valid source and destination email addresses required'}),400
+    lines = []
+    if os.path.exists(VIRTUAL_ALIAS_FILE):
+        with open(VIRTUAL_ALIAS_FILE) as f: lines = f.readlines()
+    lines = [l for l in lines if not l.strip().startswith(source+' ') and not l.strip().startswith(source+'\t')]
+    lines.append(f'{source}\t{dest}\n')
+    with open(VIRTUAL_ALIAS_FILE,'w') as f: f.writelines(lines)
+    sh(f'postmap {VIRTUAL_ALIAS_FILE}')
+    sh('systemctl reload postfix 2>/dev/null')
+    return jsonify({'ok':True})
+
+@mail_bp.route('/api/mail/forwarding', methods=['DELETE'])
+def del_forwarding():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    source = (d.get('source') or '').strip().lower()
+    if not source: return jsonify({'ok':False,'error':'source required'}),400
+    if os.path.exists(VIRTUAL_ALIAS_FILE):
+        with open(VIRTUAL_ALIAS_FILE) as f: lines = f.readlines()
+        lines = [l for l in lines if not l.strip().startswith(source+' ') and not l.strip().startswith(source+'\t')]
+        with open(VIRTUAL_ALIAS_FILE,'w') as f: f.writelines(lines)
+        sh(f'postmap {VIRTUAL_ALIAS_FILE}')
+        sh('systemctl reload postfix 2>/dev/null')
+    return jsonify({'ok':True})
+
+@mail_bp.route('/api/mail/logs')
+def mail_logs():
+    if not req(): return jsonify({'ok':False}),401
+    which = request.args.get('which','mail')
+    files = {
+        'mail':    '/var/log/mail.log',
+        'postfix': '/var/log/mail.log',
+        'dovecot': '/var/log/mail.log',
+    }
+    path = files.get(which, '/var/log/mail.log')
+    if not os.path.exists(path):
+        return jsonify({'ok':True, 'lines':'Log file not found: '+path})
+    grep = ''
+    if which == 'postfix': grep = " | grep -i postfix"
+    elif which == 'dovecot': grep = " | grep -i dovecot"
+    out = sh(f'tail -n 200 {path}{grep} 2>/dev/null')
+    return jsonify({'ok':True, 'lines':out or 'No log entries found'})

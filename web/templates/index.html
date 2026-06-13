@@ -2968,6 +2968,8 @@
           <div class="tab" :class="{active:tab==='mailboxes'}" @click="tab='mailboxes'">Mailboxes</div>
           <div class="tab" :class="{active:tab==='dkim'}" @click="tab='dkim'">DKIM / SPF</div>
           <div class="tab" :class="{active:tab==='queue'}" @click="tab='queue';loadQueue()">Queue</div>
+          <div class="tab" :class="{active:tab==='forwarding'}" @click="tab='forwarding';loadForwarding()">Forwarding</div>
+          <div class="tab" :class="{active:tab==='logs'}" @click="tab='logs';loadMailLogs()">Logs</div>
         </div>
         <div class="grid-2" x-show="tab==='mailboxes'">
           <div class="card"><div class="card-hd"><div class="card-title">Mail Domains</div><button class="btn btn-primary btn-xs" @click="showAddDomain=true">+</button></div>
@@ -2978,6 +2980,7 @@
           </div>
         </div>
         <div class="modal-overlay" x-show="showResetPass" @click.self="showResetPass=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title" x-text="'Reset Password: '+resetPassTarget"></div><button class="modal-close" @click="showResetPass=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="resetPassValue" placeholder="••••••••"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showResetPass=false">Cancel</button><button class="btn btn-primary" @click="resetPassword()">Update Password</button></div></div></div>
+        <div class="modal-overlay" x-show="showAddForward" @click.self="showAddForward=false"><div class="modal" style="max-width:420px"><div class="modal-hd"><div class="modal-title">Add Forwarding Rule</div><button class="modal-close" @click="showAddForward=false">×</button></div><div class="form-group"><label class="form-label">From (this domain's address)</label><input class="form-input" x-model="forwardForm.source" :placeholder="'name@'+selDomain"></div><div class="form-group"><label class="form-label">Forward To</label><input class="form-input" x-model="forwardForm.destination" placeholder="destination@example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddForward=false">Cancel</button><button class="btn btn-primary" @click="addForwarding()">Add Rule</button></div></div></div>
         <div x-show="tab==='dkim'" class="card">
           <div class="card-hd"><div class="card-title">DKIM / SPF Records</div></div>
           <div class="form-group"><label class="form-label">Domain</label>
@@ -3012,6 +3015,35 @@
             </div>
           </div>
           <pre class="code-block" x-text="queueOutput || 'Loading...'" style="white-space:pre-wrap;min-height:120px"></pre>
+        </div>
+        <div x-show="tab==='forwarding'" class="card">
+          <div class="card-hd"><div class="card-title">Mail Forwarding Rules</div><button class="btn btn-primary btn-xs" @click="showAddForward=true">+ Add Rule</button></div>
+          <table class="data-table">
+            <thead><tr><th>From</th><th>Forwards To</th><th>Actions</th></tr></thead>
+            <tbody>
+              <template x-for="r in forwardingRules" :key="r.source">
+                <tr>
+                  <td style="font-family:var(--font-mono);font-size:12px" x-text="r.source"></td>
+                  <td style="font-family:var(--font-mono);font-size:12px" x-text="r.destination"></td>
+                  <td><button class="btn btn-danger btn-xs" @click="delForwarding(r.source)">✕</button></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <template x-if="forwardingRules.length===0"><div class="empty-state"><div class="empty-icon">↪</div><div class="empty-text">No forwarding rules yet</div></div></template>
+        </div>
+        <div x-show="tab==='logs'" class="card">
+          <div class="card-hd"><div class="card-title">Mail Logs</div>
+            <div style="display:flex;gap:6px">
+              <select class="form-input" style="width:auto;padding:4px 8px;font-size:12px" x-model="logFilter" @change="loadMailLogs()">
+                <option value="mail">All</option>
+                <option value="postfix">Postfix</option>
+                <option value="dovecot">Dovecot</option>
+              </select>
+              <button class="btn btn-ghost btn-xs" @click="loadMailLogs()">Refresh</button>
+            </div>
+          </div>
+          <pre class="code-block" x-text="mailLogOutput || 'Loading...'" style="white-space:pre-wrap;max-height:400px;overflow-y:auto"></pre>
         </div>
         <div class="modal-overlay" x-show="showAddDomain" @click.self="showAddDomain=false"><div class="modal" style="max-width:360px"><div class="modal-hd"><div class="modal-title">Add Mail Domain</div><button class="modal-close" @click="showAddDomain=false">×</button></div><div class="form-group"><label class="form-label">Domain</label><input class="form-input" x-model="domainForm.domain" placeholder="example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddDomain=false">Cancel</button><button class="btn btn-primary" @click="addDomain()">Add</button></div></div></div>
         <div class="modal-overlay" x-show="showAddAccount" @click.self="showAddAccount=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title">Add Mail Account</div><button class="modal-close" @click="showAddAccount=false">×</button></div><div class="form-group"><label class="form-label">Email Address</label><input class="form-input" x-model="accountForm.user" :placeholder="'name@'+selDomain"></div><div style="font-size:11px;color:var(--text-muted);margin:-6px 0 10px">Must end with @<span x-text="selDomain"></span></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="accountForm.pass" placeholder="••••••••"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddAccount=false">Cancel</button><button class="btn btn-primary" @click="addAccount()">Create</button></div></div></div>

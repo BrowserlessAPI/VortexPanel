@@ -1934,6 +1934,7 @@ function mailPage() {
     showResetPass:false, resetPassTarget:'', resetPassValue:'',
     tab:'mailboxes', dkimDomain:'', dkimRecord:'', dkimLoading:false, queueOutput:'', queueLoading:false,
 
+    forwardingRules:[], showAddForward:false, forwardForm:{source:'',destination:''}, logFilter:'mail', mailLogOutput:'',
     async init() { await this.loadStatus(); await this.loadDomains(); },
 
     async loadStatus() {
@@ -1977,6 +1978,28 @@ function mailPage() {
     async loadQueue() { this.queueLoading=true; const r=await get('/api/mail/queue'); this.queueLoading=false; this.queueOutput=r.ok?(r.output||'Queue empty'):''; },
     async flushQueue() { const r=await post('/api/mail/queue/flush',{}); if(r.ok){toast('Flush requested','success'); await this.loadQueue();} },
     async resetPassword() { if(!this.resetPassValue){toast('Enter new password','error');return;} const r=await post('/api/mail/accounts/'+this.resetPassTarget+'/password',{password:this.resetPassValue}); if(r.ok){toast('Password updated','success');this.showResetPass=false;this.resetPassValue='';}else toast(r.error||'Failed','error'); },
+    async loadForwarding() {
+      const r = await get('/api/mail/forwarding?domain='+(this.selDomain||''));
+      if (r.ok) this.forwardingRules = r.rules || [];
+    },
+    async addForwarding() {
+      let source = (this.forwardForm.source||'').trim().toLowerCase();
+      const dest = (this.forwardForm.destination||'').trim().toLowerCase();
+      if (!source.includes('@')) source = source + '@' + this.selDomain;
+      if (!source.includes('@') || !dest.includes('@')) { toast('Valid email addresses required','error'); return; }
+      const r = await post('/api/mail/forwarding', {source, destination:dest});
+      if (r.ok) { toast('Forwarding rule added','success'); this.showAddForward=false; this.forwardForm={source:'',destination:''}; await this.loadForwarding(); }
+      else toast(r.error||'Failed','error');
+    },
+    async delForwarding(source) {
+      if (!confirm('Remove forwarding for '+source+'?')) return;
+      const r = await del('/api/mail/forwarding', {source});
+      if (r.ok) { toast('Removed','success'); await this.loadForwarding(); }
+    },
+    async loadMailLogs() {
+      const r = await get('/api/mail/logs?which='+this.logFilter);
+      if (r.ok) this.mailLogOutput = r.lines || 'No log entries';
+    },
     async loadDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await get('/api/mail/dkim/'+this.dkimDomain); this.dkimLoading=false; this.dkimRecord=r.ok?r.record:''; },
     async genDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await post('/api/mail/dkim/'+this.dkimDomain,{}); this.dkimLoading=false; if(r.ok){this.dkimRecord=r.record;toast('DKIM generated','success');}else toast(r.error||'Failed','error'); },
     async control(svc, action) {
