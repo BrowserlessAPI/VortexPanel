@@ -1020,7 +1020,7 @@ def composer_job(domain, job_id):
 INTEGRITY_DIR = '/opt/vortexpanel/integrity'
 
 def _get_site_path(domain):
-    for s in get_websites():
+    for s in list_sites():
         if s['domain'] == domain:
             return s['path']
     return os.path.join(get_webroot(), domain)
