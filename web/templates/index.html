@@ -2905,16 +2905,16 @@
         <div class="grid-2">
           <div class="card">
             <div class="card-hd"><div class="card-title">DNS Zones</div><button class="btn btn-ghost btn-xs" @click="loadZones()">↻</button></div>
-            <template x-for="z in zones" :key="z.name">
-              <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" @click="selectZone(z)" :style="selZone?.name===z.name?'color:var(--accent)':''">
-                <span style="font-size:14px">🌍</span><span style="flex:1;font-weight:500;font-size:13px" x-text="z.name"></span>
+            <template x-for="z in zones" :key="z.domain">
+              <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" @click="selectZone(z)" :style="selZone?.domain===z.domain?'color:var(--accent)':''">
+                <span style="font-size:14px">🌍</span><span style="flex:1;font-weight:500;font-size:13px" x-text="z.domain"></span>
                 <button class="btn btn-danger btn-xs" @click.stop="delZone(z)">✕</button>
               </div>
             </template>
             <template x-if="zones.length===0"><div class="empty-state" style="padding:20px"><div class="empty-text">No zones</div></div></template>
           </div>
           <div class="card">
-            <div class="card-hd"><div class="card-title" x-text="selZone?'Records: '+selZone.name:'Select a zone'"></div><button class="btn btn-primary btn-xs" x-show="selZone" @click="showAddRecord=true">+ Add</button></div>
+            <div class="card-hd"><div class="card-title" x-text="selZone?'Records: '+selZone.domain:'Select a zone'"></div><button class="btn btn-primary btn-xs" x-show="selZone" @click="showAddRecord=true">+ Add</button></div>
             <table class="data-table" x-show="records.length">
               <thead><tr><th>Type</th><th>Name</th><th>Value</th><th></th></tr></thead>
               <tbody>

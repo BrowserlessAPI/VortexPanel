@@ -1862,25 +1862,25 @@ function dnsPage() {
     },
 
     async delZone(z) {
-      if (!confirm(`Delete zone ${z.name}?`)) return;
-      const r = await del(`/api/dns/zones/${z.name}`);
+      if (!confirm(`Delete zone ${z.domain}?`)) return;
+      const r = await del(`/api/dns/zones/${z.domain}`);
       if (r.ok) { toast('Deleted','success'); this.selZone=null; await this.loadZones(); }
     },
 
     async selectZone(z) {
       this.selZone = z;
-      const r = await get(`/api/dns/zones/${z.name}/records`);
+      const r = await get(`/api/dns/zones/${z.domain}/records`);
       if (r.ok) this.records = r.records || [];
     },
 
     async addRecord() {
-      const r = await post(`/api/dns/zones/${this.selZone.name}/records`, this.recForm);
+      const r = await post(`/api/dns/zones/${this.selZone.domain}/records`, this.recForm);
       if (r.ok) { toast('Record added','success'); this.showAddRecord=false; await this.selectZone(this.selZone); }
       else toast(r.error||'Failed','error');
     },
 
     async delRecord(rec) {
-      const r = await del(`/api/dns/zones/${this.selZone.name}/records/${rec.id}`);
+      const r = await del(`/api/dns/zones/${this.selZone.domain}/records/${rec.id}`);
       if (r.ok) { toast('Deleted','success'); await this.selectZone(this.selZone); }
     },
   };
