@@ -1333,15 +1333,6 @@
                         <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus?'red':'gray')" style="flex-shrink:0"></span>
                         <span style="font-size:11px;color:var(--text-muted)" x-text="m.svcStatus||'unknown'"></span>
                       </div>
-                      <!-- Quick start/stop for running services -->
-                      <div x-show="m.manage" style="display:flex;gap:3px">
-                        <button class="btn btn-xs btn-success" @click.stop="control(m,'start')"
-                                x-show="m.svcStatus && m.svcStatus!=='active'" title="Start">▶</button>
-                        <button class="btn btn-xs btn-ghost" @click.stop="control(m,'restart')"
-                                x-show="!m.svcStatus || m.svcStatus==='active'" title="Restart">↺</button>
-                        <button class="btn btn-xs btn-danger" @click.stop="control(m,'stop')"
-                                x-show="!m.svcStatus || m.svcStatus==='active'" title="Stop">■</button>
-                      </div>
                     </div>
                     <span x-show="!m.installed" class="badge badge-gray" style="font-size:10px">Not Installed</span>
                   </td>
@@ -1539,22 +1530,22 @@
 
                 <!-- SERVICE tab -->
                 <div x-show="settingsModal.tab==='service'">
-                  <div style="margin-bottom:20px">
-                    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px">Service Status</div>
-                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+                  <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px">Service Status</div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--bg-base);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+                    <div style="display:flex;align-items:center;gap:10px">
                       <span :class="'dot dot-'+(settingsModal.status==='active'?'green':settingsModal.status?'red':'gray')"></span>
-                      <span style="font-size:14px;font-weight:600" x-text="settingsModal.status||'unknown'"></span>
+                      <span style="font-size:14px;font-weight:600" :style="settingsModal.status==='active'?'color:var(--green)':settingsModal.status?'color:var(--red)':'color:var(--text-muted)'" x-text="settingsModal.status||'unknown'"></span>
                       <span x-show="settingsModal.version" style="font-size:11px;font-family:var(--font-mono);background:rgba(88,101,242,.1);color:var(--accent);padding:1px 8px;border-radius:8px" x-text="'v'+settingsModal.version"></span>
                     </div>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap">
-                      <button class="btn btn-success btn-sm" @click="settingsControl('start')" x-show="settingsModal.status!=='active'">▶ Start</button>
-                      <button class="btn btn-danger btn-sm" @click="settingsControl('stop')" x-show="settingsModal.status==='active'">■ Stop</button>
-                      <button class="btn btn-ghost btn-sm" @click="settingsControl('restart')">↺ Restart</button>
-                      <button class="btn btn-ghost btn-sm" @click="settingsControl('reload')" x-show="settingsModal.mod?.id==='nginx'||settingsModal.mod?.id==='apache2'">⟳ Reload</button>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <button class="btn btn-success btn-xs" @click="settingsControl('start')" x-show="settingsModal.status!=='active'">Start</button>
+                      <button class="btn btn-danger btn-xs" @click="settingsControl('stop')" x-show="settingsModal.status==='active'">Stop</button>
+                      <button class="btn btn-ghost btn-xs" @click="settingsControl('restart')">Restart</button>
+                      <button class="btn btn-ghost btn-xs" @click="settingsControl('reload')" x-show="settingsModal.mod?.id==='nginx'||settingsModal.mod?.id==='apache2'">Reload</button>
                     </div>
                   </div>
-                  <div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.15);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text-secondary)">
-                    <div style="font-weight:600;color:var(--accent-warn);margin-bottom:4px">ℹ Service Info</div>
+                  <div style="background:var(--bg-base);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text-secondary)">
+                    <div style="font-weight:600;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;font-size:11px;letter-spacing:.4px">Service Info</div>
                     <div x-text="'Service name: '+(settingsModal.mod?.id==='php'?(settingsModal.phpServiceName||'php'+settingsModal.selPhpVer+'-fpm'):(settingsModal.mod?.service||settingsModal.mod?.id))"></div>
                     <div x-show="settingsModal.confPath" x-text="'Config: '+settingsModal.confPath" style="margin-top:3px;font-family:var(--font-mono);font-size:11px"></div>
                   </div>
