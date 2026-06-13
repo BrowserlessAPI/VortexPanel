@@ -2901,8 +2901,8 @@
       <div x-show="page==='mail'" x-data="mailPage()">
         <div class="page-header"><div><div class="page-title">Mail Server</div><div class="page-sub">Postfix + Dovecot management</div></div></div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap">
-          <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.postfix==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Postfix: <span :style="status.postfix==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.postfix"></span></span><button class="btn btn-ghost btn-xs" @click="control('postfix','restart')">↻ Restart</button></div>
-          <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.dovecot==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Dovecot: <span :style="status.dovecot==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.dovecot"></span></span><button class="btn btn-ghost btn-xs" @click="control('dovecot','restart')">↻ Restart</button></div>
+          <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.postfix==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Postfix: <span :style="status.postfix==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.postfix"></span></span><button class="btn btn-ghost btn-xs" @click="control('postfix','restart')">Restart</button></div>
+          <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.dovecot==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Dovecot: <span :style="status.dovecot==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.dovecot"></span></span><button class="btn btn-ghost btn-xs" @click="control('dovecot','restart')">Restart</button></div>
         </div>
         <div class="grid-2">
           <div class="card"><div class="card-hd"><div class="card-title">Mail Domains</div><button class="btn btn-primary btn-xs" @click="showAddDomain=true">+</button></div>
