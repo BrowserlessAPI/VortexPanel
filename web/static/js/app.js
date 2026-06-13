@@ -1892,6 +1892,8 @@ function mailPage() {
     selDomain: '', showAddDomain: false, showAddAccount: false,
     domainForm:  {domain:''},
     accountForm: {user:'', pass:''},
+    showResetPass:false, resetPassTarget:'', resetPassValue:'',
+    tab:'mailboxes', dkimDomain:'', dkimRecord:'', dkimLoading:false, queueOutput:'', queueLoading:false,
 
     async init() { await this.loadStatus(); await this.loadDomains(); },
 
@@ -1918,8 +1920,10 @@ function mailPage() {
     },
 
     async addAccount() {
-      if (!this.accountForm.user || !this.accountForm.pass) { toast('Username and password required','error'); return; }
-      const email = `${this.accountForm.user}@${this.selDomain}`;
+      let email = (this.accountForm.user||'').trim().toLowerCase();
+      if (!email || !this.accountForm.pass) { toast('Email and password required','error'); return; }
+      if (!email.includes('@')) email = email + '@' + this.selDomain;
+      if (!email.endsWith('@'+this.selDomain)) { toast('Email must end with @'+this.selDomain, 'error'); return; }
       const r = await post('/api/mail/accounts', {email, password:this.accountForm.pass});
       if (r.ok) { toast('Account created','success'); this.showAddAccount=false; this.accountForm={user:'',pass:''}; await this.loadAccounts(this.selDomain); }
       else toast(r.error||'Failed','error');
@@ -1931,6 +1935,11 @@ function mailPage() {
       if (r.ok) { toast('Deleted','success'); await this.loadAccounts(this.selDomain); }
     },
 
+    async loadQueue() { this.queueLoading=true; const r=await get('/api/mail/queue'); this.queueLoading=false; this.queueOutput=r.ok?(r.output||'Queue empty'):''; },
+    async flushQueue() { const r=await post('/api/mail/queue/flush',{}); if(r.ok){toast('Flush requested','success'); await this.loadQueue();} },
+    async resetPassword() { if(!this.resetPassValue){toast('Enter new password','error');return;} const r=await post('/api/mail/accounts/'+this.resetPassTarget+'/password',{password:this.resetPassValue}); if(r.ok){toast('Password updated','success');this.showResetPass=false;this.resetPassValue='';}else toast(r.error||'Failed','error'); },
+    async loadDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await get('/api/mail/dkim/'+this.dkimDomain); this.dkimLoading=false; this.dkimRecord=r.ok?r.record:''; },
+    async genDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await post('/api/mail/dkim/'+this.dkimDomain,{}); this.dkimLoading=false; if(r.ok){this.dkimRecord=r.record;toast('DKIM generated','success');}else toast(r.error||'Failed','error'); },
     async control(svc, action) {
       const r = await post('/api/mail/control', {service:svc, action});
       if (r.ok) { toast(`${action} ${svc}`,'success'); await this.loadStatus(); }

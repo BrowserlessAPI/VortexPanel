@@ -24,7 +24,7 @@ def mail_status():
 def mail_domains():
     if not req(): return jsonify({'ok':False}),401
     raw = sh('cat /etc/postfix/virtual_mailbox_domains 2>/dev/null')
-    domains = [l.strip() for l in raw.split('\n') if l.strip() and not l.startswith('#')]
+    domains = [l.strip().split()[0] for l in raw.split('\n') if l.strip() and not l.startswith('#')]
     return jsonify({'ok':True,'domains':domains})
 
 @mail_bp.route('/api/mail/domains', methods=['POST'])
@@ -93,6 +93,29 @@ def delete_account(email):
                 fh.writelines(l for l in lines if not l.startswith(email))
             if 'virtual' in f: sh(f'postmap {f}')
     sh('systemctl reload postfix dovecot 2>/dev/null')
+    return jsonify({'ok':True})
+
+@mail_bp.route('/api/mail/accounts/<path:email>/password', methods=['PUT'])
+def reset_mail_password(email):
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    password = d.get('password','')
+    if not password: return jsonify({'ok':False,'error':'Password required'}),400
+    pw_hash = sh(f'doveadm pw -s SHA512-CRYPT -p "{password}" 2>/dev/null')
+    if not pw_hash: return jsonify({'ok':False,'error':'Failed to hash password'}),500
+    updated = False
+    if os.path.exists(MAIL_USERS_FILE):
+        with open(MAIL_USERS_FILE) as fh: lines = fh.readlines()
+        with open(MAIL_USERS_FILE,'w') as fh:
+            for line in lines:
+                if line.startswith(email+':'):
+                    fh.write(f'{email}:{pw_hash}\n')
+                    updated = True
+                else:
+                    fh.write(line)
+    if not updated:
+        with open(MAIL_USERS_FILE,'a') as fh: fh.write(f'{email}:{pw_hash}\n')
+    sh('systemctl reload dovecot 2>/dev/null')
     return jsonify({'ok':True})
 
 @mail_bp.route('/api/mail/queue')

@@ -2904,16 +2904,57 @@
           <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.postfix==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Postfix: <span :style="status.postfix==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.postfix"></span></span><button class="btn btn-ghost btn-xs" @click="control('postfix','restart')">Restart</button></div>
           <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.dovecot==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Dovecot: <span :style="status.dovecot==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.dovecot"></span></span><button class="btn btn-ghost btn-xs" @click="control('dovecot','restart')">Restart</button></div>
         </div>
-        <div class="grid-2">
+        <div class="tabs" style="margin-bottom:14px">
+          <div class="tab" :class="{active:tab==='mailboxes'}" @click="tab='mailboxes'">Mailboxes</div>
+          <div class="tab" :class="{active:tab==='dkim'}" @click="tab='dkim'">DKIM / SPF</div>
+          <div class="tab" :class="{active:tab==='queue'}" @click="tab='queue';loadQueue()">Queue</div>
+        </div>
+        <div class="grid-2" x-show="tab==='mailboxes'">
           <div class="card"><div class="card-hd"><div class="card-title">Mail Domains</div><button class="btn btn-primary btn-xs" @click="showAddDomain=true">+</button></div>
             <template x-for="d in domains" :key="d"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:13px" x-text="d"></span><button class="btn btn-ghost btn-xs" @click="loadAccounts(d)">Accounts</button></div></template>
           </div>
           <div class="card"><div class="card-hd"><div class="card-title" x-text="selDomain?'Accounts: '+selDomain:'Select a domain'"></div><button class="btn btn-primary btn-xs" x-show="selDomain" @click="showAddAccount=true">+</button></div>
-            <template x-for="a in accounts" :key="a"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:12px;font-family:var(--font-mono)" x-text="a"></span><button class="btn btn-danger btn-xs" @click="delAccount(a)">✕</button></div></template>
+            <template x-for="a in accounts" :key="a.email"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:12px;font-family:var(--font-mono)" x-text="a.email"></span><button class="btn btn-ghost btn-xs" @click="resetPassTarget=a.email;showResetPass=true">Reset Pass</button><button class="btn btn-danger btn-xs" @click="delAccount(a.email)">✕</button></div></template>
           </div>
         </div>
+        <div class="modal-overlay" x-show="showResetPass" @click.self="showResetPass=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title" x-text="'Reset Password: '+resetPassTarget"></div><button class="modal-close" @click="showResetPass=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="resetPassValue" placeholder="••••••••"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showResetPass=false">Cancel</button><button class="btn btn-primary" @click="resetPassword()">Update Password</button></div></div></div>
+        <div x-show="tab==='dkim'" class="card">
+          <div class="card-hd"><div class="card-title">DKIM / SPF Records</div></div>
+          <div class="form-group"><label class="form-label">Domain</label>
+            <select class="form-input" x-model="dkimDomain" @change="loadDkim()">
+              <option value="">Select domain...</option>
+              <template x-for="d in domains" :key="d"><option :value="d" x-text="d"></option></template>
+            </select>
+          </div>
+          <div x-show="dkimDomain">
+            <button class="btn btn-primary btn-sm" @click="genDkim()" :disabled="dkimLoading" style="margin-bottom:10px">Generate / Regenerate DKIM Key</button>
+            <div x-show="dkimRecord">
+              <label class="form-label">DKIM TXT Record (add to your DNS)</label>
+              <pre class="code-block" x-text="dkimRecord" style="white-space:pre-wrap;word-break:break-all"></pre>
+            </div>
+            <div x-show="!dkimRecord && !dkimLoading" style="font-size:12px;color:var(--text-muted);margin-top:8px">No DKIM key generated yet for this domain.</div>
+            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+              <label class="form-label">Recommended SPF Record (TXT for @)</label>
+              <pre class="code-block" x-text="'v=spf1 mx a ip4:' + (dkimDomain ? '' : '') + ' ~all'" style="white-space:pre-wrap"></pre>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Add this as a TXT record on your domain's root (@), including your server's mail-sending IP.</div>
+            </div>
+            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+              <label class="form-label">Recommended DMARC Record (TXT for _dmarc)</label>
+              <pre class="code-block" x-text="'v=DMARC1; p=quarantine; rua=mailto:postmaster@' + dkimDomain" style="white-space:pre-wrap"></pre>
+            </div>
+          </div>
+        </div>
+        <div x-show="tab==='queue'" class="card">
+          <div class="card-hd"><div class="card-title">Mail Queue</div>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-ghost btn-xs" @click="loadQueue()">Refresh</button>
+              <button class="btn btn-primary btn-xs" @click="flushQueue()">Flush Queue</button>
+            </div>
+          </div>
+          <pre class="code-block" x-text="queueOutput || 'Loading...'" style="white-space:pre-wrap;min-height:120px"></pre>
+        </div>
         <div class="modal-overlay" x-show="showAddDomain" @click.self="showAddDomain=false"><div class="modal" style="max-width:360px"><div class="modal-hd"><div class="modal-title">Add Mail Domain</div><button class="modal-close" @click="showAddDomain=false">×</button></div><div class="form-group"><label class="form-label">Domain</label><input class="form-input" x-model="domainForm.domain" placeholder="example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddDomain=false">Cancel</button><button class="btn btn-primary" @click="addDomain()">Add</button></div></div></div>
-        <div class="modal-overlay" x-show="showAddAccount" @click.self="showAddAccount=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title">Add Mail Account</div><button class="modal-close" @click="showAddAccount=false">×</button></div><div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="accountForm.user" placeholder="user"></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="accountForm.pass" placeholder="••••••••"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddAccount=false">Cancel</button><button class="btn btn-primary" @click="addAccount()">Create</button></div></div></div>
+        <div class="modal-overlay" x-show="showAddAccount" @click.self="showAddAccount=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title">Add Mail Account</div><button class="modal-close" @click="showAddAccount=false">×</button></div><div class="form-group"><label class="form-label">Email Address</label><input class="form-input" x-model="accountForm.user" :placeholder="'name@'+selDomain"></div><div style="font-size:11px;color:var(--text-muted);margin:-6px 0 10px">Must end with @<span x-text="selDomain"></span></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="accountForm.pass" placeholder="••••••••"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddAccount=false">Cancel</button><button class="btn btn-primary" @click="addAccount()">Create</button></div></div></div>
       </div>
 
       <!-- FTP -->
