@@ -241,6 +241,8 @@ function websitesPage() {
       nodejsEnabled:false,nodejsForm:{app_path:'',startup:'index.js',port:'3000'},
       maintEnabled:false,maintMessage:'We are performing scheduled maintenance. Please check back soon.',
       loading:false,
+      integrityStatus:{enabled:false,created:'',file_count:0},
+      integrityScanning:false, integrityResult:null, integrityLoading:false,
     },
     drawerTabs:[
       {id:'domains',label:'🌐 Domain Manager'},
@@ -258,6 +260,7 @@ function websitesPage() {
       {id:'maintenance',label:'🔧 Maintenance'},
       {id:'composer',label:'🎼 Composer'},
       {id:'logs',label:'📋 Response Log'},
+      {id:'integrity',label:'🛡 Tamper-proof'},
     ],
     async init() {
       const wr=await get('/api/websites/webroot').catch(()=>({ok:false}));
@@ -318,6 +321,35 @@ function websitesPage() {
       else if(d.tab==='hotlink'){const r=await get('/api/websites/'+domain+'/hotlink');if(r.ok){d.hotlink.enabled=r.enabled||false;d.hotlink.suffixes=r.suffixes||'jpg,jpeg,gif,png,js,css';d.hotlink.domains=r.domains||'';d.hotlink.response=r.response||'404';}}
       else if(d.tab==='limit'){const r=await get('/api/websites/'+domain+'/limit-access');if(r.ok)d.limitRules=r.rules||[];}
       else if(d.tab==='logs'){const r=await get('/api/websites/'+domain+'/logs');if(r.ok){d.accessLog=r.access||'No access logs';d.errorLog=r.error||'No error logs';}}
+      else if(d.tab==='integrity'){await this.loadIntegrityStatus();}
+    },
+    async loadIntegrityStatus() {
+      const domain=this.drawer.site?.domain; if(!domain) return;
+      const r = await get('/api/websites/'+domain+'/integrity/status');
+      if (r.ok) this.drawer.integrityStatus = r;
+      this.drawer.integrityResult = null;
+    },
+    async createBaseline() {
+      const domain=this.drawer.site?.domain; if(!domain) return;
+      this.drawer.integrityLoading = true;
+      const r = await post('/api/websites/'+domain+'/integrity/baseline', {});
+      this.drawer.integrityLoading = false;
+      if (r.ok) { toast('Baseline created ('+r.file_count+' files)','success'); await this.loadIntegrityStatus(); }
+      else toast(r.error||'Failed','error');
+    },
+    async scanIntegrity() {
+      const domain=this.drawer.site?.domain; if(!domain) return;
+      this.drawer.integrityScanning = true;
+      const r = await get('/api/websites/'+domain+'/integrity/scan');
+      this.drawer.integrityScanning = false;
+      if (r.ok) { this.drawer.integrityResult = r; if(r.clean) toast('No changes detected','success'); else toast('Changes detected!','error'); }
+      else toast(r.error||'Failed','error');
+    },
+    async disableIntegrity() {
+      const domain=this.drawer.site?.domain; if(!domain) return;
+      if (!confirm('Disable tamper-proof monitoring for '+domain+'? This removes the baseline.')) return;
+      const r = await del('/api/websites/'+domain+'/integrity/baseline');
+      if (r.ok) { toast('Disabled','success'); await this.loadIntegrityStatus(); }
     },
     async saveConf(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/config',{content:this.drawer.confContent});toast(r.ok?'Saved':'Failed',r.ok?'success':'error');},
     async issueLetsEncrypt(){

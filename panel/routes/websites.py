@@ -1,5 +1,7 @@
 from flask import Blueprint, jsonify, request, session
 import os, re, subprocess
+from datetime import datetime
+import json, time
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, pkg_remove
 except ImportError:
@@ -67,7 +69,18 @@ def list_sites():
             is_enabled = os.path.exists(enabled_path) or avail == enabled
             path_m = re.search(r'root\s+([^;]+);', content)
             path   = path_m.group(1).strip() if path_m else f'{get_webroot()}/{domain}'
-            sites.append({'domain':domain,'ssl':ssl,'php':php_v,'enabled':is_enabled,'path':path,'conf_file':f})
+            ssl_days = None
+            if ssl:
+                for cp in [f'/etc/nginx/ssl/{domain}/fullchain.pem', f'/etc/letsencrypt/live/{domain}/fullchain.pem']:
+                    if os.path.exists(cp):
+                        end_str = sh(f'openssl x509 -in {cp} -noout -enddate 2>/dev/null')
+                        if end_str.startswith('notAfter='):
+                            try:
+                                end_dt = datetime.strptime(end_str[9:].strip(), '%b %d %H:%M:%S %Y %Z')
+                                ssl_days = (end_dt - datetime.utcnow()).days
+                            except: pass
+                        break
+            sites.append({'domain':domain,'ssl':ssl,'ssl_days':ssl_days,'php':php_v,'enabled':is_enabled,'path':path,'conf_file':f})
     except: pass
     return sites
 
@@ -1002,3 +1015,95 @@ def composer_job(domain, job_id):
     job = jobs.get(job_id)
     if not job: return jsonify({'ok':False,'error':'Job not found'})
     return jsonify({'ok':True,**job})
+
+# ── TAMPER-PROOF / FILE INTEGRITY MONITORING ──────────────────────────────────
+INTEGRITY_DIR = '/opt/vortexpanel/integrity'
+
+def _get_site_path(domain):
+    for s in get_websites():
+        if s['domain'] == domain:
+            return s['path']
+    return os.path.join(get_webroot(), domain)
+
+def _scan_hashes(path):
+    out = sh(f'find "{path}" -type f -printf "%T@ %s %p\\n" 2>/dev/null | sort -k3', t=60)
+    files = {}
+    for line in out.splitlines():
+        parts = line.split(' ', 2)
+        if len(parts) != 3: continue
+        mtime, size, fpath = parts
+        files[fpath] = {'mtime': mtime, 'size': size}
+    return files
+
+def _hash_file(path):
+    return sh(f'sha256sum "{path}" 2>/dev/null', t=15).split()[0] if sh(f'sha256sum "{path}" 2>/dev/null', t=15) else ''
+
+@websites_bp.route('/api/websites/<domain>/integrity/status')
+def integrity_status(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    baseline_file = os.path.join(INTEGRITY_DIR, domain+'.json')
+    exists = os.path.exists(baseline_file)
+    created = ''
+    file_count = 0
+    if exists:
+        try:
+            with open(baseline_file) as f: data = json.load(f)
+            created = data.get('created','')
+            file_count = len(data.get('files',{}))
+        except: pass
+    return jsonify({'ok':True, 'enabled':exists, 'created':created, 'file_count':file_count})
+
+@websites_bp.route('/api/websites/<domain>/integrity/baseline', methods=['POST'])
+def integrity_baseline(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    path = _get_site_path(domain)
+    if not os.path.isdir(path):
+        return jsonify({'ok':False,'error':'Site path not found'}),404
+    out = sh(f'find "{path}" -type f -exec sha256sum {{}} + 2>/dev/null', t=120)
+    files = {}
+    for line in out.splitlines():
+        parts = line.split('  ', 1)
+        if len(parts) != 2: continue
+        h, fp = parts
+        files[fp] = h
+    os.makedirs(INTEGRITY_DIR, exist_ok=True)
+    with open(os.path.join(INTEGRITY_DIR, domain+'.json'), 'w') as f:
+        json.dump({'path':path, 'created':time.strftime('%Y-%m-%d %H:%M:%S'), 'files':files}, f)
+    return jsonify({'ok':True, 'file_count':len(files)})
+
+@websites_bp.route('/api/websites/<domain>/integrity/baseline', methods=['DELETE'])
+def integrity_disable(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    baseline_file = os.path.join(INTEGRITY_DIR, domain+'.json')
+    if os.path.exists(baseline_file): os.remove(baseline_file)
+    return jsonify({'ok':True})
+
+@websites_bp.route('/api/websites/<domain>/integrity/scan')
+def integrity_scan(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    baseline_file = os.path.join(INTEGRITY_DIR, domain+'.json')
+    if not os.path.exists(baseline_file):
+        return jsonify({'ok':False,'error':'No baseline found. Create one first.'}),400
+    with open(baseline_file) as f: data = json.load(f)
+    old_files = data.get('files',{})
+    path = data.get('path') or _get_site_path(domain)
+    out = sh(f'find "{path}" -type f -exec sha256sum {{}} + 2>/dev/null', t=120)
+    new_files = {}
+    for line in out.splitlines():
+        parts = line.split('  ', 1)
+        if len(parts) != 2: continue
+        h, fp = parts
+        new_files[fp] = h
+    added    = [f for f in new_files if f not in old_files]
+    removed  = [f for f in old_files if f not in new_files]
+    modified = [f for f in new_files if f in old_files and new_files[f] != old_files[f]]
+    return jsonify({
+        'ok':True,
+        'scanned_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'baseline_created': data.get('created',''),
+        'added': sorted(added)[:200],
+        'removed': sorted(removed)[:200],
+        'modified': sorted(modified)[:200],
+        'total_files': len(new_files),
+        'clean': not (added or removed or modified),
+    })

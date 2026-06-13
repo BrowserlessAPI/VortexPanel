@@ -119,6 +119,7 @@ a{color:inherit;text-decoration:none}
 .badge-yellow{background:rgba(245,158,11,.12);color:var(--yellow)}
 .badge-blue{background:rgba(88,101,242,.12);color:var(--accent)}
 .badge-gray{background:rgba(107,114,128,.12);color:var(--text-muted)}
+.badge-orange{background:rgba(245,158,11,.12);color:var(--accent-warn)}
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
 .dot-green{background:var(--green);box-shadow:0 0 5px var(--green)}
 .dot-red{background:var(--red)}

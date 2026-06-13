@@ -210,7 +210,15 @@
                   <td style="font-weight:600" x-text="s.domain"></td>
                   <td style="font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="s.path"></td>
                   <td><span class="badge badge-blue" x-text="s.php"></span></td>
-                  <td><span :class="'badge badge-'+(s.ssl?'green':'gray')" x-text="s.ssl?'✓ SSL':'No SSL'"></span></td>
+                  <td>
+                    <span x-show="!s.ssl" class="badge badge-gray" style="cursor:pointer" @click="openDrawer(s);drawer.tab='ssl'">No SSL</span>
+                    <span x-show="s.ssl && s.ssl_days!==null"
+                          :class="'badge ' + (s.ssl_days<=7?'badge-red':(s.ssl_days<=30?'badge-orange':'badge-green'))"
+                          style="cursor:pointer" @click="openDrawer(s);drawer.tab='ssl'"
+                          :title="'Expires in '+s.ssl_days+' days'"
+                          x-text="s.ssl_days<0?'⚠ Expired':('🔒 '+s.ssl_days+'d left')"></span>
+                    <span x-show="s.ssl && s.ssl_days===null" class="badge badge-green" style="cursor:pointer" @click="openDrawer(s);drawer.tab='ssl'">🔒 SSL</span>
+                  </td>
                   <td><span :class="'badge badge-'+(s.enabled?'green':'gray')" x-text="s.enabled?'Active':'Disabled'"></span></td>
                   <td>
                     <div style="display:flex;gap:5px">
@@ -578,6 +586,63 @@
                 </div>
                 <div style="background:#0d0e18;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#94a3b8;min-height:300px;max-height:500px;overflow-y:auto;white-space:pre-wrap;line-height:1.6"
                      x-text="drawer.logType==='access'?drawer.accessLog||'No access logs':drawer.errorLog||'No error logs'"></div>
+              </div>
+              <!-- ── TAMPER-PROOF TAB ── -->
+              <div x-show="drawer.tab==='integrity'">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+                  <div>
+                    <div style="font-weight:600;font-size:13px">File Integrity Monitoring</div>
+                    <div style="font-size:11px;color:var(--text-muted)">Detects unauthorized changes to website files by comparing SHA-256 hashes against a saved baseline.</div>
+                  </div>
+                </div>
+                <div x-show="!drawer.integrityStatus.enabled" style="background:var(--bg-base);border-radius:8px;padding:16px;text-align:center">
+                  <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">No baseline created yet for this site.</div>
+                  <button class="btn btn-primary btn-sm" @click="createBaseline()" :disabled="drawer.integrityLoading">
+                    <span x-show="drawer.integrityLoading" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                    Create Baseline Now
+                  </button>
+                </div>
+                <div x-show="drawer.integrityStatus.enabled">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--bg-base);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+                    <div style="font-size:12px;color:var(--text-secondary)">
+                      <span class="badge badge-green">Monitoring Active</span>
+                      <span style="margin-left:8px" x-text="drawer.integrityStatus.file_count+' files baselined on '+drawer.integrityStatus.created"></span>
+                    </div>
+                    <div style="display:flex;gap:8px">
+                      <button class="btn btn-primary btn-xs" @click="scanIntegrity()" :disabled="drawer.integrityScanning">
+                        <span x-show="drawer.integrityScanning" class="loading-spinner" style="width:10px;height:10px;border-width:2px"></span>
+                        Scan Now
+                      </button>
+                      <button class="btn btn-ghost btn-xs" @click="createBaseline()" :disabled="drawer.integrityLoading">Update Baseline</button>
+                      <button class="btn btn-danger btn-xs" @click="disableIntegrity()">Disable</button>
+                    </div>
+                  </div>
+                  <div x-show="drawer.integrityResult">
+                    <div x-show="drawer.integrityResult?.clean" style="background:rgba(16,185,129,.08);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--green);font-weight:600">No changes detected, files match baseline.</div>
+                    <template x-if="!drawer.integrityResult?.clean">
+                      <div>
+                        <div x-show="drawer.integrityResult?.modified?.length" style="margin-bottom:14px">
+                          <div style="font-size:12px;font-weight:600;color:var(--accent-warn);margin-bottom:6px">Modified Files (<span x-text="drawer.integrityResult?.modified?.length"></span>)</div>
+                          <div style="background:var(--bg-base);border-radius:8px;padding:10px;font-family:var(--font-mono);font-size:11px;max-height:150px;overflow-y:auto">
+                            <template x-for="f in drawer.integrityResult?.modified" :key="f"><div x-text="f" style="padding:2px 0"></div></template>
+                          </div>
+                        </div>
+                        <div x-show="drawer.integrityResult?.added?.length" style="margin-bottom:14px">
+                          <div style="font-size:12px;font-weight:600;color:var(--green);margin-bottom:6px">New Files (<span x-text="drawer.integrityResult?.added?.length"></span>)</div>
+                          <div style="background:var(--bg-base);border-radius:8px;padding:10px;font-family:var(--font-mono);font-size:11px;max-height:150px;overflow-y:auto">
+                            <template x-for="f in drawer.integrityResult?.added" :key="f"><div x-text="f" style="padding:2px 0"></div></template>
+                          </div>
+                        </div>
+                        <div x-show="drawer.integrityResult?.removed?.length" style="margin-bottom:14px">
+                          <div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:6px">Removed Files (<span x-text="drawer.integrityResult?.removed?.length"></span>)</div>
+                          <div style="background:var(--bg-base);border-radius:8px;padding:10px;font-family:var(--font-mono);font-size:11px;max-height:150px;overflow-y:auto">
+                            <template x-for="f in drawer.integrityResult?.removed" :key="f"><div x-text="f" style="padding:2px 0"></div></template>
+                          </div>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
               </div>
 
               <!-- ── CONFIG TAB ── -->
