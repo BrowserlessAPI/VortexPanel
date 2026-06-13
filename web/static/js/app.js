@@ -1918,8 +1918,10 @@ function mailPage() {
     },
 
     async addAccount() {
-      const r = await post('/api/mail/accounts', {...this.accountForm, domain:this.selDomain});
-      if (r.ok) { toast('Account created','success'); this.showAddAccount=false; await this.loadAccounts(this.selDomain); }
+      if (!this.accountForm.user || !this.accountForm.pass) { toast('Username and password required','error'); return; }
+      const email = `${this.accountForm.user}@${this.selDomain}`;
+      const r = await post('/api/mail/accounts', {email, password:this.accountForm.pass});
+      if (r.ok) { toast('Account created','success'); this.showAddAccount=false; this.accountForm={user:'',pass:''}; await this.loadAccounts(this.selDomain); }
       else toast(r.error||'Failed','error');
     },
 

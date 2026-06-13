@@ -43,14 +43,19 @@ def add_domain():
 @mail_bp.route('/api/mail/accounts')
 def mail_accounts():
     if not req(): return jsonify({'ok':False}),401
+    domain_filter = request.args.get('domain','').strip()
     accounts = []
+    seen = set()
     for f in ['/etc/postfix/virtual_mailbox_maps', MAIL_USERS_FILE]:
         if os.path.exists(f):
             with open(f) as fh:
                 for line in fh:
                     line = line.strip()
                     if line and not line.startswith('#') and '@' in line:
-                        email = line.split()[0]
+                        email = line.split(':')[0].split()[0]
+                        if email in seen: continue
+                        if domain_filter and not email.endswith('@'+domain_filter): continue
+                        seen.add(email)
                         accounts.append({'email':email})
     return jsonify({'ok':True,'accounts':accounts})
 
@@ -124,14 +129,13 @@ def gen_dkim(domain):
 def control_mail():
     if not req(): return jsonify({'ok': False}), 401
     d       = request.get_json() or {}
-    service = d.get('service', 'postfix')   # postfix | dovecot
-    action  = d.get('action', 'restart')    # start | stop | restart | reload
+    service = d.get('service', 'postfix')   # postfix | dovecot | opendkim
+    action  = d.get('action', 'restart')    # start | stop | restart | reload | status
     if action not in ('start','stop','restart','reload','status'):
         return jsonify({'ok': False, 'error': 'Invalid action'}), 400
-    svc_map = {'postfix':'postfix', 'dovecot':'dovecot'}
+    svc_map = {'postfix':'postfix', 'dovecot':'dovecot', 'opendkim':'opendkim'}
     svc = svc_map.get(service, service)
-    out, err, rc = sh(f'systemctl {action} {svc} 2>&1', t=15)
-    # Get new status
-    st_out, _, _ = sh(f'systemctl is-active {svc} 2>/dev/null')
-    return jsonify({'ok': rc==0 or action=='status', 'status': st_out.strip(),
-                    'output': out or err, 'error': err if rc!=0 else ''})
+    if action != 'status':
+        sh(f'systemctl {action} {svc} 2>&1')
+    st_out = sh(f'systemctl is-active {svc} 2>/dev/null')
+    return jsonify({'ok': True, 'status': st_out.strip()})
