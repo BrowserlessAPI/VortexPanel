@@ -124,6 +124,8 @@ TASK_TEMPLATES = [
      'cmd':'/usr/bin/certbot renew --quiet','hint':''},
     {'id':'log_clear',  'label':'Clear Nginx Logs',   'icon':'🧹', 'desc':'Rotate/clear Nginx access logs',
      'cmd':'> /var/log/nginx/access.log && systemctl reload nginx','hint':''},
+    {'id':'cloud_sync', 'label':'Cloud Backup Sync',  'icon':'☁',  'desc':'Upload any new local backups to cloud storage',
+     'cmd':'/opt/vortexpanel/venv/bin/python3 /opt/vortexpanel/scripts/cloud_sync.py','hint':''},
     {'id':'custom',     'label':'Custom Command',     'icon':'⚙',  'desc':'Enter any custom command',
      'cmd':'','hint':'Enter your command...'},
 ]

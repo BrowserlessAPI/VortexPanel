@@ -180,6 +180,18 @@ def create_backup():
             size = os.path.getsize(dest) if os.path.exists(dest) else 0
             _jobs[job_id].update({'done':True,'success':True,'name':name,'size':size})
             _jobs[job_id]['lines'].append(f'✓ Backup complete: {name} ({size//1024}KB)')
+            # Auto-upload to cloud if configured
+            try:
+                from panel.routes.cloud_backup import load_config as _cb_load, get_client as _cb_client
+                cfg = _cb_load()
+                if cfg.get('bucket') and cfg.get('auto_upload'):
+                    _jobs[job_id]['lines'].append('Uploading to cloud storage...')
+                    client = _cb_client(cfg)
+                    prefix = cfg.get('prefix','vortexpanel-backups/')
+                    client.upload_file(dest, cfg['bucket'], prefix+name)
+                    _jobs[job_id]['lines'].append('✓ Uploaded to cloud storage')
+            except Exception as _e:
+                _jobs[job_id]['lines'].append(f'⚠ Cloud upload failed: {_e}')
 
         except Exception as e:
             _jobs[job_id].update({'done':True,'error':str(e)})

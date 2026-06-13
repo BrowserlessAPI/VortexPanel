@@ -1741,6 +1741,7 @@ function terminalPage() {
 // ── BACKUPS ───────────────────────────────────────────────────────────────────
 function backupsPage() {
   return {
+    tab:'local', cloudConfig:{connected:false}, cloudForm:{provider:'aws',region:'us-east-1',endpoint_url:'',access_key:'',secret_key:'',bucket:''}, cloudSaving:false, cloudList:[],
     backups: [], info: {websites:[], databases:[], mysql:false, webroot:'/www/wwwroot'},
     creating: '',
     jobModal:     {show:false, title:'', lines:[], done:false, success:false, error:''},
@@ -1758,6 +1759,42 @@ function backupsPage() {
     async loadInfo() {
       const r = await get('/api/backups/info');
       if (r.ok) this.info = r;
+    },
+    async loadCloudConfig() {
+      const r = await get('/api/backups/cloud/config');
+      if (r.ok) { this.cloudConfig = r; if (r.config) this.cloudForm = {...this.cloudForm, ...r.config}; }
+    },
+    async saveCloudConfig() {
+      this.cloudSaving = true;
+      const r = await put('/api/backups/cloud/config', this.cloudForm);
+      this.cloudSaving = false;
+      if (r.ok) { toast('Connected to cloud storage','success'); await this.loadCloudConfig(); await this.loadCloudList(); }
+      else toast(r.error||'Connection failed','error');
+    },
+    async disconnectCloud() {
+      if (!confirm('Disconnect cloud storage? Local config will be removed.')) return;
+      const r = await del('/api/backups/cloud/config');
+      if (r.ok) { toast('Disconnected','success'); this.cloudConfig={connected:false}; this.cloudList=[]; }
+    },
+    async loadCloudList() {
+      if (!this.cloudConfig.connected) return;
+      const r = await get('/api/backups/cloud/list');
+      if (r.ok) this.cloudList = r.items || [];
+    },
+    async uploadToCloud(name) {
+      const r = await post('/api/backups/cloud/upload/'+name, {});
+      if (r.ok) { toast('Upload started','success'); setTimeout(()=>this.loadCloudList(), 3000); }
+      else toast(r.error||'Failed','error');
+    },
+    async downloadFromCloud(name) {
+      const r = await post('/api/backups/cloud/download/'+name, {});
+      if (r.ok) { toast('Downloaded to server','success'); await this.load(); }
+      else toast(r.error||'Failed','error');
+    },
+    async deleteCloudBackup(name) {
+      if (!confirm('Delete '+name+' from cloud storage?')) return;
+      const r = await del('/api/backups/cloud/'+name);
+      if (r.ok) { toast('Deleted','success'); await this.loadCloudList(); }
     },
 
     async createBackup(type, domain, dbName) {

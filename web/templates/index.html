@@ -2829,13 +2829,26 @@
             <button class="btn btn-ghost btn-sm" @click="showUpload=true">↑ Upload</button>
           </div>
         </div>
-        <div class="grid-2" style="margin-bottom:16px">
+        <div class="tabs" style="margin-bottom:14px">
+          <div class="tab" :class="{active:tab==='local'}" @click="tab='local'">Local Backups</div>
+          <div class="tab" :class="{active:tab==='cloud'}" @click="tab='cloud';loadCloudConfig();loadCloudList()">Cloud Storage</div>
+        </div>
+        <div x-show="tab==='local'">
+        <div class="grid-3" style="margin-bottom:16px">
+          <div class="card">
+            <div class="card-hd"><div class="card-title">📦 Full Backup</div></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;min-height:48px">Backs up all websites, nginx/caddy configs, and the backups folder itself in one archive.</div>
+            <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center" @click="createBackup('full','')" :disabled="creating==='full'">
+              <span x-show="creating==='full'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+              Create Full Backup
+            </button>
+          </div>
           <div class="card">
             <div class="card-hd"><div class="card-title">💾 Website Backup</div></div>
             <div class="form-group"><label class="form-label">Domain</label>
               <select class="form-input" x-model="form.website.domain">
                 <option value="">— Select website —</option>
-                <template x-for="w in info.websites" :key="w"><option :value="w" x-text="w"></option></template>
+                <template x-for="w in info.websites" :key="w.domain"><option :value="w.domain" x-text="w.domain"></option></template>
               </select>
             </div>
             <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center" @click="createBackup('website',form.website.domain)" :disabled="!form.website.domain||creating==='website'">
@@ -2870,6 +2883,7 @@
                   <td style="font-size:11px;color:var(--text-muted)" x-text="fmtDate(b.mtime)"></td>
                   <td><div style="display:flex;gap:4px">
                     <button class="btn btn-ghost btn-xs" @click="downloadBackup(b.name)">↓</button>
+                    <button class="btn btn-ghost btn-xs" @click="uploadToCloud(b.name)" :disabled="!cloudConfig.connected" :title="cloudConfig.connected?'Upload to cloud':'Configure cloud storage first'">☁ Upload</button>
                     <button class="btn btn-ghost btn-xs" @click="openRestore(b)">Restore</button>
                     <button class="btn btn-danger btn-xs" @click="del(b.name)">✕</button>
                   </div></td>
@@ -2878,6 +2892,61 @@
             </tbody>
           </table>
           <template x-if="backups.length===0"><div class="empty-state"><div class="empty-icon">💾</div><div class="empty-text">No backups yet</div></div></template>
+        </div>
+        </div>
+        <div x-show="tab==='cloud'">
+          <div class="card" style="margin-bottom:16px">
+            <div class="card-hd"><div class="card-title">☁ Cloud Storage Provider</div>
+              <span class="badge" :class="cloudConfig.connected?'badge-green':'badge-gray'" x-text="cloudConfig.connected?'Connected':'Not configured'"></span>
+            </div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Provider</label>
+                <select class="form-input" x-model="cloudForm.provider">
+                  <option value="aws">AWS S3</option>
+                  <option value="b2">Backblaze B2</option>
+                  <option value="wasabi">Wasabi</option>
+                  <option value="spaces">DigitalOcean Spaces</option>
+                  <option value="custom">Custom S3-compatible</option>
+                </select>
+              </div>
+              <div class="form-group"><label class="form-label">Region</label><input class="form-input" x-model="cloudForm.region" placeholder="us-east-1"></div>
+            </div>
+            <div class="form-group" x-show="cloudForm.provider==='custom'"><label class="form-label">Endpoint URL</label><input class="form-input" x-model="cloudForm.endpoint_url" placeholder="https://s3.example.com"></div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Access Key</label><input class="form-input" x-model="cloudForm.access_key" placeholder="Access key ID"></div>
+              <div class="form-group"><label class="form-label">Secret Key</label><input class="form-input" type="password" x-model="cloudForm.secret_key" placeholder="Secret access key"></div>
+            </div>
+            <div class="form-group"><label class="form-label">Bucket Name</label><input class="form-input" x-model="cloudForm.bucket" placeholder="my-backup-bucket"></div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;cursor:pointer"><input type="checkbox" x-model="cloudForm.auto_upload" style="accent-color:var(--accent)"> Automatically upload new backups to cloud storage</label>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" @click="saveCloudConfig()" :disabled="cloudSaving">
+                <span x-show="cloudSaving" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                Save & Test Connection
+              </button>
+              <button class="btn btn-danger btn-sm" x-show="cloudConfig.connected" @click="disconnectCloud()">Disconnect</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Credentials are stored locally on your server, never transmitted elsewhere except to your chosen provider.</div>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden" x-show="cloudConfig.connected">
+            <div class="card-hd" style="padding:12px 16px"><div class="card-title">Cloud Backups</div><button class="btn btn-ghost btn-xs" @click="loadCloudList()">↻</button></div>
+            <table class="data-table">
+              <thead><tr><th>File</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead>
+              <tbody>
+                <template x-for="c in cloudList" :key="c.key">
+                  <tr>
+                    <td style="font-family:var(--font-mono);font-size:12px" x-text="c.name"></td>
+                    <td x-text="fmtSize(c.size)"></td>
+                    <td style="font-size:11px;color:var(--text-muted)" x-text="fmtDate(c.modified)"></td>
+                    <td><div style="display:flex;gap:4px">
+                      <button class="btn btn-ghost btn-xs" @click="downloadFromCloud(c.name)">↓ To Server</button>
+                      <button class="btn btn-danger btn-xs" @click="deleteCloudBackup(c.name)">✕</button>
+                    </div></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <template x-if="cloudList.length===0"><div class="empty-state"><div class="empty-icon">☁</div><div class="empty-text">No backups in cloud storage yet</div></div></template>
+          </div>
         </div>
         <!-- Job modal -->
         <div class="modal-overlay" x-show="jobModal.show">
