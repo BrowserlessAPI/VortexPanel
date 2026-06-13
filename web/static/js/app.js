@@ -1675,6 +1675,7 @@ function terminalPage() {
     connected: false,
     term: null, fitAddon: null, ws: null,
     init() {
+     try {
       if (this.term) {
         setTimeout(()=>this.fitAddon.fit(), 50);
         setTimeout(()=>this.fitAddon.fit(), 300);
@@ -1710,6 +1711,7 @@ function terminalPage() {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(data);
       });
       this.term.onResize(() => this.sendResize());
+     } catch(e) { console.error('Terminal init error:', e); }
     },
     sendResize() {
       if (this.ws && this.ws.readyState === WebSocket.OPEN && this.term) {

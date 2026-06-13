@@ -10,6 +10,11 @@
 <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
 <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<!--TEMP
+<link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
+<script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+-->
   <style>[x-cloak]{display:none!important}</style>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js"></script>
@@ -2799,8 +2804,7 @@
       </div>
 
       <!-- TERMINAL -->
-      <!-- TERMINAL -->
-      <div x-show="page==='terminal'" x-data="terminalPage()" x-init="init()" style="min-width:0;max-width:100%">
+      <div x-show="page==='terminal'" x-data="terminalPage()" x-effect="page==='terminal' && init()" style="min-width:0;max-width:100%">
         <div class="page-header"><div><div class="page-title">Terminal</div><div class="page-sub">Live shell — connected via WebSocket PTY</div></div>
           <div style="display:flex;align-items:center;gap:10px">
             <span class="badge" :class="connected?'badge-green':'badge-red'" x-text="connected?'Connected':'Disconnected'"></span>
@@ -2816,7 +2820,6 @@
           </div>
           <div x-ref="term" style="flex:1;width:100%;min-width:0;min-height:0;padding:6px 0 0 8px;overflow:hidden;box-sizing:border-box"></div>
         </div>
-      </div>
       </div>
 
       <!-- BACKUPS -->
