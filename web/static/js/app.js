@@ -67,7 +67,6 @@ function rootApp() {
         { id:'backups',   icon:'💾', label:'Backups'     },
       ]},
       { group: 'Network', items: [
-        { id:'dns',   icon:'🌍', label:'DNS Manager' },
         { id:'mail',  icon:'📧', label:'Mail Server' },
         { id:'ftp',   icon:'📂', label:'FTP / SFTP'  },
         { id:'cdn',   icon:'⚡', label:'CDN Manager' },
@@ -124,7 +123,7 @@ function rootApp() {
       // Restore page from URL hash (e.g. #files → go to files page)
       const hash = window.location.hash.replace('#', '');
       const validPages = ['dashboard','websites','databases','files','modules',
-                          'services','firewall','terminal','backups','dns','mail','ftp',
+                          'services','firewall','terminal','backups','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy',
                           'cdn','settings'];
       if (hash && validPages.includes(hash)) {
@@ -161,7 +160,6 @@ function rootApp() {
       const requires = {
         'ftp':  ['pure-ftpd','proftpd','vsftpd'],
         'mail': ['postfix'],
-        'dns':  ['bind9'],
       };
       const req = requires[pageId];
       if (!req) return true;

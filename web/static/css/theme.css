@@ -1,32 +1,32 @@
 :root {
-  --bg-base:     #141520;
-  --bg-surface:  #1a1b2e;
-  --bg-raised:   #1e2035;
-  --bg-card:     #242640;
-  --bg-hover:    #2a2d4a;
-  --bg-input:    #1a1b2e;
-  --bg-topbar:   #1a1b2e;
-  --sidebar-bg:       #12131f;
-  --sidebar-border:   #1e2038;
-  --sidebar-text:     #7b8299;
-  --sidebar-active-bg:#1e2240;
-  --sidebar-active:   #e8eaf6;
-  --sidebar-active-border: #6c7fff;
-  --accent:      #6c7fff;
-  --accent-2:    #22d3ee;
-  --accent-3:    #34d399;
-  --accent-warn: #fbbf24;
-  --accent-red:  #f87171;
-  --text-primary:   #e8eaf6;
-  --text-secondary: #a0aec0;
-  --text-muted:     #5a6580;
-  --text-dim:       #3d4460;
-  --border:       #252844;
-  --border-light: #2a2d4a;
+  --bg-base:     #f1f5f9;
+  --bg-surface:  #f8fafc;
+  --bg-raised:   #ffffff;
+  --bg-card:     #ffffff;
+  --bg-hover:    #e2e8f0;
+  --bg-input:    #ffffff;
+  --bg-topbar:   #ffffff;
+  --sidebar-bg:       #f8fafc;
+  --sidebar-border:   #e2e8f0;
+  --sidebar-text:     #64748b;
+  --sidebar-active-bg:#e0f7fa;
+  --sidebar-active:   #0e7490;
+  --sidebar-active-border: #06b6d4;
+  --accent:      #06b6d4;
+  --accent-2:    #0891b2;
+  --accent-3:    #14b8a6;
+  --accent-warn: #f59e0b;
+  --accent-red:  #ef4444;
+  --text-primary:   #1e293b;
+  --text-secondary: #64748b;
+  --text-muted:     #94a3b8;
+  --text-dim:       #cbd5e1;
+  --border:       #e2e8f0;
+  --border-light: #f1f5f9;
   --green:  #10b981;
   --yellow: #f59e0b;
   --red:    #ef4444;
-  --blue:   #5865f2;
+  --blue:   #0891b2;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
   --radius:    6px;
@@ -41,8 +41,8 @@ html{font-size:14px}
 body{font-family:var(--font);background:var(--bg-base);color:var(--text-primary);line-height:1.5;overflow-x:hidden}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:#3a3d5e}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#94a3b8}
 a{color:inherit;text-decoration:none}
 /* LAYOUT */
 .app-layout{display:flex;height:100vh}
@@ -151,12 +151,12 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 /* TOAST */
 #toast-container{position:fixed;bottom:20px;right:20px;z-index:1000;display:flex;flex-direction:column;gap:8px;pointer-events:none}
 .toast{padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px;animation:slideIn .2s ease;pointer-events:all;max-width:320px}
-.toast-success{background:#064e3b;border:1px solid #065f46;color:#d1fae5}
-.toast-error{background:#450a0a;border:1px solid #7f1d1d;color:#fecaca}
-.toast-info{background:#1e1b4b;border:1px solid #3730a3;color:#c7d2fe}
+.toast-success{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
+.toast-error{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+.toast-info{background:#ecfeff;border:1px solid #a5f3fc;color:#0e7490}
 @keyframes slideIn{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
 /* CODE */
-.code-block{background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;font-family:var(--font-mono);font-size:12px;color:#a5f3fc;white-space:pre-wrap;overflow-x:auto}
+.code-block{background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;font-family:var(--font-mono);font-size:12px;color:#0e7490;white-space:pre-wrap;overflow-x:auto}
 .terminal-out{background:#080a0e;border:1px solid #1a1d28;border-radius:8px;padding:14px;font-family:var(--font-mono);font-size:12px;color:#86efac;white-space:pre-wrap;min-height:180px;max-height:380px;overflow-y:auto;line-height:1.6}
 /* PAGE HEADER */
 .page-header{margin-bottom:20px;display:flex;align-items:flex-end;justify-content:space-between}
@@ -235,14 +235,14 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
   background: rgba(255,255,255,.05);
   border: 1px solid rgba(255,255,255,.08);
   border-radius: 4px;
-  color: #94a3b8;
+  color: var(--text-secondary);
   font-size: 11px;
   padding: 4px 8px;
   cursor: pointer;
   transition: .1s;
   white-space: nowrap;
 }
-.editor-btn:hover { background: rgba(255,255,255,.1); color: #e2e8f0; }
+.editor-btn:hover { background: rgba(0,0,0,.05); color: var(--text-primary); }
 .editor-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* File type icons in table */

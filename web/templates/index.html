@@ -2898,38 +2898,6 @@
           </div>
         </div>
       </div>
-
-      <!-- DNS -->
-      <div x-show="page==='dns'" x-data="dnsPage()">
-        <div class="page-header"><div><div class="page-title">DNS Manager</div><div class="page-sub">BIND9 zone management</div></div><button class="btn btn-primary btn-sm" @click="showAddZone=true">+ Add Zone</button></div>
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-hd"><div class="card-title">DNS Zones</div><button class="btn btn-ghost btn-xs" @click="loadZones()">↻</button></div>
-            <template x-for="z in zones" :key="z.domain">
-              <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" @click="selectZone(z)" :style="selZone?.domain===z.domain?'color:var(--accent)':''">
-                <span style="font-size:14px">🌍</span><span style="flex:1;font-weight:500;font-size:13px" x-text="z.domain"></span>
-                <button class="btn btn-danger btn-xs" @click.stop="delZone(z)">✕</button>
-              </div>
-            </template>
-            <template x-if="zones.length===0"><div class="empty-state" style="padding:20px"><div class="empty-text">No zones</div></div></template>
-          </div>
-          <div class="card">
-            <div class="card-hd"><div class="card-title" x-text="selZone?'Records: '+selZone.domain:'Select a zone'"></div><button class="btn btn-primary btn-xs" x-show="selZone" @click="showAddRecord=true">+ Add</button></div>
-            <table class="data-table" x-show="records.length">
-              <thead><tr><th>Type</th><th>Name</th><th>Value</th><th></th></tr></thead>
-              <tbody>
-                <template x-for="r in records" :key="r.id">
-                  <tr><td><span class="badge badge-blue" x-text="r.type"></span></td><td x-text="r.name"></td><td style="font-family:var(--font-mono);font-size:11px" x-text="r.value"></td><td><button class="btn btn-danger btn-xs" @click="delRecord(r)">✕</button></td></tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div class="modal-overlay" x-show="showAddZone" @click.self="showAddZone=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title">Add DNS Zone</div><button class="modal-close" @click="showAddZone=false">×</button></div><div class="form-group"><label class="form-label">Domain</label><input class="form-input" x-model="zoneForm.domain" placeholder="example.com"></div><div class="form-group"><label class="form-label">Server IP</label><input class="form-input" x-model="zoneForm.ip" placeholder="1.2.3.4"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddZone=false">Cancel</button><button class="btn btn-primary" @click="addZone()">Create</button></div></div></div>
-        <div class="modal-overlay" x-show="showAddRecord" @click.self="showAddRecord=false"><div class="modal" style="max-width:420px"><div class="modal-hd"><div class="modal-title">Add Record</div><button class="modal-close" @click="showAddRecord=false">×</button></div><div class="form-row form-row-2"><div class="form-group"><label class="form-label">Type</label><select class="form-input" x-model="recForm.type"><option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option><option>NS</option></select></div><div class="form-group"><label class="form-label">TTL</label><input class="form-input" x-model="recForm.ttl" value="3600"></div></div><div class="form-group"><label class="form-label">Name</label><input class="form-input" x-model="recForm.name" placeholder="@ or subdomain"></div><div class="form-group"><label class="form-label">Value</label><input class="form-input" x-model="recForm.value" placeholder="1.2.3.4"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddRecord=false">Cancel</button><button class="btn btn-primary" @click="addRecord()">Add</button></div></div></div>
-      </div>
-
-      <!-- MAIL -->
       <div x-show="page==='mail'" x-data="mailPage()">
         <div class="page-header"><div><div class="page-title">Mail Server</div><div class="page-sub">Postfix + Dovecot management</div></div></div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap">
