@@ -75,6 +75,7 @@ function rootApp() {
       { group: 'System', items: [
         { id:'cron',       icon:'⏱', label:'Cron Jobs'  },
         { id:'monitoring', icon:'📊', label:'Monitoring' },
+        { id:'logs',       icon:'📋', label:'Log Viewer' },
         { id:'bandwidth',  icon:'📈', label:'Bandwidth'  },
         { id:'security',   icon:'🔐', label:'Security'   },
         { id:'settings',   icon:'⚙', label:'Settings'   },
@@ -127,7 +128,7 @@ function rootApp() {
       const validPages = ['dashboard','websites','databases','files','modules',
                           'services','firewall','terminal','backups','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy',
-                          'cdn','settings'];
+                          'cdn','logs','settings'];
       if (hash && validPages.includes(hash)) {
         this.page = hash;
       }
@@ -2159,6 +2160,12 @@ function monitoringPage() {
     processes: [],
 
     async init() { await this.load(); setInterval(()=>this.load(), 5000); },
+    async killProcess(pid) {
+      if (!confirm('Kill process PID '+pid+'?')) return;
+      const r = await post('/api/monitoring/processes/kill', {pid});
+      if (r.ok) { toast('Signal sent to PID '+pid,'success'); setTimeout(()=>this.load(), 1000); }
+      else toast(r.error||'Failed','error');
+    },
 
     async load() {
       // Get processes
@@ -2837,6 +2844,32 @@ function updateModalData() {
           }
         } catch {}
       }, 600);
+    },
+  };
+}
+
+function logsPage() {
+  return {
+    sources: [], source: 'vortexpanel', search: '', lines: 200,
+    autoRefresh: false, output: '', _interval: null,
+    async init() {
+      const r = await get('/api/logs/sources');
+      if (r.ok) this.sources = r.sources || [];
+      await this.load();
+      this._interval = setInterval(() => { if (this.autoRefresh) this.load(true); }, 5000);
+    },
+    async load(silent) {
+      const params = new URLSearchParams({source:this.source, search:this.search, lines:this.lines});
+      const r = await get('/api/logs/tail?'+params.toString());
+      if (r.ok) {
+        this.output = r.lines;
+        if (silent) {
+          this.$nextTick(() => {
+            const el = document.getElementById('log-viewer-output');
+            if (el) el.scrollTop = el.scrollHeight;
+          });
+        }
+      }
     },
   };
 }

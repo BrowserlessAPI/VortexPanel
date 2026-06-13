@@ -3256,7 +3256,7 @@
             <button class="btn btn-ghost btn-xs" @click="load()">↻ Refresh</button>
           </div>
           <table class="data-table">
-            <thead><tr><th>PID</th><th>User</th><th>Command</th><th>CPU%</th><th>Mem%</th></tr></thead>
+            <thead><tr><th>PID</th><th>User</th><th>Command</th><th>CPU%</th><th>Mem%</th><th>Actions</th></tr></thead>
             <tbody>
               <template x-for="p in processes" :key="p.pid">
                 <tr>
@@ -3267,10 +3267,34 @@
                     <span style="font-size:12px" x-text="p.cpu+'%'"></span>
                   </td>
                   <td style="font-size:12px" x-text="p.mem+'%'"></td>
+                  <td><button class="btn btn-danger btn-xs" @click="killProcess(p.pid)" :disabled="p.pid==='1'">Kill</button></td>
                 </tr>
               </template>
             </tbody>
           </table>
+        </div>
+      </div>
+      <!-- LOG VIEWER -->
+      <div x-show="page==='logs'" x-data="logsPage()">
+        <div class="page-header"><div><div class="page-title">Log Viewer</div><div class="page-sub">Real-time server and application logs</div></div></div>
+        <div class="card-sm" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <select class="form-input" style="width:auto;min-width:180px" x-model="source" @change="load()">
+            <template x-for="s in sources" :key="s.id"><option :value="s.id" x-text="s.label"></option></template>
+          </select>
+          <input class="form-input" style="flex:1;min-width:150px" x-model="search" @input.debounce.400ms="load()" placeholder="Filter / search logs...">
+          <select class="form-input" style="width:auto" x-model.number="lines" @change="load()">
+            <option :value="100">Last 100 lines</option>
+            <option :value="200">Last 200 lines</option>
+            <option :value="500">Last 500 lines</option>
+            <option :value="1000">Last 1000 lines</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" x-model="autoRefresh" style="accent-color:var(--accent)"> Auto-refresh (5s)
+          </label>
+          <button class="btn btn-ghost btn-sm" @click="load()">Refresh</button>
+        </div>
+        <div class="card" style="padding:0">
+          <pre id="log-viewer-output" class="code-block" x-text="output||'Loading...'" style="white-space:pre-wrap;max-height:600px;overflow-y:auto;margin:0;border-radius:8px;font-size:12px;line-height:1.5"></pre>
         </div>
       </div>
 

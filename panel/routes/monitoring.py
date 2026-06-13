@@ -127,3 +127,16 @@ def monitoring_overview():
         'load':      load_str,
         'processes': processes,
     })
+
+@monitoring_bp.route('/api/monitoring/processes/kill', methods=['POST'])
+def kill_process():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    pid = str(d.get('pid','')).strip()
+    if not pid.isdigit():
+        return jsonify({'ok':False,'error':'Invalid PID'}),400
+    if pid == '1' or int(pid) == os.getpid():
+        return jsonify({'ok':False,'error':'Refusing to kill init or the panel process itself'}),400
+    signal_arg = '-9' if d.get('force') else ''
+    out = sh(f'kill {signal_arg} {pid} 2>&1')
+    return jsonify({'ok':True, 'output':out})
