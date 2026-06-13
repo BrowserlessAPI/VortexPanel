@@ -29,7 +29,7 @@
 <div id="vortex-root" x-data="rootApp()">
 
 <!-- LOGIN PAGE -->
-<div id="login-page" x-show="!loggedIn" style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg-base)">
+<div id="login-page" x-show="authChecked && !loggedIn" x-cloak style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg-base)">
   <div class="login-box">
     <div class="login-logo">
       <div class="logo-icon">⚡</div>

@@ -36,6 +36,7 @@ function rootApp() {
   return {
     // Auth state
     loggedIn:  false,
+    authChecked: false,
     loginUser: '',
     loginPass: '',
     loginErr:  '',
@@ -91,6 +92,7 @@ function rootApp() {
           await this._onLoggedIn();
         }
       } catch {}
+      this.authChecked = true;
     },
 
     // ── Login ────────────────────────────────────────────────────────────────
