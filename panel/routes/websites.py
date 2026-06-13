@@ -514,6 +514,9 @@ def setup_nodejs(domain):
     if not os.path.exists(fp): return jsonify({'ok':False,'error':'Site not found'}), 404
 
     if enable:
+        runtime_check = d.get('runtime','node')
+        if runtime_check == 'go' and not sh('which go 2>/dev/null'):
+            return jsonify({'ok':False,'error':'Go is not installed on this server. Install it via Terminal (e.g. apt-get install golang-go) or App Store, then try again.'}), 400
         # Install PM2 if not present
         if not sh('which pm2 2>/dev/null'):
             sh('npm install -g pm2 2>/dev/null', t=60)
@@ -537,9 +540,20 @@ def setup_nodejs(domain):
         content = re.sub(r'(}\s*)$', '    ' + node_location + '\n' + r'\1', content, count=1)
         with open(fp,'w') as f: f.write(content)
 
-        # Start app with PM2
+        # Start app with PM2 (supports node / python / go)
         pm2_name = domain.replace('.','_')
-        sh(f'cd {app_path} && pm2 start {startup} --name {pm2_name} 2>/dev/null || pm2 restart {pm2_name} 2>/dev/null')
+        runtime = d.get('runtime','node')
+        if runtime == 'python':
+            if os.path.exists(os.path.join(app_path,'requirements.txt')):
+                sh(f'cd {app_path} && pip3 install -r requirements.txt --break-system-packages 2>/dev/null', t=180)
+            sh(f'cd {app_path} && pm2 start {startup} --name {pm2_name} --interpreter python3 2>/dev/null || pm2 restart {pm2_name} 2>/dev/null')
+        elif runtime == 'go':
+            build_out = sh(f'cd {app_path} && go build -o vp_app . 2>&1', t=180)
+            sh(f'cd {app_path} && pm2 start ./vp_app --name {pm2_name} 2>/dev/null || pm2 restart {pm2_name} 2>/dev/null')
+        else:
+            if os.path.exists(os.path.join(app_path,'package.json')) and not os.path.isdir(os.path.join(app_path,'node_modules')):
+                sh(f'cd {app_path} && npm install 2>/dev/null', t=180)
+            sh(f'cd {app_path} && pm2 start {startup} --name {pm2_name} 2>/dev/null || pm2 restart {pm2_name} 2>/dev/null')
         sh('pm2 save 2>/dev/null')
     else:
         # Stop PM2 app

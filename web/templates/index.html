@@ -763,14 +763,33 @@
               <!-- ── NODE.JS TAB ── -->
               <div x-show="drawer.tab==='nodejs'">
                 <div x-show="!drawer.nodejsEnabled" class="card">
-                  <div class="card-title" style="margin-bottom:12px">🟢 Enable Node.js App</div>
+                  <div class="card-title" style="margin-bottom:12px">🚀 Run an App (Node.js / Python / Go)</div>
+                  <div class="form-group"><label class="form-label">Runtime</label>
+                    <select class="form-input" x-model="drawer.nodejsForm.runtime">
+                      <option value="node">Node.js</option>
+                      <option value="python">Python</option>
+                      <option value="go">Go</option>
+                    </select>
+                  </div>
                   <div class="form-group"><label class="form-label">App Directory</label><input class="form-input" x-model="drawer.nodejsForm.app_path" :placeholder="'/www/wwwroot/'+drawer.site?.domain"></div>
-                  <div class="form-row form-row-2"><div class="form-group"><label class="form-label">Startup File</label><input class="form-input" x-model="drawer.nodejsForm.startup" placeholder="index.js"></div><div class="form-group"><label class="form-label">Port</label><input class="form-input" x-model="drawer.nodejsForm.port" placeholder="3000"></div></div>
-                  <button class="btn btn-success" @click="enableNodejs()" style="width:100%;justify-content:center">Enable Node.js</button>
+                  <div class="form-row form-row-2">
+                    <div class="form-group">
+                      <label class="form-label" x-text="drawer.nodejsForm.runtime==='go'?'Entry (build target)':'Startup File'"></label>
+                      <input class="form-input" x-model="drawer.nodejsForm.startup"
+                             :placeholder="drawer.nodejsForm.runtime==='python'?'app.py':(drawer.nodejsForm.runtime==='go'?'.':'index.js')">
+                    </div>
+                    <div class="form-group"><label class="form-label">Port</label><input class="form-input" x-model="drawer.nodejsForm.port" placeholder="3000"></div>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">
+                    <span x-show="drawer.nodejsForm.runtime==='python'">Your app must listen on the chosen port. If a <code>requirements.txt</code> exists, dependencies are installed automatically.</span>
+                    <span x-show="drawer.nodejsForm.runtime==='node'">If a <code>package.json</code> exists, <code>npm install</code> runs automatically before starting.</span>
+                    <span x-show="drawer.nodejsForm.runtime==='go'">The Go module is built (<code>go build</code>) then run. Requires Go installed on the server.</span>
+                  </div>
+                  <button class="btn btn-success" @click="enableNodejs()" style="width:100%;justify-content:center">Enable App</button>
                 </div>
                 <div x-show="drawer.nodejsEnabled" class="card">
-                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"><span class="dot dot-green"></span><span style="font-weight:600">Node.js is active on port <span x-text="drawer.nodejsForm.port"></span></span></div>
-                  <button class="btn btn-danger btn-sm" @click="disableNodejs()">Disable Node.js</button>
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"><span class="dot dot-green"></span><span style="font-weight:600">App is active on port <span x-text="drawer.nodejsForm.port"></span></span></div>
+                  <button class="btn btn-danger btn-sm" @click="disableNodejs()">Disable App</button>
                 </div>
               </div>
 
