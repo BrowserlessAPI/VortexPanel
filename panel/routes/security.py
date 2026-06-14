@@ -205,9 +205,10 @@ def lb_status():
     if not os.path.exists(LB_CONF):
         return jsonify({'ok':True,'configured':False,'servers':[],'method':'roundrobin'})
     with open(LB_CONF) as f: content = f.read()
-    # Parse upstream servers
-    import re
-    servers = re.findall(r'server\s+([^\s;]+)\s*(?:weight=(\d+))?', content)
+    # Parse only real "server <addr> [weight=N];" upstream directives.
+    # Must end in ';' and exclude { } — this prevents the virtual host's
+    # "server {" block declaration from being parsed as a phantom backend.
+    servers = re.findall(r'^\s*server\s+([^\s;{}]+)(?:\s+weight=(\d+))?\s*;', content, re.MULTILINE)
     method = 'roundrobin'
     if 'least_conn' in content: method = 'leastconn'
     if 'ip_hash'    in content: method = 'iphash'
@@ -231,8 +232,10 @@ def lb_save():
 
     server_lines = '\n'.join([
         f"    server {s['address']} weight={s.get('weight',1)};"
-        for s in servers
+        for s in servers if s.get('address')
     ])
+    if not server_lines:
+        return jsonify({'ok':False,'error':'At least one valid server address required'}), 400
 
     conf = f"""# VortexPanel Load Balancer — managed by VortexPanel
 # Method: {method}
@@ -263,12 +266,26 @@ server {{
     }}
 }}
 """
-    import os
     os.makedirs('/etc/nginx/conf.d', exist_ok=True)
+
+    # Back up the existing config before overwriting. If 'nginx -t' fails
+    # below, we restore this so a broken config is never left on disk
+    # (which would otherwise break nginx on the next restart/reload and
+    # take down every site on the server).
+    existed = os.path.exists(LB_CONF)
+    backup = None
+    if existed:
+        with open(LB_CONF) as f: backup = f.read()
+
     with open(LB_CONF,'w') as f: f.write(conf)
     test_out, test_err, test_rc = sh('nginx -t 2>&1')
     test = (test_out + test_err)
     if test_rc != 0 or 'failed' in test.lower():
+        if existed:
+            with open(LB_CONF,'w') as f: f.write(backup)
+        else:
+            try: os.unlink(LB_CONF)
+            except: pass
         return jsonify({'ok':False,'error':test}), 400
     sh('systemctl reload nginx 2>/dev/null')
     return jsonify({'ok':True})
@@ -276,7 +293,6 @@ server {{
 @security_bp.route('/api/security/loadbalancer', methods=['DELETE'])
 def lb_delete():
     if not req(): return jsonify({'ok':False}), 401
-    import os
     try: os.unlink(LB_CONF)
     except: pass
     sh('systemctl reload nginx 2>/dev/null')
