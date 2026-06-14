@@ -131,6 +131,15 @@ def domain_bandwidth():
 @bandwidth_bp.route('/api/bandwidth/install-vnstat', methods=['POST'])
 def install_vnstat():
     if not req(): return jsonify({'ok':False}), 401
-    out = sh('apt-get install -y vnstat 2>&1 && systemctl enable vnstat && systemctl start vnstat', t=120)
+    _os = get_os()
+    cmds = []
+    if _os['family'] == 'debian':
+        cmds.append('apt-get update -qq 2>/dev/null || true')
+    elif _os['family'] == 'rhel':
+        cmds.append('dnf install -y epel-release 2>/dev/null || true')
+    cmds.append(pkg_install('vnstat'))
+    cmds.append('systemctl enable vnstat 2>/dev/null || true')
+    cmds.append('systemctl start vnstat 2>/dev/null || true')
+    out = sh(' && '.join(cmds) + ' 2>&1', t=120)
     installed = bool(sh('which vnstat 2>/dev/null'))
     return jsonify({'ok':installed,'output':out[-300:]})

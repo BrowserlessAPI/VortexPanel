@@ -172,8 +172,12 @@ def modsec_status():
     if installed:
         with open(conf) as f: content = f.read()
         enabled = 'SecRuleEngine On' in content
-    rules_count = sh('find /etc/nginx/modsec/crs/rules/ -name "*.conf" 2>/dev/null | wc -l')
-    return jsonify({'ok':True,'installed':installed,'enabled':enabled,'rules':int(rules_count or 0)})
+    rules_out, _, _ = sh('find /etc/nginx/modsec/crs/rules/ -name "*.conf" 2>/dev/null | wc -l')
+    try:
+        rules_count = int(rules_out.strip() or 0)
+    except (ValueError, AttributeError):
+        rules_count = 0
+    return jsonify({'ok':True,'installed':installed,'enabled':enabled,'rules':rules_count})
 
 @security_bp.route('/api/security/modsecurity/toggle', methods=['POST'])
 def modsec_toggle():
@@ -262,8 +266,9 @@ server {{
     import os
     os.makedirs('/etc/nginx/conf.d', exist_ok=True)
     with open(LB_CONF,'w') as f: f.write(conf)
-    test = sh('nginx -t 2>&1')
-    if 'failed' in test.lower():
+    test_out, test_err, test_rc = sh('nginx -t 2>&1')
+    test = (test_out + test_err)
+    if test_rc != 0 or 'failed' in test.lower():
         return jsonify({'ok':False,'error':test}), 400
     sh('systemctl reload nginx 2>/dev/null')
     return jsonify({'ok':True})

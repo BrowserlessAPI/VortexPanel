@@ -65,8 +65,9 @@ def create_app():
 
     return app
 
+app = create_app()
+
 if __name__ == '__main__':
-    app  = create_app()
     port = int(os.environ.get('PORT', 8888))
     # '::' binds to all IPv6 + IPv4 on dual-stack systems (covers 0.0.0.0 too)
     # Falls back to 0.0.0.0 if IPv6 not available
