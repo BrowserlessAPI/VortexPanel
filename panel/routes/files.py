@@ -162,6 +162,23 @@ def extract_file():
     try:
         if src.endswith('.zip'):
             r = subprocess.run(f'unzip -o "{src}" -d "{dst}"', shell=True, capture_output=True, text=True)
+            # Fallback for AES-encrypted (compression method 99) or other zips unzip can't handle
+            if r.returncode != 0 or 'unsupported compression method' in (r.stderr + r.stdout).lower():
+                r7 = subprocess.run(f'7z x "{src}" -o"{dst}" -y', shell=True, capture_output=True, text=True)
+                if r7.returncode == 0:
+                    return jsonify({'ok': True, 'error': ''})
+                err = (r.stderr or r.stdout)[:300] + ' | 7z: ' + (r7.stderr or r7.stdout)[:300]
+                return jsonify({'ok': False, 'error': err})
+        elif src.endswith(('.tar.gz', '.tgz')):
+            r = subprocess.run(f'tar -xzf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+        elif src.endswith('.tar.bz2'):
+            r = subprocess.run(f'tar -xjf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+        elif src.endswith('.tar.xz'):
+            r = subprocess.run(f'tar -xJf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+        elif src.endswith('.tar'):
+            r = subprocess.run(f'tar -xf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+        elif src.endswith(('.7z', '.rar')):
+            r = subprocess.run(f'7z x "{src}" -o"{dst}" -y', shell=True, capture_output=True, text=True)
         else:
             r = subprocess.run(f'tar -xzf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
         return jsonify({'ok': r.returncode==0, 'error': r.stderr[:300] if r.returncode!=0 else ''})
