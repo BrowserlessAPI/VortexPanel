@@ -164,7 +164,7 @@ def create_db():
     d      = request.get_json() or {}
     name   = re.sub(r'[^a-zA-Z0-9_]','', d.get('name',''))
     user   = re.sub(r'[^a-zA-Z0-9_]','', d.get('user', ''))
-    pwd    = d.get('password','')
+    pwd    = d.get('password','') or d.get('pass','')
     engine = d.get('engine','mysql')
     if not name: return jsonify({'ok':False,'error':'Database name required'})
 
