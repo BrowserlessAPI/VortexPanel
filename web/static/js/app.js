@@ -2595,6 +2595,35 @@ const DOCKER_CATALOG = [
    ports:[{host:'3007', container:'3000'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/flowise', container:'/root/.flowise'}],
    cmd:'', docs:'https://hub.docker.com/r/flowiseai/flowise'},
+  {id:'mosquitto', icon:'📡', name:'Eclipse Mosquitto', hardened:false, image:'eclipse-mosquitto', tag:'latest', cat:'IoT / Home Automation',
+   desc:'Lightweight open-source MQTT broker for IoT messaging.',
+   ports:[{host:'1883', container:'1883'},{host:'9001', container:'9001'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/mosquitto/config', container:'/mosquitto/config'},{host:'/opt/vortexpanel/docker-data/mosquitto/data', container:'/mosquitto/data'}],
+   cmd:'', docs:'https://hub.docker.com/_/eclipse-mosquitto'},
+
+  {id:'node-red', icon:'🔴', name:'Node-RED', hardened:false, image:'nodered/node-red', tag:'latest', cat:'IoT / Home Automation',
+   desc:'Flow-based visual programming for wiring together IoT devices and APIs.',
+   ports:[{host:'1880', container:'1880'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/node-red', container:'/data'}],
+   cmd:'', docs:'https://hub.docker.com/r/nodered/node-red'},
+
+  {id:'home-assistant', icon:'🏠', name:'Home Assistant', hardened:false, image:'ghcr.io/home-assistant/home-assistant', tag:'stable', cat:'IoT / Home Automation',
+   desc:'Open-source home automation platform to control smart devices.',
+   ports:[{host:'8123', container:'8123'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/home-assistant', container:'/config'}],
+   cmd:'', docs:'https://github.com/home-assistant/core'},
+
+  {id:'jenkins', icon:'⚙', name:'Jenkins', hardened:false, image:'jenkins/jenkins', tag:'lts', cat:'Dev Tools',
+   desc:'Automation server for building, testing and deploying code (CI/CD).',
+   ports:[{host:'8095', container:'8080'},{host:'50000', container:'50000'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/jenkins', container:'/var/jenkins_home'}],
+   cmd:'', docs:'https://hub.docker.com/r/jenkins/jenkins'},
+
+  {id:'verdaccio', icon:'📦', name:'Verdaccio', hardened:false, image:'verdaccio/verdaccio', tag:'latest', cat:'Dev Tools',
+   desc:'Lightweight private npm registry for hosting your own packages.',
+   ports:[{host:'4873', container:'4873'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/verdaccio', container:'/verdaccio/storage'}],
+   cmd:'', docs:'https://hub.docker.com/r/verdaccio/verdaccio'},
 ];
 
 function dockerPage() {
