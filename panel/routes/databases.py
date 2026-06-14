@@ -269,7 +269,15 @@ def list_users():
         users = []
         for line in raw.split('\n')[1:]:
             parts = line.strip().split('\t')
-            if len(parts)>=2 and parts[0]: users.append({'user':parts[0],'host':parts[1]})
+            if len(parts)>=2 and parts[0]:
+                u, h = parts[0], parts[1]
+                grants_raw, _ = mysql_cmd(f"SHOW GRANTS FOR '{u}'@'{h}';")
+                dbs = []
+                for gline in grants_raw.split('\n'):
+                    m = re.search(r'ON `?([A-Za-z0-9_\\*]+)`?\.\*', gline)
+                    if m and m.group(1) != '*':
+                        dbs.append(m.group(1))
+                users.append({'user':u,'host':h,'databases':dbs})
         return jsonify({'ok':True,'users':users})
     elif engine == 'postgresql':
         raw, err = pg_cmd("SELECT usename FROM pg_user WHERE usename != 'postgres' ORDER BY usename;")

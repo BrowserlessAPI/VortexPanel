@@ -416,9 +416,9 @@ function databasesPage() {
       const systemUsers=['mysql','mariadb.sys','postgres'];
       const filtered=this.users.filter(u=>!systemUsers.includes(u.user));
       return this.filteredDbs.map(db=>{
-        let user=filtered.find(u=>db.name.includes(u.user)||u.user.includes(db.name.replace('_db','').replace('_','')));
-        if(!user) user=filtered[0]||null;
-        return {db,user};
+        let owners=filtered.filter(u=>Array.isArray(u.databases)&&u.databases.includes(db.name));
+        let user=owners.length?owners[0]:null;
+        return {db,user,owners};
       });
     },
     async init(){ await this.load(); },
