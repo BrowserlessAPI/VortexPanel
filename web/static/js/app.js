@@ -2565,6 +2565,36 @@ const DOCKER_CATALOG = [
    ports:[{host:'8001', container:'8000'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/python-app', container:'/app'}],
    cmd:'python /app/main.py', docs:'https://hub.docker.com/_/python'},
+  {id:'ollama', icon:'🦙', name:'Ollama', hardened:false, image:'ollama/ollama', tag:'latest', cat:'AI / LLM',
+   desc:'Run open-source LLMs (Llama, Mistral, Phi, etc.) locally via a simple API.',
+   ports:[{host:'11434', container:'11434'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/ollama', container:'/root/.ollama'}],
+   cmd:'', docs:'https://hub.docker.com/r/ollama/ollama'},
+
+  {id:'open-webui', icon:'🤖', name:'Open WebUI', hardened:false, image:'ghcr.io/open-webui/open-webui', tag:'main', cat:'AI / LLM',
+   desc:'ChatGPT-style web interface for Ollama and OpenAI-compatible APIs.',
+   ports:[{host:'3011', container:'8080'}],
+   envs:[{key:'OLLAMA_BASE_URL', value:'', placeholder:'http://ollama-container:11434'}],
+   volumes:[{host:'/opt/vortexpanel/docker-data/open-webui', container:'/app/backend/data'}],
+   cmd:'', docs:'https://github.com/open-webui/open-webui'},
+
+  {id:'qdrant', icon:'🧭', name:'Qdrant', hardened:false, image:'qdrant/qdrant', tag:'latest', cat:'AI / LLM',
+   desc:'High-performance vector database for AI search and RAG applications.',
+   ports:[{host:'6333', container:'6333'},{host:'6334', container:'6334'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/qdrant', container:'/qdrant/storage'}],
+   cmd:'', docs:'https://hub.docker.com/r/qdrant/qdrant'},
+
+  {id:'localai', icon:'🧠', name:'LocalAI', hardened:false, image:'localai/localai', tag:'latest-cpu', cat:'AI / LLM',
+   desc:'Drop-in OpenAI-compatible API for running local AI models, CPU-friendly.',
+   ports:[{host:'8002', container:'8080'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/localai/models', container:'/models'}],
+   cmd:'', docs:'https://hub.docker.com/r/localai/localai'},
+
+  {id:'flowise', icon:'🌊', name:'Flowise', hardened:false, image:'flowiseai/flowise', tag:'latest', cat:'AI / LLM',
+   desc:'Drag-and-drop UI to build AI agents and chatbot workflows with LLMs.',
+   ports:[{host:'3007', container:'3000'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/flowise', container:'/root/.flowise'}],
+   cmd:'', docs:'https://hub.docker.com/r/flowiseai/flowise'},
 ];
 
 function dockerPage() {
