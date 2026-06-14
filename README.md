@@ -49,7 +49,7 @@ it automatically installs and uses Python 3.11 for the panel's virtual environme
 
 ## 📋 Requirements
 
-- **OS**: Ubuntu 20.04 / 22.04 / 24.04, Debian 11 / 12, Fedora 38+, AlmaLinux 8 / 9 / 10, Rocky Linux 8 / 9 / 10, RHEL 8 / 9 / 10, Oracle Linux 8 / 9, CentOS Stream
+- **OS**: Ubuntu 20.04 / 22.04 / 24.04, Debian 11 / 12, Fedora 38+, AlmaLinux 8 / 9 / 10, Rocky Linux 8 / 9 / 10, RHEL 8 / 9 / 10, Oracle Linux 8 / 9, CentOS Stream, CloudLinux 8 / 9 / 10
 - **RAM**: 512 MB minimum (1 GB recommended)
 - **Disk**: 2 GB free
 - **Python**: 3.8+ (the installer handles this automatically on older RHEL 8-family systems)

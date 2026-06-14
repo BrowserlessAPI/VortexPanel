@@ -18,7 +18,7 @@ if [ -f /etc/os-release ]; then
     case "$OS_ID" in
         ubuntu|debian|linuxmint|pop) OS_FAMILY="debian"; PKG_MGR="apt" ;;
         fedora) OS_FAMILY="fedora"; PKG_MGR="dnf" ;;
-        rhel|centos|almalinux|rocky|ol) OS_FAMILY="rhel"; PKG_MGR="dnf" ;;
+        rhel|centos|almalinux|rocky|ol|cloudlinux) OS_FAMILY="rhel"; PKG_MGR="dnf" ;;
         *) warn "Unknown OS: $OS_ID, assuming Debian-like" ; OS_FAMILY="debian"; PKG_MGR="apt" ;;
     esac
 else
@@ -37,7 +37,7 @@ if [ "$PKG_MGR" = "apt" ]; then
 elif [ "$PKG_MGR" = "dnf" ]; then
     dnf install -y python3 python3-pip curl git wget unzip sudo
     # Enable EPEL for extra packages
-    if [[ "$OS_ID" =~ ^(rhel|almalinux|rocky|ol|centos)$ ]]; then
+    if [[ "$OS_ID" =~ ^(rhel|almalinux|rocky|ol|centos|cloudlinux)$ ]]; then
         dnf install -y epel-release 2>/dev/null || true
     fi
     # RHEL8-family ships Python 3.6 by default, which is too old for
