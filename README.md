@@ -1,6 +1,6 @@
 <div align="center">
   <img src="https://img.shields.io/badge/VortexPanel-v3.0-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel">
-  <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=for-the-badge&logo=python&logoColor=white">
+  <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
   <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
   <img src="https://img.shields.io/badge/Alpine.js-3.14-8bc0d0?style=for-the-badge">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge">
@@ -35,20 +35,24 @@
 ## 🚀 Quick Install
 
 ```bash
-# One-line install (Ubuntu 20.04 / 22.04 / 24.04)
+# One-line install (Ubuntu, Debian, Fedora, AlmaLinux, Rocky, RHEL, Oracle Linux, CentOS)
 wget -O install.sh https://raw.githubusercontent.com/BrowserlessAPI/Vortexpanel/main/install.sh && bash install.sh
 ```
 
 Access the panel at: `http://YOUR-SERVER-IP:8888`
 
+The installer auto-detects your OS and package manager (`apt` or `dnf`), and on
+RHEL 8-family systems (AlmaLinux 8 / Rocky 8, where the default Python is 3.6)
+it automatically installs and uses Python 3.11 for the panel's virtual environment.
+
 ---
 
 ## 📋 Requirements
 
-- **OS**: Ubuntu 20.04, 22.04, or 24.04 LTS
+- **OS**: Ubuntu 20.04 / 22.04 / 24.04, Debian 11 / 12, Fedora 38+, AlmaLinux 8 / 9 / 10, Rocky Linux 8 / 9 / 10, RHEL 8 / 9 / 10, Oracle Linux 8 / 9, CentOS Stream
 - **RAM**: 512 MB minimum (1 GB recommended)
 - **Disk**: 2 GB free
-- **Python**: 3.10+
+- **Python**: 3.8+ (the installer handles this automatically on older RHEL 8-family systems)
 
 ---
 
@@ -68,7 +72,7 @@ python3 app.py
 - **Backend**: Python 3 + Flask
 - **Frontend**: Alpine.js 3.14 + Vanilla CSS (no framework)
 - **Database**: File-based config (no external DB required for panel itself)
-- **Auth**: Session-based with bcrypt passwords
+- **Auth**: Session-based with SHA-256 hashed passwords
 
 ---
 
