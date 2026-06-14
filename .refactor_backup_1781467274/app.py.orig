@@ -6,14 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from flask import Flask
 from panel.routes.auth      import auth_bp
 from panel.routes.dashboard import dashboard_bp
-from panel.routes.websites_core import websites_bp
-from panel.routes.websites_ssl import *  # noqa
-from panel.routes.websites_proxy import *  # noqa
-from panel.routes.websites_security import *  # noqa
-from panel.routes.websites_nodejs import *  # noqa
-from panel.routes.websites_deploy import *  # noqa
-from panel.routes.websites_composer import *  # noqa
-from panel.routes.websites_integrity import *  # noqa
+from panel.routes.websites  import websites_bp
 from panel.routes.databases import databases_bp
 from panel.routes.files     import files_bp
 from panel.routes.php       import php_bp
