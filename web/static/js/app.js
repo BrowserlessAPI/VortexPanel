@@ -139,6 +139,7 @@ function rootApp() {
       } catch {}
       // Silent update check after 3s
       setTimeout(() => this.silentUpdateCheck(), 3000);
+      document.dispatchEvent(new CustomEvent('vortex-logged-in'));
     },
 
     // ── Panel navigation ──────────────────────────────────────────────────────
@@ -1345,7 +1346,7 @@ function modulesPage() {
     verModal:  {show:false, mod:null, selVer:'', action:'install'},
     phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
-
+    async init() { await this.load(); document.addEventListener('vortex-logged-in', () => { if (this.modules.length === 0) this.load(); }); },
     async init() { await this.load(); },
 
     async load() {
