@@ -49,8 +49,11 @@ def save_credentials(creds):
 @auth_bp.route('/api/auth/check')
 def check_session():
     if 'user' in session:
-        return jsonify({'ok': True, 'logged_in': True, 'username': session.get('user','admin')})
-    return jsonify({'ok': True, 'logged_in': False})
+        resp = jsonify({'ok': True, 'logged_in': True, 'username': session.get('user','admin')})
+    else:
+        resp = jsonify({'ok': True, 'logged_in': False})
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    return resp
 
 @auth_bp.route('/api/auth/login', methods=['POST'])
 def login():

@@ -1,6 +1,6 @@
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
 async function api(method, url, body) {
-  const opts = { method, headers: {'Content-Type':'application/json'} };
+  const opts = { method, headers: {'Content-Type':'application/json'}, cache: 'no-store' };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(url, opts);
   return r.json();
@@ -2341,9 +2341,123 @@ function securityPage() {
 }
 
 // ── DOCKER ────────────────────────────────────────────────────────────────────
+// ── DOCKER CATALOG ────────────────────────────────────────────────────────────
+const DOCKER_CATALOG = [
+  {id:'nginx', icon:'🌐', name:'Nginx', hardened:false, image:'nginx', tag:'latest', cat:'Web Server',
+   desc:'High-performance web server and reverse proxy.',
+   ports:[{host:'8080', container:'80'}], envs:[], volumes:[{host:'/opt/vortexpanel/docker-data/nginx', container:'/usr/share/nginx/html'}],
+   cmd:'', docs:'https://hub.docker.com/_/nginx'},
+
+  {id:'httpd', icon:'🪶', name:'Apache HTTPD', hardened:false, image:'httpd', tag:'latest', cat:'Web Server',
+   desc:'The Apache HTTP Server, widely used and battle-tested.',
+   ports:[{host:'8081', container:'80'}], envs:[], volumes:[{host:'/opt/vortexpanel/docker-data/httpd', container:'/usr/local/apache2/htdocs'}],
+   cmd:'', docs:'https://hub.docker.com/_/httpd'},
+
+  {id:'mysql', icon:'🐬', name:'MySQL', hardened:false, image:'mysql', tag:'8.0', cat:'Database',
+   desc:'Popular open-source relational database server.',
+   ports:[{host:'3306', container:'3306'}],
+   envs:[{key:'MYSQL_ROOT_PASSWORD', value:'', placeholder:'set a strong password'}],
+   volumes:[{host:'/opt/vortexpanel/docker-data/mysql', container:'/var/lib/mysql'}],
+   cmd:'', docs:'https://hub.docker.com/_/mysql'},
+
+  {id:'postgres', icon:'🐘', name:'PostgreSQL', hardened:false, image:'postgres', tag:'16', cat:'Database',
+   desc:'Advanced open-source relational database.',
+   ports:[{host:'5432', container:'5432'}],
+   envs:[{key:'POSTGRES_PASSWORD', value:'', placeholder:'set a strong password'}],
+   volumes:[{host:'/opt/vortexpanel/docker-data/postgres', container:'/var/lib/postgresql/data'}],
+   cmd:'', docs:'https://hub.docker.com/_/postgres'},
+
+  {id:'mariadb', icon:'🦭', name:'MariaDB', hardened:false, image:'mariadb', tag:'11', cat:'Database',
+   desc:'Community-developed MySQL fork.',
+   ports:[{host:'3307', container:'3306'}],
+   envs:[{key:'MARIADB_ROOT_PASSWORD', value:'', placeholder:'set a strong password'}],
+   volumes:[{host:'/opt/vortexpanel/docker-data/mariadb', container:'/var/lib/mysql'}],
+   cmd:'', docs:'https://hub.docker.com/_/mariadb'},
+
+  {id:'mongo', icon:'🍃', name:'MongoDB', hardened:false, image:'mongo', tag:'7', cat:'Database',
+   desc:'Document-oriented NoSQL database.',
+   ports:[{host:'27017', container:'27017'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/mongo', container:'/data/db'}],
+   cmd:'', docs:'https://hub.docker.com/_/mongo'},
+
+  {id:'redis', icon:'⚡', name:'Redis', hardened:false, image:'redis', tag:'7-alpine', cat:'Cache',
+   desc:'In-memory key-value store, cache and message broker.',
+   ports:[{host:'6379', container:'6379'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/redis', container:'/data'}],
+   cmd:'', docs:'https://hub.docker.com/_/redis'},
+
+  {id:'memcached', icon:'💾', name:'Memcached', hardened:false, image:'memcached', tag:'alpine', cat:'Cache',
+   desc:'Distributed memory object caching system.',
+   ports:[{host:'11211', container:'11211'}], envs:[], volumes:[],
+   cmd:'', docs:'https://hub.docker.com/_/memcached'},
+
+  {id:'wordpress', icon:'📝', name:'WordPress', hardened:false, image:'wordpress', tag:'latest', cat:'CMS',
+   desc:"The world's most popular CMS, ready to run.",
+   ports:[{host:'8082', container:'80'}],
+   envs:[
+     {key:'WORDPRESS_DB_HOST', value:'', placeholder:'db-container-name:3306'},
+     {key:'WORDPRESS_DB_USER', value:'', placeholder:'wordpress'},
+     {key:'WORDPRESS_DB_PASSWORD', value:'', placeholder:'database password'},
+     {key:'WORDPRESS_DB_NAME', value:'', placeholder:'wordpress'},
+   ],
+   volumes:[{host:'/opt/vortexpanel/docker-data/wordpress', container:'/var/www/html'}],
+   cmd:'', docs:'https://hub.docker.com/_/wordpress'},
+
+  {id:'portainer', icon:'🐳', name:'Portainer', hardened:false, image:'portainer/portainer-ce', tag:'latest', cat:'Management',
+   desc:'Web UI for managing Docker containers, images and volumes.',
+   ports:[{host:'9000', container:'9000'}], envs:[],
+   volumes:[
+     {host:'/var/run/docker.sock', container:'/var/run/docker.sock'},
+     {host:'/opt/vortexpanel/docker-data/portainer', container:'/data'},
+   ],
+   cmd:'', docs:'https://hub.docker.com/r/portainer/portainer-ce'},
+
+  {id:'adminer', icon:'🛠', name:'Adminer', hardened:false, image:'adminer', tag:'latest', cat:'Database Tools',
+   desc:'Lightweight database management UI for MySQL/Postgres/SQLite.',
+   ports:[{host:'8083', container:'8080'}], envs:[], volumes:[],
+   cmd:'', docs:'https://hub.docker.com/_/adminer'},
+
+  {id:'phpmyadmin', icon:'🐘', name:'phpMyAdmin', hardened:false, image:'phpmyadmin/phpmyadmin', tag:'latest', cat:'Database Tools',
+   desc:'Web UI for managing MySQL/MariaDB databases.',
+   ports:[{host:'8084', container:'80'}],
+   envs:[{key:'PMA_HOST', value:'', placeholder:'db-container-name'}],
+   volumes:[], cmd:'', docs:'https://hub.docker.com/r/phpmyadmin/phpmyadmin'},
+
+  {id:'grafana', icon:'📊', name:'Grafana', hardened:false, image:'grafana/grafana', tag:'latest', cat:'Monitoring',
+   desc:'Dashboards and visualization for metrics and logs.',
+   ports:[{host:'3001', container:'3000'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/grafana', container:'/var/lib/grafana'}],
+   cmd:'', docs:'https://hub.docker.com/r/grafana/grafana'},
+
+  {id:'prometheus', icon:'🔥', name:'Prometheus', hardened:false, image:'prom/prometheus', tag:'latest', cat:'Monitoring',
+   desc:'Metrics collection and alerting toolkit.',
+   ports:[{host:'9090', container:'9090'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/prometheus', container:'/prometheus'}],
+   cmd:'', docs:'https://hub.docker.com/r/prom/prometheus'},
+
+  {id:'rabbitmq', icon:'🐰', name:'RabbitMQ', hardened:false, image:'rabbitmq', tag:'3-management', cat:'Messaging',
+   desc:'Message broker with web management console.',
+   ports:[{host:'5672', container:'5672'},{host:'15672', container:'15672'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/rabbitmq', container:'/var/lib/rabbitmq'}],
+   cmd:'', docs:'https://hub.docker.com/_/rabbitmq'},
+
+  {id:'vaultwarden', icon:'🔐', name:'Vaultwarden', hardened:false, image:'vaultwarden/server', tag:'latest', cat:'Security',
+   desc:'Lightweight self-hosted Bitwarden-compatible password server.',
+   ports:[{host:'8085', container:'80'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/vaultwarden', container:'/data'}],
+   cmd:'', docs:'https://hub.docker.com/r/vaultwarden/server'},
+
+  {id:'uptime-kuma', icon:'🟢', name:'Uptime Kuma', hardened:false, image:'louislam/uptime-kuma', tag:'1', cat:'Monitoring',
+   desc:'Self-hosted uptime monitoring tool with notifications.',
+   ports:[{host:'3002', container:'3001'}], envs:[],
+   volumes:[{host:'/opt/vortexpanel/docker-data/uptime-kuma', container:'/app/data'}],
+   cmd:'', docs:'https://hub.docker.com/r/louislam/uptime-kuma'},
+];
+
 function dockerPage() {
   return {
     status: {installed:false, running:false, version:''},
+    loading: true,
     containers: [], images: [], volumes: [], networks: [],
     tab: 'catalog',
     catalogFilter: 'All', search: '',
@@ -2356,6 +2470,7 @@ function dockerPage() {
     async init() {
       await this.loadStatus();
       if (this.status.running) await Promise.all([this.loadContainers(), this.loadImages()]);
+      this.loading = false;
     },
 
     async loadStatus()     { const r=await get('/api/docker/status');     if(r.ok) this.status=r; },
