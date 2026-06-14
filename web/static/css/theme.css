@@ -322,3 +322,12 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 }
 .php-pill-status.on  { background: #4ade80; box-shadow: 0 0 5px #4ade8088; }
 .php-pill-status.off { background: var(--text-muted); opacity: .4; }
+
+/* Code editor: CodeMirror sizing */
+.CodeMirror {
+  height: 100% !important;
+  font-family: 'JetBrains Mono', monospace;
+}
+.CodeMirror-scroll { min-height: 100%; }
+.cm-s-material-darker.CodeMirror { background: #0d0e14; }
+.cm-s-material-darker .CodeMirror-gutters { background: #0d0e14; border-right: 1px solid #1e2030; }

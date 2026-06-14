@@ -1,4 +1,12 @@
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
+// CodeMirror instance kept OUTSIDE Alpine's reactive data on purpose: Alpine
+// deep-proxies object properties, and CodeMirror's internal closures hold
+// references to the raw instance. Mixing raw + proxied references to the same
+// instance breaks internal identity checks (editing silently fails while
+// simple things like cursor tracking still work). Keeping it module-level
+// avoids this entirely.
+let _editorCM = null;
+
 async function api(method, url, body) {
   const opts = { method, headers: {'Content-Type':'application/json'}, cache: 'no-store' };
   if (body) opts.body = JSON.stringify(body);
@@ -509,17 +517,15 @@ function filesPage() {
     editorOpen: false,
     editorTabs: [],      // [{path, name, content, original, modified}]
     activeTab: null,
-    editorContent: '',
     editorSearch: false,
     findStr: '', replaceStr: '', findCount: 0, findIdx: 0,
     cursorLine: 1, cursorCol: 1,
     lintErrors: [], showLintPanel: false,
     fontSize: 13,
     showHighlight: false, highlightedContent: '',
-
-    get lineCount() {
-      return this.editorContent.split('\n').length;
-    },
+    editorSidebarOpen: true,
+    editorTree: [], editorTreeExpanded: {},
+    cmReady: false, cmLoadPromise: null,
 
     get breadcrumbs() {
       const parts = this.path.split('/').filter(Boolean);
@@ -653,31 +659,136 @@ function filesPage() {
     // ── Code Editor ──────────────────────────────────────────────────────────
     async openEditor(f) {
       if (!this.isEditable(f.name)) { toast('Cannot edit binary files', 'error'); return; }
-      // Check if already open
       const existing = this.editorTabs.find(t => t.path === f.path);
-      if (existing) { this.switchTab(existing); return; }
-
-      const r = await get('/api/files/read?path=' + encodeURIComponent(f.path));
-      if (!r.ok) { toast(r.error || 'Cannot read file', 'error'); return; }
-
-      const tab = { path: f.path, name: f.name, content: r.content, original: r.content, modified: false };
-      this.editorTabs.push(tab);
-      this.switchTab(tab);
       this.editorOpen = true;
-      this.$nextTick(() => {
-        if (this.$refs.editor) this.$refs.editor.focus();
-        document.documentElement.style.setProperty('--ed-fs', this.fontSize + 'px');
-      });
+      if (existing) {
+        await this.switchTab(existing);
+      } else {
+        const r = await get('/api/files/read?path=' + encodeURIComponent(f.path));
+        if (!r.ok) {
+          toast(r.error || 'Cannot read file', 'error');
+          this.editorOpen = this.editorTabs.length > 0;
+          return;
+        }
+        const tab = { path: f.path, name: f.name, content: r.content, original: r.content, modified: false };
+        this.editorTabs.push(tab);
+        await this.switchTab(tab);
+      }
+      if (!this.editorTree.length) await this.initEditorTree();
+      await this.expandTreeToPath(f.path);
     },
 
-    switchTab(tab) {
-      // Save current content to current tab
-      if (this.activeTab) this.activeTab.content = this.editorContent;
+    cmModeFor(name) {
+      const ext = name.split('.').pop().toLowerCase();
+      const modes = {
+        php: 'application/x-httpd-php', html: 'application/x-httpd-php', htm: 'application/x-httpd-php',
+        js: 'javascript', jsx: 'javascript', mjs: 'javascript',
+        ts: { name: 'javascript', typescript: true }, tsx: { name: 'javascript', typescript: true },
+        json: { name: 'javascript', json: true },
+        css: 'css', scss: 'css', sass: 'css',
+        xml: 'xml', svg: 'xml',
+        yaml: 'yaml', yml: 'yaml',
+        py: 'python',
+        rb: 'ruby',
+        sh: 'shell', bash: 'shell',
+        md: 'markdown',
+        sql: 'sql',
+      };
+      return modes[ext] || null;
+    },
+
+    async ensureCodeMirror() {
+      if (window.CodeMirror) return;
+      if (this.cmLoadPromise) return this.cmLoadPromise;
+      const base = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/';
+      const files = [
+        'codemirror.min.js',
+        'mode/xml/xml.min.js',
+        'mode/javascript/javascript.min.js',
+        'mode/css/css.min.js',
+        'mode/clike/clike.min.js',
+        'mode/htmlmixed/htmlmixed.min.js',
+        'mode/php/php.min.js',
+        'mode/python/python.min.js',
+        'mode/shell/shell.min.js',
+        'mode/yaml/yaml.min.js',
+        'mode/markdown/markdown.min.js',
+        'mode/sql/sql.min.js',
+        'mode/ruby/ruby.min.js',
+        'addon/edit/matchbrackets.min.js',
+        'addon/edit/closebrackets.min.js',
+        'addon/selection/active-line.min.js',
+        'addon/search/searchcursor.min.js',
+      ];
+      const loadScript = src => new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src; s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      this.cmLoadPromise = (async () => {
+        await loadScript(base + files[0]);
+        await Promise.all(files.slice(1).map(p => loadScript(base + p)));
+      })();
+      return this.cmLoadPromise;
+    },
+
+    async initOrSyncCM(tab) {
+      await this.ensureCodeMirror();
+      const host = this.$refs.cmHost;
+      if (!host) return;
+      if (!_editorCM) {
+        _editorCM = CodeMirror(host, {
+          value: tab.content,
+          mode: this.cmModeFor(tab.name),
+          theme: 'material-darker',
+          lineNumbers: true,
+          lineWrapping: true,
+          matchBrackets: true,
+          autoCloseBrackets: true,
+          styleActiveLine: true,
+          tabSize: 4,
+          indentUnit: 4,
+          extraKeys: {
+            'Tab': cm => cm.replaceSelection('    '),
+            'Ctrl-S': () => { this.saveFile(); return false; },
+            'Cmd-S': () => { this.saveFile(); return false; },
+          },
+        });
+        _editorCM.getWrapperElement().style.fontFamily = "'JetBrains Mono', monospace";
+        _editorCM.getWrapperElement().style.fontSize = this.fontSize + 'px';
+        _editorCM.on('change', () => {
+          if (this._cmSyncing) return;
+          if (this.activeTab) {
+            this.activeTab.content = _editorCM.getValue();
+            this.activeTab.modified = this.activeTab.content !== this.activeTab.original;
+          }
+        });
+        _editorCM.on('cursorActivity', () => {
+          const c = _editorCM.getCursor();
+          this.cursorLine = c.line + 1;
+          this.cursorCol = c.ch + 1;
+        });
+        this.cmReady = true;
+      } else {
+        this._cmSyncing = true;
+        _editorCM.setValue(tab.content);
+        _editorCM.setOption('mode', this.cmModeFor(tab.name));
+        _editorCM.clearHistory();
+        this._cmSyncing = false;
+      }
+      this.$nextTick(() => { _editorCM.refresh(); _editorCM.focus(); });
+    },
+
+    async switchTab(tab) {
+      if (_editorCM && this.activeTab) {
+        this.activeTab.content = _editorCM.getValue();
+        this.activeTab.modified = this.activeTab.content !== this.activeTab.original;
+      }
       this.activeTab = tab;
-      this.editorContent = tab.content;
       this.lintErrors = [];
       this.showLintPanel = false;
       this.cursorLine = 1; this.cursorCol = 1;
+      await this.initOrSyncCM(tab);
     },
 
     closeTab(tab) {
@@ -689,26 +800,36 @@ function filesPage() {
           const newTab = this.editorTabs[Math.max(0, idx - 1)];
           this.switchTab(newTab);
         } else {
-          this.activeTab = null; this.editorContent = ''; this.editorOpen = false;
+          this.activeTab = null;
+          if (_editorCM) _editorCM.setValue('');
+          this.editorOpen = false;
         }
       }
     },
 
-    onEditorInput() {
-      if (this.activeTab) {
-        this.activeTab.content = this.editorContent;
-        this.activeTab.modified = this.editorContent !== this.activeTab.original;
+    closeEditorModal() {
+      const unsaved = this.editorTabs.filter(t => t.modified);
+      if (unsaved.length && !confirm(unsaved.length + ' file(s) have unsaved changes. Close anyway?')) return;
+      this.editorOpen = false;
+    },
+
+    toggleEditorSearch() {
+      this.editorSearch = !this.editorSearch;
+      if (this.editorSearch) {
+        this.findIdx = -1;
+        this.$nextTick(() => { if (this.$refs.findInput) this.$refs.findInput.focus(); });
       }
     },
 
     async saveFile() {
-      if (!this.activeTab) return;
-      const r = await post('/api/files/write', { path: this.activeTab.path, content: this.editorContent });
+      if (!this.activeTab || !_editorCM) return;
+      const content = _editorCM.getValue();
+      this.activeTab.content = content;
+      const r = await post('/api/files/write', { path: this.activeTab.path, content });
       if (r.ok) {
-        this.activeTab.original = this.editorContent;
+        this.activeTab.original = content;
         this.activeTab.modified = false;
         toast('✓ Saved: ' + this.activeTab.name, 'success');
-        // Auto-lint on save
         await this.lintCurrentFile();
       } else {
         toast('Save failed: ' + (r.error || ''), 'error');
@@ -716,6 +837,10 @@ function filesPage() {
     },
 
     async saveAllFiles() {
+      if (_editorCM && this.activeTab) {
+        this.activeTab.content = _editorCM.getValue();
+        this.activeTab.modified = this.activeTab.content !== this.activeTab.original;
+      }
       for (const tab of this.editorTabs.filter(t => t.modified)) {
         await post('/api/files/write', { path: tab.path, content: tab.content });
         tab.original = tab.content; tab.modified = false;
@@ -725,7 +850,6 @@ function filesPage() {
 
     async lintCurrentFile() {
       if (!this.activeTab) return;
-      // Save first so lint reads latest content
       const r = await post('/api/files/lint', { path: this.activeTab.path });
       if (r.ok) {
         this.lintErrors = r.errors;
@@ -735,81 +859,117 @@ function filesPage() {
       }
     },
 
-    insertTab() {
-      const ta = this.$refs.editor;
-      if (!ta) return;
-      const start = ta.selectionStart, end = ta.selectionEnd;
-      this.editorContent = this.editorContent.substring(0, start) + '    ' + this.editorContent.substring(end);
-      this.$nextTick(() => { ta.selectionStart = ta.selectionEnd = start + 4; });
-    },
-
-    syncScroll() {
-      if (this.$refs.lineNums && this.$refs.editor) {
-        this.$refs.lineNums.scrollTop = this.$refs.editor.scrollTop;
-      }
-    },
-
-    updateCursor() {
-      const ta = this.$refs.editor;
-      if (!ta) return;
-      const val = ta.value.substring(0, ta.selectionStart);
-      const lines = val.split('\n');
-      this.cursorLine = lines.length;
-      this.cursorCol  = lines[lines.length - 1].length + 1;
-    },
-
     cycleFontSize() {
       const sizes = [11, 12, 13, 14, 16, 18];
       const idx = sizes.indexOf(this.fontSize);
       this.fontSize = sizes[(idx + 1) % sizes.length];
       document.documentElement.style.setProperty('--ed-fs', this.fontSize + 'px');
+      if (_editorCM) {
+        _editorCM.getWrapperElement().style.fontSize = this.fontSize + 'px';
+        _editorCM.refresh();
+      }
     },
 
-    jumpLine() {
-      const line = prompt('Jump to line:', this.cursorLine);
-      if (!line) return;
-      const ta = this.$refs.editor; if (!ta) return;
-      const lines = this.editorContent.split('\n');
-      let pos = 0;
-      for (let i = 0; i < Math.min(parseInt(line) - 1, lines.length); i++) {
-        pos += lines[i].length + 1;
-      }
-      ta.focus(); ta.setSelectionRange(pos, pos);
-      this.updateCursor();
+    jumpLine(line) {
+      if (!_editorCM) return;
+      const ln = Math.max(0, parseInt(line) - 1);
+      _editorCM.setCursor({ line: ln, ch: 0 });
+      _editorCM.scrollIntoView({ line: ln, ch: 0 }, 100);
+      _editorCM.focus();
     },
 
     doFind() {
-      if (!this.findStr) return;
-      const content = this.editorContent;
-      const regex = new RegExp(this.findStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-      const matches = [...content.matchAll(regex)];
-      this.findCount = matches.length;
-      if (!matches.length) { toast('Not found', 'info'); return; }
-      this.findIdx = (this.findIdx + 1) % matches.length;
-      const ta = this.$refs.editor; if (!ta) return;
-      ta.focus();
-      ta.setSelectionRange(matches[this.findIdx].index, matches[this.findIdx].index + this.findStr.length);
+      if (!this.findStr || !_editorCM) return;
+      const cm = _editorCM;
+      let searchCursor = cm.getSearchCursor(this.findStr, cm.getCursor(), { caseFold: true });
+      if (!searchCursor.findNext()) {
+        searchCursor = cm.getSearchCursor(this.findStr, { line: 0, ch: 0 }, { caseFold: true });
+        if (!searchCursor.findNext()) { this.findCount = 0; toast('Not found', 'info'); return; }
+      }
+      cm.setSelection(searchCursor.from(), searchCursor.to());
+      cm.scrollIntoView(searchCursor.from(), 100);
+      let count = 0;
+      const counter = cm.getSearchCursor(this.findStr, { line: 0, ch: 0 }, { caseFold: true });
+      while (counter.findNext()) count++;
+      this.findCount = count;
     },
 
     doReplace() {
-      if (!this.findStr || !this.activeTab) return;
-      const ta = this.$refs.editor; if (!ta) return;
-      const start = ta.selectionStart, end = ta.selectionEnd;
-      if (this.editorContent.substring(start, end).toLowerCase() === this.findStr.toLowerCase()) {
-        this.editorContent = this.editorContent.substring(0, start) + this.replaceStr + this.editorContent.substring(end);
-        ta.setSelectionRange(start, start + this.replaceStr.length);
+      if (!this.findStr || !_editorCM) return;
+      const cm = _editorCM;
+      if (cm.getSelection().toLowerCase() === this.findStr.toLowerCase()) {
+        cm.replaceSelection(this.replaceStr);
       }
       this.doFind();
     },
 
     doReplaceAll() {
-      if (!this.findStr || !this.activeTab) return;
-      const regex = new RegExp(this.findStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-      const count = (this.editorContent.match(regex) || []).length;
-      this.editorContent = this.editorContent.replace(regex, this.replaceStr);
-      this.activeTab.content = this.editorContent;
-      this.activeTab.modified = true;
+      if (!this.findStr || !_editorCM || !this.activeTab) return;
+      const cm = _editorCM;
+      let count = 0;
+      const searchCursor = cm.getSearchCursor(this.findStr, { line: 0, ch: 0 }, { caseFold: true });
+      while (searchCursor.findNext()) {
+        searchCursor.replace(this.replaceStr);
+        count++;
+      }
+      this.activeTab.content = cm.getValue();
+      this.activeTab.modified = this.activeTab.content !== this.activeTab.original;
+      this.findCount = 0;
       toast('Replaced ' + count + ' occurrence(s)', 'success');
+    },
+
+    // ── Editor file tree ─────────────────────────────────────────────────────
+    async loadEditorTreeChildren(dirPath) {
+      const r = await get('/api/files/list?path=' + encodeURIComponent(dirPath));
+      if (!r.ok) return [];
+      return r.items
+        .map(i => ({ path: i.path, name: i.name, type: i.type }))
+        .sort((a, b) => {
+          if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+    },
+
+    async initEditorTree() {
+      const root = await this.loadEditorTreeChildren(this.webroot);
+      this.editorTree = root.map(n => ({ ...n, depth: 0 }));
+    },
+
+    async toggleTreeDir(node) {
+      if (node.type !== 'dir') return;
+      const idx = this.editorTree.indexOf(node);
+      if (this.editorTreeExpanded[node.path]) {
+        let end = idx + 1;
+        while (end < this.editorTree.length && this.editorTree[end].depth > node.depth) end++;
+        this.editorTree.splice(idx + 1, end - (idx + 1));
+        delete this.editorTreeExpanded[node.path];
+      } else {
+        const children = await this.loadEditorTreeChildren(node.path);
+        this.editorTree.splice(idx + 1, 0, ...children.map(c => ({ ...c, depth: node.depth + 1 })));
+        this.editorTreeExpanded[node.path] = true;
+      }
+    },
+
+    openTreeFile(node) {
+      if (node.type === 'dir') { this.toggleTreeDir(node); return; }
+      if (!this.isEditable(node.name)) { toast('Cannot edit binary files', 'error'); return; }
+      this.openEditor({ path: node.path, name: node.name, type: 'file' });
+    },
+
+    async expandTreeToPath(filePath) {
+      if (!this.editorTree.length) return;
+      let rel = filePath;
+      if (rel.startsWith(this.webroot)) rel = rel.slice(this.webroot.length);
+      const parts = rel.split('/').filter(Boolean);
+      parts.pop();
+      let current = this.webroot.replace(/\/$/, '');
+      for (const part of parts) {
+        current = current + '/' + part;
+        const node = this.editorTree.find(n => n.path === current);
+        if (node && !this.editorTreeExpanded[current]) {
+          await this.toggleTreeDir(node);
+        }
+      }
     },
 
     // ── File operations ──────────────────────────────────────────────────────

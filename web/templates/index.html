@@ -10,6 +10,8 @@
 <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
 <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
 <!--TEMP
 <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
 <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
@@ -1242,72 +1244,82 @@
           </div>
         </div>
 
-        <!-- Code Editor (full screen overlay) -->
-        <div x-show="editorOpen" style="position:fixed;inset:0;z-index:400;background:var(--bg-base);display:flex;flex-direction:column">
-          <!-- Editor topbar -->
-          <div style="height:42px;background:#161722;border-bottom:1px solid #1e2030;display:flex;align-items:center;gap:8px;padding:0 12px;flex-shrink:0">
-            <button class="editor-btn" @click="editorOpen=false">← Back</button>
-            <!-- Tabs -->
-            <div style="display:flex;gap:2px;flex:1;overflow-x:auto">
-              <template x-for="tab in editorTabs" :key="tab.path">
-                <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap"
-                     :style="activeTab===tab?'background:rgba(255,255,255,.1);color:#e2e8f0':'color:#94a3b8'"
-                     @click="switchTab(tab)">
-                  <span x-text="tab.name"></span>
-                  <span x-show="tab.modified" style="color:var(--accent-warn);font-size:10px">●</span>
-                  <span style="opacity:.6;font-size:14px" @click.stop="closeTab(tab)">×</span>
-                </div>
+        <!-- Code Editor (floating window with file tree) -->
+        <div x-show="editorOpen" x-cloak style="position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center">
+          <div style="width:94vw;height:90vh;background:#161722;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden">
+            <!-- Editor topbar -->
+            <div style="height:42px;background:#161722;border-bottom:1px solid #1e2030;display:flex;align-items:center;gap:8px;padding:0 12px;flex-shrink:0">
+              <button class="editor-btn" @click="editorSidebarOpen=!editorSidebarOpen" title="Toggle file tree">📁</button>
+              <!-- Tabs -->
+              <div style="display:flex;gap:2px;flex:1;overflow-x:auto">
+                <template x-for="tab in editorTabs" :key="tab.path">
+                  <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap"
+                       :style="activeTab===tab?'background:rgba(255,255,255,.1);color:#e2e8f0':'color:#94a3b8'"
+                       @click="switchTab(tab)">
+                    <span x-text="getIcon(tab.name)"></span>
+                    <span x-text="tab.name"></span>
+                    <span x-show="tab.modified" style="color:var(--accent-warn);font-size:10px">●</span>
+                    <span style="opacity:.6;font-size:14px" @click.stop="closeTab(tab)">×</span>
+                  </div>
+                </template>
+              </div>
+              <!-- Editor toolbar -->
+              <div style="display:flex;gap:4px;flex-shrink:0">
+                <button class="editor-btn" @click="saveFile()" :disabled="!activeTab" title="Ctrl+S">💾 Save</button>
+                <button class="editor-btn" @click="saveAllFiles()" title="Save All">Save All</button>
+                <button class="editor-btn" @click="lintCurrentFile()" :disabled="!activeTab">🔍 Lint</button>
+                <button class="editor-btn" @click="toggleEditorSearch()">Find</button>
+                <button class="editor-btn" @click="cycleFontSize()">Aa</button>
+                <button class="editor-btn" @click="closeEditorModal()" title="Close">✕</button>
+              </div>
+            </div>
+            <!-- Find/Replace bar -->
+            <div x-show="editorSearch" style="padding:6px 12px;background:#161722;border-bottom:1px solid #1e2030;display:flex;gap:8px;align-items:center">
+              <input x-ref="findInput" style="background:#0d0e14;border:1px solid #2a2b3a;border-radius:4px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:180px;outline:none" x-model="findStr" placeholder="Find..." @keydown.enter="doFind()" @keydown.escape="editorSearch=false">
+              <input style="background:#0d0e14;border:1px solid #2a2b3a;border-radius:4px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:180px;outline:none" x-model="replaceStr" placeholder="Replace...">
+              <button class="editor-btn" @click="doFind()">Find</button>
+              <button class="editor-btn" @click="doReplace()">Replace</button>
+              <button class="editor-btn" @click="doReplaceAll()">Replace All</button>
+              <span x-show="findCount>0" style="font-size:11px;color:#94a3b8" x-text="(findIdx+1)+'/'+findCount"></span>
+              <span x-show="findCount===0 && findStr" style="font-size:11px;color:#94a3b8">No results</span>
+            </div>
+            <!-- Lint errors -->
+            <div x-show="showLintPanel && lintErrors.length" style="background:#1a0808;border-bottom:1px solid #7f1d1d;padding:6px 12px;max-height:80px;overflow-y:auto">
+              <template x-for="err in lintErrors" :key="err.line">
+                <div style="font-size:11px;font-family:monospace;color:#fca5a5;cursor:pointer" @click="jumpLine(err.line)" x-text="'Line '+err.line+': '+err.message"></div>
               </template>
             </div>
-            <!-- Editor toolbar -->
-            <div style="display:flex;gap:4px;flex-shrink:0">
-              <button class="editor-btn" @click="saveFile()" :disabled="!activeTab" title="Ctrl+S">💾 Save</button>
-              <button class="editor-btn" @click="saveAllFiles()" title="Save All">Save All</button>
-              <button class="editor-btn" @click="lintCurrentFile()" :disabled="!activeTab">🔍 Lint</button>
-              <button class="editor-btn" @click="editorSearch=!editorSearch">Find</button>
-              <button class="editor-btn" @click="cycleFontSize()">Aa</button>
+            <!-- Body: file tree + editor -->
+            <div style="flex:1;display:flex;overflow:hidden;min-height:0">
+              <!-- File tree sidebar -->
+              <div x-show="editorSidebarOpen" style="width:210px;flex-shrink:0;background:#13141e;border-right:1px solid #1e2030;overflow-y:auto;font-size:12px;padding:6px 0">
+                <template x-for="node in editorTree" :key="node.path">
+                  <div style="display:flex;align-items:center;gap:4px;padding:3px 8px;cursor:pointer;white-space:nowrap;color:#94a3b8;overflow:hidden;text-overflow:ellipsis"
+                       :style="'padding-left:'+(node.depth*14+8)+'px'+(activeTab&&activeTab.path===node.path?';background:rgba(255,255,255,.08);color:#e2e8f0':'')"
+                       @click="openTreeFile(node)">
+                    <span x-show="node.type==='dir'" style="font-size:9px;width:10px;flex-shrink:0;display:inline-block" x-text="editorTreeExpanded[node.path]?'▾':'▸'"></span>
+                    <span x-show="node.type!=='dir'" style="width:10px;flex-shrink:0;display:inline-block"></span>
+                    <span x-text="node.type==='dir'?'📁':getIcon(node.name)" style="flex-shrink:0"></span>
+                    <span x-text="node.name"></span>
+                  </div>
+                </template>
+                <div x-show="!editorTree.length" style="padding:12px;color:#4b5563;font-size:11px">Loading file tree...</div>
+              </div>
+              <!-- CodeMirror host -->
+              <div style="flex:1;min-width:0;overflow:hidden;position:relative">
+                <div x-show="!cmReady" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;background:#0d0e14">Loading editor…</div>
+                <div x-ref="cmHost" style="height:100%"></div>
+              </div>
             </div>
-          </div>
-          <!-- Find/Replace bar -->
-          <div x-show="editorSearch" style="padding:6px 12px;background:#161722;border-bottom:1px solid #1e2030;display:flex;gap:8px;align-items:center">
-            <input style="background:#0d0e14;border:1px solid #2a2b3a;border-radius:4px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:180px;outline:none" x-model="findStr" placeholder="Find..." @keydown.enter="doFind()">
-            <input style="background:#0d0e14;border:1px solid #2a2b3a;border-radius:4px;color:#e2e8f0;padding:4px 8px;font-size:12px;width:180px;outline:none" x-model="replaceStr" placeholder="Replace...">
-            <button class="editor-btn" @click="doFind()">Find</button>
-            <button class="editor-btn" @click="doReplace()">Replace</button>
-            <button class="editor-btn" @click="doReplaceAll()">Replace All</button>
-            <span x-show="findCount>0" style="font-size:11px;color:#94a3b8" x-text="(findIdx+1)+'/'+findCount"></span>
-          </div>
-          <!-- Lint errors -->
-          <div x-show="showLintPanel && lintErrors.length" style="background:#1a0808;border-bottom:1px solid #7f1d1d;padding:6px 12px;max-height:80px;overflow-y:auto">
-            <template x-for="err in lintErrors" :key="err.line">
-              <div style="font-size:11px;font-family:monospace;color:#fca5a5" x-text="'Line '+err.line+': '+err.message"></div>
-            </template>
-          </div>
-          <!-- Editor area -->
-          <div style="flex:1;display:flex;overflow:hidden">
-            <!-- Line numbers -->
-            <div x-ref="lineNums" style="background:#0d0e14;border-right:1px solid #1e2030;padding:12px 8px;font-family:monospace;font-size:var(--ed-fs);line-height:1.6;color:#4b5563;text-align:right;min-width:48px;overflow:hidden;user-select:none;flex-shrink:0">
-              <template x-for="n in lineCount" :key="n"><div x-text="n"></div></template>
+            <!-- Status bar -->
+            <div style="height:24px;background:#161722;border-top:1px solid #1e2030;display:flex;align-items:center;padding:0 12px;gap:16px;font-size:11px;color:#64748b;flex-shrink:0">
+              <span x-text="activeTab?getLang(activeTab.name):'—'"></span>
+              <span x-text="'Ln '+cursorLine+', Col '+cursorCol"></span>
+              <span style="flex:1"></span>
+              <span x-text="'UTF-8'"></span>
+              <span x-text="fontSize+'px'" style="cursor:pointer" @click="cycleFontSize()"></span>
+              <span x-show="activeTab?.modified" style="color:var(--accent-warn)">● Unsaved</span>
             </div>
-            <!-- Textarea -->
-            <textarea x-ref="editor"
-                      style="flex:1;background:#0d0e14;color:#e2e8f0;border:none;outline:none;padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:var(--ed-fs);line-height:1.6;resize:none;tab-size:4;white-space:pre"
-                      x-model="editorContent"
-                      @keydown.ctrl.s.prevent="saveFile()"
-                      @keydown.tab.prevent="insertTab()"
-                      @input="onEditorInput();syncScroll()"
-                      @scroll="syncScroll()"
-                      @keyup="updateCursor()"
-                      @click="updateCursor()"
-                      spellcheck="false"></textarea>
-          </div>
-          <!-- Status bar -->
-          <div style="height:24px;background:#161722;border-top:1px solid #1e2030;display:flex;align-items:center;padding:0 12px;gap:16px;font-size:11px;color:#64748b;flex-shrink:0">
-            <span x-text="activeTab?getLang(activeTab.name):'—'"></span>
-            <span x-text="'Ln '+cursorLine+', Col '+cursorCol"></span>
-            <span x-text="'UTF-8'"></span>
-            <span x-text="fontSize+'px'" style="cursor:pointer" @click="cycleFontSize()"></span>
-            <span x-show="activeTab?.modified" style="color:var(--accent-warn)">● Unsaved</span>
           </div>
         </div>
 
