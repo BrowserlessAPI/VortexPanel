@@ -29,6 +29,7 @@ log "Detected: $NAME $VERSION_ID ($OS_FAMILY/$PKG_MGR)"
 
 # Install dependencies
 log "Installing dependencies..."
+PYTHON_BIN="python3"
 if [ "$PKG_MGR" = "apt" ]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq || true
@@ -39,6 +40,20 @@ elif [ "$PKG_MGR" = "dnf" ]; then
     if [[ "$OS_ID" =~ ^(rhel|almalinux|rocky|ol|centos)$ ]]; then
         dnf install -y epel-release 2>/dev/null || true
     fi
+    # RHEL8-family ships Python 3.6 by default, which is too old for
+    # Flask 3.x / boto3 / flask-sock. Use python3.11 if available.
+    PYMAJOR=$(python3 -c 'import sys; print(sys.version_info[0])' 2>/dev/null || echo 0)
+    PYMINOR=$(python3 -c 'import sys; print(sys.version_info[1])' 2>/dev/null || echo 0)
+    if [ "$PYMAJOR" -lt 3 ] || { [ "$PYMAJOR" -eq 3 ] && [ "$PYMINOR" -lt 8 ]; }; then
+        warn "System python3 is $PYMAJOR.$PYMINOR (too old), installing python3.11"
+        dnf install -y python3.11 2>/dev/null || dnf install -y python3.11 python3.11-pip
+    fi
+fi
+
+# Use python3.11 for the venv if the system default is too old (RHEL8-family)
+if command -v python3.11 &>/dev/null; then
+    V=$(python3 -c 'import sys; print(sys.version_info[1])' 2>/dev/null || echo 0)
+    if [ "$V" -lt 8 ] 2>/dev/null; then PYTHON_BIN="python3.11"; fi
 fi
 
 # Install VortexPanel
@@ -56,7 +71,7 @@ fi
 
 # Create virtualenv
 log "Setting up Python environment..."
-python3 -m venv "$INSTALL_DIR/venv"
+"$PYTHON_BIN" -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
 if [ -f /tmp/vortexpanel_src/requirements.txt ]; then
     "$INSTALL_DIR/venv/bin/pip" install -r /tmp/vortexpanel_src/requirements.txt -q
@@ -99,7 +114,6 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/venv/bin/gunicorn --workers 4 --threads 4 --worker-class gthread --bind 0.0.0.0:8888 --timeout 120 --access-logfile /var/log/vortexpanel/access.log --error-logfile /var/log/vortexpanel/error.log app:app
 Restart=always
 RestartSec=3
-Environment=PORT=8888
 
 [Install]
 WantedBy=multi-user.target
