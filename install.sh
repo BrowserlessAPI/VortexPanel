@@ -31,7 +31,7 @@ log "Detected: $NAME $VERSION_ID ($OS_FAMILY/$PKG_MGR)"
 log "Installing dependencies..."
 if [ "$PKG_MGR" = "apt" ]; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
+    apt-get update -qq || true
     apt-get install -y python3 python3-pip python3-venv curl git wget unzip sudo
 elif [ "$PKG_MGR" = "dnf" ]; then
     dnf install -y python3 python3-pip curl git wget unzip sudo
@@ -58,10 +58,17 @@ fi
 log "Setting up Python environment..."
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
-"$INSTALL_DIR/venv/bin/pip" install flask flask-session requests -q
+if [ -f /tmp/vortexpanel_src/requirements.txt ]; then
+    "$INSTALL_DIR/venv/bin/pip" install -r /tmp/vortexpanel_src/requirements.txt -q
+elif [ -f /root/Vortexpanel/requirements.txt ]; then
+    "$INSTALL_DIR/venv/bin/pip" install -r /root/Vortexpanel/requirements.txt -q
+else
+    "$INSTALL_DIR/venv/bin/pip" install flask flask-session flask-sock requests gunicorn boto3 -q
+fi
 
 # Create directories
 mkdir -p /opt/vortexpanel/{backups,logs}
+mkdir -p /var/log/vortexpanel
 mkdir -p /etc/nginx/vortex 2>/dev/null || true
 
 # Create credentials
@@ -89,7 +96,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/app.py
+ExecStart=$INSTALL_DIR/venv/bin/gunicorn --workers 4 --threads 4 --worker-class gthread --bind 0.0.0.0:8888 --timeout 120 --access-logfile /var/log/vortexpanel/access.log --error-logfile /var/log/vortexpanel/error.log app:app
 Restart=always
 RestartSec=3
 Environment=PORT=8888

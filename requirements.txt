@@ -1,5 +1,6 @@
 flask
 flask-session
+flask-sock
 requests
 gunicorn
-gthread
+boto3
