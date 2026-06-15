@@ -434,6 +434,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         'id':'ddns', 'name':'DDNS Manager', 'icon':'🌍', 'category':'DNS',
         'desc':'Dynamic DNS — automatic IP update service (Built-in)',
         'check':'echo found',  # Built-in, always available
+        'builtin':True,
         'versions':[
             {'label':'3.11.2 (Latest)', 'value':'latest'},
         ],
@@ -758,6 +759,7 @@ def list_modules():
             'installedVer': installed_ver,
             'versions': m.get('versions', []),
             'manage': m.get('manage', False),
+            'builtin': m.get('builtin', False),
             'conflict_group': next((g for g,ms in CONFLICT_GROUPS.items() if m['id'] in ms), None),
         })
     return jsonify({'ok':True, 'modules':result})
@@ -1317,7 +1319,7 @@ def get_module_settings(mod_id):
             with open(pma_conf) as f: cc = f.read()
             m = _re.search(r'listen\s+(\d+)', cc)
             if m: port = m.group(1)
-        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists('/usr/bin/php' + v)]
+        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists(f'/run/php/php{v}-fpm.sock')]
         current_php = ''
         if os.path.exists(pma_conf):
             with open(pma_conf) as f: cc = f.read()

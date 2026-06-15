@@ -1650,7 +1650,7 @@ function modulesPage() {
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal
-      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service','roundcube':'rc_overview'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'service'}[m.id] : 'service';
+      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version'}[m.id] : 'service';
       this.settingsModal = {
         ...this.settingsModal,
         show: true, mod: m, tab: defaultTab, rcData: {},
@@ -1786,7 +1786,7 @@ function modulesPage() {
         clamav:     ['service','logs'],
         ddns:       ['ddns_domains','ddns_server','ddns_log'],
         bind9:      ['service','dns_zones','dns_records','dns_config','dns_private','switch_version','logs'],
-        phpmyadmin: ['service','php_version','security'],
+        phpmyadmin: ['php_version','security'],
         roundcube:  ['rc_overview','rc_config','rc_php','rc_logs'],
         docker:     ['service','info'],
       };
