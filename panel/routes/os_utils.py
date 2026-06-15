@@ -120,12 +120,28 @@ def nginx_install_script(channel='stable'):
 def php_install_script(ver):
     """PHP install script for all distros"""
     os_info = get_os()
+    # After installing PHP-FPM, align the pool's listen.owner/listen.group
+    # with nginx's actual worker user. Package defaults (www-data on
+    # Debian/Ubuntu, apache/nginx on RHEL) may not match what nginx is
+    # actually configured to run as - a mismatch causes nginx to fail
+    # connecting to the FPM socket with "(13: Permission denied)", i.e.
+    # every website on this PHP version returns 502 Bad Gateway.
+    fix_pool_owner = (
+        'NGINX_USER=$(grep -oP "^user\\s+\\K\\S+" /etc/nginx/nginx.conf 2>/dev/null | tr -d ";" | head -1); '
+        'NGINX_USER=${NGINX_USER:-www-data}; '
+        f'for POOL in /etc/php/{ver}/fpm/pool.d/www.conf /etc/php-fpm.d/www.conf; do '
+        '  [ -f "$POOL" ] || continue; '
+        '  grep -q "^listen.owner" "$POOL" && sed -i "s|^listen.owner.*|listen.owner = $NGINX_USER|" "$POOL" || echo "listen.owner = $NGINX_USER" >> "$POOL"; '
+        '  grep -q "^listen.group" "$POOL" && sed -i "s|^listen.group.*|listen.group = $NGINX_USER|" "$POOL" || echo "listen.group = $NGINX_USER" >> "$POOL"; '
+        'done'
+    )
     if os_info['family'] == 'debian':
         return (
             f'add-apt-repository -y ppa:ondrej/php 2>/dev/null; '
             f'{pkg_update()} && '
             f'{pkg_install(f"php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml php{ver}-curl php{ver}-mbstring php{ver}-zip php{ver}-gd php{ver}-bcmath php{ver}-intl php{ver}-soap php{ver}-redis")} && '
-            f'systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm'
+            f'systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm && '
+            f'{fix_pool_owner} && systemctl restart php{ver}-fpm'
         )
     elif os_info['family'] in ('rhel','fedora'):
         return (
@@ -133,7 +149,8 @@ def php_install_script(ver):
             f'dnf module reset php -y 2>/dev/null; '
             f'dnf module enable php:remi-{ver} -y 2>/dev/null; '
             f'{pkg_install(f"php php-fpm php-common php-mysql php-xml php-curl php-mbstring php-zip php-gd php-bcmath php-intl php-soap")} && '
-            f'systemctl enable php-fpm && systemctl start php-fpm'
+            f'systemctl enable php-fpm && systemctl start php-fpm && '
+            f'{fix_pool_owner} && systemctl restart php-fpm'
         )
     return f'{pkg_install(f"php{ver}-fpm")} && systemctl enable php{ver}-fpm'
 
