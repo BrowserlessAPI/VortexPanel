@@ -851,7 +851,7 @@
           <div><span style="color:var(--text-muted)">Connections: </span><span style="font-weight:600" x-text="dbInfo.connections"></span></div>
           <div><span style="color:var(--text-muted)">Total Size: </span><span style="font-weight:600" x-text="(dbInfo.total_size_mb||0)+' MB'"></span></div>
           <div style="margin-left:auto;display:flex;gap:6px">
-            <a x-show="activeEngine==='mysql'||activeEngine==='mariadb'" href="http://localhost:8082" target="_blank" class="btn btn-ghost btn-sm" style="font-size:11px">🔗 phpMyAdmin</a>
+            <a x-show="activeEngine==='mysql'||activeEngine==='mariadb'" :href="'http://'+location.hostname+':8082'" target="_blank" class="btn btn-ghost btn-sm" style="font-size:11px">🔗 phpMyAdmin</a>
           </div>
         </div>
 

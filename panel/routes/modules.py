@@ -376,6 +376,8 @@ apt-get autoremove -y 2>/dev/null || true''',
             '  echo "docRoot /usr/share/phpmyadmin" > /usr/local/lsws/conf/vhosts/phpmyadmin/vhconf.conf && '
             '  systemctl restart lsws; '
             'fi && '
+            '(command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active" && ufw allow 8082/tcp comment "phpMyAdmin" || true) && '
+            '(command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port=8082/tcp && firewall-cmd --reload || true) && '
             'echo "[VortexPanel] phpMyAdmin ready at http://YOUR-SERVER-IP:8082"'
         ),
         'uninstall':(
@@ -386,7 +388,9 @@ apt-get autoremove -y 2>/dev/null || true''',
             'sed -i "/:8082/,/^}/d" /etc/caddy/Caddyfile 2>/dev/null && '
             'systemctl reload caddy 2>/dev/null || true && '
             'rm -f /etc/apache2/conf-available/phpmyadmin.conf && '
-            'systemctl reload apache2 2>/dev/null || true'
+            'systemctl reload apache2 2>/dev/null || true && '
+            '(command -v ufw >/dev/null 2>&1 && ufw delete allow 8082/tcp 2>/dev/null || true) && '
+            '(command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --remove-port=8082/tcp && firewall-cmd --reload || true)'
         ),
         'manage':False,
     },
@@ -1823,9 +1827,16 @@ def save_module_settings(mod_id):
         if os.path.exists(conf):
             import re as _re
             with open(conf) as f: c = f.read()
+            m = _re.search(r'listen\s+(\d+)', c)
+            old_port = m.group(1) if m else None
             c = _re.sub(r'listen\s+\d+', f'listen {port}', c)
             with open(conf, 'w') as f: f.write(c)
             sh('nginx -t && systemctl reload nginx')
+            if old_port and old_port != port:
+                sh(f'ufw status 2>/dev/null | grep -q "Status: active" && ufw delete allow {old_port}/tcp 2>/dev/null; '
+                   f'firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --remove-port={old_port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null; true')
+            sh(f'ufw status 2>/dev/null | grep -q "Status: active" && ufw allow {port}/tcp comment "phpMyAdmin" 2>/dev/null; '
+               f'firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port={port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null; true')
             return jsonify({'ok': True, 'port': port})
         return jsonify({'ok': False, 'error': 'phpMyAdmin nginx config not found'})
 
