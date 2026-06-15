@@ -231,6 +231,8 @@ function dashboardPage() {
       if(r.ok) this.services=r.services.slice(0,8);
     },
     go(page){ window.dispatchEvent(new CustomEvent('nav',{detail:{page}})); },
+    ramPct()  { const r=this.stats.ram;  return (r && r.total) ? Math.round(r.used/r.total*100) : 0; },
+    diskPct() { const d=this.stats.disk; return (d && d.total) ? Math.round(d.used/d.total*100) : 0; },
   };
 }
 
