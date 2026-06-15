@@ -1852,4 +1852,18 @@ def save_module_settings(mod_id):
             return jsonify({'ok': True})
         return jsonify({'ok': False, 'error': 'Config not found or PHP version missing'})
 
+    elif action == 'set_php':
+        # Used by Roundcube's PHP Version tab to switch which PHP-FPM
+        # socket serves it via nginx.
+        php_ver = d.get('version', '')
+        conf    = '/etc/nginx/conf.d/roundcube.conf'
+        if os.path.exists(conf) and php_ver:
+            import re as _re
+            with open(conf) as f: c = f.read()
+            c = _re.sub(r'php[\d.]+\-fpm\.sock', f'php{php_ver}-fpm.sock', c)
+            with open(conf, 'w') as f: f.write(c)
+            sh('nginx -t && systemctl reload nginx')
+            return jsonify({'ok': True})
+        return jsonify({'ok': False, 'error': 'Roundcube nginx config not found or PHP version missing'})
+
     return jsonify({'ok': False, 'error': 'Unknown action'})
