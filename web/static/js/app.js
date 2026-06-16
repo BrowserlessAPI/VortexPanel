@@ -424,7 +424,7 @@ function databasesPage() {
         return {db,user,owners};
       });
     },
-    async init(){ await this.load(); },
+    async init(){ await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
     async load(){
       const r=await get('/api/databases?engine='+this.activeEngine);
       if(r.ok){
