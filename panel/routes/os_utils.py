@@ -62,6 +62,25 @@ def pkg_install(packages, extra_flags=''):
         return f'{pkg} install -y {extra_flags} {packages}'
     return f'apt-get install -y {packages}'
 
+import time as _time
+
+class _TTLCache:
+    """Simple in-process TTL cache for expensive read-only endpoints."""
+    def __init__(self):
+        self._store = {}
+    def get(self, key):
+        item = self._store.get(key)
+        if item and (_time.monotonic() - item['ts']) < item['ttl']:
+            return item['val']
+        return None
+    def set(self, key, val, ttl=30):
+        self._store[key] = {'val': val, 'ts': _time.monotonic(), 'ttl': ttl}
+    def invalidate(self, key):
+        self._store.pop(key, None)
+
+panel_cache = _TTLCache()
+
+
 def pkg_update():
     """Return update command for current OS"""
     os_info = get_os()

@@ -4,6 +4,12 @@ import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from flask import Flask
+try:
+    from flask_compress import Compress
+    _compress_available = True
+except ImportError:
+    _compress_available = False
+
 from panel.routes.auth      import auth_bp
 from panel.routes.dashboard import dashboard_bp
 from panel.routes.websites_core import websites_bp
@@ -44,6 +50,15 @@ from panel.routes.logs import logs_bp
 def create_app():
     app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
     app.secret_key = os.environ.get('SECRET_KEY', 'vortex-dev-secret-change-in-prod')
+
+    if _compress_available:
+        app.config['COMPRESS_MIMETYPES'] = [
+            'text/html', 'application/json', 'application/javascript',
+            'text/css', 'text/plain',
+        ]
+        app.config['COMPRESS_LEVEL']    = 6
+        app.config['COMPRESS_MIN_SIZE'] = 500
+        Compress(app)
 
     for bp in [auth_bp, dashboard_bp, websites_bp, databases_bp, files_bp,
                php_bp, services_bp, firewall_bp, terminal_bp, backups_bp,

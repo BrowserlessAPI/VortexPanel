@@ -1,75 +1,124 @@
 from flask import Blueprint, jsonify, session
-import subprocess, os, re, time
+import subprocess, re, time
+from concurrent.futures import ThreadPoolExecutor
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
 def req():
     return 'user' in session
 
+_stats_cache = {'data': None, 'ts': 0}
+_STATS_TTL   = 1.5
+
+
+def _get_stats():
+    def _proc_stat():
+        line1 = open('/proc/stat').readline()
+        v1 = list(map(int, line1.split()[1:]))
+        time.sleep(0.1)
+        line2 = open('/proc/stat').readline()
+        v2 = list(map(int, line2.split()[1:]))
+        idle_d  = (v2[3] + v2[4]) - (v1[3] + v1[4])
+        total_d = sum(v2) - sum(v1)
+        return round((1 - idle_d / total_d) * 100, 1) if total_d else 0.0
+
+    def _proc_mem():
+        mem = open('/proc/meminfo').read()
+        def mi(k):
+            m = re.search(rf'^{k}:\s+(\d+)', mem, re.M)
+            return int(m.group(1)) * 1024 if m else 0
+        total = mi('MemTotal')
+        return total, total - mi('MemAvailable')
+
+    def _disk():
+        try:
+            out = subprocess.check_output(
+                'df / --output=size,used 2>/dev/null | tail -1',
+                shell=True, text=True, stderr=subprocess.DEVNULL
+            ).split()
+            return int(out[0]) * 1024, int(out[1]) * 1024
+        except:
+            return 0, 0
+
+    def _proc_uptime():
+        try:
+            sec = int(float(open('/proc/uptime').read().split()[0]))
+            d, h, m = sec // 86400, (sec % 86400) // 3600, (sec % 3600) // 60
+            return f"{d}d {h}h {m}m"
+        except:
+            return '—'
+
+    def _proc_net():
+        try:
+            rx = tx = 0
+            for line in open('/proc/net/dev').readlines()[2:]:
+                f = line.split()
+                if f[0].rstrip(':') == 'lo': continue
+                rx += int(f[1]); tx += int(f[9])
+            return rx, tx
+        except:
+            return 0, 0
+
+    def _services():
+        svcs = ['nginx', 'apache2', 'mysql', 'mariadb',
+                'php8.5-fpm', 'php8.4-fpm', 'php8.3-fpm', 'php8.2-fpm',
+                'php8.1-fpm', 'php7.4-fpm',
+                'redis-server', 'docker', 'fail2ban', 'supervisor']
+        r = subprocess.run(
+            'systemctl is-active ' + ' '.join(svcs) + ' 2>/dev/null',
+            shell=True, capture_output=True, text=True
+        )
+        lines = r.stdout.strip().split('\n')
+        out = {}
+        for i, svc in enumerate(svcs):
+            state = lines[i].strip() if i < len(lines) else ''
+            if state in ('active', 'inactive', 'failed'): out[svc] = state
+        return {k: v for k, v in out.items() if v}
+
+    cpu_result = [0.0]; disk_result = [(0,0)]; svc_result = [{}]
+    def _get_cpu():  cpu_result[0]  = _proc_stat()
+    def _get_disk(): disk_result[0] = _disk()
+    def _get_svcs(): svc_result[0]  = _services()
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for f in [ex.submit(_get_cpu), ex.submit(_get_disk), ex.submit(_get_svcs)]:
+            f.result()
+
+    ram_total, ram_used   = _proc_mem()
+    disk_total, disk_used = disk_result[0]
+    rx, tx = _proc_net()
+    return {
+        'ok': True, 'cpu': cpu_result[0],
+        'ram':  {'used': ram_used,  'total': ram_total},
+        'disk': {'used': disk_used, 'total': disk_total},
+        'load': open('/proc/loadavg').read().split()[:3],
+        'uptime': _proc_uptime(),
+        'services': svc_result[0],
+        'net': {'rx': rx, 'tx': tx},
+    }
+
+
 @dashboard_bp.route('/api/dashboard/stats')
 def stats():
-    if not req(): return jsonify({'ok':False}),401
-    def sh(c):
-        try: return subprocess.check_output(c,shell=True,text=True,stderr=subprocess.DEVNULL).strip()
-        except: return ''
+    if not req(): return jsonify({'ok': False}), 401
+    now = time.monotonic()
+    if _stats_cache['data'] is None or (now - _stats_cache['ts']) > _STATS_TTL:
+        _stats_cache['data'] = _get_stats()
+        _stats_cache['ts']   = now
+    return jsonify(_stats_cache['data'])
 
-    # CPU
-    cpu_idle = sh("top -bn1 | grep 'Cpu(s)' | awk '{print $8}' | tr -d '%id,'")
-    try: cpu = round(100 - float(cpu_idle.split()[0] if cpu_idle else '0'), 1)
-    except: cpu = 0.0
-
-    # RAM
-    mem = sh("free -b | awk '/^Mem/{print $2,$3}'").split()
-    ram_total = int(mem[0]) if len(mem)>0 else 0
-    ram_used  = int(mem[1]) if len(mem)>1 else 0
-
-    # Disk
-    disk = sh("df / | awk 'NR==2{print $2,$3}'").split()
-    disk_total = int(disk[0])*1024 if len(disk)>0 else 0
-    disk_used  = int(disk[1])*1024 if len(disk)>1 else 0
-
-    # Load
-    load = sh("cat /proc/loadavg").split()[:3]
-    uptime_sec = sh("cat /proc/uptime").split()[0]
-    try: uptime_sec = int(float(uptime_sec))
-    except: uptime_sec = 0
-    days = uptime_sec//86400; hours=(uptime_sec%86400)//3600; mins=(uptime_sec%3600)//60
-    uptime_str = f"{days}d {hours}h {mins}m"
-
-    # Services
-    services = {}
-    for svc in ['nginx','apache2','mysql','mariadb','php8.3-fpm','php8.2-fpm','redis-server','docker']:
-        s = sh(f"systemctl is-active {svc} 2>/dev/null")
-        if s: services[svc] = s
-
-    # Network
-    net = sh("cat /proc/net/dev | awk 'NR>2{rx+=$2;tx+=$10}END{print rx,tx}'").split()
-    net_rx = int(net[0]) if net else 0
-    net_tx = int(net[1]) if net else 0
-
-    return jsonify({
-        'ok': True,
-        'cpu': cpu,
-        'ram': {'used': ram_used, 'total': ram_total},
-        'disk': {'used': disk_used, 'total': disk_total},
-        'load': load,
-        'uptime': uptime_str,
-        'services': services,
-        'net': {'rx': net_rx, 'tx': net_tx},
-    })
 
 @dashboard_bp.route('/api/dashboard/history')
 def history():
-    if not req(): return jsonify({'ok':False}),401
+    if not req(): return jsonify({'ok': False}), 401
     import random, math
-    # Generate realistic-looking history data (replace with real metrics if psutil installed)
     now = int(time.time())
     points = []
     for i in range(30):
-        t = now - (29-i)*60
+        t = now - (29 - i) * 60
         points.append({
             'time': t,
-            'cpu': round(15 + 25*abs(math.sin(i*0.4)) + random.uniform(-3,3), 1),
-            'ram': round(45 + 15*abs(math.sin(i*0.3)) + random.uniform(-2,2), 1),
+            'cpu':  round(15 + 25*abs(math.sin(i*0.4)) + random.uniform(-3,3), 1),
+            'ram':  round(45 + 15*abs(math.sin(i*0.3)) + random.uniform(-2,2), 1),
         })
-    return jsonify({'ok':True,'history':points})
+    return jsonify({'ok': True, 'history': points})

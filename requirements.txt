@@ -4,3 +4,4 @@ flask-sock
 requests
 gunicorn
 boto3
+flask-compress

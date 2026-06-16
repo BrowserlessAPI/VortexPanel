@@ -1,9 +1,9 @@
 from flask import Blueprint, jsonify, request, session, Response
 import subprocess, os, threading, time, json, uuid, re
 try:
-    from panel.routes.os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script
+    from panel.routes.os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script, panel_cache
 except ImportError:
-    from os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script
+    from os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script, panel_cache
 
 modules_bp = Blueprint('modules', __name__)
 
@@ -740,6 +740,8 @@ def get_conflict(mod_id):
 @modules_bp.route('/api/modules')
 def list_modules():
     if not req(): return jsonify({'ok':False}), 401
+    cached = panel_cache.get('modules_list')
+    if cached: return jsonify(cached)
     result = []
     for m in MODULES:
         installed   = is_installed(m['check'])
@@ -762,7 +764,9 @@ def list_modules():
             'builtin': m.get('builtin', False),
             'conflict_group': next((g for g,ms in CONFLICT_GROUPS.items() if m['id'] in ms), None),
         })
-    return jsonify({'ok':True, 'modules':result})
+    response = {'ok':True, 'modules':result}
+    panel_cache.set('modules_list', response, ttl=30)
+    return jsonify(response)
 
 @modules_bp.route('/api/modules/<mod_id>/install', methods=['POST'])
 def install_module(mod_id):
@@ -863,6 +867,7 @@ def install_module(mod_id):
         _jobs[job_id]['lines'].append(
             f'[VortexPanel] {"✓ Installed successfully! Version: "+inst_ver if installed else "⚠ Installation may have failed — check output above."}'
         )
+        panel_cache.invalidate('modules_list')
 
     threading.Thread(target=run_job, daemon=True).start()
     return jsonify({'ok':True, 'job_id':job_id, 'action':'install'})
@@ -911,6 +916,7 @@ def uninstall_module(mod_id):
         _jobs[job_id]['lines'].append(
             f'[VortexPanel] {"✓ Removed successfully!" if removed else "⚠ May not be fully removed — check output above."}'
         )
+        panel_cache.invalidate('modules_list')
 
     threading.Thread(target=run_job, daemon=True).start()
     return jsonify({'ok':True, 'job_id':job_id, 'action':'uninstall'})
