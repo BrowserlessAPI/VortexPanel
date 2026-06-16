@@ -1005,7 +1005,7 @@
                   <span>PHP version</span>
                   <span style="display:flex;align-items:center;gap:6px">
                     <span :class="'badge '+phpBadgeClass(drawer.site?.php_version)" x-text="drawer.site?.php_version"></span>
-                    <span x-show="parseFloat(drawer.site?.php_version)>8.4" style="font-size:10px;color:var(--accent-warn)">⚠ WP 5.2 supports PHP 7.2–8.4</span>
+                    <span x-show="parseFloat(drawer.site?.php_version)>8.4" style="font-size:10px;color:var(--accent-warn)">⚠ WP 7.0 recommends PHP 8.0+</span>
                   </span>
                 </div>
                 <div style="font-size:12px;color:var(--text-secondary);padding:10px 0;border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between">
@@ -1260,7 +1260,7 @@
                     <select class="form-input" @change="saveSettings({php_version:$event.target.value})">
                       <option x-show="!phpVersions.length" :value="drawer.site?.php_version" x-text="drawer.site?.php_version"></option>
                       <template x-for="v in phpVersions" :key="v">
-                        <option :value="v" :selected="v===drawer.site?.php_version" x-text="'PHP '+v+(parseFloat(v)>8.4?' (unsupported by WP 5.2)':parseFloat(v)>=8.2?' (recommended)':'')"></option>
+                        <option :value="v" :selected="v===drawer.site?.php_version" x-text="'PHP '+v+(parseFloat(v)>=8.0?' ✓ recommended':' legacy')"></option>
                       </template>
                     </select>
                   </div>
@@ -1340,7 +1340,7 @@
                   <label class="form-label">PHP version</label>
                   <select class="form-input" x-model="installForm.php_version">
                     <template x-for="v in (phpVersions.length?phpVersions:['8.5','8.4','8.3','8.2','8.1','8.0','7.4'])" :key="v">
-                      <option :value="v" x-text="'PHP '+v+(parseFloat(v)>8.4?' ⚠ (unsupported by WP 5.2)':parseFloat(v)>=8.2?' ✓ recommended':'')"></option>
+                      <option :value="v" x-text="'PHP '+v+(parseFloat(v)>=8.0?' ✓ recommended':' legacy')"></option>
                     </template>
                   </select>
                 </div>

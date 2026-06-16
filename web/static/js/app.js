@@ -594,7 +594,7 @@ function wpPage() {
       // Fetch WP versions
       const r = await get('/api/wp/wp-versions');
       if (r.ok) this.wpVersions = r.versions;
-      else this.wpVersions = ['6.7.2','6.6.2','6.5.5','6.4.4'];
+      else this.wpVersions = ['7.0','6.9.4','6.9.3','6.9.2','6.9.1','6.8.1','6.7.2'];
     },
     async runInstall() {
       if (!this.installForm.domain) { toast('Domain required','error'); return; }

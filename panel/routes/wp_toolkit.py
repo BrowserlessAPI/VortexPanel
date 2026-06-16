@@ -1376,7 +1376,7 @@ def wp_versions():
     out = sh('curl -s https://api.wordpress.org/core/version-check/1.7/ 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); [print(o[\'version\']) for o in d.get(\'offers\',[])]"')
     versions = [v for v in out.split('\n') if v.strip()][:8]
     if not versions:
-        versions = ['6.7.2', '6.6.2', '6.5.5', '6.4.4', '6.3.4']
+        versions = ['7.0', '6.9.4', '6.9.3', '6.9.2', '6.9.1', '6.8.1', '6.7.2']
     return jsonify({'ok': True, 'versions': versions})
 
 @wp_bp.route('/api/wp/php-versions')
