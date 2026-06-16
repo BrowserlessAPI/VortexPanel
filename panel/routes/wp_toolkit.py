@@ -82,6 +82,21 @@ def _detect_webserver():
         return 'caddy'
     return 'nginx'  # default
 
+def _installed_webservers():
+    """Return list of actually installed webservers."""
+    installed = []
+    if shutil.which('nginx'):
+        installed.append('nginx')
+    if shutil.which('apache2') or shutil.which('httpd'):
+        installed.append('apache')
+    if os.path.exists('/usr/local/lsws/bin/lshttpd'):
+        installed.append('openlitespeed')
+    if shutil.which('caddy'):
+        installed.append('caddy')
+    if not installed:
+        installed.append('nginx')  # assume nginx as fallback
+    return installed
+
 def _php_sock(ver):
     """Return the PHP-FPM socket path for a given version."""
     for sock in [
@@ -602,6 +617,7 @@ def list_sites():
         'ok': True,
         'sites': sites,
         'webservers': ['nginx', 'apache', 'openlitespeed', 'caddy'],
+        'installed_webservers': _installed_webservers(),
         'php_versions': _available_php(),
         'db_engines': _available_db(),
         'wpcli_installed': _wp_installed(),

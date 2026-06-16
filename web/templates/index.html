@@ -936,8 +936,8 @@
         </div>
 
         <!-- ═══ SITE DETAIL DRAWER ═══ -->
-        <div x-show="drawer.show" @click.self="drawer.show=false"
-             style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;display:flex;align-items:stretch;justify-content:flex-end">
+        <div x-show="drawer.show" @click.self="drawer.show=false" class="modal-overlay"
+             style="z-index:100;align-items:stretch;justify-content:flex-end">
           <div style="width:700px;background:var(--bg-card);height:100%;display:flex;flex-direction:column;overflow:hidden;box-shadow:-4px 0 24px rgba(0,0,0,.2)">
 
             <!-- Drawer header -->
@@ -1288,8 +1288,7 @@
         </div>
 
         <!-- ═══ INSTALL MODAL ═══ -->
-        <div x-show="showInstall" @click.self="showInstall=false"
-             style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center">
+        <div x-show="showInstall" @click.self="showInstall=false" class="modal-overlay" style="z-index:200">
           <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:88vh;overflow-y:auto;border:1px solid var(--border);box-shadow:var(--shadow-lg)">
             <!-- Modal header -->
             <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--bg-card);z-index:1">
@@ -1357,11 +1356,16 @@
                 <div class="form-group">
                   <label class="form-label">Web server</label>
                   <select class="form-input" x-model="installForm.webserver">
-                    <option value="nginx">Nginx</option>
-                    <option value="apache">Apache</option>
-                    <option value="openlitespeed">OpenLiteSpeed</option>
-                    <option value="caddy">Caddy</option>
+                    <option value="nginx" x-text="installedWebservers.includes('nginx')?'Nginx ✓ installed':'Nginx (not installed)'"></option>
+                    <option value="apache" x-text="installedWebservers.includes('apache')?'Apache ✓ installed':'Apache (not installed)'"></option>
+                    <option value="openlitespeed" x-text="installedWebservers.includes('openlitespeed')?'OpenLiteSpeed ✓ installed':'OpenLiteSpeed (not installed)'"></option>
+                    <option value="caddy" x-text="installedWebservers.includes('caddy')?'Caddy ✓ installed':'Caddy (not installed)'"></option>
                   </select>
+                  <div x-show="!installedWebservers.includes(installForm.webserver)"
+                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:#92400e">
+                    ⚠ <strong x-text="installForm.webserver"></strong> is not installed on this server.
+                    Install it first from the <strong>App Store</strong>, then return here to install WordPress.
+                  </div>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Site title</label>
@@ -1434,9 +1438,10 @@
               </div>
               <div style="display:flex;gap:8px">
                 <button class="btn btn-ghost" @click="showInstall=false">Cancel</button>
-                <button class="btn btn-primary" :disabled="installing" @click="runInstall()">
+                <button class="btn btn-primary" :disabled="installing || !installedWebservers.includes(installForm.webserver)" @click="runInstall()">
                   <span x-show="installing">Installing…</span>
-                  <span x-show="!installing">Install WordPress</span>
+                  <span x-show="!installing && !installedWebservers.includes(installForm.webserver)">Install webserver first</span>
+                  <span x-show="!installing && installedWebservers.includes(installForm.webserver)">Install WordPress</span>
                 </button>
               </div>
             </div>

@@ -411,6 +411,7 @@ function wpPage() {
     sites: [], loading: false, scanning: false,
     wpcliInstalled: false, activeWebserver: 'nginx',
     phpVersions: [], dbEngines: [], wpVersions: [],
+    installedWebservers: ['nginx'],
     searchQ: '', filterTab: 'all',
     showInstall: false, installing: false, installResult: null,
     installLog: '',
@@ -436,6 +437,7 @@ function wpPage() {
         this.sites = r.sites || [];
         this.wpcliInstalled = r.wpcli_installed;
         this.activeWebserver = r.active_webserver || 'nginx';
+        this.installedWebservers = r.installed_webservers || [r.active_webserver || 'nginx'];
         this.phpVersions = (r.php_versions || []).map(v => v.version);
         this.dbEngines = r.db_engines || ['mysql','mariadb'];
         if (this.installForm.php_version === '8.4' && this.phpVersions.length)
