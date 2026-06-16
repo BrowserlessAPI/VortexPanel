@@ -40,7 +40,8 @@ from panel.routes.main      import main_bp
 from panel.routes.ddns      import ddns_bp
 from panel.routes.modules   import modules_bp
 from panel.routes.security  import security_bp
-from panel.routes.caddy     import caddy_bp
+from panel.routes.caddy      import caddy_bp
+from panel.routes.wp_toolkit import wp_bp
 from panel.routes.cdn       import cdn_bp
 from panel.routes.bandwidth import bandwidth_bp
 from panel.routes.terminal_ws import sock as terminal_sock
@@ -63,7 +64,7 @@ def create_app():
     for bp in [auth_bp, dashboard_bp, websites_bp, databases_bp, files_bp,
                php_bp, services_bp, firewall_bp, terminal_bp, backups_bp,
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
-               settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp, caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp, logs_bp]:
+               settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp, caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp, logs_bp, wp_bp]:
         app.register_blueprint(bp)
     terminal_sock.init_app(app)
 

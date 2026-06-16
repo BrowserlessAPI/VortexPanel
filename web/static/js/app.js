@@ -64,6 +64,7 @@ function rootApp() {
       { group: 'Overview', items: [
         { id:'dashboard', icon:'▦', label:'Dashboard'    },
         { id:'websites',  icon:'🌐', label:'Websites'    },
+        { id:'wp',        icon:'🔷', label:'WP Toolkit'  },
         { id:'databases', icon:'🗄', label:'Databases'   },
         { id:'files',     icon:'📁', label:'File Manager'},
       ]},
@@ -405,6 +406,224 @@ function websitesPage() {
 }
 
 // ── DATABASES ─────────────────────────────────────────────────────────────────
+function wpPage() {
+  return {
+    sites: [], loading: false, scanning: false,
+    wpcliInstalled: false, activeWebserver: 'nginx',
+    phpVersions: [], dbEngines: [], wpVersions: [],
+    searchQ: '', filterTab: 'all',
+    showInstall: false, installing: false, installResult: null,
+    installLog: '',
+    drawer: { show: false, site: null, tab: 'overview' },
+    plugins: [], themes: [], backups: [], security: null,
+    secScanning: false, pluginLoading: false, themeLoading: false,
+    backupLoading: false, stagingLoading: false,
+    stagingDomain: '', cloneType: 'full',
+    installForm: {
+      domain:'', path:'', php_version:'8.4', db_engine:'mysql',
+      wp_version:'latest', locale:'en_US', webserver:'',
+      site_title:'', admin_user:'', admin_pass:'', admin_email:'',
+      table_prefix:'', auto_ssl:true, system_cron:true, block_xmlrpc:false,
+    },
+    async init() {
+      await this.load();
+      document.addEventListener('vortex-logged-in', () => { this.init(); });
+    },
+    async load() {
+      this.loading = true;
+      const r = await get('/api/wp/sites');
+      if (r.ok) {
+        this.sites = r.sites || [];
+        this.wpcliInstalled = r.wpcli_installed;
+        this.activeWebserver = r.active_webserver || 'nginx';
+        this.phpVersions = (r.php_versions || []).map(v => v.version);
+        this.dbEngines = r.db_engines || ['mysql','mariadb'];
+        if (this.installForm.php_version === '8.4' && this.phpVersions.length)
+          this.installForm.php_version = this.phpVersions[0];
+        if (this.installForm.db_engine === 'mysql' && this.dbEngines.length)
+          this.installForm.db_engine = this.dbEngines[0];
+        this.installForm.webserver = this.activeWebserver;
+      }
+      this.loading = false;
+    },
+    async scan() {
+      this.scanning = true;
+      await this.load();
+      this.scanning = false;
+    },
+    get filteredSites() {
+      let s = this.sites;
+      if (this.searchQ) s = s.filter(x => x.domain.includes(this.searchQ) || x.path.includes(this.searchQ));
+      if (this.filterTab === 'updates') s = s.filter(x => x.update_count > 0);
+      if (this.filterTab === 'staging') s = s.filter(x => x.is_staging);
+      return s;
+    },
+    get totalUpdates() { return this.sites.reduce((a, s) => a + (s.update_count || 0), 0); },
+    get stagingCount() { return this.sites.filter(s => s.is_staging).length; },
+    diskFmt(bytes) {
+      if (!bytes) return '0 B';
+      const u = ['B','KB','MB','GB']; let i=0;
+      while(bytes>=1024 && i<3){bytes/=1024;i++;}
+      return bytes.toFixed(i?1:0)+' '+u[i];
+    },
+    phpBadgeClass(v) {
+      const n = parseFloat(v);
+      if (n >= 8.2 && n <= 8.4) return 'badge-green';
+      if (n === 8.5) return 'badge-yellow';
+      return 'badge-gray';
+    },
+    async openDrawer(site, tab) {
+      this.drawer = { show: true, site, tab: tab || 'overview' };
+      if (tab === 'plugins' || tab === 'overview') await this.loadPlugins();
+      if (tab === 'themes') await this.loadThemes();
+      if (tab === 'backups') await this.loadBackups();
+      if (tab === 'security') await this.runSecurityScan();
+    },
+    switchDrawerTab(tab) {
+      this.drawer.tab = tab;
+      if (tab === 'plugins' && !this.plugins.length) this.loadPlugins();
+      if (tab === 'themes' && !this.themes.length) this.loadThemes();
+      if (tab === 'backups' && !this.backups.length) this.loadBackups();
+      if (tab === 'security' && !this.security) this.runSecurityScan();
+    },
+    async loadPlugins() {
+      if (!this.drawer.site) return;
+      this.pluginLoading = true;
+      const r = await get(`/api/wp/${this.drawer.site.domain}/plugins?path=${encodeURIComponent(this.drawer.site.path)}`);
+      if (r.ok) this.plugins = r.plugins || [];
+      this.pluginLoading = false;
+    },
+    async loadThemes() {
+      if (!this.drawer.site) return;
+      this.themeLoading = true;
+      const r = await get(`/api/wp/${this.drawer.site.domain}/themes?path=${encodeURIComponent(this.drawer.site.path)}`);
+      if (r.ok) this.themes = r.themes || [];
+      this.themeLoading = false;
+    },
+    async loadBackups() {
+      if (!this.drawer.site) return;
+      this.backupLoading = true;
+      const r = await get(`/api/wp/${this.drawer.site.domain}/backups`);
+      if (r.ok) this.backups = r.backups || [];
+      this.backupLoading = false;
+    },
+    async runSecurityScan() {
+      if (!this.drawer.site) return;
+      this.secScanning = true; this.security = null;
+      const r = await get(`/api/wp/${this.drawer.site.domain}/security?path=${encodeURIComponent(this.drawer.site.path)}`);
+      if (r.ok) this.security = r;
+      this.secScanning = false;
+    },
+    async pluginAction(plugin, action) {
+      const r = await post(`/api/wp/${this.drawer.site.domain}/plugins/${plugin}`, { action, path: this.drawer.site.path });
+      toast(r.ok ? `Plugin ${action}d` : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) await this.loadPlugins();
+    },
+    async updateAllPlugins() {
+      const r = await post(`/api/wp/${this.drawer.site.domain}/plugins/update-all`, { path: this.drawer.site.path });
+      toast(r.ok ? 'All plugins updated' : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) await this.loadPlugins();
+    },
+    async themeAction(theme, action) {
+      const r = await post(`/api/wp/${this.drawer.site.domain}/themes/${theme}`, { action, path: this.drawer.site.path });
+      toast(r.ok ? `Theme ${action}d` : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) await this.loadThemes();
+    },
+    async updateCore() {
+      const r = await post(`/api/wp/${this.drawer.site.domain}/update-core`, { path: this.drawer.site.path });
+      toast(r.ok ? 'Core updated' : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) { await this.load(); }
+    },
+    async createBackup() {
+      this.backupLoading = true;
+      const r = await post(`/api/wp/${this.drawer.site.domain}/backups`, { path: this.drawer.site.path, label:'manual' });
+      toast(r.ok ? 'Backup created' : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) await this.loadBackups();
+      this.backupLoading = false;
+    },
+    async deleteBackup(filename) {
+      if (!confirm('Delete this backup?')) return;
+      await del(`/api/wp/${this.drawer.site.domain}/backups/${filename}`);
+      await this.loadBackups();
+    },
+    async applyFix(fix) {
+      const r = await post(`/api/wp/${this.drawer.site.domain}/security/fix`, { fix, path: this.drawer.site.path });
+      toast(r.ok ? 'Fix applied' : 'Failed', r.ok?'success':'error');
+      if (r.ok) await this.runSecurityScan();
+    },
+    async cloneSite() {
+      if (!this.stagingDomain) { toast('Staging domain required','error'); return; }
+      this.stagingLoading = true;
+      const r = await post(`/api/wp/${this.drawer.site.domain}/clone`, {
+        path: this.drawer.site.path, dest_domain: this.stagingDomain,
+        type: this.cloneType, php_version: this.drawer.site.php_version,
+        webserver: this.activeWebserver,
+      });
+      toast(r.ok ? 'Staging created at '+this.stagingDomain : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) { await this.load(); this.stagingDomain = ''; }
+      this.stagingLoading = false;
+    },
+    async pushToLive(stagingSite) {
+      if (!confirm('This will overwrite the live site. A backup is created first. Continue?')) return;
+      const liveDomain = stagingSite.domain.replace(/^staging\./,'');
+      const liveSite = this.sites.find(s => s.domain === liveDomain);
+      if (!liveSite) { toast('Live site not found','error'); return; }
+      const r = await post(`/api/wp/${liveDomain}/push-staging`, {
+        staging_path: stagingSite.path, live_path: liveSite.path,
+      });
+      toast(r.ok ? 'Staging pushed to live' : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) await this.load();
+    },
+    async deleteSite(site) {
+      if (!confirm(`Delete ${site.domain} and all its data? This cannot be undone.`)) return;
+      const r = await del(`/api/wp/${site.domain}`, { path: site.path, delete_db: true });
+      toast(r.ok ? 'Site deleted' : 'Failed', r.ok?'success':'error');
+      if (r.ok) { this.drawer.show = false; await this.load(); }
+    },
+    async oneClickLogin(site) {
+      const r = await get(`/api/wp/${site.domain}/login?path=${encodeURIComponent(site.path)}`);
+      if (r.ok && r.login_url) window.open(r.login_url, '_blank');
+      else toast('Login failed — wp-cli may not be installed','error');
+    },
+    async openInstallModal() {
+      this.showInstall = true; this.installResult = null; this.installLog = '';
+      // Auto-generate username and prefix
+      const rand = () => Math.random().toString(36).substring(2,7);
+      this.installForm.admin_user  = 'admin_' + rand();
+      this.installForm.table_prefix = 'wp_' + rand() + '_';
+      // Fetch WP versions
+      const r = await get('/api/wp/wp-versions');
+      if (r.ok) this.wpVersions = r.versions;
+      else this.wpVersions = ['6.7.2','6.6.2','6.5.5','6.4.4'];
+    },
+    async runInstall() {
+      if (!this.installForm.domain) { toast('Domain required','error'); return; }
+      if (!this.installForm.admin_email) { toast('Admin email required','error'); return; }
+      this.installing = true; this.installLog = 'Starting WordPress installation…\n';
+      const r = await post('/api/wp/install', this.installForm);
+      this.installing = false;
+      if (r.ok) {
+        this.installResult = r;
+        this.installLog += `✓ WordPress installed at ${r.site_url}\n✓ Admin: ${r.admin_user} / ${r.admin_pass}\n✓ DB: ${r.db_name}`;
+        await this.load();
+      } else {
+        this.installLog += '✗ Failed: ' + (r.error || 'Unknown error');
+        toast('Installation failed: '+(r.error||''),'error');
+      }
+    },
+    async installWpCli() {
+      const r = await post('/api/wp/install-wpcli', {});
+      toast(r.ok ? 'wp-cli installed: '+r.version : 'Failed to install wp-cli', r.ok?'success':'error');
+      if (r.ok) { this.wpcliInstalled = true; }
+    },
+    async saveSettings(settings) {
+      const r = await put(`/api/wp/${this.drawer.site.domain}/settings`, { ...settings, path: this.drawer.site.path });
+      toast(r.ok ? 'Settings saved' : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) await this.load();
+    },
+  };
+}
+
 function databasesPage() {
   return {
     dbs:[], users:[], showAdd:false, showAddUser:false,
