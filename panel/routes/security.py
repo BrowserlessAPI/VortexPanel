@@ -163,38 +163,283 @@ def security_score():
     return jsonify({'ok':True,'checks':checks,'score':score})
 
 # ── ModSecurity ───────────────────────────────────────────────────────────────
+
+MODSEC_CONF     = '/etc/nginx/modsec/modsecurity.conf'
+MODSEC_MAIN     = '/etc/nginx/modsec/main.conf'
+MODSEC_CRS_DIR  = '/etc/nginx/modsec/crs'
+MODSEC_CUSTOM   = '/etc/nginx/modsec/custom-rules.conf'
+MODSEC_AUDIT    = '/var/log/modsec_audit.log'
+
+def _modsec_installed():
+    for p in [MODSEC_CONF,
+              '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
+              '/usr/lib64/libmodsecurity.so.3',
+              '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3']:
+        if os.path.exists(p): return True
+    return False
+
+def _crs_version():
+    """Read CRS version from the CHANGES file or setup.conf."""
+    for path in [f'{MODSEC_CRS_DIR}/CHANGES.md',
+                 f'{MODSEC_CRS_DIR}/CHANGES',
+                 f'{MODSEC_CRS_DIR}/crs-setup.conf.example']:
+        if not os.path.exists(path): continue
+        try:
+            for line in open(path):
+                m = re.search(r'(\d+\.\d+\.\d+)', line)
+                if m: return m.group(1)
+        except: pass
+    return 'unknown'
+
+def _paranoia_level():
+    """Read current paranoia level from crs-setup.conf."""
+    setup = f'{MODSEC_CRS_DIR}/crs-setup.conf'
+    if not os.path.exists(setup): return 1
+    try:
+        content = open(setup).read()
+        m = re.search(r'tx\.paranoia_level=(\d)', content)
+        return int(m.group(1)) if m else 1
+    except: return 1
+
+def _engine_state():
+    """Return engine state: On / DetectionOnly / Off."""
+    if not os.path.exists(MODSEC_CONF): return 'Off'
+    content = open(MODSEC_CONF).read()
+    if 'SecRuleEngine On' in content:             return 'On'
+    if 'SecRuleEngine DetectionOnly' in content:  return 'DetectionOnly'
+    return 'Off'
+
 @security_bp.route('/api/security/modsecurity')
 def modsec_status():
     if not req(): return jsonify({'ok':False}), 401
-    conf = '/etc/nginx/modsec/modsecurity.conf'
-    installed = os.path.exists(conf)
-    enabled   = False
-    if installed:
-        with open(conf) as f: content = f.read()
-        enabled = 'SecRuleEngine On' in content
+    installed = _modsec_installed()
+    state     = _engine_state()
     rules_out, _, _ = sh('find /etc/nginx/modsec/crs/rules/ -name "*.conf" 2>/dev/null | wc -l')
-    try:
-        rules_count = int(rules_out.strip() or 0)
-    except (ValueError, AttributeError):
-        rules_count = 0
-    return jsonify({'ok':True,'installed':installed,'enabled':enabled,'rules':rules_count})
+    try:    rules_count = int(rules_out.strip() or 0)
+    except: rules_count = 0
+
+    # Custom rules
+    custom_rules = ''
+    if os.path.exists(MODSEC_CUSTOM):
+        try: custom_rules = open(MODSEC_CUSTOM).read()
+        except: pass
+
+    # Sites with per-site overrides
+    site_overrides = {}
+    for conf_dir in ['/etc/nginx/vortex', '/etc/nginx/conf.d']:
+        if not os.path.isdir(conf_dir): continue
+        for fn in os.listdir(conf_dir):
+            fp = os.path.join(conf_dir, fn)
+            try:
+                c = open(fp).read()
+                domain = re.search(r'server_name\s+([^;]+);', c)
+                if domain:
+                    d = domain.group(1).strip().split()[0]
+                    if 'modsecurity off' in c.lower():
+                        site_overrides[d] = 'off'
+                    elif 'modsecurity on' in c.lower():
+                        site_overrides[d] = 'on'
+            except: pass
+
+    return jsonify({
+        'ok':            True,
+        'installed':     installed,
+        'enabled':       state == 'On',
+        'state':         state,
+        'rules':         rules_count,
+        'crs_version':   _crs_version() if installed else '',
+        'paranoia_level':_paranoia_level() if installed else 1,
+        'custom_rules':  custom_rules,
+        'site_overrides':site_overrides,
+        'audit_log':     os.path.exists(MODSEC_AUDIT),
+    })
+
 
 @security_bp.route('/api/security/modsecurity/toggle', methods=['POST'])
 def modsec_toggle():
     if not req(): return jsonify({'ok':False}), 401
-    enable = (request.get_json() or {}).get('enable', True)
-    conf   = '/etc/nginx/modsec/modsecurity.conf'
+    d      = request.get_json() or {}
+    state  = d.get('state', 'On')     # 'On' | 'DetectionOnly' | 'Off'
+    conf   = MODSEC_CONF
     if not os.path.exists(conf):
         return jsonify({'ok':False,'error':'ModSecurity not installed'}), 404
-    with open(conf) as f: content = f.read()
-    if enable:
-        content = content.replace('SecRuleEngine DetectionOnly','SecRuleEngine On')
-        content = content.replace('SecRuleEngine Off','SecRuleEngine On')
-    else:
-        content = content.replace('SecRuleEngine On','SecRuleEngine DetectionOnly')
+    content = open(conf).read()
+    # Replace any existing state
+    content = re.sub(r'SecRuleEngine\s+(On|DetectionOnly|Off)',
+                     f'SecRuleEngine {state}', content)
     with open(conf,'w') as f: f.write(content)
+    out, err, rc = sh('nginx -t 2>&1')
+    if rc != 0:
+        return jsonify({'ok':False,'error':f'nginx config error: {out}{err}'}), 400
+    sh('systemctl reload nginx 2>/dev/null')
+    return jsonify({'ok':True,'state':state})
+
+
+@security_bp.route('/api/security/modsecurity/paranoia', methods=['POST'])
+def modsec_paranoia():
+    """Set OWASP CRS paranoia level (1–4)."""
+    if not req(): return jsonify({'ok':False}), 401
+    level = int((request.get_json() or {}).get('level', 1))
+    level = max(1, min(4, level))
+    setup = f'{MODSEC_CRS_DIR}/crs-setup.conf'
+    if not os.path.exists(setup):
+        return jsonify({'ok':False,'error':'CRS setup.conf not found'}), 404
+    content = open(setup).read()
+    # Replace or inject paranoia level
+    if 'tx.paranoia_level' in content:
+        content = re.sub(r'tx\.paranoia_level=\d', f'tx.paranoia_level={level}', content)
+    else:
+        content += f'\nSecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level={level}"\n'
+    with open(setup,'w') as f: f.write(content)
     sh('nginx -t && systemctl reload nginx 2>/dev/null')
-    return jsonify({'ok':True,'enabled':enable})
+    return jsonify({'ok':True,'level':level})
+
+
+@security_bp.route('/api/security/modsecurity/custom-rules', methods=['GET'])
+def modsec_get_custom():
+    if not req(): return jsonify({'ok':False}), 401
+    content = ''
+    if os.path.exists(MODSEC_CUSTOM):
+        try: content = open(MODSEC_CUSTOM).read()
+        except: pass
+    return jsonify({'ok':True,'rules':content})
+
+
+@security_bp.route('/api/security/modsecurity/custom-rules', methods=['POST'])
+def modsec_save_custom():
+    """Save custom SecRule directives."""
+    if not req(): return jsonify({'ok':False}), 401
+    rules = (request.get_json() or {}).get('rules', '')
+    os.makedirs('/etc/nginx/modsec', exist_ok=True)
+    with open(MODSEC_CUSTOM,'w') as f: f.write(rules)
+    # Ensure it's included in main.conf
+    if os.path.exists(MODSEC_MAIN):
+        main = open(MODSEC_MAIN).read()
+        include_line = f'Include {MODSEC_CUSTOM}'
+        if include_line not in main:
+            with open(MODSEC_MAIN,'a') as f: f.write(f'\n{include_line}\n')
+    out, err, rc = sh('nginx -t 2>&1')
+    if rc != 0:
+        return jsonify({'ok':False,'error':f'Syntax error in rules: {out}{err}'}), 400
+    sh('systemctl reload nginx 2>/dev/null')
+    return jsonify({'ok':True})
+
+
+@security_bp.route('/api/security/modsecurity/audit-log')
+def modsec_audit_log():
+    """Return last N lines of ModSecurity audit log."""
+    if not req(): return jsonify({'ok':False}), 401
+    lines = int(request.args.get('lines', 100))
+    if not os.path.exists(MODSEC_AUDIT):
+        return jsonify({'ok':True,'entries':[],'raw':'','exists':False})
+    out, _, _ = sh(f'tail -n {min(lines, 500)} "{MODSEC_AUDIT}" 2>/dev/null')
+    entries = []
+    current = {}
+    for line in out.split('\n'):
+        # ModSecurity audit log section markers: --UUID-A-- through --UUID-Z--
+        m = re.match(r'--[a-f0-9]+-([A-Z])--', line)
+        if m:
+            section = m.group(1)
+            if section == 'A' and current:
+                entries.append(current)
+                current = {}
+            if section == 'A':
+                current = {'raw': line}
+            elif section == 'B' and current:
+                # Request line
+                req_m = re.search(r'(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)', line)
+                if req_m:
+                    current['method'] = req_m.group(1)
+                    current['uri']    = req_m.group(2)
+            elif section == 'H' and current:
+                # Response / action
+                msg_m = re.search(r'Message: (.+)', line)
+                if msg_m: current['message'] = msg_m.group(1)[:200]
+                id_m = re.search(r'\[id "(\d+)"\]', line)
+                if id_m: current['rule_id'] = id_m.group(1)
+                sev_m = re.search(r'\[severity "(\w+)"\]', line)
+                if sev_m: current['severity'] = sev_m.group(1)
+                ip_m = re.search(r'client (\d+\.\d+\.\d+\.\d+)', line)
+                if ip_m: current['ip'] = ip_m.group(1)
+        elif current and line:
+            if 'timestamp' not in current:
+                ts_m = re.search(r'\[(\d{2}/\w+/\d{4}:\d{2}:\d{2}:\d{2})', line)
+                if ts_m: current['timestamp'] = ts_m.group(1)
+    if current: entries.append(current)
+    entries = [e for e in entries if e.get('message') or e.get('uri')]
+    entries.reverse()
+    return jsonify({'ok':True,'entries':entries[-100:],'raw':out,'exists':True})
+
+
+@security_bp.route('/api/security/modsecurity/update-crs', methods=['POST'])
+def modsec_update_crs():
+    """Pull latest OWASP CRS tarball and replace existing rules."""
+    if not req(): return jsonify({'ok':False}), 401
+    # Get latest CRS release tag from GitHub API
+    api_out, _, rc = sh(
+        'curl -s https://api.github.com/repos/coreruleset/coreruleset/releases/latest'
+        ' | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])"',
+        t=15
+    )
+    tag = api_out.strip() if rc == 0 and api_out.strip().startswith('v') else 'v4.0.0'
+    ver = tag.lstrip('v')
+
+    out, err, rc = sh(
+        f'wget -q https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz'
+        f' -O /tmp/crs_update.tar.gz && '
+        f'mkdir -p {MODSEC_CRS_DIR}_backup && '
+        f'cp -r {MODSEC_CRS_DIR}/crs-setup.conf {MODSEC_CRS_DIR}_backup/ 2>/dev/null || true && '
+        f'tar -xzf /tmp/crs_update.tar.gz -C {MODSEC_CRS_DIR} --strip-components=1 && '
+        f'cp {MODSEC_CRS_DIR}/crs-setup.conf.example {MODSEC_CRS_DIR}/crs-setup.conf 2>/dev/null || true && '
+        f'cp {MODSEC_CRS_DIR}_backup/crs-setup.conf {MODSEC_CRS_DIR}/crs-setup.conf 2>/dev/null || true && '
+        f'nginx -t && systemctl reload nginx 2>/dev/null',
+        t=120
+    )
+    return jsonify({
+        'ok': rc == 0,
+        'version': ver,
+        'output': (out + err)[-500:],
+    })
+
+
+@security_bp.route('/api/security/modsecurity/per-site', methods=['POST'])
+def modsec_per_site():
+    """Enable or disable ModSecurity for a specific site's nginx vhost."""
+    if not req(): return jsonify({'ok':False}), 401
+    d      = request.get_json() or {}
+    domain = d.get('domain', '')
+    enable = d.get('enable', True)   # True = use global setting, False = disable for this site
+    if not domain:
+        return jsonify({'ok':False,'error':'domain required'}), 400
+
+    for conf_dir in ['/etc/nginx/vortex', '/etc/nginx/conf.d']:
+        if not os.path.isdir(conf_dir): continue
+        for fn in os.listdir(conf_dir):
+            fp = os.path.join(conf_dir, fn)
+            try:
+                content = open(fp).read()
+                if domain not in content: continue
+                # Remove any existing modsecurity directives for this site
+                content = re.sub(r'\s*modsecurity\s+(on|off);\s*', '\n', content,
+                                 flags=re.IGNORECASE)
+                content = re.sub(r'\s*modsecurity_rules_file[^\n]+\n', '', content)
+                if not enable:
+                    # Insert modsecurity off; inside the server block
+                    content = content.replace(
+                        'server {',
+                        'server {\n    modsecurity off;',
+                        1
+                    )
+                with open(fp,'w') as f: f.write(content)
+                out, err, rc = sh('nginx -t 2>&1')
+                if rc != 0:
+                    return jsonify({'ok':False,'error':f'nginx config error: {out}{err}'}), 400
+                sh('systemctl reload nginx 2>/dev/null')
+                return jsonify({'ok':True,'domain':domain,'enabled':enable})
+            except Exception as e:
+                return jsonify({'ok':False,'error':str(e)}), 500
+
+    return jsonify({'ok':False,'error':f'No nginx config found for {domain}'}), 404
 
 # ── Nginx Load Balancer ───────────────────────────────────────────────────────
 LB_CONF = '/etc/nginx/conf.d/loadbalancer.conf'

@@ -4006,10 +4006,186 @@
           </template>
         </div>
         <div x-show="tab==='modsec'" style="margin-top:14px">
-          <div class="card"><div class="card-hd"><div class="card-title">🔥 ModSecurity WAF</div><span :class="'badge badge-'+(modsec.installed?(modsec.enabled?'green':'yellow'):'gray')" x-text="modsec.installed?(modsec.enabled?'Blocking':'Detection'):'Not Installed'"></span></div>
-            <template x-if="!modsec.installed"><div style="font-size:12px;color:var(--text-muted)">Install ModSecurity WAF via Modules page.</div></template>
-            <template x-if="modsec.installed"><div><button class="btn btn-success btn-sm" x-show="!modsec.enabled" @click="toggleModsec(true)">Enable Blocking Mode</button><button class="btn btn-warn btn-sm" x-show="modsec.enabled" @click="toggleModsec(false)">Detection Only</button></div></template>
+
+          <!-- Status card -->
+          <div class="card" style="margin-bottom:12px">
+            <div class="card-hd">
+              <div class="card-title">🔥 ModSecurity WAF</div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span x-show="modsec.installed && modsec.state==='On'"    class="badge badge-green">● Blocking</span>
+                <span x-show="modsec.installed && modsec.state==='DetectionOnly'" class="badge badge-yellow">◑ Detection Only</span>
+                <span x-show="modsec.installed && modsec.state==='Off'"   class="badge badge-gray">○ Disabled</span>
+                <span x-show="!modsec.installed"                          class="badge badge-gray">Not Installed</span>
+                <span x-show="modsec.installed && modsec.crs_version" class="badge badge-blue" style="font-size:9px" x-text="'CRS v'+modsec.crs_version"></span>
+                <button x-show="modsec.installed" class="btn btn-ghost btn-xs" @click="loadModsec()">↻</button>
+              </div>
+            </div>
+
+            <!-- Not installed -->
+            <template x-if="!modsec.installed">
+              <div style="padding:12px 0;font-size:12px;color:var(--text-muted)">
+                ModSecurity WAF is not installed. Install it from the <strong>App Store</strong> — supports Nginx on all distros (Debian, Ubuntu, AlmaLinux, Rocky, Fedora, RHEL, CentOS, Oracle, CloudLinux).
+              </div>
+            </template>
+
+            <!-- Installed: controls -->
+            <template x-if="modsec.installed">
+              <div>
+                <!-- Engine state row -->
+                <div style="margin-bottom:14px">
+                  <div class="form-label" style="margin-bottom:8px">Engine Mode</div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <button :class="modsec.state==='On'?'btn btn-success btn-sm':'btn btn-ghost btn-sm'"
+                            @click="setModsecState('On')">
+                      🛡 Blocking
+                    </button>
+                    <button :class="modsec.state==='DetectionOnly'?'btn btn-warn btn-sm':'btn btn-ghost btn-sm'"
+                            @click="setModsecState('DetectionOnly')">
+                      🔍 Detection Only
+                    </button>
+                    <button :class="modsec.state==='Off'?'btn btn-danger btn-sm':'btn btn-ghost btn-sm'"
+                            @click="setModsecState('Off')">
+                      ○ Disabled
+                    </button>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
+                    <span x-show="modsec.state==='On'">Blocking mode: requests matching WAF rules are blocked with HTTP 403.</span>
+                    <span x-show="modsec.state==='DetectionOnly'">Detection mode: threats are logged but not blocked. Use for testing before going live.</span>
+                    <span x-show="modsec.state==='Off'">WAF is disabled globally. No rules are evaluated.</span>
+                  </div>
+                </div>
+
+                <!-- Paranoia level + CRS stats -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+                  <div>
+                    <div class="form-label" style="margin-bottom:6px">
+                      OWASP CRS Paranoia Level
+                      <span style="font-size:10px;color:var(--text-muted);margin-left:4px">(1=default, 4=strictest)</span>
+                    </div>
+                    <div style="display:flex;gap:4px">
+                      <template x-for="lvl in [1,2,3,4]" :key="lvl">
+                        <button :class="modsec.paranoia_level===lvl?'btn btn-primary btn-sm':'btn btn-ghost btn-sm'"
+                                style="flex:1;justify-content:center"
+                                @click="setParanoia(lvl)" x-text="lvl">
+                        </button>
+                      </template>
+                    </div>
+                    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">
+                      <span x-show="modsec.paranoia_level===1">Level 1: Basic protection, very low false positives. Recommended for production.</span>
+                      <span x-show="modsec.paranoia_level===2">Level 2: Stricter rules for better protection. Some false positives possible.</span>
+                      <span x-show="modsec.paranoia_level===3">Level 3: Aggressive. Test thoroughly before enabling on production.</span>
+                      <span x-show="modsec.paranoia_level===4">Level 4: Maximum protection. High false positive risk — advanced users only.</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="form-label" style="margin-bottom:6px">CRS Status</div>
+                    <div style="background:var(--bg-raised);border-radius:var(--radius);padding:10px;font-size:12px">
+                      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                        <span style="color:var(--text-muted)">Version</span>
+                        <span style="font-weight:600" x-text="modsec.crs_version||'—'"></span>
+                      </div>
+                      <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                        <span style="color:var(--text-muted)">Active rules</span>
+                        <span style="font-weight:600" x-text="modsec.rules"></span>
+                      </div>
+                      <button class="btn btn-ghost btn-xs" style="width:100%;justify-content:center"
+                              :disabled="modsec.updating" @click="updateCRS()">
+                        <span x-show="modsec.updating">Updating…</span>
+                        <span x-show="!modsec.updating">⬆ Update to latest CRS</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
+
+          <!-- Per-site toggles -->
+          <div x-show="modsec.installed" class="card" style="margin-bottom:12px">
+            <div class="card-hd"><div class="card-title">Per-site WAF override</div></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+              Disable ModSecurity for specific sites (e.g. admin panels, API servers) without affecting the global setting.
+            </div>
+            <div x-show="!sites || sites.length===0" style="font-size:12px;color:var(--text-muted)">No sites found. Add sites on the Websites page.</div>
+            <template x-for="site in (sites||[])" :key="site.domain">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-light)">
+                <span style="font-size:12px;font-weight:500" x-text="site.domain"></span>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span x-show="(modsec.site_overrides||{})[site.domain]==='off'" class="badge badge-yellow" style="font-size:9px">WAF Off</span>
+                  <label style="position:relative;width:34px;height:18px;display:inline-block">
+                    <input type="checkbox" style="opacity:0;width:0;height:0"
+                           :checked="(modsec.site_overrides||{})[site.domain]!=='off'"
+                           @change="toggleSiteWAF(site.domain, $event.target.checked)">
+                    <span style="position:absolute;cursor:pointer;inset:0;border-radius:9px;transition:.2s"
+                          :style="(modsec.site_overrides||{})[site.domain]!=='off'?'background:var(--accent)':'background:#cbd5e1'">
+                      <span style="position:absolute;height:12px;width:12px;top:3px;background:#fff;border-radius:50%;transition:.2s"
+                            :style="(modsec.site_overrides||{})[site.domain]!=='off'?'left:19px':'left:3px'"></span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Custom rules editor -->
+          <div x-show="modsec.installed" class="card" style="margin-bottom:12px">
+            <div class="card-hd">
+              <div class="card-title">Custom Rules</div>
+              <button class="btn btn-primary btn-sm" @click="saveCustomRules()">Save rules</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">
+              Write custom <code>SecRule</code> directives here. These are saved to <code>/etc/nginx/modsec/custom-rules.conf</code> and validated with <code>nginx -t</code> before applying.
+            </div>
+            <textarea x-model="modsec.custom_rules" rows="8"
+                      style="width:100%;font-family:var(--font-mono);font-size:11px;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:10px;color:var(--text-primary);resize:vertical;outline:none"
+                      placeholder="# Example: whitelist an IP&#10;SecRule REMOTE_ADDR &quot;^192\.168\.1\.100$&quot; \&#10;    &quot;id:1001,phase:1,pass,nolog,ctl:ruleEngine=Off&quot;&#10;&#10;# Example: block user agent&#10;SecRule REQUEST_HEADERS:User-Agent &quot;(sqlmap|nikto|havij)&quot; \&#10;    &quot;id:1002,phase:1,deny,status:403,log,msg:'Bad bot blocked'&quot;"></textarea>
+          </div>
+
+          <!-- Audit log viewer -->
+          <div x-show="modsec.installed" class="card">
+            <div class="card-hd">
+              <div class="card-title">Audit Log</div>
+              <div style="display:flex;gap:6px">
+                <span x-show="!modsec.audit_log" class="badge badge-gray" style="font-size:10px">No audit log yet</span>
+                <button x-show="modsec.audit_log" class="btn btn-ghost btn-xs" @click="loadAuditLog()">↻ Refresh</button>
+              </div>
+            </div>
+            <div x-show="modsec.audit_log">
+              <div x-show="modsec.auditEntries && modsec.auditEntries.length===0" style="font-size:12px;color:var(--text-muted);padding:10px 0">
+                No triggered rules yet — or audit log is empty.
+              </div>
+              <table x-show="modsec.auditEntries && modsec.auditEntries.length>0" class="data-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>IP</th>
+                    <th>Method</th>
+                    <th>URI</th>
+                    <th>Rule ID</th>
+                    <th>Severity</th>
+                    <th>Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(e,i) in (modsec.auditEntries||[])" :key="i">
+                    <tr>
+                      <td style="font-size:10px;font-family:var(--font-mono);white-space:nowrap" x-text="e.timestamp||'—'"></td>
+                      <td style="font-family:var(--font-mono);font-size:11px" x-text="e.ip||'—'"></td>
+                      <td><span class="badge badge-gray" style="font-size:9px" x-text="e.method||'—'"></span></td>
+                      <td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="e.uri||'—'"></td>
+                      <td style="font-family:var(--font-mono);font-size:11px" x-text="e.rule_id||'—'"></td>
+                      <td>
+                        <span :class="e.severity==='CRITICAL'?'badge badge-red':e.severity==='ERROR'?'badge badge-yellow':'badge badge-gray'"
+                              style="font-size:9px" x-text="e.severity||'—'"></span>
+                      </td>
+                      <td style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="e.message||'—'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
         <div x-show="tab==='lb'" style="margin-top:14px">
           <div class="card"><div class="card-hd"><div class="card-title">⚖ Load Balancer</div><span :class="'badge badge-'+(lb.configured?'green':'gray')" x-text="lb.configured?'Active':'Not Configured'"></span></div>

@@ -2638,7 +2638,7 @@ function securityPage() {
     tab: 'ssh', score: 0, checks: [],
     ssh: {port:'22', password_auth:'yes', root_login:'yes', pubkey_auth:'yes', max_auth_tries:'6'},
     f2bJails: [], attempts: [], portsOutput: '',
-    modsec: {installed:false, enabled:false, rules:0},
+    modsec: {installed:false, enabled:false, state:'Off', rules:0, crs_version:'', paranoia_level:1, custom_rules:'', site_overrides:{}, audit_log:false, auditEntries:[], updating:false},
     lb: {configured:false, method:'roundrobin', domain:'_', port:'80',
          servers:[{address:'127.0.0.1:8001',weight:1},{address:'127.0.0.1:8002',weight:1}]},
 
@@ -2691,13 +2691,55 @@ function securityPage() {
 
     async loadModsec() {
       const r = await get('/api/security/modsecurity');
-      if (r.ok) this.modsec = r;
+      if (r.ok) {
+        this.modsec = { ...this.modsec, ...r };
+        if (!this.modsec.auditEntries) this.modsec.auditEntries = [];
+        if (r.audit_log && (!this.modsec.auditEntries || this.modsec.auditEntries.length === 0)) {
+          await this.loadAuditLog();
+        }
+      }
     },
 
-    async toggleModsec(enable) {
-      const r = await post('/api/security/modsecurity/toggle', {enable});
-      if (r.ok) { this.modsec.enabled=enable; toast(enable?'WAF Blocking Mode ON':'Detection Only','success'); }
-      else toast(r.error||'Failed','error');
+    async setModsecState(state) {
+      const r = await post('/api/security/modsecurity/toggle', {state});
+      if (r.ok) {
+        this.modsec.state = state;
+        this.modsec.enabled = state === 'On';
+        const labels = {On:'WAF Blocking Mode ON', DetectionOnly:'WAF Detection Only (logging)', Off:'WAF Disabled'};
+        toast(labels[state] || state, r.ok ? 'success' : 'error');
+      } else toast(r.error || 'Failed', 'error');
+    },
+
+    async setParanoia(level) {
+      const r = await post('/api/security/modsecurity/paranoia', {level});
+      if (r.ok) {
+        this.modsec.paranoia_level = level;
+        toast(`Paranoia level set to ${level}`, 'success');
+      } else toast(r.error || 'Failed', 'error');
+    },
+
+    async saveCustomRules() {
+      const r = await post('/api/security/modsecurity/custom-rules', {rules: this.modsec.custom_rules || ''});
+      toast(r.ok ? 'Custom rules saved and applied' : 'Error: ' + (r.error || 'Failed'), r.ok ? 'success' : 'error');
+    },
+
+    async loadAuditLog() {
+      const r = await get('/api/security/modsecurity/audit-log?lines=200');
+      if (r.ok) this.modsec.auditEntries = r.entries || [];
+    },
+
+    async updateCRS() {
+      this.modsec.updating = true;
+      const r = await post('/api/security/modsecurity/update-crs', {});
+      this.modsec.updating = false;
+      toast(r.ok ? `CRS updated to v${r.version}` : 'Update failed: ' + (r.error || ''), r.ok ? 'success' : 'error');
+      if (r.ok) await this.loadModsec();
+    },
+
+    async toggleSiteWAF(domain, enable) {
+      const r = await post('/api/security/modsecurity/per-site', {domain, enable});
+      toast(r.ok ? (enable ? `WAF enabled for ${domain}` : `WAF disabled for ${domain}`) : 'Failed: ' + (r.error || ''), r.ok ? 'success' : 'error');
+      if (r.ok) await this.loadModsec();
     },
 
     async loadLB() {
