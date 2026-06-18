@@ -1,1 +1,8 @@
 .refactor_backup_*/
+_pycache__
+*.pyc
+venv/
+.env
+credentials.json
+admin_password.txt
+cdn_config.json
