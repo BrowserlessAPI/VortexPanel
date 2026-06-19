@@ -177,8 +177,8 @@ def security_score():
             creds = _json.load(open(creds_file))
             h = creds.get('password_hash','')
             # bcrypt hash starts with $2b$
-            checks.append({'label':'Panel Password Uses bcrypt (not SHA-256)',
-                           'pass': h.startswith('$2b$') or h.startswith('$2a$'),
+            checks.append({'label':'Panel Password Uses bcrypt or Argon2id (not SHA-256)',
+                           'pass': h.startswith('$2b$') or h.startswith('$2a$') or h.startswith('$argon2'),
                            'severity':'high'})
             # Default password check (admin123)
             default_sha = _hashlib.sha256(b'admin123').hexdigest()

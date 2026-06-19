@@ -110,6 +110,22 @@ def create_app():
         app.register_blueprint(bp)
     terminal_sock.init_app(app)
 
+    # ── IP allowlist enforcement on EVERY API request ────────────────────────
+    # The allowlist in auth.py is also checked at login, but checking every
+    # API call prevents use of a stolen session cookie from an unlisted IP.
+    @app.before_request
+    def enforce_ip_allowlist():
+        if not request.path.startswith('/api/'):
+            return None   # Static files / HTML — not checked
+        if request.path.startswith('/api/auth/'):
+            return None   # Auth endpoints handle their own IP check
+        # Import here to avoid circular import at module level
+        from panel.routes.auth import _client_ip, _ip_allowed
+        ip = _client_ip()
+        if not _ip_allowed(ip):
+            return jsonify({'ok': False, 'error': 'Access denied from this IP address'}), 403
+        return None
+
     # ── Security headers on every response ───────────────────────────────────
     @app.after_request
     def add_security_headers(response):
