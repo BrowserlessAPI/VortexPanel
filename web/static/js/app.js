@@ -2524,6 +2524,12 @@ function settingsPage() {
     stab: 'general',
     panelVersion: 'v3.0.0',
     pwForm: {current:'', newpw:'', confirm:''},
+    allowlistText: '',
+    twofa: {
+      enabled:false, secret:'', qr_url:'', code:'', err:'',
+      setupLoading:false, enabling:false,
+      disableConfirm:false, disablePw:'', disabling:false,
+    },
     aiConfig: {enabled:true, api_key:'', base_url:'https://neoncodex.io/api/v1', model:'neoncodex-default', max_tokens:2048},
     aiModels: [], showApiKey: false,
     aiTesting: false, aiTestResult: '', aiTestOk: false,
@@ -2532,6 +2538,69 @@ function settingsPage() {
       const uv = await get('/api/update/version').catch(()=>({ok:false}));
       if (uv.ok) this.panelVersion = uv.version;
       document.addEventListener("vortex-logged-in", () => { this.init(); });
+    },
+
+    async loadSecurityTab() {
+      // Load 2FA status and allowlist when security tab opened
+      const [s, a] = await Promise.all([
+        get('/api/auth/2fa/status'),
+        get('/api/auth/security-settings'),
+      ]);
+      if (s.ok) this.twofa.enabled = s.enabled;
+      if (a.ok) this.allowlistText = (a.allowed_ips||[]).join('\n');
+    },
+
+    // ── 2FA ──────────────────────────────────────────────────────────────────
+    async setup2FA() {
+      this.twofa.setupLoading = true;
+      const r = await post('/api/auth/2fa/setup', {});
+      this.twofa.setupLoading = false;
+      if (r.ok) {
+        this.twofa.secret  = r.secret;
+        this.twofa.qr_url  = r.qr_url;
+        this.twofa.code    = '';
+        this.twofa.err     = '';
+      } else toast(r.error || 'Failed to setup 2FA', 'error');
+    },
+
+    async enable2FA() {
+      if (!this.twofa.code || this.twofa.code.length < 6) {
+        this.twofa.err = 'Enter the 6-digit code from your authenticator app'; return;
+      }
+      this.twofa.enabling = true;
+      this.twofa.err = '';
+      const r = await post('/api/auth/2fa/enable', {code: this.twofa.code});
+      this.twofa.enabling = false;
+      if (r.ok) {
+        this.twofa.enabled = true;
+        this.twofa.secret  = '';
+        this.twofa.qr_url  = '';
+        this.twofa.code    = '';
+        toast('2FA enabled — your account is now protected', 'success');
+      } else {
+        this.twofa.err = r.error || 'Invalid code';
+        toast(r.error || 'Invalid code', 'error');
+      }
+    },
+
+    async disable2FA() {
+      if (!this.twofa.disablePw) { toast('Enter your password', 'error'); return; }
+      this.twofa.disabling = true;
+      const r = await post('/api/auth/2fa/disable', {password: this.twofa.disablePw});
+      this.twofa.disabling = false;
+      if (r.ok) {
+        this.twofa.enabled = false;
+        this.twofa.disableConfirm = false;
+        this.twofa.disablePw = '';
+        toast('2FA disabled', 'success');
+      } else toast(r.error || 'Failed', 'error');
+    },
+
+    // ── IP allowlist ─────────────────────────────────────────────────────────
+    async saveAllowlist() {
+      const ips = this.allowlistText.split('\n').map(s=>s.trim()).filter(Boolean);
+      const r = await post('/api/auth/security-settings', {allowed_ips: ips});
+      toast(r.ok ? 'Allowlist saved' : 'Failed: '+(r.error||''), r.ok?'success':'error');
     },
 
     async loadAiConfig() {
@@ -2667,7 +2736,9 @@ function bandwidthPage() {
 function securityPage() {
   return {
     tab: 'ssh', score: 0, checks: [],
-    ssh: {port:'22', password_auth:'yes', root_login:'yes', pubkey_auth:'yes', max_auth_tries:'6'},
+    ssh: {port:'22', password_auth:'yes', root_login:'yes', pubkey_auth:'yes', max_auth_tries:'6', keys_exist:false, sudo_users:[], active_port:'22', saving:false},
+    sshPubkey: '',
+    newUser: {username:'', password:'', pubkey:'', loading:false, result:'', ok:false},
     f2bJails: [], attempts: [], portsOutput: '',
     modsec: {installed:false, enabled:false, state:'Off', rules:0, crs_version:'', paranoia_level:1, custom_rules:'', site_overrides:{}, audit_log:false, auditEntries:[], updating:false},
     lb: {configured:false, method:'roundrobin', domain:'_', port:'80',
@@ -2685,10 +2756,61 @@ function securityPage() {
       if (r.ok) this.ssh = {...this.ssh, ...r.config};
     },
 
-    async saveSSH() {
-      const r = await put('/api/security/ssh', this.ssh);
-      toast(r.ok?'SSH config saved':'Failed', r.ok?'success':'error');
-      if (r.ok) await this.loadScore();
+    async saveSSHConfig() {
+      this.ssh.saving = true;
+      const r = await put('/api/security/ssh', {
+        port:          this.ssh.port,
+        password_auth: this.ssh.password_auth,
+        root_login:    this.ssh.root_login,
+        pubkey_auth:   this.ssh.pubkey_auth,
+        max_auth_tries:this.ssh.max_auth_tries,
+      });
+      this.ssh.saving = false;
+      if (r.ok) {
+        toast('SSH config saved and applied', 'success');
+        await this.loadSSH();
+        await this.loadScore();
+      } else {
+        toast('Failed: ' + (r.error || 'Unknown error'), 'error');
+      }
+    },
+
+    // Keep old saveSSH as alias
+    async saveSSH() { return this.saveSSHConfig(); },
+
+    async addSSHKey() {
+      if (!this.sshPubkey.trim()) { toast('Paste your public key first', 'error'); return; }
+      const r = await post('/api/security/ssh/add-key', {pubkey: this.sshPubkey});
+      if (r.ok) {
+        toast('SSH key added to /root/.ssh/authorized_keys', 'success');
+        this.sshPubkey = '';
+        await this.loadSSH();
+      } else toast(r.error || 'Failed', 'error');
+    },
+
+    async createSudoUser() {
+      if (!this.newUser.username) { toast('Username required', 'error'); return; }
+      if (!this.newUser.password && !this.newUser.pubkey) { toast('Password or SSH key required', 'error'); return; }
+      this.newUser.loading = true;
+      this.newUser.result  = '';
+      const r = await post('/api/security/ssh/create-user', {
+        username: this.newUser.username,
+        password: this.newUser.password,
+        pubkey:   this.newUser.pubkey,
+      });
+      this.newUser.loading = false;
+      this.newUser.ok      = r.ok;
+      this.newUser.result  = r.ok
+        ? `✓ User "${this.newUser.username}" created and added to ${r.sudo_group} group`
+        : (r.error || 'Failed');
+      if (r.ok) {
+        this.newUser.username = '';
+        this.newUser.password = '';
+        this.newUser.pubkey   = '';
+        await this.loadSSH();
+        await this.loadScore();
+        toast(`User ${r.username || ''} created`, 'success');
+      } else toast(r.error || 'Failed', 'error');
     },
 
     async loadFail2ban() {

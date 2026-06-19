@@ -27,10 +27,20 @@ def ssh_config():
             'pubkey_auth':    get_val('PubkeyAuthentication', 'yes').lower(),
             'max_auth_tries': get_val('MaxAuthTries', '6'),
         }
-    # Get current SSH port from ss
     port_out, _, _ = sh("ss -tlnp | grep sshd | awk '{print $4}' | grep -oP ':\\K[0-9]+'")
     if port_out: cfg['active_port'] = port_out.split('\n')[0]
+
+    # Check if any SSH keys exist for root (safe to disable password auth?)
+    key_files = ['/root/.ssh/authorized_keys', '/root/.ssh/id_rsa.pub', '/root/.ssh/id_ed25519.pub']
+    keys_exist = any(os.path.exists(f) and os.path.getsize(f) > 0 for f in key_files)
+    cfg['keys_exist'] = keys_exist
+
+    # List sudo users (non-root users in sudo/wheel group)
+    sudo_users_out, _, _ = sh("getent group sudo wheel 2>/dev/null | cut -d: -f4 | tr ',' '\n' | sort -u | grep -v '^$'")
+    cfg['sudo_users'] = [u for u in sudo_users_out.strip().split('\n') if u]
+
     return jsonify({'ok':True, 'config':cfg})
+
 
 @security_bp.route('/api/security/ssh', methods=['PUT'])
 def save_ssh():
@@ -39,6 +49,18 @@ def save_ssh():
     sshd = '/etc/ssh/sshd_config'
     if not os.path.exists(sshd):
         return jsonify({'ok':False,'error':'sshd_config not found'}), 404
+
+    # Safety: refuse to disable password auth if no SSH keys exist
+    if d.get('password_auth') == 'no':
+        key_files = ['/root/.ssh/authorized_keys', '/root/.ssh/id_rsa.pub', '/root/.ssh/id_ed25519.pub']
+        keys_exist = any(os.path.exists(f) and os.path.getsize(f) > 0 for f in key_files)
+        # Also check if any sudo user has keys
+        sudo_out, _, _ = sh("find /home -name authorized_keys 2>/dev/null | xargs cat 2>/dev/null | wc -l")
+        sudo_keys = int(sudo_out.strip() or 0) > 0
+        if not keys_exist and not sudo_keys:
+            return jsonify({'ok':False,
+                'error':'Cannot disable password auth: no SSH keys found. Add your public key to /root/.ssh/authorized_keys first.'}), 400
+
     with open(sshd) as f: content = f.read()
 
     def set_val(key, val, content):
@@ -47,14 +69,107 @@ def save_ssh():
         if pattern.search(content): return pattern.sub(new_line, content)
         return content + f'\n{new_line}\n'
 
+    old_port = re.search(r'^#?\s*Port\s+(\d+)', content, re.MULTILINE|re.IGNORECASE)
+    old_port = old_port.group(1) if old_port else '22'
+
     if 'port' in d:           content = set_val('Port', d['port'], content)
     if 'password_auth' in d:  content = set_val('PasswordAuthentication', d['password_auth'], content)
     if 'root_login' in d:     content = set_val('PermitRootLogin', d['root_login'], content)
     if 'pubkey_auth' in d:    content = set_val('PubkeyAuthentication', d['pubkey_auth'], content)
     if 'max_auth_tries' in d: content = set_val('MaxAuthTries', d['max_auth_tries'], content)
 
+    # Test config before applying
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as tf:
+        tf.write(content)
+        tf_path = tf.name
+    test_out, test_err, rc = sh(f'sshd -t -f {tf_path} 2>&1')
+    os.unlink(tf_path)
+    if rc != 0:
+        return jsonify({'ok':False, 'error':f'sshd config test failed: {test_out}{test_err}'}), 400
+
     with open(sshd,'w') as f: f.write(content)
+
+    # Update firewall rule if port changed
+    new_port = d.get('port', old_port)
+    if new_port != old_port:
+        sh(f'ufw allow {new_port}/tcp 2>/dev/null || firewall-cmd --add-port={new_port}/tcp --permanent 2>/dev/null')
+        sh(f'ufw delete allow {old_port}/tcp 2>/dev/null || firewall-cmd --remove-port={old_port}/tcp --permanent 2>/dev/null')
+        sh('firewall-cmd --reload 2>/dev/null || true')
+
     sh('systemctl reload sshd 2>/dev/null || service ssh reload 2>/dev/null')
+    return jsonify({'ok':True, 'port': new_port})
+
+
+@security_bp.route('/api/security/ssh/create-user', methods=['POST'])
+def create_sudo_user():
+    """Create a new sudo user — must do this before disabling root login."""
+    if not req(): return jsonify({'ok':False}), 401
+    d        = request.get_json() or {}
+    username = d.get('username','').strip().lower()
+    password = d.get('password','')
+    pubkey   = d.get('pubkey','').strip()
+
+    if not username or not re.match(r'^[a-z_][a-z0-9_-]{1,30}$', username):
+        return jsonify({'ok':False,'error':'Invalid username (2-31 chars, lowercase letters/numbers/-/_)'}), 400
+    if not password and not pubkey:
+        return jsonify({'ok':False,'error':'Password or SSH public key required'}), 400
+    if len(password) < 8 and password:
+        return jsonify({'ok':False,'error':'Password must be at least 8 characters'}), 400
+
+    # Check user doesn't already exist
+    out, _, rc = sh(f'id {username} 2>/dev/null')
+    if rc == 0:
+        return jsonify({'ok':False,'error':f'User {username} already exists'}), 409
+
+    # Create user
+    _, err, rc = sh(f'useradd -m -s /bin/bash {username} 2>&1')
+    if rc != 0:
+        return jsonify({'ok':False,'error':f'Failed to create user: {err}'}), 500
+
+    # Set password
+    if password:
+        _, err, rc = sh(f'echo "{username}:{password}" | chpasswd 2>&1')
+        if rc != 0:
+            sh(f'userdel -r {username} 2>/dev/null')
+            return jsonify({'ok':False,'error':f'Failed to set password: {err}'}), 500
+
+    # Add to sudo/wheel group
+    os_family = sh('. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian')
+    sudo_group = 'wheel' if 'rhel' in os_family or 'fedora' in os_family else 'sudo'
+    sh(f'usermod -aG {sudo_group} {username} 2>/dev/null')
+
+    # Add SSH public key
+    if pubkey:
+        ssh_dir = f'/home/{username}/.ssh'
+        sh(f'mkdir -p {ssh_dir} && chmod 700 {ssh_dir}')
+        with open(f'{ssh_dir}/authorized_keys', 'w') as f:
+            f.write(pubkey + '\n')
+        sh(f'chmod 600 {ssh_dir}/authorized_keys && chown -R {username}:{username} {ssh_dir}')
+
+    return jsonify({'ok':True,'username':username,'sudo_group':sudo_group})
+
+
+@security_bp.route('/api/security/ssh/add-key', methods=['POST'])
+def add_ssh_key():
+    """Add an SSH public key to /root/.ssh/authorized_keys."""
+    if not req(): return jsonify({'ok':False}), 401
+    pubkey = (request.get_json() or {}).get('pubkey','').strip()
+    if not pubkey or not pubkey.startswith('ssh-'):
+        return jsonify({'ok':False,'error':'Invalid public key format (must start with ssh-)'}), 400
+    ssh_dir = '/root/.ssh'
+    os.makedirs(ssh_dir, exist_ok=True)
+    os.chmod(ssh_dir, 0o700)
+    auth_file = f'{ssh_dir}/authorized_keys'
+    # Check if key already exists
+    existing = ''
+    if os.path.exists(auth_file):
+        existing = open(auth_file).read()
+    if pubkey in existing:
+        return jsonify({'ok':True,'message':'Key already exists'})
+    with open(auth_file,'a') as f:
+        f.write(('\n' if existing and not existing.endswith('\n') else '') + pubkey + '\n')
+    os.chmod(auth_file, 0o600)
     return jsonify({'ok':True})
 
 # ── Fail2ban ─────────────────────────────────────────────────────────────────

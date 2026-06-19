@@ -4017,13 +4017,165 @@
           <div class="tab" :class="{active:tab==='lb'}" @click="tab='lb';loadLB()">Load Balancer</div>
           <div class="tab" :class="{active:tab==='ports'}" @click="tab='ports';loadPorts()">Ports</div>
         </div>
-        <div x-show="tab==='ssh'" class="card" style="max-width:560px;margin-top:14px">
-          <div class="card-hd"><div class="card-title">SSH Configuration</div></div>
-          <div class="form-row form-row-2"><div class="form-group"><label class="form-label">Port</label><input class="form-input" x-model="ssh.port"></div><div class="form-group"><label class="form-label">Max Auth Tries</label><input class="form-input" x-model="ssh.max_auth_tries"></div></div>
-          <label class="form-check" style="margin-bottom:10px"><input type="checkbox" :checked="ssh.root_login==='yes'" @change="ssh.root_login=$event.target.checked?'yes':'no'"><div><div style="font-size:13px;font-weight:500">Allow Root Login</div></div></label>
-          <label class="form-check" style="margin-bottom:14px"><input type="checkbox" :checked="ssh.password_auth==='yes'" @change="ssh.password_auth=$event.target.checked?'yes':'no'"><div><div style="font-size:13px;font-weight:500">Password Authentication</div></div></label>
-          <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--yellow);margin-bottom:12px">⚠ Changing SSH settings may lock you out. Ensure you have console access.</div>
-          <button class="btn btn-primary" @click="saveSSH()">Save SSH Config</button>
+        <div x-show="tab==='ssh'" style="margin-top:14px">
+
+          <!-- Step 0: Create sudo user first (show if root login is 'yes') -->
+          <div class="card" style="margin-bottom:12px" x-show="ssh.root_login==='yes' || !ssh.sudo_users || ssh.sudo_users.length===0">
+            <div class="card-hd">
+              <div class="card-title">⚠ Step 1 — Create a sudo user first</div>
+              <span x-show="ssh.sudo_users && ssh.sudo_users.length>0" class="badge badge-green">✓ Users exist</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+              Before disabling root login, create a regular user with sudo access. Otherwise you'll be permanently locked out.
+              <span x-show="ssh.sudo_users && ssh.sudo_users.length>0" style="color:var(--green);margin-left:6px">
+                Existing sudo users: <strong x-text="(ssh.sudo_users||[]).join(', ')"></strong>
+              </span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <div>
+                <div class="form-label">Username</div>
+                <input class="form-input" x-model="newUser.username" placeholder="vortex" />
+              </div>
+              <div>
+                <div class="form-label">Password (min 8 chars)</div>
+                <input class="form-input" type="password" x-model="newUser.password" placeholder="••••••••" />
+              </div>
+            </div>
+            <div class="form-group">
+              <div class="form-label">SSH Public Key <span style="color:var(--text-muted)">(optional — paste contents of id_rsa.pub / id_ed25519.pub)</span></div>
+              <textarea class="form-input" x-model="newUser.pubkey" rows="2" placeholder="ssh-ed25519 AAAA... user@machine" style="font-family:var(--font-mono);font-size:11px;resize:vertical"></textarea>
+            </div>
+            <button class="btn btn-primary btn-sm" :disabled="newUser.loading" @click="createSudoUser()">
+              <span x-show="newUser.loading">Creating…</span>
+              <span x-show="!newUser.loading">Create sudo user</span>
+            </button>
+            <div x-show="newUser.result" style="margin-top:8px;font-size:12px;padding:8px 10px;border-radius:var(--radius)"
+                 :style="newUser.ok?'background:rgba(16,185,129,.08);color:var(--green)':'background:rgba(239,68,68,.08);color:var(--red)'"
+                 x-text="newUser.result"></div>
+          </div>
+
+          <!-- Step 1: SSH Key check -->
+          <div class="card" style="margin-bottom:12px">
+            <div class="card-hd">
+              <div class="card-title">🔑 SSH Key Status</div>
+              <span :class="ssh.keys_exist?'badge badge-green':'badge badge-red'"
+                    x-text="ssh.keys_exist?'Keys found':'No keys found'"></span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px"
+                 x-show="!ssh.keys_exist">
+              No SSH public key found in <code>/root/.ssh/authorized_keys</code>.
+              Add your public key before disabling password authentication, or you'll be locked out.
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" x-show="ssh.keys_exist">
+              SSH public key detected. It is safe to disable password authentication.
+            </div>
+            <div x-show="!ssh.keys_exist">
+              <div class="form-label">Paste your public key to add it now</div>
+              <div style="display:flex;gap:8px;margin-top:4px">
+                <input class="form-input" x-model="sshPubkey" placeholder="ssh-ed25519 AAAA... user@machine" style="font-family:var(--font-mono);font-size:11px;flex:1" />
+                <button class="btn btn-primary btn-sm" @click="addSSHKey()">Add key</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: SSH hardening controls -->
+          <div class="card" style="margin-bottom:12px">
+            <div class="card-hd"><div class="card-title">⚙ SSH Hardening</div></div>
+
+            <!-- Root Login -->
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-light)">
+              <div style="flex:1;margin-right:16px">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary)">Disable Root Login</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Prevents direct SSH login as root. Users must login as a regular user and use sudo.</div>
+                <div x-show="ssh.root_login==='yes' && (!ssh.sudo_users || ssh.sudo_users.length===0)"
+                     style="font-size:11px;color:var(--red);margin-top:3px">⚠ Create a sudo user first (Step 1 above)</div>
+              </div>
+              <label style="position:relative;width:42px;height:22px;display:inline-block;flex-shrink:0">
+                <input type="checkbox" style="opacity:0;width:0;height:0"
+                       :checked="ssh.root_login==='no'"
+                       :disabled="ssh.root_login==='yes' && (!ssh.sudo_users || ssh.sudo_users.length===0)"
+                       @change="ssh.root_login=$event.target.checked?'no':'yes'">
+                <span style="position:absolute;cursor:pointer;inset:0;border-radius:11px;transition:.2s"
+                      :style="ssh.root_login==='no'?'background:var(--accent)':'background:#cbd5e1'">
+                  <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
+                        :style="ssh.root_login==='no'?'left:23px':'left:3px'"></span>
+                </span>
+              </label>
+            </div>
+
+            <!-- Password Auth -->
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-light)">
+              <div style="flex:1;margin-right:16px">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary)">Disable Password Authentication</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Only allow SSH key-based login. Eliminates brute-force attacks completely.</div>
+                <div x-show="ssh.password_auth==='yes' && !ssh.keys_exist"
+                     style="font-size:11px;color:var(--red);margin-top:3px">⚠ Add your SSH key first — disabling without a key will lock you out permanently</div>
+              </div>
+              <label style="position:relative;width:42px;height:22px;display:inline-block;flex-shrink:0">
+                <input type="checkbox" style="opacity:0;width:0;height:0"
+                       :checked="ssh.password_auth==='no'"
+                       @change="if($event.target.checked && !ssh.keys_exist){toast('Add your SSH key first!','error');$event.target.checked=false;return;} ssh.password_auth=$event.target.checked?'no':'yes'">
+                <span style="position:absolute;cursor:pointer;inset:0;border-radius:11px;transition:.2s"
+                      :style="ssh.password_auth==='no'?'background:var(--accent)':'background:#cbd5e1'">
+                  <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
+                        :style="ssh.password_auth==='no'?'left:23px':'left:3px'"></span>
+                </span>
+              </label>
+            </div>
+
+            <!-- PubKey Auth -->
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-light)">
+              <div style="flex:1;margin-right:16px">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary)">Enable Public Key Authentication</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Allow SSH login using key pairs (recommended, keep enabled).</div>
+              </div>
+              <label style="position:relative;width:42px;height:22px;display:inline-block;flex-shrink:0">
+                <input type="checkbox" style="opacity:0;width:0;height:0"
+                       :checked="ssh.pubkey_auth==='yes'"
+                       @change="ssh.pubkey_auth=$event.target.checked?'yes':'no'">
+                <span style="position:absolute;cursor:pointer;inset:0;border-radius:11px;transition:.2s"
+                      :style="ssh.pubkey_auth==='yes'?'background:var(--accent)':'background:#cbd5e1'">
+                  <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
+                        :style="ssh.pubkey_auth==='yes'?'left:23px':'left:3px'"></span>
+                </span>
+              </label>
+            </div>
+
+            <!-- Max tries -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border-light)">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary)">Max Auth Tries</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Max failed attempts before connection is dropped (default: 6, recommended: 3)</div>
+              </div>
+              <input class="form-input" x-model="ssh.max_auth_tries" type="number" min="1" max="10" style="width:70px;text-align:center" />
+            </div>
+
+            <!-- Port change -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary)">SSH Port</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
+                  Currently active: <strong x-text="ssh.active_port||ssh.port"></strong>
+                  <span x-show="ssh.port!=='22'" style="color:var(--green);margin-left:4px">● Non-default port</span>
+                  <span x-show="ssh.port==='22'" style="color:var(--accent-warn);margin-left:4px">● Default port (risk)</span>
+                </div>
+                <div x-show="ssh.port !== (ssh.active_port||ssh.port)"
+                     style="font-size:11px;color:var(--accent-warn);margin-top:2px">
+                  ⚠ Firewall rule will be updated automatically. Save from a terminal session to avoid lockout.
+                </div>
+              </div>
+              <input class="form-input" x-model="ssh.port" type="number" min="1024" max="65535" style="width:90px;text-align:center" />
+            </div>
+
+            <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:10px 12px;font-size:11px;color:#7f1d1d;margin-bottom:12px">
+              ⚠ <strong>Warning:</strong> Keep an active terminal/console session open while saving SSH changes. If you get locked out, use your VPS provider's console/VNC to fix it.
+            </div>
+
+            <button class="btn btn-primary" :disabled="ssh.saving" @click="saveSSHConfig()">
+              <span x-show="ssh.saving">Saving…</span>
+              <span x-show="!ssh.saving">Save SSH Config</span>
+            </button>
+          </div>
         </div>
         <div x-show="tab==='fail2ban'" style="margin-top:14px">
           <template x-if="!f2bJails||!f2bJails.length"><div class="card"><div class="empty-state"><div class="empty-icon">🛡</div><div class="empty-text">Fail2ban not running — install via Modules</div></div></div></template>
@@ -5210,7 +5362,7 @@
         <div class="tabs" style="margin-bottom:16px">
           <div class="tab" :class="{active:stab==='general'}" @click="stab='general'">General</div>
           <div class="tab" :class="{active:stab==='ai'}" @click="stab='ai';loadAiConfig()">✦ AI Assistant</div>
-          <div class="tab" :class="{active:stab==='security'}" @click="stab='security'">🔐 Security</div>
+          <div class="tab" :class="{active:stab==='security'}" @click="stab='security';loadSecurityTab()">🔐 Security</div>
         </div>
 
         <!-- General -->
@@ -5297,13 +5449,107 @@
         </div>
 
         <!-- Security tab -->
-        <div x-show="stab==='security'" style="max-width:480px">
-          <div class="card">
-            <div class="card-hd"><div class="card-title">Change Panel Password</div></div>
+        <div x-show="stab==='security'" style="max-width:520px">
+
+          <!-- 2FA card -->
+          <div class="card" style="margin-bottom:12px">
+            <div class="card-hd">
+              <div class="card-title">🔐 Two-Factor Authentication (2FA)</div>
+              <span :class="twofa.enabled?'badge badge-green':'badge badge-gray'"
+                    x-text="twofa.enabled?'Enabled':'Disabled'"></span>
+            </div>
+
+            <!-- 2FA disabled — setup flow -->
+            <div x-show="!twofa.enabled">
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+                Add a second layer of protection. After entering your password, you'll also need a 6-digit code from your authenticator app (Google Authenticator, Authy, 1Password, etc).
+              </div>
+
+              <!-- Step 1: Show QR -->
+              <div x-show="!twofa.secret">
+                <button class="btn btn-primary btn-sm" :disabled="twofa.setupLoading" @click="setup2FA()">
+                  <span x-show="twofa.setupLoading">Generating…</span>
+                  <span x-show="!twofa.setupLoading">Enable 2FA</span>
+                </button>
+              </div>
+
+              <!-- Step 2: Scan QR and verify -->
+              <div x-show="twofa.secret">
+                <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px">1. Scan this QR code in your authenticator app</div>
+                <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:14px">
+                  <img :src="twofa.qr_url" alt="QR Code" style="width:160px;height:160px;border:2px solid var(--border);border-radius:var(--radius);background:#fff" />
+                  <div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Can't scan? Enter this key manually:</div>
+                    <div style="font-family:var(--font-mono);font-size:12px;font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;word-break:break-all;color:var(--text-primary)" x-text="twofa.secret"></div>
+                    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Keep this key secret and backed up</div>
+                    <div style="font-size:10px;color:var(--text-muted);margin-top:2px">Type: Time-based (TOTP) • Issuer: VortexPanel</div>
+                  </div>
+                </div>
+                <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:6px">2. Enter the 6-digit code to confirm</div>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <input class="form-input" x-model="twofa.code" type="text" inputmode="numeric"
+                         maxlength="6" placeholder="000000"
+                         style="width:120px;font-size:18px;letter-spacing:4px;text-align:center;font-family:var(--font-mono)"
+                         @keydown.enter="enable2FA()" />
+                  <button class="btn btn-primary btn-sm" :disabled="twofa.enabling" @click="enable2FA()">
+                    <span x-show="twofa.enabling">Verifying…</span>
+                    <span x-show="!twofa.enabling">Verify &amp; Enable</span>
+                  </button>
+                  <button class="btn btn-ghost btn-sm" @click="twofa.secret='';twofa.code='';twofa.qr_url=''">Cancel</button>
+                </div>
+                <div x-show="twofa.err" style="margin-top:8px;font-size:11px;color:var(--red)" x-text="twofa.err"></div>
+              </div>
+            </div>
+
+            <!-- 2FA enabled — disable option -->
+            <div x-show="twofa.enabled">
+              <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
+                2FA is active. Your account requires a verification code from your authenticator app on every login.
+              </div>
+              <div x-show="!twofa.disableConfirm">
+                <button class="btn btn-danger btn-sm" @click="twofa.disableConfirm=true">Disable 2FA</button>
+              </div>
+              <div x-show="twofa.disableConfirm">
+                <div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:6px">⚠ Confirm disable — enter your panel password</div>
+                <div style="display:flex;gap:8px">
+                  <input class="form-input" x-model="twofa.disablePw" type="password" placeholder="Current password" style="flex:1" />
+                  <button class="btn btn-danger btn-sm" :disabled="twofa.disabling" @click="disable2FA()">
+                    <span x-show="twofa.disabling">Disabling…</span>
+                    <span x-show="!twofa.disabling">Confirm Disable</span>
+                  </button>
+                  <button class="btn btn-ghost btn-sm" @click="twofa.disableConfirm=false;twofa.disablePw=''">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Change password card -->
+          <div class="card" style="margin-bottom:12px">
+            <div class="card-hd"><div class="card-title">🔑 Change Panel Password</div></div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Password is hashed with Argon2id (OWASP recommended). Min 8 characters.</div>
             <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="pwForm.current"></div>
             <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwForm.newpw"></div>
             <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="pwForm.confirm"></div>
             <button class="btn btn-primary" @click="changePw()">Change Password</button>
+          </div>
+
+          <!-- IP allowlist card -->
+          <div class="card">
+            <div class="card-hd">
+              <div class="card-title">🌐 IP Access Allowlist</div>
+              <span class="badge badge-gray" style="font-size:10px">Optional</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+              Restrict panel access to specific IPs. Empty = allow all. <code>127.0.0.1</code> is always allowed.
+              Prefix notation supported (e.g. <code>192.168.1.</code> allows the whole subnet).
+            </div>
+            <div class="form-group">
+              <label class="form-label">Allowed IPs (one per line)</label>
+              <textarea class="form-input" x-model="allowlistText" rows="4"
+                        style="font-family:var(--font-mono);font-size:12px;resize:vertical"
+                        placeholder="192.168.1.100&#10;10.0.0.&#10;Leave empty to allow all IPs"></textarea>
+            </div>
+            <button class="btn btn-primary btn-sm" @click="saveAllowlist()">Save allowlist</button>
           </div>
         </div>
       </div>
