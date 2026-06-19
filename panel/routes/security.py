@@ -126,41 +126,80 @@ def open_ports():
     out, _, _ = sh('ss -tlnp 2>/dev/null')
     return jsonify({'ok':True,'output':out})
 
-# ── Two-Factor / basic security score ─────────────────────────────────────────
+# ── Security Score ────────────────────────────────────────────────────────────
 @security_bp.route('/api/security/score')
 def security_score():
     if not req(): return jsonify({'ok':False}), 401
     checks = []
 
-    # SSH root login
+    # ── SSH ───────────────────────────────────────────────────────────────────
     sshd = '/etc/ssh/sshd_config'
     if os.path.exists(sshd):
         with open(sshd) as f: content = f.read()
-        root_login = re.search(r'^PermitRootLogin\s+(\S+)', content, re.MULTILINE)
-        val = root_login.group(1).lower() if root_login else 'yes'
-        checks.append({'label':'SSH Root Login Disabled','pass': val in ('no','prohibit-password','forced-commands-only'),'severity':'high'})
-        pw_auth = re.search(r'^PasswordAuthentication\s+(\S+)', content, re.MULTILINE)
-        pval = pw_auth.group(1).lower() if pw_auth else 'yes'
-        checks.append({'label':'SSH Password Auth Disabled','pass':pval=='no','severity':'medium'})
+        root_m = re.search(r'^PermitRootLogin\s+(\S+)', content, re.MULTILINE)
+        val    = root_m.group(1).lower() if root_m else 'yes'
+        checks.append({'label':'SSH Root Login Disabled',
+                        'pass': val in ('no','prohibit-password','forced-commands-only'),
+                        'severity':'high'})
+        pw_m  = re.search(r'^PasswordAuthentication\s+(\S+)', content, re.MULTILINE)
+        pval  = pw_m.group(1).lower() if pw_m else 'yes'
+        checks.append({'label':'SSH Password Auth Disabled',
+                        'pass': pval == 'no', 'severity':'medium'})
         port_m = re.search(r'^Port\s+(\d+)', content, re.MULTILINE)
-        port = int(port_m.group(1)) if port_m else 22
-        checks.append({'label':'SSH on Non-default Port','pass':port!=22,'severity':'low'})
+        port   = int(port_m.group(1)) if port_m else 22
+        checks.append({'label':'SSH on Non-default Port',
+                        'pass': port != 22, 'severity':'low'})
 
-    # Fail2ban running
-    f2b, _, rc = sh('systemctl is-active fail2ban 2>/dev/null')
-    checks.append({'label':'Fail2ban Running','pass':f2b.strip()=='active','severity':'high'})
+    # ── Fail2ban ──────────────────────────────────────────────────────────────
+    f2b, _, _ = sh('systemctl is-active fail2ban 2>/dev/null')
+    checks.append({'label':'Fail2ban Running',
+                   'pass': f2b.strip() == 'active', 'severity':'high'})
 
-    # UFW active
-    ufw, _, _ = sh('ufw status 2>/dev/null | head -1')
-    checks.append({'label':'Firewall (UFW) Active','pass':'active' in ufw.lower(),'severity':'high'})
+    # ── Firewall — check both UFW and firewalld ───────────────────────────────
+    ufw, _, _  = sh('ufw status 2>/dev/null | head -1')
+    fwd, _, _  = sh('firewall-cmd --state 2>/dev/null')
+    fw_active  = 'active' in ufw.lower() or fwd.strip() == 'running'
+    checks.append({'label':'Firewall Active (UFW or firewalld)',
+                   'pass': fw_active, 'severity':'high'})
 
-    # Unattended upgrades
-    out, _, rc = sh('dpkg -l unattended-upgrades 2>/dev/null | grep -c "^ii"')
-    checks.append({'label':'Auto Security Updates Enabled','pass':out.strip()=='1','severity':'medium'})
+    # ── Auto security updates ─────────────────────────────────────────────────
+    apt_out, _, _ = sh('dpkg -l unattended-upgrades 2>/dev/null | grep -c "^ii"')
+    dnf_out, _, _ = sh('dnf list installed dnf-automatic 2>/dev/null | grep -c dnf-automatic')
+    auto_updates  = apt_out.strip() == '1' or dnf_out.strip() == '1'
+    checks.append({'label':'Auto Security Updates Enabled',
+                   'pass': auto_updates, 'severity':'medium'})
+
+    # ── Panel security ────────────────────────────────────────────────────────
+    try:
+        import json as _json, hashlib as _hashlib
+        creds_file = '/opt/vortexpanel/credentials.json'
+        if os.path.exists(creds_file):
+            creds = _json.load(open(creds_file))
+            h = creds.get('password_hash','')
+            # bcrypt hash starts with $2b$
+            checks.append({'label':'Panel Password Uses bcrypt (not SHA-256)',
+                           'pass': h.startswith('$2b$') or h.startswith('$2a$'),
+                           'severity':'high'})
+            # Default password check (admin123)
+            default_sha = _hashlib.sha256(b'admin123').hexdigest()
+            not_default = h != default_sha and h != _hashlib.sha256(b'admin').hexdigest()
+            checks.append({'label':'Panel Default Password Changed',
+                           'pass': not_default, 'severity':'critical'})
+            # 2FA
+            checks.append({'label':'Panel Two-Factor Authentication Enabled',
+                           'pass': bool(creds.get('totp_enabled') and creds.get('totp_secret')),
+                           'severity':'medium'})
+    except Exception:
+        pass
+
+    # ── Secret key not default ────────────────────────────────────────────────
+    checks.append({'label':'Panel Secret Key Auto-Generated (not default)',
+                   'pass': os.path.exists('/opt/vortexpanel/secret.key'),
+                   'severity':'high'})
 
     passed = sum(1 for c in checks if c['pass'])
     score  = round(passed / len(checks) * 100) if checks else 0
-    return jsonify({'ok':True,'checks':checks,'score':score})
+    return jsonify({'ok':True, 'checks':checks, 'score':score})
 
 # ── ModSecurity ───────────────────────────────────────────────────────────────
 

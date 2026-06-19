@@ -1,7 +1,9 @@
 flask
 flask-session
 flask-sock
+flask-compress
 requests
 gunicorn
 boto3
-flask-compress
+bcrypt
+pyotp

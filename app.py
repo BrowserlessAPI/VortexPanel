@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """VortexPanel v3.0 — Main Application"""
-import os, sys
+import os, sys, secrets
+from datetime import timedelta
 sys.path.insert(0, os.path.dirname(__file__))
 
-from flask import Flask
+from flask import Flask, request, g
 try:
     from flask_compress import Compress
     _compress_available = True
@@ -48,10 +49,48 @@ from panel.routes.terminal_ws import sock as terminal_sock
 from panel.routes.cloud_backup import cloud_backup_bp
 from panel.routes.logs import logs_bp
 
+# ── Secret key: auto-generate and persist on first run ───────────────────────
+_SECRET_KEY_FILE = '/opt/vortexpanel/secret.key'
+
+def _get_secret_key() -> bytes:
+    """
+    Load secret key from file if it exists, otherwise generate a new
+    64-byte random key and save it.  The hardcoded fallback is only used
+    when the install directory isn't writable (e.g. CI/test environments).
+    """
+    if os.path.exists(_SECRET_KEY_FILE):
+        try:
+            key = open(_SECRET_KEY_FILE, 'rb').read()
+            if len(key) >= 32:
+                return key
+        except Exception:
+            pass
+    # Generate a new key
+    key = secrets.token_bytes(64)
+    try:
+        os.makedirs('/opt/vortexpanel', exist_ok=True)
+        with open(_SECRET_KEY_FILE, 'wb') as f:
+            f.write(key)
+        os.chmod(_SECRET_KEY_FILE, 0o600)
+    except Exception:
+        pass
+    return key
+
+
 def create_app():
     app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
-    app.secret_key = os.environ.get('SECRET_KEY', 'vortex-dev-secret-change-in-prod')
 
+    # ── Secret key ────────────────────────────────────────────────────────────
+    # ENV var override available for Docker/container deployments
+    app.secret_key = os.environ.get('SECRET_KEY', '').encode() or _get_secret_key()
+
+    # ── Session hardening ─────────────────────────────────────────────────────
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
+    app.config['SESSION_COOKIE_HTTPONLY']    = True
+    app.config['SESSION_COOKIE_SAMESITE']    = 'Lax'
+    # Don't force Secure flag — panel may run HTTP; let admin configure HTTPS
+
+    # ── Gzip compression ──────────────────────────────────────────────────────
     if _compress_available:
         app.config['COMPRESS_MIMETYPES'] = [
             'text/html', 'application/json', 'application/javascript',
@@ -61,19 +100,43 @@ def create_app():
         app.config['COMPRESS_MIN_SIZE'] = 500
         Compress(app)
 
+    # ── Register blueprints ───────────────────────────────────────────────────
     for bp in [auth_bp, dashboard_bp, websites_bp, databases_bp, files_bp,
                php_bp, services_bp, firewall_bp, terminal_bp, backups_bp,
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
-               settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp, caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp, logs_bp, wp_bp]:
+               settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
+               caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
+               logs_bp, wp_bp]:
         app.register_blueprint(bp)
     terminal_sock.init_app(app)
 
-    # Auto-init built-in features (create config files if missing)
+    # ── Security headers on every response ───────────────────────────────────
+    @app.after_request
+    def add_security_headers(response):
+        response.headers['X-Frame-Options']        = 'SAMEORIGIN'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-XSS-Protection']       = '1; mode=block'
+        response.headers['Referrer-Policy']         = 'strict-origin-when-cross-origin'
+        response.headers['Permissions-Policy']      = 'geolocation=(), camera=(), microphone=()'
+        # CSP — Alpine.js needs unsafe-inline; adjust if you add a nonce
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' data: https://fonts.gstatic.com; "
+            "img-src 'self' data: https:; "
+            "connect-src 'self' wss: ws:; "
+            "frame-ancestors 'self';"
+        )
+        return response
+
+    # ── Auto-init built-in features ───────────────────────────────────────────
     try:
-        import os as _os
-        _os.makedirs('/opt/vortexpanel', exist_ok=True)
-        for _cfg in ['/opt/vortexpanel/cdn_config.json', '/opt/vortexpanel/ai_config.json']:
-            if not _os.path.exists(_cfg):
+        os.makedirs('/opt/vortexpanel', exist_ok=True)
+        for _cfg in ['/opt/vortexpanel/cdn_config.json',
+                     '/opt/vortexpanel/ai_config.json',
+                     '/opt/vortexpanel/config.json']:
+            if not os.path.exists(_cfg):
                 with open(_cfg, 'w') as _f:
                     _f.write('{}')
     except Exception:

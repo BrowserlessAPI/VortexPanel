@@ -40,24 +40,55 @@
         <div style="font-size:11px;color:var(--text-muted)">Server Management Panel</div>
       </div>
     </div>
-    <div class="form-group">
-      <label class="form-label">Username</label>
-      <input class="form-input" type="text" x-model="loginUser" placeholder="admin" @keydown.enter="doLogin" x-ref="loginInput">
+
+    <!-- Step 1: Username + Password -->
+    <div x-show="!show2fa">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input class="form-input" type="text" x-model="loginUser" placeholder="admin" @keydown.enter="doLogin" x-ref="loginInput">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input class="form-input" type="password" x-model="loginPass" placeholder="••••••••" @keydown.enter="doLogin">
+      </div>
+      <template x-if="loginErr">
+        <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:8px 12px;font-size:12px;color:#fca5a5;margin-bottom:14px" x-text="loginErr"></div>
+      </template>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px" @click="doLogin" :disabled="loginLoading">
+        <span x-show="loginLoading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+        <span x-text="loginLoading?'Signing in…':'Sign In'"></span>
+      </button>
     </div>
-    <div class="form-group">
-      <label class="form-label">Password</label>
-      <input class="form-input" type="password" x-model="loginPass" placeholder="••••••••" @keydown.enter="doLogin">
+
+    <!-- Step 2: 2FA TOTP code -->
+    <div x-show="show2fa">
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:28px;margin-bottom:8px">🔐</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text-primary)">Two-Factor Authentication</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Enter the 6-digit code from your authenticator app</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Verification code</label>
+        <input class="form-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+               x-model="totpCode" placeholder="000000"
+               style="font-size:22px;letter-spacing:6px;text-align:center;font-family:var(--font-mono)"
+               @keydown.enter="verify2fa" x-ref="totpInput">
+      </div>
+      <template x-if="totpErr">
+        <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:8px 12px;font-size:12px;color:#fca5a5;margin-bottom:14px" x-text="totpErr"></div>
+      </template>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px" @click="verify2fa" :disabled="totpLoading">
+        <span x-show="totpLoading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
+        <span x-text="totpLoading?'Verifying…':'Verify'"></span>
+      </button>
+      <button class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:8px;font-size:12px" @click="show2fa=false;loginPass=''">
+        ← Back to login
+      </button>
     </div>
-    <template x-if="loginErr">
-      <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:8px 12px;font-size:12px;color:#fca5a5;margin-bottom:14px" x-text="loginErr"></div>
-    </template>
-    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:10px" @click="doLogin" :disabled="loginLoading">
-      <span x-show="loginLoading" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
-      <span x-text="loginLoading?'Signing in…':'Sign In'"></span>
-    </button>
+
     <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:11px;color:var(--text-dim)">VortexPanel v3.0</span>
-      <a href="https://github.com/BrowserlessAPI/Vortexpanel" target="_blank" style="font-size:11px;color:var(--text-muted);text-decoration:none">GitHub ↗</a>
+      <span style="font-size:11px;color:var(--text-dim)">VortexPanel v3.1</span>
+      <a href="https://github.com/BrowserlessAPI/VortexPanel" target="_blank" style="font-size:11px;color:var(--text-muted);text-decoration:none">GitHub ↗</a>
     </div>
   </div>
 </div>

@@ -49,6 +49,10 @@ function rootApp() {
     loginPass: '',
     loginErr:  '',
     loginLoading: false,
+    show2fa: false,
+    totpCode: '',
+    totpErr: '',
+    totpLoading: false,
 
     // Panel state
     username: '', page: 'dashboard',
@@ -117,7 +121,12 @@ function rootApp() {
           username: this.loginUser,
           password: this.loginPass,
         });
-        if (r.ok) {
+        if (r.ok && r.requires_2fa) {
+          // Server accepted password but 2FA is required
+          this.show2fa = true;
+          this.totpCode = '';
+          this.totpErr = '';
+        } else if (r.ok) {
           this.username = this.loginUser;
           this.loggedIn = true;
           this.loginPass = '';
@@ -129,6 +138,28 @@ function rootApp() {
         this.loginErr = 'Connection error — try again';
       }
       this.loginLoading = false;
+    },
+
+    async verify2fa() {
+      if (!this.totpCode) { this.totpErr = 'Enter the 6-digit code'; return; }
+      this.totpLoading = true;
+      this.totpErr = '';
+      try {
+        const r = await post('/api/auth/verify-2fa', { code: this.totpCode });
+        if (r.ok) {
+          this.show2fa = false;
+          this.username = r.username || this.loginUser;
+          this.loggedIn = true;
+          this.loginPass = '';
+          this.totpCode = '';
+          await this._onLoggedIn();
+        } else {
+          this.totpErr = r.error || 'Invalid code';
+        }
+      } catch(e) {
+        this.totpErr = 'Connection error — try again';
+      }
+      this.totpLoading = false;
     },
 
     async _onLoggedIn() {
