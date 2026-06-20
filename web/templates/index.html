@@ -102,7 +102,7 @@
       <div class="logo-icon">⚡</div>
       <div>
         <div class="logo-text">VortexPanel</div>
-        <div class="logo-ver">v3.0</div>
+        <div class="logo-ver">v3.1</div>
       </div>
     </div>
 
@@ -5357,202 +5357,359 @@
 
 <!-- SETTINGS -->
       <div x-show="page==='settings'" x-data="settingsPage()">
-        <div class="page-header"><div><div class="page-title">Settings</div><div class="page-sub">Panel configuration</div></div></div>
+        <div class="page-header">
+          <div><div class="page-title">Settings</div><div class="page-sub">Panel configuration &amp; security</div></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" @click="syncTime()">⏱ Sync Time</button>
+            <button class="btn btn-ghost btn-sm" @click="if(confirm('Reboot server?'))reboot()">↻ Reboot</button>
+          </div>
+        </div>
 
-        <div class="tabs" style="margin-bottom:16px">
-          <div class="tab" :class="{active:stab==='general'}" @click="stab='general'">General</div>
-          <div class="tab" :class="{active:stab==='ai'}" @click="stab='ai';loadAiConfig()">✦ AI Assistant</div>
-          <div class="tab" :class="{active:stab==='security'}" @click="stab='security';loadSecurityTab()">🔐 Security</div>
+        <!-- ══ CARD GRID ══ -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
+
+          <!-- 1. Network & Access -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#06b6d4,#0891b2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">🌐</div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Network &amp; Access</div><div style="font-size:11px;color:var(--text-muted)">Panel port and domain settings</div></div>
+            </div>
+            <!-- Panel name -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Panel name</div></div>
+              <div style="display:flex;gap:6px"><input class="form-input" x-model="cfg.panel_name" style="width:160px;font-size:12px" /><button class="btn btn-primary btn-xs" @click="savePanelName()">Save</button></div>
+            </div>
+            <!-- Panel port -->
+            <div style="padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div>
+                  <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Panel port</div>
+                  <div style="font-size:11px;color:var(--text-muted)">Currently: <strong x-text="cfg.port||8888"></strong> — suggested: 8888–65535</div>
+                </div>
+                <div style="display:flex;gap:6px"><input class="form-input" x-model="newPort" type="number" style="width:90px;text-align:center;font-size:12px" /><button class="btn btn-primary btn-xs" @click="changePort()">Modify</button></div>
+              </div>
+              <div style="font-size:10px;color:var(--accent-warn);margin-top:4px">⚠ Panel will restart and firewall rule updated automatically</div>
+            </div>
+            <!-- Domain -->
+            <div style="padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Panel domain</div><div style="font-size:11px;color:var(--text-muted)">Leave blank to use IP address</div></div>
+                <div style="display:flex;gap:6px"><input class="form-input" x-model="cfg.panel_domain" placeholder="panel.yourdomain.com" style="width:180px;font-size:11px" /><button class="btn btn-primary btn-xs" @click="saveSettings()">Save</button></div>
+              </div>
+              <div x-show="cfg.panel_domain" style="font-size:10px;color:var(--red);margin-top:3px">⚠ After setting, panel accessible only via this domain</div>
+            </div>
+            <!-- Webroot -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Default site folder</div><div style="font-size:11px;color:var(--text-muted)">New websites created in this directory</div></div>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-primary)">/www/wwwroot</span>
+            </div>
+          </div>
+
+          <!-- 2. Panel SSL -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#10b981,#059669);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">🔒</div>
+              <div>
+                <div style="font-size:13px;font-weight:700;color:var(--text-primary)">Panel SSL</div>
+                <div style="font-size:11px;color:var(--text-muted)">HTTPS for the panel interface</div>
+              </div>
+            </div>
+            <!-- SSL status row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text-primary)">SSL Certificate</div>
+                <div style="font-size:11px;color:var(--text-muted)" x-text="ssl.type==='none'?'Not configured':ssl.type==='letsencrypt'?'Let\'s Encrypt':'Self-signed'"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span x-show="ssl.enabled" class="badge badge-green" style="font-size:10px">✓ Active</span>
+                <span x-show="!ssl.enabled" class="badge badge-gray" style="font-size:10px">Inactive</span>
+                <button x-show="ssl.enabled" class="btn btn-ghost btn-xs" @click="disableSSL()">Disable</button>
+              </div>
+            </div>
+            <!-- Cert info if active -->
+            <div x-show="ssl.enabled && ssl.days_left >= 0" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+              <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+                <span style="color:var(--text-muted)">Validity</span>
+                <span :style="ssl.days_left<30?'color:var(--red)':'color:var(--green)'" x-text="ssl.days_left+' days remaining'"></span>
+              </div>
+              <div style="height:4px;background:var(--bg-hover);border-radius:2px"><div :style="'width:'+Math.min(100,ssl.days_left/36.5)+'%;height:100%;border-radius:2px;background:'+(ssl.days_left<30?'var(--red)':'var(--green)')"></div></div>
+            </div>
+            <!-- Issue buttons -->
+            <div x-show="!ssl.enabled" style="padding:10px 0">
+              <div class="form-group">
+                <div class="form-label">Domain (leave blank to use server IP)</div>
+                <input class="form-input" x-model="sslDomain" placeholder="panel.yourdomain.com" style="font-size:12px" />
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+                <button class="btn btn-primary btn-sm" :disabled="ssl.loading" @click="genSelfSigned()">
+                  <span x-show="ssl.loading && ssl.type_loading==='selfsigned'">Generating…</span>
+                  <span x-show="!(ssl.loading && ssl.type_loading==='selfsigned')">Self-signed cert</span>
+                </button>
+                <button class="btn btn-ghost btn-sm" :disabled="ssl.loading || !sslDomain" @click="issueLetsEncrypt()" style="font-size:11px">
+                  <span x-show="ssl.loading && ssl.type_loading==='le'">Issuing…</span>
+                  <span x-show="!(ssl.loading && ssl.type_loading==='le')">Let's Encrypt (needs domain)</span>
+                </button>
+              </div>
+              <div x-show="ssl.msg" style="margin-top:8px;font-size:11px;padding:7px 10px;border-radius:var(--radius)"
+                   :style="ssl.ok?'background:rgba(16,185,129,.08);color:var(--green)':'background:rgba(239,68,68,.08);color:var(--red)'"
+                   x-text="ssl.msg"></div>
+            </div>
+          </div>
+
+          <!-- 3. Authentication & Security -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">🛡</div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Authentication &amp; Security</div><div style="font-size:11px;color:var(--text-muted)">Panel login and access control</div></div>
+            </div>
+            <!-- 2FA row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Google Authenticator (2FA)</div>
+                <div style="font-size:11px;color:var(--text-muted)">Requires verification code on login</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span :class="twofa.enabled?'badge badge-green':'badge badge-gray'" style="font-size:10px" x-text="twofa.enabled?'Enabled':'Disabled'"></span>
+                <button class="btn btn-ghost btn-xs" @click="stab='security';loadSecurityTab()">Modify</button>
+              </div>
+            </div>
+            <!-- Password row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Panel password</div>
+                <div style="font-size:11px;color:var(--text-muted)">Argon2id hashed (OWASP recommended)</div>
+              </div>
+              <button class="btn btn-ghost btn-xs" @click="stab='security'">Modify</button>
+            </div>
+            <!-- IP allowlist row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Authorized IP</div>
+                <div style="font-size:11px;color:var(--text-muted)" x-text="allowlistText?'Restricted to: '+allowlistText.split('\n').filter(Boolean).slice(0,2).join(', ')+(allowlistText.split('\n').filter(Boolean).length>2?' +more':''):'All IPs allowed'"></div>
+              </div>
+              <button class="btn btn-ghost btn-xs" @click="stab='security';loadSecurityTab()">Modify</button>
+            </div>
+            <!-- Session timeout -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Session timeout</div>
+                <div style="font-size:11px;color:var(--text-muted)">Auto-logout after inactivity</div>
+              </div>
+              <div style="display:flex;gap:5px;align-items:center">
+                <input class="form-input" x-model="sessionHours" type="number" min="1" max="720" style="width:70px;text-align:center;font-size:12px" />
+                <span style="font-size:11px;color:var(--text-muted)">hours</span>
+                <button class="btn btn-primary btn-xs" @click="saveSessionTimeout()">Save</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. PHP Webshell Scanner -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#ef4444,#dc2626);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">🔍</div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">PHP Webshell Scanner</div><div style="font-size:11px;color:var(--text-muted)">Detect malicious PHP files in site directories</div></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+              <select class="form-input" x-model="scanPath" style="flex:1;font-size:12px">
+                <template x-for="p in scanPaths" :key="p"><option :value="p" x-text="p"></option></template>
+                <option value="/www/wwwroot">/www/wwwroot (all sites)</option>
+              </select>
+              <button class="btn btn-danger btn-sm" :disabled="scanner.loading" @click="runWebshellScan()">
+                <span x-show="scanner.loading">Scanning…</span>
+                <span x-show="!scanner.loading">Scan now</span>
+              </button>
+            </div>
+            <!-- Scan results summary -->
+            <div x-show="scanner.done" style="margin-bottom:10px">
+              <div style="display:flex;gap:8px;margin-bottom:8px">
+                <div style="flex:1;text-align:center;background:var(--bg-raised);border-radius:var(--radius);padding:8px">
+                  <div style="font-size:16px;font-weight:700;" :style="scanner.critical>0?'color:var(--red)':'color:var(--green)'" x-text="scanner.critical"></div>
+                  <div style="font-size:10px;color:var(--text-muted)">Critical</div>
+                </div>
+                <div style="flex:1;text-align:center;background:var(--bg-raised);border-radius:var(--radius);padding:8px">
+                  <div style="font-size:16px;font-weight:700;" :style="scanner.high>0?'color:var(--accent-warn)':'color:var(--green)'" x-text="scanner.high"></div>
+                  <div style="font-size:10px;color:var(--text-muted)">High</div>
+                </div>
+                <div style="flex:1;text-align:center;background:var(--bg-raised);border-radius:var(--radius);padding:8px">
+                  <div style="font-size:16px;font-weight:700;color:var(--text-primary)" x-text="scanner.medium"></div>
+                  <div style="font-size:10px;color:var(--text-muted)">Medium</div>
+                </div>
+                <div style="flex:1;text-align:center;background:var(--bg-raised);border-radius:var(--radius);padding:8px">
+                  <div style="font-size:14px;font-weight:700;color:var(--text-primary)" x-text="scanner.scanned"></div>
+                  <div style="font-size:10px;color:var(--text-muted)">Files</div>
+                </div>
+              </div>
+              <div x-show="scanner.total===0" style="font-size:12px;color:var(--green);padding:6px 0">✓ No threats detected in <span x-text="scanner.scanned"></span> PHP files</div>
+              <!-- Findings list -->
+              <div x-show="scanner.findings && scanner.findings.length>0" style="max-height:200px;overflow-y:auto">
+                <template x-for="(f,i) in scanner.findings" :key="i">
+                  <div style="padding:8px 10px;margin-bottom:4px;border-radius:var(--radius);border-left:3px solid"
+                       :style="f.severity==='CRITICAL'?'border-color:var(--red);background:rgba(239,68,68,.05)':f.severity==='HIGH'?'border-color:var(--accent-warn);background:rgba(245,158,11,.05)':'border-color:var(--text-muted);background:var(--bg-raised)'">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+                      <span :class="f.severity==='CRITICAL'?'badge badge-red':f.severity==='HIGH'?'badge badge-yellow':'badge badge-gray'" style="font-size:9px" x-text="f.severity"></span>
+                      <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-primary)" x-text="f.file.split('/').slice(-3).join('/')+' :'+f.line"></span>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-secondary);margin-bottom:2px" x-text="f.pattern"></div>
+                    <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);background:var(--bg-card);padding:3px 6px;border-radius:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="f.snippet"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. Panel Settings -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#8b5cf6,#7c3aed);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">⚙</div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Panel Settings</div><div style="font-size:11px;color:var(--text-muted)">General panel behaviour</div></div>
+            </div>
+            <!-- Auto update -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Auto update panel</div><div style="font-size:11px;color:var(--text-muted)">Check for VortexPanel updates automatically</div></div>
+              <label style="position:relative;width:38px;height:20px;display:inline-block"><input type="checkbox" style="opacity:0;width:0;height:0" :checked="cfg.auto_update" @change="cfg.auto_update=$event.target.checked;saveSettings()"><span style="position:absolute;cursor:pointer;inset:0;border-radius:10px;transition:.2s" :style="cfg.auto_update?'background:var(--accent)':'background:#cbd5e1'"><span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="cfg.auto_update?'left:21px':'left:3px'"></span></span></label>
+            </div>
+            <!-- Timezone -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Timezone</div><div style="font-size:11px;color:var(--text-muted)" x-text="system.timezone"></div></div>
+              <div style="display:flex;gap:5px">
+                <input class="form-input" x-model="cfg.timezone" placeholder="UTC" style="width:130px;font-size:12px" />
+                <button class="btn btn-primary btn-xs" @click="saveSettings()">Save</button>
+              </div>
+            </div>
+            <!-- Server time -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Server time</div><div style="font-size:11px;color:var(--text-muted)" x-text="system.server_time"></div></div>
+              <button class="btn btn-ghost btn-xs" @click="syncTime()">Sync NTP</button>
+            </div>
+            <!-- Hostname -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Hostname</div><div style="font-size:11px;color:var(--text-muted)" x-text="system.hostname"></div></div>
+              <div style="display:flex;gap:5px">
+                <input class="form-input" x-model="newHostname" :placeholder="system.hostname" style="width:160px;font-size:12px" />
+                <button class="btn btn-primary btn-xs" @click="setHostname()">Save</button>
+              </div>
+            </div>
+            <!-- System update -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">System packages</div><div style="font-size:11px;color:var(--text-muted)">Update all installed OS packages</div></div>
+              <button class="btn btn-ghost btn-xs" @click="systemUpdate()">Update now</button>
+            </div>
+          </div>
+
+          <!-- 6. System Info -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#06b6d4,#0e7490);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">💻</div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">System Information</div><div style="font-size:11px;color:var(--text-muted)">Server details</div></div>
+            </div>
+            <template x-for="[k,v] in [['OS',system.os],['Kernel',system.kernel],['CPU',system.cpu],['IP Address',system.ip],['Uptime',system.uptime],['VortexPanel',panelVersion]]" :key="k">
+              <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border-light);font-size:12px">
+                <span style="color:var(--text-muted)" x-text="k"></span>
+                <span style="color:var(--text-primary);font-weight:500;text-align:right;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="v||'—'"></span>
+              </div>
+            </template>
+          </div>
+
+          <!-- 7. AI Assistant -->
+          <div class="card" style="grid-column:span 1">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#8b5cf6,#06b6d4);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">✦</div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">AI Assistant</div><div style="font-size:11px;color:var(--text-muted)">OpenAI-compatible API connection</div></div>
+            </div>
+            <div class="form-group"><label class="form-label">API Base URL</label><input class="form-input" x-model="aiConfig.base_url" placeholder="https://neoncodex.io/api/v1" style="font-size:12px" /></div>
+            <div class="form-group">
+              <label class="form-label">API Key</label>
+              <div style="display:flex;gap:6px">
+                <input class="form-input" :type="showApiKey?'text':'password'" x-model="aiConfig.api_key" placeholder="sk-..." style="flex:1;font-size:12px;font-family:var(--font-mono)" />
+                <button class="btn btn-ghost btn-xs" @click="showApiKey=!showApiKey" x-text="showApiKey?'Hide':'Show'"></button>
+              </div>
+            </div>
+            <div class="form-group"><label class="form-label">Model</label><input class="form-input" x-model="aiConfig.model" placeholder="neoncodex-default" style="font-size:12px" /></div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button class="btn btn-primary btn-sm" @click="saveAiConfig()">Save AI Config</button>
+              <button class="btn btn-ghost btn-sm" :disabled="aiTesting" @click="testAiConnection()">
+                <span x-show="aiTesting">Testing…</span>
+                <span x-show="!aiTesting">Test connection</span>
+              </button>
+            </div>
+            <div x-show="aiTestResult" style="margin-top:8px;font-size:11px;padding:7px 10px;border-radius:var(--radius)"
+                 :style="aiTestOk?'background:rgba(16,185,129,.08);color:var(--green)':'background:rgba(239,68,68,.08);color:var(--red)'"
+                 x-text="aiTestResult"></div>
+          </div>
+
+        </div><!-- card grid -->
+
+        <!-- ── Security sub-section (unchanged, shown when stab=security) ── -->
+        <div x-show="stab==='security'" style="margin-top:16px">
+          <div style="font-size:14px;font-weight:700;color:var(--text-primary);margin-bottom:12px">🔐 Security Settings</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
+
+            <!-- 2FA card -->
+            <div class="card">
+              <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:10px">Two-Factor Authentication (2FA)</div>
+              <div x-show="!twofa.enabled">
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Add TOTP verification on every login (Google Authenticator, Authy, etc).</div>
+                <div x-show="!twofa.secret"><button class="btn btn-primary btn-sm" :disabled="twofa.setupLoading" @click="setup2FA()"><span x-show="twofa.setupLoading">Generating…</span><span x-show="!twofa.setupLoading">Enable 2FA</span></button></div>
+                <div x-show="twofa.secret">
+                  <div style="font-size:12px;font-weight:600;margin-bottom:8px">Scan QR code in your authenticator app:</div>
+                  <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
+                    <img :src="twofa.qr_url" style="width:140px;height:140px;border:2px solid var(--border);border-radius:var(--radius);background:#fff" />
+                    <div>
+                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Manual key:</div>
+                      <div style="font-family:var(--font-mono);font-size:11px;font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;word-break:break-all" x-text="twofa.secret"></div>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <input class="form-input" x-model="twofa.code" type="text" inputmode="numeric" maxlength="6" placeholder="000000" style="width:110px;font-size:18px;letter-spacing:4px;text-align:center;font-family:var(--font-mono)" @keydown.enter="enable2FA()" />
+                    <button class="btn btn-primary btn-sm" :disabled="twofa.enabling" @click="enable2FA()"><span x-show="twofa.enabling">Verifying…</span><span x-show="!twofa.enabling">Verify &amp; Enable</span></button>
+                    <button class="btn btn-ghost btn-sm" @click="twofa.secret='';twofa.code=''">Cancel</button>
+                  </div>
+                  <div x-show="twofa.err" style="margin-top:6px;font-size:11px;color:var(--red)" x-text="twofa.err"></div>
+                </div>
+              </div>
+              <div x-show="twofa.enabled">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><span class="badge badge-green">● 2FA Active</span><span style="font-size:12px;color:var(--text-muted)">Login requires verification code</span></div>
+                <div x-show="!twofa.disableConfirm"><button class="btn btn-danger btn-sm" @click="twofa.disableConfirm=true">Disable 2FA</button></div>
+                <div x-show="twofa.disableConfirm">
+                  <div style="font-size:12px;color:var(--red);margin-bottom:6px">⚠ Enter your password to confirm:</div>
+                  <div style="display:flex;gap:6px">
+                    <input class="form-input" x-model="twofa.disablePw" type="password" placeholder="Current password" style="flex:1" />
+                    <button class="btn btn-danger btn-sm" :disabled="twofa.disabling" @click="disable2FA()"><span x-show="twofa.disabling">Disabling…</span><span x-show="!twofa.disabling">Confirm</span></button>
+                    <button class="btn btn-ghost btn-sm" @click="twofa.disableConfirm=false;twofa.disablePw=''">Cancel</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Change password card -->
+            <div class="card">
+              <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:10px">Change Panel Password</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Hashed with Argon2id (OWASP #1 recommended). Min 8 characters.</div>
+              <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="pwForm.current"></div>
+              <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwForm.newpw"></div>
+              <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="pwForm.confirm"></div>
+              <button class="btn btn-primary" @click="changePw()">Change Password</button>
+            </div>
+
+            <!-- IP allowlist card -->
+            <div class="card">
+              <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:6px">IP Access Allowlist</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">One IP or prefix per line. <code>127.0.0.1</code> always allowed. Empty = allow all.</div>
+              <textarea class="form-input" x-model="allowlistText" rows="4" style="font-family:var(--font-mono);font-size:12px;resize:vertical" placeholder="192.168.1.100&#10;10.0.0.&#10;Leave empty to allow all IPs"></textarea>
+              <button class="btn btn-primary btn-sm" style="margin-top:8px" @click="saveAllowlist()">Save allowlist</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
         </div>
 
         <!-- General -->
-        <div x-show="stab==='general'" style="max-width:500px">
-          <div class="card">
-            <div class="card-hd"><div class="card-title">Panel Information</div></div>
-            <div style="font-size:13px;line-height:2">
-              <div style="display:flex;gap:8px"><span style="color:var(--text-muted);width:120px">Version</span><span x-text="panelVersion||'v3.0.0'"></span></div>
-              <div style="display:flex;gap:8px"><span style="color:var(--text-muted);width:120px">Username</span><span x-text="username||'admin'"></span></div>
-            </div>
-          </div>
-        </div>
+    </div><!-- page-content -->
+  </div><!-- main-area -->
+</div><!-- app-layout -->
 
-        <!-- AI tab -->
-        <div x-show="stab==='ai'" style="max-width:600px">
-          <div style="background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.1));border:1px solid rgba(88,101,242,.3);border-radius:12px;padding:20px;margin-bottom:20px;display:flex;align-items:center;gap:16px">
-            <div style="width:48px;height:48px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0">✦</div>
-            <div>
-              <div style="font-weight:700;font-size:16px;margin-bottom:3px">NeonCodex AI</div>
-              <div style="font-size:12px;color:var(--text-secondary)">Integrate your NeonCodex AI models directly into VortexPanel for server management, code review, config generation and diagnostics.</div>
-              <a href="https://neoncodex.io" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none;margin-top:4px;display:inline-block">Get API key at neoncodex.io →</a>
-            </div>
-          </div>
-          <div class="card">
-            <div class="form-group">
-              <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
-                <span>Enable AI Assistant</span>
-                <div style="width:40px;height:22px;border-radius:11px;cursor:pointer;position:relative;transition:.2s"
-                     :style="'background:'+(aiConfig.enabled?'var(--accent)':'var(--border)')"
-                     @click="aiConfig.enabled=!aiConfig.enabled">
-                  <div style="width:18px;height:18px;background:white;border-radius:50%;position:absolute;top:2px;transition:.2s"
-                       :style="'left:'+(aiConfig.enabled?'20px':'2px')"></div>
-                </div>
-              </label>
-            </div>
-            <div class="form-group">
-              <label class="form-label">NeonCodex API Key</label>
-              <div style="position:relative">
-                <input class="form-input" :type="showApiKey?'text':'password'" x-model="aiConfig.api_key" placeholder="nc_sk_...">
-                <button style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px" @click="showApiKey=!showApiKey" x-text="showApiKey?'🙈':'👁'"></button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">API Base URL</label>
-              <input class="form-input" x-model="aiConfig.base_url" placeholder="https://neoncodex.io/api/v1">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Model</label>
-              <div style="display:flex;gap:8px">
-                <select class="form-input" x-model="aiConfig.model" style="flex:1">
-                  <option value="neoncodex-default">NeonCodex Default</option>
-                  <template x-for="m in aiModels" :key="m.id||m">
-                    <option :value="m.id||m" x-text="m.name||m.id||m"></option>
-                  </template>
-                </select>
-                <button class="btn btn-ghost btn-sm" @click="fetchModels()">↻ Fetch</button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Max Tokens</label>
-              <input class="form-input" type="number" x-model.number="aiConfig.max_tokens" min="256" max="8192" style="width:140px">
-            </div>
-            <div style="display:flex;gap:10px;margin-bottom:12px">
-              <button class="btn btn-ghost" @click="testAiConnection()" :disabled="aiTesting">
-                <span x-show="aiTesting" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
-                <span x-text="aiTesting?'Testing…':'Test Connection'"></span>
-              </button>
-              <button class="btn btn-primary" @click="saveAiConfig()">Save</button>
-            </div>
-            <div x-show="aiTestResult" style="padding:10px 12px;border-radius:6px;font-size:12px"
-                 :style="aiTestOk?'background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);color:var(--green)':'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);color:var(--red)'"
-                 x-text="aiTestResult"></div>
-          </div>
-          <!-- Feature list -->
-          <div class="card" style="margin-top:12px">
-            <div style="font-size:12px;font-weight:600;margin-bottom:10px">What NeonCodex AI does inside VortexPanel</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
-              <div x-for="f in [{i:'🔍',l:'Server Diagnostics'},{i:'⚙',l:'Config Generator'},{i:'🐘',l:'PHP Code Review'},{i:'🔐',l:'Security Audit'},{i:'📋',l:'Log Analysis'},{i:'🗄',l:'SQL Optimizer'}]" :key="f.l"
-                   style="display:flex;gap:6px;padding:6px;background:var(--bg-raised);border-radius:6px">
-                <span x-text="f.i"></span><span x-text="f.l" style="color:var(--text-secondary)"></span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Security tab -->
-        <div x-show="stab==='security'" style="max-width:520px">
-
-          <!-- 2FA card -->
-          <div class="card" style="margin-bottom:12px">
-            <div class="card-hd">
-              <div class="card-title">🔐 Two-Factor Authentication (2FA)</div>
-              <span :class="twofa.enabled?'badge badge-green':'badge badge-gray'"
-                    x-text="twofa.enabled?'Enabled':'Disabled'"></span>
-            </div>
-
-            <!-- 2FA disabled — setup flow -->
-            <div x-show="!twofa.enabled">
-              <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-                Add a second layer of protection. After entering your password, you'll also need a 6-digit code from your authenticator app (Google Authenticator, Authy, 1Password, etc).
-              </div>
-
-              <!-- Step 1: Show QR -->
-              <div x-show="!twofa.secret">
-                <button class="btn btn-primary btn-sm" :disabled="twofa.setupLoading" @click="setup2FA()">
-                  <span x-show="twofa.setupLoading">Generating…</span>
-                  <span x-show="!twofa.setupLoading">Enable 2FA</span>
-                </button>
-              </div>
-
-              <!-- Step 2: Scan QR and verify -->
-              <div x-show="twofa.secret">
-                <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:8px">1. Scan this QR code in your authenticator app</div>
-                <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:14px">
-                  <img :src="twofa.qr_url" alt="QR Code" style="width:160px;height:160px;border:2px solid var(--border);border-radius:var(--radius);background:#fff" />
-                  <div>
-                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">Can't scan? Enter this key manually:</div>
-                    <div style="font-family:var(--font-mono);font-size:12px;font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;word-break:break-all;color:var(--text-primary)" x-text="twofa.secret"></div>
-                    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Keep this key secret and backed up</div>
-                    <div style="font-size:10px;color:var(--text-muted);margin-top:2px">Type: Time-based (TOTP) • Issuer: VortexPanel</div>
-                  </div>
-                </div>
-                <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:6px">2. Enter the 6-digit code to confirm</div>
-                <div style="display:flex;gap:8px;align-items:center">
-                  <input class="form-input" x-model="twofa.code" type="text" inputmode="numeric"
-                         maxlength="6" placeholder="000000"
-                         style="width:120px;font-size:18px;letter-spacing:4px;text-align:center;font-family:var(--font-mono)"
-                         @keydown.enter="enable2FA()" />
-                  <button class="btn btn-primary btn-sm" :disabled="twofa.enabling" @click="enable2FA()">
-                    <span x-show="twofa.enabling">Verifying…</span>
-                    <span x-show="!twofa.enabling">Verify &amp; Enable</span>
-                  </button>
-                  <button class="btn btn-ghost btn-sm" @click="twofa.secret='';twofa.code='';twofa.qr_url=''">Cancel</button>
-                </div>
-                <div x-show="twofa.err" style="margin-top:8px;font-size:11px;color:var(--red)" x-text="twofa.err"></div>
-              </div>
-            </div>
-
-            <!-- 2FA enabled — disable option -->
-            <div x-show="twofa.enabled">
-              <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
-                2FA is active. Your account requires a verification code from your authenticator app on every login.
-              </div>
-              <div x-show="!twofa.disableConfirm">
-                <button class="btn btn-danger btn-sm" @click="twofa.disableConfirm=true">Disable 2FA</button>
-              </div>
-              <div x-show="twofa.disableConfirm">
-                <div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:6px">⚠ Confirm disable — enter your panel password</div>
-                <div style="display:flex;gap:8px">
-                  <input class="form-input" x-model="twofa.disablePw" type="password" placeholder="Current password" style="flex:1" />
-                  <button class="btn btn-danger btn-sm" :disabled="twofa.disabling" @click="disable2FA()">
-                    <span x-show="twofa.disabling">Disabling…</span>
-                    <span x-show="!twofa.disabling">Confirm Disable</span>
-                  </button>
-                  <button class="btn btn-ghost btn-sm" @click="twofa.disableConfirm=false;twofa.disablePw=''">Cancel</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Change password card -->
-          <div class="card" style="margin-bottom:12px">
-            <div class="card-hd"><div class="card-title">🔑 Change Panel Password</div></div>
-            <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Password is hashed with Argon2id (OWASP recommended). Min 8 characters.</div>
-            <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="pwForm.current"></div>
-            <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwForm.newpw"></div>
-            <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="pwForm.confirm"></div>
-            <button class="btn btn-primary" @click="changePw()">Change Password</button>
-          </div>
-
-          <!-- IP allowlist card -->
-          <div class="card">
-            <div class="card-hd">
-              <div class="card-title">🌐 IP Access Allowlist</div>
-              <span class="badge badge-gray" style="font-size:10px">Optional</span>
-            </div>
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
-              Restrict panel access to specific IPs. Empty = allow all. <code>127.0.0.1</code> is always allowed.
-              Prefix notation supported (e.g. <code>192.168.1.</code> allows the whole subnet).
-            </div>
-            <div class="form-group">
-              <label class="form-label">Allowed IPs (one per line)</label>
-              <textarea class="form-input" x-model="allowlistText" rows="4"
-                        style="font-family:var(--font-mono);font-size:12px;resize:vertical"
-                        placeholder="192.168.1.100&#10;10.0.0.&#10;Leave empty to allow all IPs"></textarea>
-            </div>
-            <button class="btn btn-primary btn-sm" @click="saveAllowlist()">Save allowlist</button>
-          </div>
-        </div>
-      </div>
 
     </div><!-- page-content -->
   </div><!-- main-area -->

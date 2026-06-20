@@ -61,7 +61,7 @@ function rootApp() {
     moduleStatus: {},
     updateAvailable: false,
     updateModal: {
-      show:false, current:'v3.0.0', latest:'', name:'',
+      show:false, current:'v3.1.0', latest:'', name:'',
       body:'', published:'', url:'', error:'',
     },
     nav: [
@@ -2521,8 +2521,18 @@ function ftpPage() {
 // ── SETTINGS ──────────────────────────────────────────────────────────────────
 function settingsPage() {
   return {
-    stab: 'general',
-    panelVersion: 'v3.0.0',
+    stab: 'none',  // 'none' = card grid visible, 'security' = security sub-section
+    panelVersion: 'v3.1.0',
+    cfg: {panel_name:'VortexPanel', port:8888, ssl_enabled:false, auto_update:true, timezone:'UTC', panel_domain:'', security_path:''},
+    system: {hostname:'', os:'', kernel:'', cpu:'', ip:'', uptime:'', timezone:'UTC', server_time:''},
+    ssl: {enabled:false, type:'none', days_left:-1, expiry:'', loading:false, msg:'', ok:false, type_loading:''},
+    sslDomain: '',
+    newPort: '',
+    newHostname: '',
+    sessionHours: 24,
+    scanPath: '/www/wwwroot',
+    scanPaths: ['/www/wwwroot'],
+    scanner: {loading:false, done:false, scanned:0, total:0, critical:0, high:0, medium:0, findings:[]},
     pwForm: {current:'', newpw:'', confirm:''},
     allowlistText: '',
     twofa: {
@@ -2535,80 +2545,173 @@ function settingsPage() {
     aiTesting: false, aiTestResult: '', aiTestOk: false,
 
     async init() {
-      const uv = await get('/api/update/version').catch(()=>({ok:false}));
-      if (uv.ok) this.panelVersion = uv.version;
+      await this.loadSettings();
+      await this.load2faStatus();
+      const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
+      if (sc.ok) { this.allowlistText=(sc.allowed_ips||[]).join('\n'); this.sessionHours=sc.session_hours||24; }
+      const sp = await get('/api/settings/webshell-scan/paths').catch(()=>({ok:false}));
+      if (sp.ok) this.scanPaths = sp.paths||['/www/wwwroot'];
+      if (this.scanPaths.length) this.scanPath = this.scanPaths[0];
       document.addEventListener("vortex-logged-in", () => { this.init(); });
     },
 
-    async loadSecurityTab() {
-      // Load 2FA status and allowlist when security tab opened
-      const [s, a] = await Promise.all([
-        get('/api/auth/2fa/status'),
-        get('/api/auth/security-settings'),
-      ]);
-      if (s.ok) this.twofa.enabled = s.enabled;
-      if (a.ok) this.allowlistText = (a.allowed_ips||[]).join('\n');
+    async loadSettings() {
+      const r = await get('/api/settings');
+      if (!r.ok) return;
+      this.cfg    = {...this.cfg, ...r.config};
+      this.system = {...this.system, ...r.system};
+      this.ssl    = {...this.ssl, ...r.ssl};
+      this.newPort = String(this.cfg.port||8888);
+      const uv = await get('/api/update/version').catch(()=>({ok:false}));
+      if (uv.ok) this.panelVersion = uv.version;
     },
 
-    // ── 2FA ──────────────────────────────────────────────────────────────────
-    async setup2FA() {
-      this.twofa.setupLoading = true;
-      const r = await post('/api/auth/2fa/setup', {});
-      this.twofa.setupLoading = false;
+    async load2faStatus() {
+      const r = await get('/api/auth/2fa/status').catch(()=>({ok:false}));
+      if (r.ok) this.twofa.enabled = r.enabled;
+    },
+
+    async loadSecurityTab() {
+      this.stab = this.stab==='security' ? 'none' : 'security';
+      if (this.stab==='security') {
+        await this.load2faStatus();
+        const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
+        if (sc.ok) { this.allowlistText=(sc.allowed_ips||[]).join('\n'); this.sessionHours=sc.session_hours||24; }
+      }
+    },
+
+    async saveSettings() {
+      const r = await put('/api/settings', {panel_name:this.cfg.panel_name, auto_update:this.cfg.auto_update, timezone:this.cfg.timezone, panel_domain:this.cfg.panel_domain});
+      toast(r.ok?'Settings saved':'Failed', r.ok?'success':'error');
+    },
+
+    async savePanelName() {
+      const r = await put('/api/settings', {panel_name:this.cfg.panel_name});
+      toast(r.ok?'Panel name saved':'Failed', r.ok?'success':'error');
+    },
+
+    async changePort() {
+      const p = parseInt(this.newPort);
+      if (!p || p<1024||p>65535) { toast('Port must be 1024–65535','error'); return; }
+      const r = await post('/api/settings/port', {port:p});
+      toast(r.ok?(r.message||'Port changed'):'Failed: '+(r.error||''), r.ok?'success':'error');
+      if (r.ok) { this.cfg.port=p; }
+    },
+
+    async setHostname() {
+      if (!this.newHostname) return;
+      const r = await post('/api/settings/hostname', {hostname:this.newHostname});
+      toast(r.ok?'Hostname changed':'Failed', r.ok?'success':'error');
+      if (r.ok) { this.system.hostname=this.newHostname; this.newHostname=''; }
+    },
+
+    async syncTime() {
+      const r = await post('/api/settings/sync-time', {});
+      toast(r.ok?'Time synced: '+r.time:'Failed', r.ok?'success':'error');
+      if (r.ok) this.system.server_time = r.time;
+    },
+
+    async systemUpdate() {
+      const r = await post('/api/settings/update', {});
+      toast(r.ok?'System update started in background':'Failed', r.ok?'success':'error');
+    },
+
+    async reboot() {
+      const r = await post('/api/settings/reboot', {});
+      toast(r.ok?'Rebooting in 3 seconds…':'Failed', r.ok?'success':'error');
+    },
+
+    // ── SSL ───────────────────────────────────────────────────────────────────
+    async genSelfSigned() {
+      this.ssl.loading=true; this.ssl.type_loading='selfsigned'; this.ssl.msg='';
+      const r = await post('/api/settings/ssl/self-signed', {domain:this.sslDomain});
+      this.ssl.loading=false;
+      this.ssl.ok=r.ok; this.ssl.msg=r.message||(r.error||'');
+      if (r.ok) { this.ssl.enabled=true; this.ssl.type='self-signed'; toast('HTTPS enabled','success'); await this.loadSettings(); }
+      else toast('Failed: '+(r.error||''), 'error');
+    },
+
+    async issueLetsEncrypt() {
+      if (!this.sslDomain) { toast('Domain required for Let\'s Encrypt','error'); return; }
+      this.ssl.loading=true; this.ssl.type_loading='le'; this.ssl.msg='';
+      const r = await post('/api/settings/ssl/letsencrypt', {domain:this.sslDomain});
+      this.ssl.loading=false;
+      this.ssl.ok=r.ok; this.ssl.msg=r.message||(r.error||'');
+      if (r.ok) { this.ssl.enabled=true; this.ssl.type='letsencrypt'; toast('Let\'s Encrypt cert issued','success'); await this.loadSettings(); }
+      else toast('Failed: '+(r.error||''),'error');
+    },
+
+    async disableSSL() {
+      const r = await post('/api/settings/ssl/disable', {});
+      toast(r.ok?'HTTPS disabled':'Failed','success');
+      if (r.ok) { this.ssl.enabled=false; this.ssl.type='none'; }
+    },
+
+    // ── Webshell scanner ──────────────────────────────────────────────────────
+    async runWebshellScan() {
+      this.scanner.loading=true; this.scanner.done=false;
+      const r = await post('/api/settings/webshell-scan', {path:this.scanPath});
+      this.scanner.loading=false;
       if (r.ok) {
-        this.twofa.secret  = r.secret;
-        this.twofa.qr_url  = r.qr_url;
-        this.twofa.code    = '';
-        this.twofa.err     = '';
-      } else toast(r.error || 'Failed to setup 2FA', 'error');
+        this.scanner = {...this.scanner, ...r, done:true, loading:false};
+        if (r.critical>0) toast(`⚠ ${r.critical} critical threats found!`,'error');
+        else if (r.total>0) toast(`${r.total} suspicious files found`,'warning');
+        else toast(`✓ Clean — ${r.scanned} files scanned`,'success');
+      } else toast(r.error||'Scan failed','error');
+    },
+
+    // ── 2FA ───────────────────────────────────────────────────────────────────
+    async setup2FA() {
+      this.twofa.setupLoading=true;
+      const r = await post('/api/auth/2fa/setup', {});
+      this.twofa.setupLoading=false;
+      if (r.ok) { this.twofa.secret=r.secret; this.twofa.qr_url=r.qr_url; this.twofa.code=''; this.twofa.err=''; }
+      else toast(r.error||'Failed','error');
     },
 
     async enable2FA() {
-      if (!this.twofa.code || this.twofa.code.length < 6) {
-        this.twofa.err = 'Enter the 6-digit code from your authenticator app'; return;
-      }
-      this.twofa.enabling = true;
-      this.twofa.err = '';
-      const r = await post('/api/auth/2fa/enable', {code: this.twofa.code});
-      this.twofa.enabling = false;
-      if (r.ok) {
-        this.twofa.enabled = true;
-        this.twofa.secret  = '';
-        this.twofa.qr_url  = '';
-        this.twofa.code    = '';
-        toast('2FA enabled — your account is now protected', 'success');
-      } else {
-        this.twofa.err = r.error || 'Invalid code';
-        toast(r.error || 'Invalid code', 'error');
-      }
+      if (!this.twofa.code||this.twofa.code.length<6) { this.twofa.err='Enter the 6-digit code'; return; }
+      this.twofa.enabling=true; this.twofa.err='';
+      const r = await post('/api/auth/2fa/enable', {code:this.twofa.code});
+      this.twofa.enabling=false;
+      if (r.ok) { this.twofa.enabled=true; this.twofa.secret=''; this.twofa.qr_url=''; this.twofa.code=''; toast('2FA enabled','success'); }
+      else { this.twofa.err=r.error||'Invalid code'; }
     },
 
     async disable2FA() {
-      if (!this.twofa.disablePw) { toast('Enter your password', 'error'); return; }
-      this.twofa.disabling = true;
-      const r = await post('/api/auth/2fa/disable', {password: this.twofa.disablePw});
-      this.twofa.disabling = false;
-      if (r.ok) {
-        this.twofa.enabled = false;
-        this.twofa.disableConfirm = false;
-        this.twofa.disablePw = '';
-        toast('2FA disabled', 'success');
-      } else toast(r.error || 'Failed', 'error');
+      if (!this.twofa.disablePw) { toast('Enter your password','error'); return; }
+      this.twofa.disabling=true;
+      const r = await post('/api/auth/2fa/disable', {password:this.twofa.disablePw});
+      this.twofa.disabling=false;
+      if (r.ok) { this.twofa.enabled=false; this.twofa.disableConfirm=false; this.twofa.disablePw=''; toast('2FA disabled','success'); }
+      else toast(r.error||'Failed','error');
     },
 
-    // ── IP allowlist ─────────────────────────────────────────────────────────
+    // ── Allowlist + session ───────────────────────────────────────────────────
     async saveAllowlist() {
       const ips = this.allowlistText.split('\n').map(s=>s.trim()).filter(Boolean);
-      const r = await post('/api/auth/security-settings', {allowed_ips: ips});
-      toast(r.ok ? 'Allowlist saved' : 'Failed: '+(r.error||''), r.ok?'success':'error');
+      const r = await post('/api/auth/security-settings', {allowed_ips:ips});
+      toast(r.ok?'Allowlist saved':'Failed', r.ok?'success':'error');
     },
 
+    async saveSessionTimeout() {
+      const r = await post('/api/auth/security-settings', {session_hours:parseInt(this.sessionHours)||24});
+      toast(r.ok?'Session timeout saved':'Failed', r.ok?'success':'error');
+    },
+
+    // ── Password ──────────────────────────────────────────────────────────────
+    async changePw() {
+      if (this.pwForm.newpw!==this.pwForm.confirm) { toast('Passwords do not match','error'); return; }
+      if (this.pwForm.newpw.length<8) { toast('Minimum 8 characters','error'); return; }
+      const r = await post('/api/settings/password', {current_password:this.pwForm.current, new_password:this.pwForm.newpw});
+      if (r.ok) { toast('Password changed','success'); this.pwForm={current:'',newpw:'',confirm:''}; }
+      else toast(r.error||'Failed','error');
+    },
+
+    // ── AI ────────────────────────────────────────────────────────────────────
     async loadAiConfig() {
       const r = await get('/api/ai/config');
-      if (r.ok) {
-        this.aiConfig = {...this.aiConfig, ...r.config};
-        if (this.aiConfig.api_key === '***') this.aiConfig.api_key = '';
-      }
+      if (r.ok) { this.aiConfig={...this.aiConfig,...r.config}; if(this.aiConfig.api_key==='***')this.aiConfig.api_key=''; }
     },
 
     async saveAiConfig() {
@@ -2619,30 +2722,21 @@ function settingsPage() {
 
     async fetchModels() {
       const r = await get('/api/ai/models');
-      if (r.ok && r.models.length) { this.aiModels=r.models; toast(`${r.models.length} models loaded`,'success'); }
+      if (r.ok&&r.models.length) { this.aiModels=r.models; toast(`${r.models.length} models loaded`,'success'); }
       else toast(r.error||'Could not fetch models','error');
     },
 
     async testAiConnection() {
       this.aiTesting=true; this.aiTestResult='';
       await put('/api/ai/config', this.aiConfig);
-      const r = await post('/api/ai/chat', {messages:[{role:'user',content:'Reply with just: "NeonCodex AI connected ✓"'}]});
+      const r = await post('/api/ai/chat', {messages:[{role:'user',content:'Reply with just: \"VortexPanel AI connected ✓\"'}]});
       this.aiTesting=false;
-      this.aiTestOk    = r.ok;
-      this.aiTestResult = r.ok ? '✓ '+r.content?.substring(0,80) : '✗ '+(r.error||'Connection failed');
-    },
-
-    async changePw() {
-      if (this.pwForm.newpw !== this.pwForm.confirm) { toast('Passwords do not match','error'); return; }
-      if (this.pwForm.newpw.length < 6) { toast('Minimum 6 characters','error'); return; }
-      const r = await post('/api/settings/password', this.pwForm);
-      if (r.ok) { toast('Password changed','success'); this.pwForm={current:'',newpw:'',confirm:''}; }
-      else toast(r.error||'Failed','error');
+      this.aiTestOk=r.ok;
+      this.aiTestResult=r.ok?'✓ '+r.content?.substring(0,80):'✗ '+(r.error||'Connection failed');
     },
   };
 }
 
-// ── MONITORING ────────────────────────────────────────────────────────────────
 function monitoringPage() {
   return {
     stats: {cpu:0,ram:'',ramPct:0,disk:0,diskStr:'',uptime:'',load:''},
