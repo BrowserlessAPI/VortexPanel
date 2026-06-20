@@ -5426,6 +5426,16 @@
                 <button x-show="ssl.enabled" class="btn btn-ghost btn-xs" @click="disableSSL()">Disable</button>
               </div>
             </div>
+            <!-- Access URL — always shows the SAME custom port, never 443 -->
+            <div style="padding:10px 0;border-bottom:1px solid var(--border-light);background:var(--bg-raised);margin:0 -2px;padding-left:8px;padding-right:8px;border-radius:6px">
+              <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px">Access the panel at:</div>
+              <div style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--accent)">
+                <span x-text="ssl.enabled?'https://':'http://'"></span><span x-text="system.ip||'your-server-ip'"></span>:<span x-text="cfg.port||8888"></span>
+              </div>
+              <div style="font-size:10px;color:var(--text-muted);margin-top:3px">
+                ⚠ Enabling HTTPS keeps your custom port — it never switches to the well-known port 443, so the panel stays hidden from generic port scans.
+              </div>
+            </div>
             <!-- Cert info if active -->
             <div x-show="ssl.enabled && ssl.days_left >= 0" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
               <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
@@ -5450,9 +5460,12 @@
                   <span x-show="!(ssl.loading && ssl.type_loading==='le')">Let's Encrypt (needs domain)</span>
                 </button>
               </div>
+              <div style="font-size:10px;color:var(--text-muted);margin-top:6px">Let's Encrypt briefly needs port 80 open for domain validation — this is unrelated to your panel's custom port and closes automatically.</div>
               <div x-show="ssl.msg" style="margin-top:8px;font-size:11px;padding:7px 10px;border-radius:var(--radius)"
                    :style="ssl.ok?'background:rgba(16,185,129,.08);color:var(--green)':'background:rgba(239,68,68,.08);color:var(--red)'"
                    x-text="ssl.msg"></div>
+              <div x-show="ssl.ok && ssl.msg" style="margin-top:6px;font-size:11px;font-weight:600;color:var(--accent)">
+                ⚠ Reconnect your browser to: <span x-text="'https://'+(system.ip||'your-server-ip')+':'+(cfg.port||8888)"></span>
             </div>
           </div>
 
