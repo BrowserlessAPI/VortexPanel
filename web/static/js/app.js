@@ -2623,28 +2623,62 @@ function settingsPage() {
 
     // ── SSL ───────────────────────────────────────────────────────────────────
     async genSelfSigned() {
-      this.ssl.loading=true; this.ssl.type_loading='selfsigned'; this.ssl.msg='';
+      this.ssl.loading=true; this.ssl.type_loading='selfsigned'; this.ssl.msg='Applying changes — this takes about 5-10 seconds…';
       const r = await post('/api/settings/ssl/self-signed', {domain:this.sslDomain});
-      this.ssl.loading=false;
-      this.ssl.ok=r.ok; this.ssl.msg=r.message||(r.error||'');
-      if (r.ok) { this.ssl.enabled=true; this.ssl.type='self-signed'; toast('HTTPS enabled','success'); await this.loadSettings(); }
-      else toast('Failed: '+(r.error||''), 'error');
+      if (!r.ok) {
+        this.ssl.loading=false; this.ssl.ok=false; this.ssl.msg=r.error||'Failed';
+        toast('Failed: '+(r.error||''), 'error');
+        return;
+      }
+      await this.pollSslApply('self-signed');
     },
 
     async issueLetsEncrypt() {
       if (!this.sslDomain) { toast('Domain required for Let\'s Encrypt','error'); return; }
-      this.ssl.loading=true; this.ssl.type_loading='le'; this.ssl.msg='';
+      this.ssl.loading=true; this.ssl.type_loading='le'; this.ssl.msg='Issuing certificate and applying changes…';
       const r = await post('/api/settings/ssl/letsencrypt', {domain:this.sslDomain});
+      if (!r.ok) {
+        this.ssl.loading=false; this.ssl.ok=false; this.ssl.msg=r.error||'Failed';
+        toast('Failed: '+(r.error||''), 'error');
+        return;
+      }
+      await this.pollSslApply('letsencrypt');
+    },
+
+    async pollSslApply(type) {
+      // Poll the cutover script's log so we only declare success once the
+      // stop→reload→start sequence has actually completed and confirmed
+      // both services are active — not just that the initial request returned.
+      for (let i=0; i<15; i++) {
+        await new Promise(r=>setTimeout(r,1000));
+        const log = await get('/api/settings/ssl/apply-log').catch(()=>({ok:false}));
+        if (log.ok && log.done) {
+          const success = (log.log||'').includes('vortexpanel=active') && (log.log||'').includes('nginx=active');
+          this.ssl.loading=false;
+          this.ssl.ok=success;
+          this.ssl.enabled=success;
+          this.ssl.type=type;
+          this.ssl.msg = success
+            ? 'HTTPS active. Reconnect your browser now.'
+            : 'Something went wrong applying the change — check Settings → Panel SSL again, or contact support with this log:\n'+log.log;
+          toast(success?'HTTPS enabled':'HTTPS setup had an issue — see details', success?'success':'error');
+          await this.loadSettings();
+          return;
+        }
+      }
+      // Timed out waiting — don't claim success, tell the user to check manually
       this.ssl.loading=false;
-      this.ssl.ok=r.ok; this.ssl.msg=r.message||(r.error||'');
-      if (r.ok) { this.ssl.enabled=true; this.ssl.type='letsencrypt'; toast('Let\'s Encrypt cert issued','success'); await this.loadSettings(); }
-      else toast('Failed: '+(r.error||''),'error');
+      this.ssl.msg='Still applying — this is taking longer than expected. Wait a few more seconds, then refresh this page or check Settings → Panel SSL again before trying again.';
+      toast('Still applying — check back in a few seconds','warning');
     },
 
     async disableSSL() {
       const r = await post('/api/settings/ssl/disable', {});
-      toast(r.ok?'HTTPS disabled':'Failed','success');
-      if (r.ok) { this.ssl.enabled=false; this.ssl.type='none'; }
+      if (!r.ok) { toast('Failed: '+(r.error||''),'error'); return; }
+      toast(r.message||'Disabling HTTPS…','success');
+      this.ssl.loading=true; this.ssl.msg='Reverting to plain HTTP…';
+      await this.pollSslApply('none');
+      if (this.ssl.ok) { this.ssl.enabled=false; this.ssl.type='none'; }
     },
 
     // ── Webshell scanner ──────────────────────────────────────────────────────

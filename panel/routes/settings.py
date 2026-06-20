@@ -33,6 +33,8 @@ CONFIG_FILE  = '/opt/vortexpanel/config.json'
 SSL_DIR      = '/opt/vortexpanel/ssl'
 SSL_CONF     = '/etc/nginx/conf.d/vortexpanel-https.conf'
 SERVICE_FILE = '/etc/systemd/system/vortexpanel.service'
+SSL_APPLY_SCRIPT = '/opt/vortexpanel/ssl_apply.sh'
+SSL_APPLY_LOG    = '/opt/vortexpanel/ssl_apply.log'
 PANEL_PORT          = 8888
 DEFAULT_INTERNAL_PORT = 18888   # gunicorn's loopback-only port when SSL is active
 
@@ -131,12 +133,15 @@ def _gen_selfsigned(domain=''):
     )
     return rc == 0, err if rc != 0 else ''
 
-def _write_nginx_ssl(domain=''):
+def _write_nginx_ssl_file(domain=''):
     """
-    Write nginx config that listens on the panel's CUSTOM public port (never
-    the well-known 443) and proxies to gunicorn on loopback. This keeps the
-    benefit of a non-default port even with HTTPS enabled — enabling SSL must
-    never make the panel newly discoverable on a well-known port.
+    Write the nginx HTTPS vhost (custom port, never 443) and validate syntax
+    with `nginx -t` (parse-only, doesn't bind sockets — always safe to run).
+    Does NOT reload nginx here: reloading must happen only after gunicorn has
+    actually released the public port, otherwise nginx's bind() races against
+    the still-running old gunicorn process and silently fails while still
+    reporting "reload successful" at the systemd level. The actual reload is
+    performed by the atomic cutover script in _enable_https().
     """
     cfg            = load_config()
     external_port  = cfg.get('port', PANEL_PORT)
@@ -180,8 +185,30 @@ server {{
     if rc != 0:
         os.unlink(SSL_CONF)
         return False, f'nginx config error: {err}'
-    sh('systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null')
     return True, ''
+
+
+def _run_cutover_script(script_body, unit_name='vortexpanel-ssl-apply'):
+    """
+    Run a multi-step bind-cutover sequence as an independent, detached
+    systemd transient unit (outside vortexpanel.service's cgroup) so it
+    survives stopping/restarting vortexpanel itself, and can reliably wait
+    for a port to actually be released before handing it to nginx.
+    """
+    os.makedirs(os.path.dirname(SSL_APPLY_LOG), exist_ok=True)
+    with open(SSL_APPLY_SCRIPT, 'w') as f:
+        f.write(script_body)
+    os.chmod(SSL_APPLY_SCRIPT, 0o700)
+    if sh('which systemd-run 2>/dev/null'):
+        sh(f'systemd-run --no-block --collect --unit={unit_name} '
+           f'/bin/bash {SSL_APPLY_SCRIPT} 2>&1')
+        return True
+    elif sh('which setsid 2>/dev/null'):
+        sh(f'setsid /bin/bash {SSL_APPLY_SCRIPT} >/dev/null 2>&1 < /dev/null &')
+        return True
+    else:
+        sh(f'/bin/bash {SSL_APPLY_SCRIPT} >/dev/null 2>&1 &')
+        return True
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -271,10 +298,39 @@ def ssl_status():
     return jsonify({'ok':True, **_ssl_status()})
 
 
+@settings_bp.route('/api/settings/ssl/apply-log')
+def ssl_apply_log():
+    """Tail the cutover script's log so the UI can show real progress
+    instead of guessing whether the switch has completed."""
+    if not req(): return jsonify({'ok':False}), 401
+    if not os.path.exists(SSL_APPLY_LOG):
+        return jsonify({'ok':True,'log':'','done':False})
+    try:
+        lines = open(SSL_APPLY_LOG).readlines()[-20:]
+        log = ''.join(lines)
+        done = any('Result: vortexpanel=' in l for l in lines)
+        return jsonify({'ok':True,'log':log,'done':done})
+    except Exception as e:
+        return jsonify({'ok':False,'error':str(e)}), 500
+
+
 def _enable_https(domain=''):
     """
     Shared logic: switch gunicorn to loopback-only and put nginx in front
     with TLS, serving on the SAME public port the panel already used.
+
+    The cutover is performed by an ATOMIC external script (stop gunicorn ->
+    confirm the public port is actually free -> reload nginx -> start
+    gunicorn) rather than as separate fire-and-forget steps. The previous
+    implementation reloaded nginx (step 2) while the OLD gunicorn process
+    was still bound to the public port (it doesn't get released until the
+    delayed restart in step 4 actually runs) — nginx's bind() raced against
+    the still-running gunicorn and lost, every time, while still reporting
+    "reload successful" because the reload signal itself was delivered fine
+    even though the new listen socket silently failed to open. Confirmed via
+    nginx's error log: "bind() to 0.0.0.0:8888 failed (98: Address already
+    in use)" / "still could not bind()".
+
     Returns (ok, error_message).
     """
     cfg           = load_config()
@@ -285,28 +341,49 @@ def _enable_https(domain=''):
         cfg['internal_port'] = internal_port
         save_config(cfg)
 
-    # 1. Rebind gunicorn to loopback-only on the internal port
+    # 1. Point gunicorn's *target* bind at loopback (text edit only — takes
+    #    no effect until gunicorn is actually restarted, which happens at
+    #    the right moment inside the cutover script below).
     ok, err = _set_gunicorn_bind('127.0.0.1', internal_port)
     if not ok:
         return False, f'Failed to update panel service: {err}'
 
-    # 2. nginx takes over the external (public, custom) port with TLS
-    ok2, err2 = _write_nginx_ssl(domain)
+    # 2. Write + syntax-check (not reload) the nginx vhost.
+    ok2, err2 = _write_nginx_ssl_file(domain)
     if not ok2:
-        # Roll back gunicorn bind so the panel doesn't go dark
-        _set_gunicorn_bind('0.0.0.0', external_port)
-        _safe_restart_panel()
+        _set_gunicorn_bind('0.0.0.0', external_port)  # roll back the unit file
         return False, err2
 
     # 3. Firewall: the external/custom port must stay open (it already was);
-    #    the internal port is loopback-only and not reachable externally
-    #    regardless of firewall, so nothing further to open there.
+    #    the internal port is loopback-only and unreachable externally
+    #    regardless of firewall state, so nothing further to open there.
     sh(f'ufw allow {external_port}/tcp 2>/dev/null')
     sh(f'firewall-cmd --add-port={external_port}/tcp --permanent 2>/dev/null; firewall-cmd --reload 2>/dev/null || true')
 
-    # 4. Restart gunicorn AFTER a short delay so this HTTP response (which is
-    #    itself served by the current gunicorn process) finishes sending first.
-    _safe_restart_panel()
+    # 4. Atomic cutover, run OUTSIDE vortexpanel's cgroup so it survives
+    #    stopping the very service it's orchestrating:
+    #      stop gunicorn -> poll until the public port is truly free
+    #      -> reload nginx (now guaranteed to win the bind) -> start gunicorn
+    script = f"""#!/bin/bash
+exec >> {SSL_APPLY_LOG} 2>&1
+echo "=== $(date -u +'%Y-%m-%d %H:%M:%S UTC') : enabling HTTPS on port {external_port} ==="
+systemctl stop vortexpanel
+for i in $(seq 1 20); do
+  ss -tln 2>/dev/null | grep -q ":{external_port} " || break
+  sleep 0.5
+done
+systemctl daemon-reload
+if nginx -t 2>&1; then
+  systemctl reload nginx 2>&1 || systemctl restart nginx 2>&1
+else
+  echo "nginx -t failed at cutover time — skipping reload"
+fi
+systemctl start vortexpanel
+sleep 1
+echo "Result: vortexpanel=$(systemctl is-active vortexpanel) nginx=$(systemctl is-active nginx)"
+echo "Listening: $(ss -tln 2>/dev/null | grep -E ':{external_port} |:{internal_port} ')"
+"""
+    _run_cutover_script(script)
 
     cfg['ssl_enabled'] = True
     if domain: cfg['panel_domain'] = domain
@@ -377,16 +454,29 @@ def ssl_disable():
 
     try: os.unlink(SSL_CONF)
     except: pass
-    sh('systemctl reload nginx 2>/dev/null || true')
 
-    # Move gunicorn back to binding the public port directly
+    # Point gunicorn's target bind back at the public port (text edit only;
+    # takes effect when the cutover script restarts it below).
     ok, err = _set_gunicorn_bind('0.0.0.0', external_port)
-    if ok:
-        _safe_restart_panel()
+    if not ok:
+        return jsonify({'ok':False,'error':err}), 500
+
+    script = f"""#!/bin/bash
+exec >> {SSL_APPLY_LOG} 2>&1
+echo "=== $(date -u +'%Y-%m-%d %H:%M:%S UTC') : disabling HTTPS, reverting to plain HTTP on port {external_port} ==="
+systemctl stop vortexpanel
+nginx -t 2>&1 && (systemctl reload nginx 2>&1 || systemctl restart nginx 2>&1)
+systemctl daemon-reload
+systemctl start vortexpanel
+sleep 1
+echo "Result: vortexpanel=$(systemctl is-active vortexpanel) nginx=$(systemctl is-active nginx)"
+echo "Listening: $(ss -tln 2>/dev/null | grep -E ':{external_port} ')"
+"""
+    _run_cutover_script(script)
 
     cfg['ssl_enabled'] = False
     save_config(cfg)
-    return jsonify({'ok':True, 'message': 'HTTPS disabled. Panel now serves plain HTTP on the same port.'})
+    return jsonify({'ok':True, 'message': 'Disabling HTTPS — reverting to plain HTTP. Reconnect at http://<ip>:'+str(external_port)+' in a few seconds.'})
 
 
 # ── PHP Webshell Scanner ───────────────────────────────────────────────────────
