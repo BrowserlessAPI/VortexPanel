@@ -69,6 +69,30 @@ def _current_bind():
     m = re.search(r'(?:--bind|-b)\s+(\S+):(\d+)', content)
     return (m.group(1), int(m.group(2))) if m else None
 
+def _safe_restart_panel():
+    """
+    Restart vortexpanel.service from WITHIN a request handled by that very
+    service. A naive '(sleep 2 && systemctl restart vortexpanel) &' is
+    unsafe: that background process is still a member of vortexpanel's
+    systemd cgroup, and 'systemctl restart' kills the ENTIRE cgroup —
+    including the background restart command itself — partway through,
+    which can leave the service down instead of restarted.
+
+    Fix: use `systemd-run` to launch the restart command as an independent
+    *transient* unit, outside vortexpanel's cgroup, so it survives the kill
+    and reliably completes the restart. Falls back to setsid double-fork
+    detachment if systemd-run isn't available (non-systemd or container
+    environments), and finally to the naive approach as a last resort.
+    """
+    if sh('which systemd-run 2>/dev/null'):
+        sh('systemd-run --no-block --collect --unit=vortexpanel-restart '
+           '/bin/sh -c "sleep 2 && systemctl restart vortexpanel" 2>/dev/null')
+    elif sh('which setsid 2>/dev/null'):
+        sh('setsid sh -c "sleep 2 && systemctl restart vortexpanel" '
+           '>/dev/null 2>&1 < /dev/null &')
+    else:
+        sh('(sleep 2 && systemctl restart vortexpanel) >/dev/null 2>&1 &')
+
 # ── SSL helpers ───────────────────────────────────────────────────────────────
 def _ssl_status():
     cert = os.path.join(SSL_DIR, 'panel.crt')
@@ -226,7 +250,7 @@ def change_port():
             return jsonify({'ok':False,'error':err}), 500
         cfg['port'] = new_port
         save_config(cfg)
-        sh('sleep 1 && systemctl restart vortexpanel 2>/dev/null &')
+        _safe_restart_panel()
 
     # Update firewall: open new port, close old one
     sh(f'ufw allow {new_port}/tcp 2>/dev/null')
@@ -271,7 +295,7 @@ def _enable_https(domain=''):
     if not ok2:
         # Roll back gunicorn bind so the panel doesn't go dark
         _set_gunicorn_bind('0.0.0.0', external_port)
-        sh('(sleep 2 && systemctl restart vortexpanel) >/dev/null 2>&1 &')
+        _safe_restart_panel()
         return False, err2
 
     # 3. Firewall: the external/custom port must stay open (it already was);
@@ -282,7 +306,7 @@ def _enable_https(domain=''):
 
     # 4. Restart gunicorn AFTER a short delay so this HTTP response (which is
     #    itself served by the current gunicorn process) finishes sending first.
-    sh('(sleep 2 && systemctl restart vortexpanel) >/dev/null 2>&1 &')
+    _safe_restart_panel()
 
     cfg['ssl_enabled'] = True
     if domain: cfg['panel_domain'] = domain
@@ -358,7 +382,7 @@ def ssl_disable():
     # Move gunicorn back to binding the public port directly
     ok, err = _set_gunicorn_bind('0.0.0.0', external_port)
     if ok:
-        sh('(sleep 2 && systemctl restart vortexpanel) >/dev/null 2>&1 &')
+        _safe_restart_panel()
 
     cfg['ssl_enabled'] = False
     save_config(cfg)
