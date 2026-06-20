@@ -2630,7 +2630,7 @@ function settingsPage() {
         toast('Failed: '+(r.error||''), 'error');
         return;
       }
-      await this.pollSslApply('self-signed');
+      await this.pollSslApply('self-signed', 'https');
     },
 
     async issueLetsEncrypt() {
@@ -2642,43 +2642,61 @@ function settingsPage() {
         toast('Failed: '+(r.error||''), 'error');
         return;
       }
-      await this.pollSslApply('letsencrypt');
+      await this.pollSslApply('letsencrypt', 'https');
     },
 
-    async pollSslApply(type) {
-      // Poll the cutover script's log so we only declare success once the
-      // stop→reload→start sequence has actually completed and confirmed
-      // both services are active — not just that the initial request returned.
-      for (let i=0; i<15; i++) {
+    async pollSslApply(type, targetScheme) {
+      // IMPORTANT: once the cutover actually completes, this page's AJAX
+      // calls (made over the OLD protocol) start failing — that's not a
+      // bug, it's the entire point of the switch. So we can only use
+      // polling to catch FAST failures (e.g. nginx config rejected before
+      // any switch happens, in which case the old protocol keeps working
+      // fine and polling still succeeds). Once we stop getting a definitive
+      // answer, we assume the switch is in progress and navigate the
+      // browser for real — a stale AJAX-only refresh can never recover the
+      // UI from here, only a fresh page load over the correct protocol can.
+      let definitiveResult = null;
+      for (let i=0; i<4; i++) {
         await new Promise(r=>setTimeout(r,1000));
         const log = await get('/api/settings/ssl/apply-log').catch(()=>({ok:false}));
         if (log.ok && log.done) {
-          const success = (log.log||'').includes('vortexpanel=active') && (log.log||'').includes('nginx=active');
-          this.ssl.loading=false;
-          this.ssl.ok=success;
-          this.ssl.enabled=success;
-          this.ssl.type=type;
-          this.ssl.msg = success
-            ? 'HTTPS active. Reconnect your browser now.'
-            : 'Something went wrong applying the change — check Settings → Panel SSL again, or contact support with this log:\n'+log.log;
-          toast(success?'HTTPS enabled':'HTTPS setup had an issue — see details', success?'success':'error');
-          await this.loadSettings();
-          return;
+          definitiveResult = log;
+          break;
         }
       }
-      // Timed out waiting — don't claim success, tell the user to check manually
-      this.ssl.loading=false;
-      this.ssl.msg='Still applying — this is taking longer than expected. Wait a few more seconds, then refresh this page or check Settings → Panel SSL again before trying again.';
-      toast('Still applying — check back in a few seconds','warning');
+
+      const port = this.cfg.port || 8888;
+      const host = window.location.hostname;
+      const targetUrl = `${targetScheme}://${host}:${port}/#settings`;
+
+      if (definitiveResult) {
+        const success = (definitiveResult.log||'').includes('vortexpanel=active') &&
+                        (definitiveResult.log||'').includes('nginx=active');
+        if (!success) {
+          // Caught a fast, definitive failure — nothing changed, stay put and show it.
+          this.ssl.loading=false;
+          this.ssl.ok=false;
+          this.ssl.msg='Failed to apply: '+definitiveResult.log;
+          toast('HTTPS setup failed — see details below','error');
+          return;
+        }
+        // Fast success is rare (cutover usually isn't done in <4s) but handle it too.
+      }
+
+      // Either we got fast confirmation of success, or (far more likely) the
+      // switch is mid-flight and this tab can no longer talk to the server
+      // at all. Either way, the only reliable next step is a real navigation.
+      this.ssl.msg = `Switching to ${targetScheme.toUpperCase()} — redirecting in 3 seconds…`;
+      toast(`Reconnecting over ${targetScheme.toUpperCase()}…`, 'success');
+      await new Promise(r=>setTimeout(r,3000));
+      window.location.href = targetUrl;
     },
 
     async disableSSL() {
       const r = await post('/api/settings/ssl/disable', {});
       if (!r.ok) { toast('Failed: '+(r.error||''),'error'); return; }
-      toast(r.message||'Disabling HTTPS…','success');
       this.ssl.loading=true; this.ssl.msg='Reverting to plain HTTP…';
-      await this.pollSslApply('none');
-      if (this.ssl.ok) { this.ssl.enabled=false; this.ssl.type='none'; }
+      await this.pollSslApply('none', 'http');
     },
 
     // ── Webshell scanner ──────────────────────────────────────────────────────

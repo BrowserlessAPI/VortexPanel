@@ -161,6 +161,18 @@ server {{
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_session_cache   shared:SSL:10m;
 
+    # A plain HTTP request landing on this HTTPS-only port (e.g. an old
+    # bookmark, browser history, or a tab open since before SSL was enabled)
+    # normally gets nginx's raw "400 Bad Request" page. Show a clear message
+    # instead — we can't redirect (that would require also listening for
+    # plain HTTP on this exact port, which would re-create the original bind
+    # conflict this whole feature exists to avoid).
+    error_page 400 = @plain_http_message;
+    location @plain_http_message {{
+        default_type text/html;
+        return 200 '<!DOCTYPE html><html><head><meta charset="utf-8"><title>HTTPS Required</title></head><body style="font-family:-apple-system,sans-serif;text-align:center;padding:80px 20px;background:#0f1117;color:#e5e7eb"><div style="font-size:40px;margin-bottom:16px">&#128274;</div><h2 style="margin-bottom:8px">This port now requires HTTPS</h2><p style="color:#9ca3af">Please reconnect using <strong>https://</strong> instead of <strong>http://</strong> &mdash; same address, same port {external_port}.</p></body></html>';
+    }}
+
     location / {{
         proxy_pass         http://127.0.0.1:{internal_port};
         proxy_set_header   Host $host;
