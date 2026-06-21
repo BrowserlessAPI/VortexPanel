@@ -283,6 +283,7 @@ function websitesPage() {
       proxyForm:{name:'',path:'/',target:'',sent_domain:'$host'},
       redirectForm:{target:'',mode:'301',keep_uri:'true'},
       nodejsEnabled:false,nodejsForm:{app_path:'',startup:'index.js',port:'3000',runtime:'node'},
+      envVars:{}, envRows:[], envSaving:false, envMsg:'', envOk:false,
       maintEnabled:false,maintMessage:'We are performing scheduled maintenance. Please check back soon.',
       loading:false,
       integrityStatus:{enabled:false,created:'',file_count:0},
@@ -358,7 +359,17 @@ function websitesPage() {
       if(d.tab==='config'){const r=await get('/api/websites/'+domain+'/config');if(r.ok){d.confContent=r.content;d.confPath=r.path;}}
       else if(d.tab==='ssl'){const r=await get('/api/websites/'+domain+'/ssl/info');if(r.ok)d.sslInfo=r.info;}
       else if(d.tab==='proxy'){const r=await get('/api/websites/'+domain+'/proxy');if(r.ok)d.proxies=r.proxies;}
-      else if(d.tab==='nodejs'){const r=await get('/api/websites/'+domain+'/nodejs');if(r.ok){d.nodejsEnabled=r.enabled;if(r.port)d.nodejsForm.port=r.port;}}
+      else if(d.tab==='nodejs'){
+        const r=await get('/api/websites/'+domain+'/nodejs');
+        if(r.ok){
+          d.nodejsEnabled=r.enabled;
+          if(r.port)d.nodejsForm.port=r.port;
+          if(r.runtime)d.nodejsForm.runtime=r.runtime;
+          if(r.app_path)d.nodejsForm.app_path=r.app_path;
+          if(r.startup)d.nodejsForm.startup=r.startup;
+        }
+        if(d.nodejsEnabled) await this.loadEnvVars();
+      }
       else if(d.tab==='maintenance'){const r=await get('/api/websites/'+domain+'/maintenance');if(r.ok)d.maintEnabled=r.enabled;}
       else if(d.tab==='domains'){const r=await get('/api/websites/'+domain+'/domains');if(r.ok)d.domains=r.domains||[];}
       else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok)d.directory.path=r.path||d.site?.path||'';}
@@ -415,8 +426,41 @@ function websitesPage() {
     async delProxy(name){const r=await del('/api/websites/'+this.drawer.site?.domain+'/proxy/'+name);if(r.ok){toast('Removed','success');await this.loadDrawerTab();}},
     async saveRedirect(){const form={...this.drawer.redirectForm,keep_uri:this.drawer.redirectForm.keep_uri==='true'};const r=await post('/api/websites/'+this.drawer.site?.domain+'/redirect',form);toast(r.ok?'Redirect set':'Failed',r.ok?'success':'error');},
     async delRedirect(){const r=await del('/api/websites/'+this.drawer.site?.domain+'/redirect');toast(r.ok?'Removed':'Failed',r.ok?'success':'error');},
-    async enableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{...this.drawer.nodejsForm,enable:true});toast(r.ok?'Node.js enabled':'Failed',r.ok?'success':'error');if(r.ok){this.drawer.nodejsEnabled=true;await this.load();}},
+    async enableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{...this.drawer.nodejsForm,enable:true});toast(r.ok?'Node.js enabled':'Failed',r.ok?'success':'error');if(r.ok){this.drawer.nodejsEnabled=true;await this.load();await this.loadEnvVars();}},
     async disableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{enable:false});if(r.ok){toast('Disabled','success');this.drawer.nodejsEnabled=false;await this.load();}},
+
+    async loadEnvVars(){
+      const domain=this.drawer.site?.domain; if(!domain) return;
+      const r=await get('/api/websites/'+domain+'/env');
+      if(r.ok){
+        this.drawer.envVars=r.env||{};
+        this.drawer.envRows=Object.entries(this.drawer.envVars).map(([key,value])=>(
+          {_id:Date.now()+Math.random(), key, value, show:false}
+        ));
+      }
+    },
+
+    async saveEnvVars(){
+      const domain=this.drawer.site?.domain; if(!domain) return;
+      // Validate: no empty keys, no duplicate keys
+      const rows=(this.drawer.envRows||[]).filter(r=>r.key.trim());
+      const keys=rows.map(r=>r.key.trim().toUpperCase());
+      const dupes=keys.filter((k,i)=>keys.indexOf(k)!==i);
+      if(dupes.length){ toast('Duplicate variable name: '+dupes[0],'error'); return; }
+
+      const env={};
+      rows.forEach(r=>{ env[r.key.trim().toUpperCase()]=r.value; });
+
+      this.drawer.envSaving=true; this.drawer.envMsg='';
+      const r=await put('/api/websites/'+domain+'/env',{env});
+      this.drawer.envSaving=false;
+      this.drawer.envOk=r.ok;
+      this.drawer.envMsg=r.ok
+        ? `Saved ${r.count} variable${r.count!==1?'s':''} and restarted the app.`
+        : 'Failed: '+(r.error||'Unknown error');
+      toast(r.ok?'Environment variables saved':'Failed to save', r.ok?'success':'error');
+      if(r.ok) await this.loadEnvVars();
+    },
     async runComposer(){
       const d=this.drawer;
       if(d.composerRunning) return;
@@ -2522,7 +2566,7 @@ function ftpPage() {
 function settingsPage() {
   return {
     stab: 'none',  // 'none' = card grid visible, 'security' = security sub-section
-    panelVersion: 'v3.1.0',
+    panelVersion: 'v3.2.0',
     cfg: {panel_name:'VortexPanel', port:8888, ssl_enabled:false, auto_update:true, timezone:'UTC', panel_domain:'', security_path:''},
     system: {hostname:'', os:'', kernel:'', cpu:'', ip:'', uptime:'', timezone:'UTC', server_time:''},
     ssl: {enabled:false, type:'none', days_left:-1, expiry:'', loading:false, msg:'', ok:false, type_loading:''},

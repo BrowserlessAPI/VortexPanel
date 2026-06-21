@@ -87,7 +87,7 @@
     </div>
 
     <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:11px;color:var(--text-dim)">VortexPanel v3.1</span>
+      <span style="font-size:11px;color:var(--text-dim)">VortexPanel v3.2</span>
       <a href="https://github.com/BrowserlessAPI/VortexPanel" target="_blank" style="font-size:11px;color:var(--text-muted);text-decoration:none">GitHub ↗</a>
     </div>
   </div>
@@ -102,7 +102,7 @@
       <div class="logo-icon">⚡</div>
       <div>
         <div class="logo-text">VortexPanel</div>
-        <div class="logo-ver">v3.1</div>
+        <div class="logo-ver">v3.2</div>
       </div>
     </div>
 
@@ -823,6 +823,48 @@
                 <div x-show="drawer.nodejsEnabled" class="card">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px"><span class="dot dot-green"></span><span style="font-weight:600">App is active on port <span x-text="drawer.nodejsForm.port"></span></span></div>
                   <button class="btn btn-danger btn-sm" @click="disableNodejs()">Disable App</button>
+                </div>
+
+                <!-- Environment Variables -->
+                <div x-show="drawer.nodejsEnabled" class="card" style="margin-top:14px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                    <div class="card-title">🔐 Environment Variables</div>
+                    <span class="badge badge-gray" style="font-size:10px" x-text="Object.keys(drawer.envVars||{}).length+' set'"></span>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">
+                    Injected directly into the app's runtime via PM2 — never written to a <code>.env</code> file in the project directory, never exposed over HTTP, and untouched by future <code>git pull</code> or redeploys.
+                  </div>
+
+                  <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+                    <template x-for="(row,i) in drawer.envRows" :key="row._id">
+                      <div style="display:flex;gap:8px;align-items:center">
+                        <input class="form-input" x-model="row.key" placeholder="VARIABLE_NAME"
+                               style="flex:1;font-family:var(--font-mono);font-size:12px;text-transform:uppercase" />
+                        <span style="color:var(--text-muted)">=</span>
+                        <input class="form-input" :type="row.show?'text':'password'" x-model="row.value" placeholder="value"
+                               style="flex:2;font-family:var(--font-mono);font-size:12px" />
+                        <button class="btn btn-ghost btn-xs" @click="row.show=!row.show" type="button" :title="row.show?'Hide':'Show'">
+                          <span x-text="row.show?'🙈':'👁'"></span>
+                        </button>
+                        <button class="btn btn-danger btn-xs" @click="drawer.envRows.splice(i,1)" type="button">✕</button>
+                      </div>
+                    </template>
+                  </div>
+
+                  <div x-show="(drawer.envRows||[]).length===0" style="text-align:center;padding:16px;color:var(--text-muted);font-size:12px">
+                    No environment variables yet. Add your API keys, database URLs, and config below.
+                  </div>
+
+                  <div style="display:flex;gap:8px;margin-top:10px">
+                    <button class="btn btn-ghost btn-sm" @click="drawer.envRows.push({_id:Date.now()+Math.random(),key:'',value:'',show:false})" type="button">+ Add Variable</button>
+                    <button class="btn btn-primary btn-sm" :disabled="drawer.envSaving" @click="saveEnvVars()" style="margin-left:auto">
+                      <span x-show="drawer.envSaving">Saving &amp; restarting…</span>
+                      <span x-show="!drawer.envSaving">Save &amp; Restart App</span>
+                    </button>
+                  </div>
+                  <div x-show="drawer.envMsg" style="margin-top:10px;font-size:11px;padding:7px 10px;border-radius:var(--radius)"
+                       :style="drawer.envOk?'background:rgba(16,185,129,.08);color:var(--green)':'background:rgba(239,68,68,.08);color:var(--red)'"
+                       x-text="drawer.envMsg"></div>
                 </div>
               </div>
 
