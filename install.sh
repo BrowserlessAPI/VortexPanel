@@ -82,7 +82,7 @@ else
 fi
 
 # Create directories
-mkdir -p /opt/vortexpanel/{backups,logs}
+mkdir -p /opt/vortexpanel/{backups,logs,sessions}
 mkdir -p /var/log/vortexpanel
 mkdir -p /etc/nginx/vortex 2>/dev/null || true
 

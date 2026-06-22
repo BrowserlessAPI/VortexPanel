@@ -11,6 +11,12 @@ try:
 except ImportError:
     _compress_available = False
 
+try:
+    from flask_session import Session as FlaskSession
+    _server_session_available = True
+except ImportError:
+    _server_session_available = False
+
 from panel.routes.auth      import auth_bp
 from panel.routes.dashboard import dashboard_bp
 from panel.routes.websites_core import websites_bp
@@ -90,6 +96,22 @@ def create_app():
     app.config['SESSION_COOKIE_HTTPONLY']    = True
     app.config['SESSION_COOKIE_SAMESITE']    = 'Lax'
     # Don't force Secure flag — panel may run HTTP; let admin configure HTTPS
+
+    # ── Server-side sessions (survives gunicorn restarts / nginx reloads) ─────
+    # flask-session stores session data in files on disk; the cookie only holds
+    # the session ID. This means:
+    #   1. Sessions are NOT lost when gunicorn restarts or workers are recycled.
+    #   2. No multi-worker race condition on secret-key generation at boot.
+    #   3. Sessions can be individually invalidated server-side (logout).
+    _SESSION_DIR = '/opt/vortexpanel/sessions'
+    if _server_session_available:
+        os.makedirs(_SESSION_DIR, exist_ok=True)
+        app.config['SESSION_TYPE']              = 'filesystem'
+        app.config['SESSION_FILE_DIR']          = _SESSION_DIR
+        app.config['SESSION_FILE_THRESHOLD']    = 500      # max session files kept
+        app.config['SESSION_USE_SIGNER']        = True     # signs session ID cookie
+        app.config['SESSION_PERMANENT']         = True
+        FlaskSession(app)
 
     # ── Gzip compression ──────────────────────────────────────────────────────
     if _compress_available:

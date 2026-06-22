@@ -365,7 +365,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             '    DirectoryIndex index.php\n'
             '    Require all granted\n'
             '  </Directory>\n'
-            '  <FilesMatch \.php$>\n'
+            '  <FilesMatch \\.php$>\n'
             '    SetHandler "proxy:unix:$SOCK|fcgi://localhost"\n'
             '  </FilesMatch>\n'
             '</VirtualHost>\n'
@@ -402,7 +402,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'versions':[
             {'label':'1.1.0 (Latest Stable)', 'value':'latest'},
         ],
-        'install':'''apt-get install -y python3 python3-pip curl gzip && \
+        'install':r'''apt-get install -y python3 python3-pip curl gzip && \
 F2B_VER=$(curl -s https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
 F2B_VER=${F2B_VER:-1.1.0} && \
 curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
@@ -418,7 +418,7 @@ systemctl enable fail2ban && systemctl start fail2ban''',
         'versions':[
             {'label':'1.4.2 (Latest Stable)', 'value':'latest'},
         ],
-        'install':'''apt-get install -y curl && \
+        'install':r'''apt-get install -y curl && \
 CLAM_VER=$(curl -s https://api.github.com/repos/Cisco-Talos/clamav/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
 CLAM_VER=${CLAM_VER:-clamav-1.4.2} && \
 CLAM_NUM=${CLAM_VER#clamav-} && \
@@ -1062,7 +1062,7 @@ def get_module_settings(mod_id):
         log_path = '/usr/local/lsws/logs/error.log'
         logs = sh(f'tail -100 {log_path}') if os.path.exists(log_path) else 'No logs'
         def lsget(key):
-            return sh(f"grep -oP '{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
+            return sh(rf"grep -oP '{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
         optimization = {
             'maxConnections':    lsget('maxConnections') or '10000',
             'maxSSLConnections': lsget('maxSSLConnections') or '10000',
@@ -1212,9 +1212,9 @@ def get_module_settings(mod_id):
         logs = sh('tail -100 /var/log/php' + sel + '-fpm.log 2>/dev/null') or \
                sh('journalctl -u php' + sel + '-fpm -n 80') or 'No logs'
         def ini_get(key):
-            return sh('grep -oP "^' + key + '\s*=\s*\K.*" ' + ini_path + ' 2>/dev/null | head -1').strip() or ''
+            return sh('grep -oP "^' + key + r'\s*=\s*\K.*" ' + ini_path + ' 2>/dev/null | head -1').strip() or ''
         def fpm_get(key):
-            return sh('grep -oP "^' + key + '\s*=\s*\K.*" ' + fpm_conf + ' 2>/dev/null | head -1').strip() or ''
+            return sh('grep -oP "^' + key + r'\s*=\s*\K.*" ' + fpm_conf + ' 2>/dev/null | head -1').strip() or ''
         config = {
             'short_open_tag':      ini_get('short_open_tag') or 'On',
             'max_execution_time':  ini_get('max_execution_time') or '300',
@@ -1402,7 +1402,7 @@ def get_module_settings(mod_id):
         logs = sh(f'tail -100 {log_path} 2>/dev/null') or sh('journalctl -u caddy -n 100 --no-pager') or 'No logs'
         # Parse global options from Caddyfile
         def cget(key):
-            return sh(f"grep -oP '^\s*{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
+            return sh(rf"grep -oP '^\s*{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
         global_opts = {
             'email':      cget('email') or '',
             'http_port':  cget('http_port') or '80',
