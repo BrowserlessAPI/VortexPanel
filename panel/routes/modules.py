@@ -1722,103 +1722,103 @@ def save_module_settings(mod_id):
 
     elif action == 'switch_version':
         ver = d.get('version', '')
-        if mod_id == 'redis' and ver:
-            # Stop redis, install specific version from redis.io, restart
+        if not ver:
+            return jsonify({'ok': False, 'error': 'No version specified'}), 400
+
+        # Build the switch script per module
+        script = None
+        ver_check_cmd = None  # command to get new version string after switch
+
+        if mod_id == 'redis':
             script = (
-                'systemctl stop redis-server 2>/dev/null || systemctl stop redis 2>/dev/null; '
+                'systemctl stop redis-server 2>/dev/null || systemctl stop redis 2>/dev/null && '
                 'curl -fsSL https://packages.redis.io/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && '
                 'echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && '
                 'apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && '
-                'apt-get install -y --allow-downgrades redis-server=' + ver + '.* 2>/dev/null || '
-                'apt-get install -y redis-server && '
+                f'apt-get install -y --allow-downgrades redis-server={ver}.* 2>/dev/null || apt-get install -y redis-server && '
                 'systemctl start redis-server 2>/dev/null || systemctl start redis'
             )
-            out = sh(script, t=120)
-            new_ver = sh("redis-server --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
-        elif mod_id in ('pure-ftpd', 'pure_ftpd') and ver:
-            out = sh('apt-get install -y pure-ftpd=' + ver + ' 2>/dev/null || apt-get install -y pure-ftpd 2>&1', t=60)
-            return jsonify({'ok': True, 'output': out})
-        elif mod_id == 'mariadb' and ver:
+            ver_check_cmd = "redis-server --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'"
+
+        elif mod_id in ('pure-ftpd', 'pure_ftpd'):
+            script = f'apt-get install -y pure-ftpd={ver} 2>/dev/null || apt-get install -y pure-ftpd'
+            ver_check_cmd = "pure-ftpd --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
+
+        elif mod_id == 'mariadb':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
-                'systemctl stop mariadb 2>/dev/null; '
-                'curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version=' + ver + ' && '
+                'systemctl stop mariadb 2>/dev/null && '
+                f'curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} && '
                 'apt-get update -qq && '
                 'apt-get install -y mariadb-server && '
                 'systemctl start mariadb'
             )
-            out = sh(script, t=300)
-            new_ver = sh("mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+            ver_check_cmd = "mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
 
-        elif mod_id == 'postgresql' and ver:
+        elif mod_id == 'mysql':
+            script = (
+                'export DEBIAN_FRONTEND=noninteractive && '
+                f'apt-get install -y --allow-downgrades mysql-server={ver}* 2>/dev/null || '
+                'apt-get install -y mysql-server && '
+                'systemctl restart mysql'
+            )
+            ver_check_cmd = "mysql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
+
+        elif mod_id == 'postgresql':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
                 'rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
                 'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
                 'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
-                'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && '
+                f'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && '
                 'apt-get update -qq && '
-                'apt-get install -y postgresql-' + ver + ' && '
+                f'apt-get install -y postgresql-{ver} && '
                 'systemctl restart postgresql'
             )
-            out = sh(script, t=300)
-            new_ver = sh("psql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+' | head -1") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+            ver_check_cmd = "psql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+' | head -1"
 
-        elif mod_id == 'mongodb' and ver:
+        elif mod_id == 'mongodb':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
-                'systemctl stop mongod 2>/dev/null; '
-                'rm -f /usr/share/keyrings/mongodb-server-*.gpg /etc/apt/sources.list.d/mongodb*.list && '
-                'curl -fsSL https://www.mongodb.org/static/pgp/server-' + ver + '.asc -o /tmp/mongo.asc && '
-                'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-' + ver + '.gpg /tmp/mongo.asc && '
-                'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-' + ver + '.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/' + ver + ' multiverse" > /etc/apt/sources.list.d/mongodb-org-' + ver + '.list && '
+                'systemctl stop mongod 2>/dev/null && '
+                f'rm -f /usr/share/keyrings/mongodb-server-*.gpg /etc/apt/sources.list.d/mongodb*.list && '
+                f'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.asc && '
+                f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.asc && '
+                f'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
                 'apt-get update -qq && '
                 'apt-get install -y mongodb-org && '
                 'systemctl start mongod'
             )
-            out = sh(script, t=300)
-            new_ver = sh("mongod --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+            ver_check_cmd = "mongod --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
 
-        elif mod_id == 'apache2' and ver:
+        elif mod_id == 'apache2':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
-                'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
+                'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null && '
                 'apt-get update -qq && '
-                'apt-get install -y --allow-downgrades apache2=' + ver + '-* 2>/dev/null || '
-                'apt-get install -y apache2 && '
+                f'apt-get install -y --allow-downgrades apache2={ver}-* 2>/dev/null || apt-get install -y apache2 && '
                 'systemctl restart apache2'
             )
-            out = sh(script, t=180)
-            new_ver = sh("apache2 -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+            ver_check_cmd = "apache2 -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
 
-        elif mod_id == 'nodejs' and ver:
+        elif mod_id == 'nodejs':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
-                'curl -fsSL https://deb.nodesource.com/setup_' + ver + '.x | bash - && '
+                f'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && '
                 'apt-get install -y nodejs'
             )
-            out = sh(script, t=180)
-            new_ver = sh("node --version 2>/dev/null") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+            ver_check_cmd = "node --version 2>/dev/null"
 
-        elif mod_id == 'bind9' and ver:
+        elif mod_id == 'bind9':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
                 + ('add-apt-repository -y ppa:isc/bind && apt-get update -qq && ' if ver == '9.20' else 'apt-get update -qq && ') +
                 'apt-get install -y bind9 bind9utils && '
                 '(systemctl restart named 2>/dev/null || systemctl restart bind9 2>/dev/null)'
             )
-            out = sh(script, t=180)
-            new_ver = sh("named -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
+            ver_check_cmd = "named -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
 
-        elif mod_id == 'nginx' and ver:
-            # Switch nginx repo based on channel (stable/mainline)
+        elif mod_id == 'nginx':
             repo = 'http://nginx.org/packages/ubuntu' if ver == 'stable' else 'http://nginx.org/packages/mainline/ubuntu'
             script = (
                 f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} $(lsb_release -cs) nginx" '
@@ -1827,22 +1827,48 @@ def save_module_settings(mod_id):
                 'apt-get install -y nginx && '
                 'systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null'
             )
-            out = sh(script, t=120)
-            new_ver = sh("nginx -v 2>&1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
-        elif mod_id == 'openlitespeed' and ver:
+            ver_check_cmd = "nginx -v 2>&1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'"
+
+        elif mod_id == 'openlitespeed':
             script = (
-                'systemctl stop lsws 2>/dev/null; '
+                'systemctl stop lsws 2>/dev/null && '
                 'wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && '
                 '(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && '
-                f'apt-get install -y --allow-downgrades openlitespeed={ver} 2>/dev/null || '
-                'apt-get install -y openlitespeed && '
+                f'apt-get install -y --allow-downgrades openlitespeed={ver} 2>/dev/null || apt-get install -y openlitespeed && '
                 'systemctl start lsws'
             )
-            out = sh(script, t=120)
-            new_ver = sh("cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
-            return jsonify({'ok': True, 'output': out, 'version': new_ver})
-        return jsonify({'ok': False, 'error': 'Version switch not supported for ' + mod_id})
+            ver_check_cmd = "cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'"
+
+        if not script:
+            return jsonify({'ok': False, 'error': f'Version switch not supported for {mod_id}'}), 400
+
+        # Run as a streaming job — same system as install/uninstall
+        job_id = str(uuid.uuid4())[:8]
+        _jobs[job_id] = {'status':'running','lines':[],'done':False,'success':False,'installed':True}
+
+        def run_switch():
+            mod_name = mod['name'] if mod else mod_id
+            _jobs[job_id]['lines'].append(f'[VortexPanel] Switching {mod_name} to version {ver}...')
+            proc = subprocess.Popen(
+                f'DEBIAN_FRONTEND=noninteractive {script} 2>&1',
+                shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+            )
+            for line in proc.stdout:
+                _jobs[job_id]['lines'].append(line.rstrip())
+            proc.wait()
+            success = proc.returncode == 0
+            new_ver = sh(ver_check_cmd) if ver_check_cmd else ver
+            _jobs[job_id]['lines'].append(
+                f'[VortexPanel] {"✓ Switched to " + new_ver + " successfully!" if success else "⚠ Switch may have failed — check output above."}'
+            )
+            _jobs[job_id].update({
+                'done': True, 'success': success, 'status': 'done',
+                'installed': True, 'installedVer': new_ver,
+            })
+            panel_cache.invalidate('modules_list')
+
+        threading.Thread(target=run_switch, daemon=True).start()
+        return jsonify({'ok': True, 'job_id': job_id, 'action': 'switch_version'})
 
     elif action == 'setup_private_dns':
         networks = d.get('networks', '127.0.0.1;')
