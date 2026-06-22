@@ -245,6 +245,7 @@ function rootApp() {
 function dashboardPage() {
   return {
     stats:{cpu:0,ram:0,disk:0,uptime:'',load:'',ramTotal:'',diskTotal:'',network:''},
+    wsConflict:{conflict:false, active:[], message:''},
     services:[], quickActions:[
       {icon:'🌐',label:'Manage Websites',page:'websites'},
       {icon:'🗄',label:'Manage Databases',page:'databases'},
@@ -2470,7 +2471,8 @@ function mailPage() {
     showResetPass:false, resetPassTarget:'', resetPassValue:'',
     tab:'mailboxes', dkimDomain:'', dkimRecord:'', dkimLoading:false, queueOutput:'', queueLoading:false,
 
-    forwardingRules:[], showAddForward:false, forwardForm:{source:'',destination:''}, logFilter:'mail', mailLogOutput:'',
+    forwardingRules:[], showAddForward:false, forwardForm:{source:'',destination:''},
+    logFilter:'mail', logLines:'100', logSearch:'', mailLogOutput:'', filteredMailLog:'',
     async init() { await this.loadStatus(); await this.loadDomains(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
 
     async loadStatus() {
@@ -2533,8 +2535,13 @@ function mailPage() {
       if (r.ok) { toast('Removed','success'); await this.loadForwarding(); }
     },
     async loadMailLogs() {
-      const r = await get('/api/mail/logs?which='+this.logFilter);
-      if (r.ok) this.mailLogOutput = r.lines || 'No log entries';
+      const r = await get('/api/mail/logs?which='+this.logFilter+'&lines='+(this.logLines||'100'));
+      if (r.ok) { this.mailLogOutput = r.lines || 'No log entries'; this.filterMailLogs(); }
+    },
+    filterMailLogs() {
+      const q = (this.logSearch||'').toLowerCase().trim();
+      if (!q) { this.filteredMailLog = ''; return; }
+      this.filteredMailLog = (this.mailLogOutput||'').split('\n').filter(l=>l.toLowerCase().includes(q)).join('\n') || 'No matching entries.';
     },
     async loadDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await get('/api/mail/dkim/'+this.dkimDomain); this.dkimLoading=false; this.dkimRecord=r.ok?r.record:''; },
     async genDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await post('/api/mail/dkim/'+this.dkimDomain,{}); this.dkimLoading=false; if(r.ok){this.dkimRecord=r.record;toast('DKIM generated','success');}else toast(r.error||'Failed','error'); },
@@ -2918,6 +2925,8 @@ function monitoringPage() {
           this.stats.disk    = s.disk || 0;
           this.stats.diskStr = '';
         }
+        // Webserver conflict
+        this.wsConflict = s.webserver_conflict || {conflict:false, active:[]};
       }
     },
   };

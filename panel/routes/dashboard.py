@@ -75,13 +75,33 @@ def _get_stats():
             if state in ('active', 'inactive', 'failed'): out[svc] = state
         return {k: v for k, v in out.items() if v}
 
-    cpu_result = [0.0]; disk_result = [(0,0)]; svc_result = [{}]
+    def _webserver_conflicts():
+        """Detect multiple webservers running simultaneously."""
+        webservers = {
+            'nginx':         'systemctl is-active nginx 2>/dev/null',
+            'apache2':       'systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null',
+            'openlitespeed': 'systemctl is-active lsws 2>/dev/null',
+            'caddy':         'systemctl is-active caddy 2>/dev/null',
+        }
+        active = []
+        for name, cmd in webservers.items():
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if 'active' in result.stdout:
+                active.append(name)
+        if len(active) > 1:
+            return {'conflict': True, 'active': active,
+                    'message': f"Multiple webservers running simultaneously: {', '.join(active)}. "
+                               f"This causes port 80/443 conflicts. Stop all but one."}
+        return {'conflict': False, 'active': active}
+
+    cpu_result = [0.0]; disk_result = [(0,0)]; svc_result = [{}]; ws_result = [{}]
     def _get_cpu():  cpu_result[0]  = _proc_stat()
     def _get_disk(): disk_result[0] = _disk()
     def _get_svcs(): svc_result[0]  = _services()
+    def _get_ws():   ws_result[0]   = _webserver_conflicts()
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        for f in [ex.submit(_get_cpu), ex.submit(_get_disk), ex.submit(_get_svcs)]:
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for f in [ex.submit(_get_cpu), ex.submit(_get_disk), ex.submit(_get_svcs), ex.submit(_get_ws)]:
             f.result()
 
     ram_total, ram_used   = _proc_mem()
@@ -95,6 +115,7 @@ def _get_stats():
         'uptime': _proc_uptime(),
         'services': svc_result[0],
         'net': {'rx': rx, 'tx': tx},
+        'webserver_conflict': ws_result[0],
     }
 
 

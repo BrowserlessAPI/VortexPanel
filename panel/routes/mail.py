@@ -218,16 +218,22 @@ def del_forwarding():
 def mail_logs():
     if not req(): return jsonify({'ok':False}),401
     which = request.args.get('which','mail')
-    files = {
-        'mail':    '/var/log/mail.log',
-        'postfix': '/var/log/mail.log',
-        'dovecot': '/var/log/mail.log',
-    }
-    path = files.get(which, '/var/log/mail.log')
-    if not os.path.exists(path):
-        return jsonify({'ok':True, 'lines':'Log file not found: '+path})
+    try:
+        lines = max(50, min(1000, int(request.args.get('lines', 200))))
+    except: lines = 200
+    # Support both Debian (/var/log/mail.log) and RHEL (/var/log/maillog) paths
+    log_candidates = ['/var/log/mail.log', '/var/log/maillog']
+    path = next((p for p in log_candidates if os.path.exists(p)), None)
+    if not path:
+        # Try journalctl as fallback (systemd-based distros)
+        svc = 'postfix' if which == 'postfix' else 'dovecot' if which == 'dovecot' else ''
+        if svc:
+            out = sh(f'journalctl -u {svc} -n {lines} --no-pager 2>/dev/null')
+        else:
+            out = sh(f'journalctl -n {lines} --no-pager 2>/dev/null | grep -iE "postfix|dovecot|smtp|imap"')
+        return jsonify({'ok':True, 'lines': out or 'No log entries found (journalctl fallback)', 'source':'journalctl'})
     grep = ''
     if which == 'postfix': grep = " | grep -i postfix"
     elif which == 'dovecot': grep = " | grep -i dovecot"
-    out = sh(f'tail -n 200 {path}{grep} 2>/dev/null')
-    return jsonify({'ok':True, 'lines':out or 'No log entries found'})
+    out = sh(f'tail -n {lines} {path}{grep} 2>/dev/null')
+    return jsonify({'ok':True, 'lines': out or 'No log entries found', 'source': path})
