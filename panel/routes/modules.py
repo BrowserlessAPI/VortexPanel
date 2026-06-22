@@ -1630,6 +1630,7 @@ def save_module_settings(mod_id):
     d = request.get_json() or {}
     action = d.get('action', 'save_config')
     ver = d.get('version', '')
+    mod = _get_mod(mod_id)  # needed by switch_version closure
 
     if action == 'get_ver_data' and ver:
         import os as _os
