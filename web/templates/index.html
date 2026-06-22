@@ -2220,7 +2220,9 @@
               <template x-for="m in filtered()" :key="m.id">
                 <tr :style="m.installed?'background:rgba(16,185,129,.03)':''">
                   <!-- Icon -->
-                  <td style="text-align:center;font-size:22px;padding:10px 8px" x-text="m.icon"></td>
+                  <td style="text-align:center;padding:10px 8px">
+                    <img :src="m.icon" :alt="m.name" style="width:28px;height:28px;object-fit:contain" onerror="this.style.display='none';this.nextElementSibling.style.display='inline';"><span style="display:none;font-size:22px">📦</span>
+                  </td>
 
                   <!-- Name + Category -->
                   <td>
@@ -2389,7 +2391,7 @@
                    document.addEventListener('mousemove',mm);
                    document.addEventListener('mouseup',mu);
                  })(event)">
-              <span style="font-size:22px" x-text="settingsModal.mod?.icon"></span>
+              <img :src="settingsModal.mod?.icon" :alt="settingsModal.mod?.name" style="width:26px;height:26px;object-fit:contain" onerror="this.style.display='none'">
               <div style="flex:1;min-width:0">
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                   <div style="font-weight:700;font-size:15px" x-text="settingsModal.mod?.name+' Settings'"></div>
