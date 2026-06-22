@@ -1134,10 +1134,38 @@ def get_module_settings(mod_id):
         try:
             with open(conf_path) as f: conf_content = f.read()
         except: conf_content = ''
-        logs = sh('journalctl -u mariadb -n 80') or 'No logs'
-        port = sh("mysql -e 'SHOW VARIABLES LIKE \"port\"' 2>/dev/null | awk 'NR==2{print $2}'") or '3306'
+        logs     = sh('journalctl -u mariadb -n 80') or 'No logs'
+        log_path = '/var/log/mysql/error.log'
+        port     = sh(r"mysql -e 'SHOW VARIABLES LIKE \"port\"' 2>/dev/null | awk 'NR==2{print $2}'") or '3306'
+        datadir  = sh(r"mysql -e 'SHOW VARIABLES LIKE \"datadir\"' 2>/dev/null | awk 'NR==2{print $2}'") or '/var/lib/mysql'
+        def mvar(v): return sh(f"mysql -e 'SHOW VARIABLES LIKE \"{v}\"' 2>/dev/null | awk 'NR==2{{print $2}}'") or ''
+        def mstat(v): return sh(f"mysql -e 'SHOW STATUS LIKE \"{v}\"' 2>/dev/null | awk 'NR==2{{print $2}}'") or ''
+        current_status = {
+            'uptime':            mstat('Uptime'),
+            'queries':           mstat('Queries'),
+            'slow_queries':      mstat('Slow_queries'),
+            'threads_connected': mstat('Threads_connected'),
+            'connections':       mstat('Connections'),
+        }
+        optimization = {
+            'key_buffer_size':         mvar('key_buffer_size') or '8M',
+            'tmp_table_size':          mvar('tmp_table_size') or '16M',
+            'innodb_buffer_pool_size': mvar('innodb_buffer_pool_size') or '128M',
+            'innodb_log_buffer_size':  mvar('innodb_log_buffer_size') or '8M',
+            'sort_buffer_size':        mvar('sort_buffer_size') or '2M',
+            'read_buffer_size':        mvar('read_buffer_size') or '128K',
+            'thread_cache_size':       mvar('thread_cache_size') or '10',
+            'max_connections':         mvar('max_connections') or '151',
+            'table_open_cache':        mvar('table_open_cache') or '2000',
+        }
+        slow_log_path = mvar('slow_query_log_file') or '/var/log/mysql/mariadb-slow.log'
+        slow_log = sh(f'tail -100 {slow_log_path} 2>/dev/null') or 'Slow query log is empty or not enabled.'
         return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'port':port, 'versions': [{'label': '11.7 (Latest)', 'value': '11.7'}, {'label': '11.4 (LTS)', 'value': '11.4'}, {'label': '10.11 (LTS)', 'value': '10.11'}, {'label': '10.6 (LTS)', 'value': '10.6'}]})
+            'conf_path':conf_path,'conf_content':conf_content,
+            'logs':logs,'log_path':log_path,
+            'port':port,'datadir':datadir,
+            'current_status':current_status,'optimization':optimization,'slow_log':slow_log,
+            'versions':[{'label':'11.7 (Latest)','value':'11.7'},{'label':'11.4 (LTS)','value':'11.4'},{'label':'10.11 (LTS)','value':'10.11'},{'label':'10.6 (LTS)','value':'10.6'}]})
 
     elif mod_id == 'redis':
         status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis') or 'inactive'
@@ -1666,6 +1694,29 @@ def save_module_settings(mod_id):
                 with open(conf, 'w') as f: f.write(content)
                 sh('nginx -t && systemctl reload nginx')
                 return jsonify({'ok': True})
+            except Exception as e:
+                return jsonify({'ok': False, 'error': str(e)})
+
+        if mod_id in ('mysql', 'mariadb'):
+            # Determine cnf path
+            if mod_id == 'mariadb':
+                cnf_paths = ['/etc/mysql/mariadb.conf.d/50-server.cnf', '/etc/my.cnf', '/etc/mysql/my.cnf']
+            else:
+                cnf_paths = ['/etc/mysql/mysql.conf.d/mysqld.cnf', '/etc/my.cnf', '/etc/mysql/my.cnf']
+            cnf = next((p for p in cnf_paths if os.path.exists(p)), cnf_paths[-1])
+            import re as _re
+            try:
+                with open(cnf) as f: c = f.read()
+                for key, val in opts.items():
+                    if not val: continue
+                    # Update if exists, else append under [mysqld]
+                    if _re.search(rf'^\s*{key}\s*=', c, flags=_re.MULTILINE):
+                        c = _re.sub(rf'^(\s*{key}\s*=\s*)\S+', rf'\g<1>{val}', c, flags=_re.MULTILINE)
+                    else:
+                        c = _re.sub(r'(\[mysqld\])', rf'\1\n{key} = {val}', c, count=1)
+                with open(cnf, 'w') as f: f.write(c)
+                sh(f'systemctl restart {mod_id} 2>&1')
+                return jsonify({'ok': True, 'message': 'Optimization saved and MariaDB restarted.'})
             except Exception as e:
                 return jsonify({'ok': False, 'error': str(e)})
 
