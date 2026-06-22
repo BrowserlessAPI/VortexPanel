@@ -16,7 +16,7 @@ update_bp = Blueprint('update', __name__)
 def req(): return 'user' in session
 
 GITHUB_REPO   = 'BrowserlessAPI/Vortexpanel'
-CURRENT_VERSION = 'v3.0.0'
+CURRENT_VERSION = 'v3.3.0'
 VERSION_FILE  = '/opt/vortexpanel/version.txt'
 INSTALL_DIR   = '/opt/vortexpanel'
 REPO_DIR      = '/root/Vortexpanel'
