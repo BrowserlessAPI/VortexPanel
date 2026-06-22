@@ -279,6 +279,8 @@ function websitesPage() {
       confContent:'',confPath:'',
       sslTab:'le',sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',
       http3Enabled:false, http3Capable:false, http3NginxVersion:'',
+      http3Webserver:'nginx', http3Support:'manual', http3Message:'',
+      http3UdpOpen:false, http3UpgradeNeeded:false, http3Upgrading:false,
       phpVer:'8.3',
       proxies:[],showAddProxy:false,
       proxyForm:{name:'',path:'/',target:'',sent_domain:'$host'},
@@ -362,7 +364,16 @@ function websitesPage() {
         const r=await get('/api/websites/'+domain+'/ssl/info');
         if(r.ok)d.sslInfo=r.info;
         const r2=await get('/api/websites/'+domain+'/http3');
-        if(r2.ok){ d.http3Enabled=r2.enabled; d.http3Capable=r2.nginx_supports_http3; d.http3NginxVersion=r2.nginx_version; }
+        if(r2.ok){
+          d.http3Enabled        = r2.enabled;
+          d.http3Capable        = r2.nginx_supports_http3 ?? (r2.http3_support === 'auto');
+          d.http3NginxVersion   = r2.nginx_version || '';
+          d.http3Webserver      = r2.webserver || 'nginx';
+          d.http3Support        = r2.http3_support || 'manual';
+          d.http3Message        = r2.message || '';
+          d.http3UdpOpen        = r2.udp_443_open ?? false;
+          d.http3UpgradeNeeded  = r2.upgrade_needed ?? false;
+        }
       }
       else if(d.tab==='proxy'){const r=await get('/api/websites/'+domain+'/proxy');if(r.ok)d.proxies=r.proxies;}
       else if(d.tab==='nodejs'){
@@ -429,8 +440,27 @@ function websitesPage() {
     },
     async toggleHttp3(enable){
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/http3',{enable});
-      if(r.ok){ this.drawer.http3Enabled=enable; toast(enable?'HTTP/3 enabled':'HTTP/3 disabled','success'); }
-      else toast(r.error||'Failed','error');
+      if(r.ok){
+        this.drawer.http3Enabled=enable;
+        this.drawer.http3UdpOpen=r.udp_443?.length>0 || this.drawer.http3UdpOpen;
+        toast(r.message||(enable?'HTTP/3 enabled':'HTTP/3 disabled'),'success');
+      } else {
+        toast(r.error||'Failed','error');
+      }
+    },
+    async upgradeNginxMainline(){
+      this.drawer.http3Upgrading=true;
+      const r=await post('/api/nginx/upgrade-mainline',{});
+      this.drawer.http3Upgrading=false;
+      if(r.ok){
+        this.drawer.http3Capable=true;
+        this.drawer.http3UpgradeNeeded=false;
+        this.drawer.http3NginxVersion=r.nginx_version||'';
+        this.drawer.http3UdpOpen=true;
+        toast(r.message||'nginx upgraded to mainline!','success');
+      } else {
+        toast(r.error||'Upgrade failed','error');
+      }
     },
     async savePhpVer(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/php',{version:this.drawer.phpVer});toast(r.ok?'PHP applied':'Failed',r.ok?'success':'error');if(r.ok)await this.load();},
     async addProxy(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/proxy',this.drawer.proxyForm);if(r.ok){toast('Proxy added','success');this.drawer.showAddProxy=false;await this.loadDrawerTab();}else toast(r.error||'Failed','error');},

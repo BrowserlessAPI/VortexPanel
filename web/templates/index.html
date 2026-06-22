@@ -739,17 +739,85 @@
                 <!-- HTTP/3 (QUIC) -->
                 <div class="card">
                   <div class="card-hd">
-                    <div class="card-title">⚡ HTTP/3 (QUIC)</div>
-                    <span :class="'badge badge-'+(drawer.http3Enabled?'green':'gray')" x-text="drawer.http3Enabled?'Enabled':'Disabled'"></span>
+                    <div class="card-title">⚡ HTTP/3 / QUIC</div>
+                    <!-- Auto-on webservers -->
+                    <span x-show="drawer.http3Support==='auto'" class="badge badge-green">Always On</span>
+                    <!-- Unsupported -->
+                    <span x-show="drawer.http3Support==='unsupported'" class="badge badge-gray">Not Supported</span>
+                    <!-- nginx manual -->
+                    <span x-show="drawer.http3Support==='manual'" :class="'badge badge-'+(drawer.http3Enabled?'green':'gray')" x-text="drawer.http3Enabled?'Enabled':'Disabled'"></span>
                   </div>
-                  <div x-show="!drawer.http3Capable" style="font-size:11px;color:#92400e;background:rgba(245,158,11,.08);border-radius:var(--radius);padding:10px;margin-bottom:10px">
-                    ⚠ Your nginx (<span x-text="drawer.http3NginxVersion"></span>) doesn't include HTTP/3 support. This requires nginx 1.25+ built with QUIC — usually means installing from
-                    <a href="https://nginx.org/en/linux_packages.html#mainline" target="_blank" style="color:inherit;text-decoration:underline">nginx.org's official mainline repository</a>
-                    instead of your distro's default package.
+
+                  <!-- ── CADDY: auto, nothing to do ── -->
+                  <div x-show="drawer.http3Webserver==='caddy'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
+                    ✅ <strong>Caddy</strong> enables HTTP/3 automatically whenever SSL is active. No configuration needed.
+                    <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;font-size:11px">
+                      ⚠ UDP port 443 may be blocked in your firewall. HTTP/3 won't work until it's open.
+                      <button class="btn btn-sm" style="margin-top:6px;display:block" @click="toggleHttp3(true)">Open UDP 443</button>
+                    </div>
+                    <div x-show="drawer.http3UdpOpen" style="margin-top:6px;font-size:11px;color:var(--green)">✓ UDP 443 is open</div>
                   </div>
-                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">HTTP/3 uses QUIC over UDP for faster connection setup and better performance on lossy networks. Requires SSL to be enabled first.</div>
-                  <button class="btn btn-success btn-sm" x-show="!drawer.http3Enabled" :disabled="!drawer.http3Capable || !drawer.sslInfo" @click="toggleHttp3(true)">Enable HTTP/3</button>
-                  <button class="btn btn-danger btn-sm" x-show="drawer.http3Enabled" @click="toggleHttp3(false)">Disable HTTP/3</button>
+
+                  <!-- ── OPENLITESPEED: auto, nothing to do ── -->
+                  <div x-show="drawer.http3Webserver==='openlitespeed'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
+                    ✅ <strong>OpenLiteSpeed</strong> enables HTTP/3 by default. No configuration needed.
+                    <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;font-size:11px">
+                      ⚠ UDP port 443 is not open in your firewall. HTTP/3 requires UDP 443 in addition to TCP 443.
+                      <button class="btn btn-sm" style="margin-top:6px;display:block" @click="toggleHttp3(true)">Open UDP 443 Now</button>
+                    </div>
+                    <div x-show="drawer.http3UdpOpen" style="margin-top:6px;font-size:11px;color:var(--green)">✓ UDP 443 is open — HTTP/3 is active</div>
+                  </div>
+
+                  <!-- ── APACHE: not supported ── -->
+                  <div x-show="drawer.http3Webserver==='apache'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
+                    ❌ <strong>Apache</strong> does not have native HTTP/3 support. There is no configuration VortexPanel can apply to enable it.
+                    <div style="margin-top:6px;font-size:11px;color:var(--text-muted)">If HTTP/3 is critical, consider switching to nginx or Caddy as your web server.</div>
+                  </div>
+
+                  <!-- ── NGINX: full manual flow ── -->
+                  <div x-show="drawer.http3Webserver==='nginx'">
+
+                    <!-- Case 1: distro nginx, needs upgrade -->
+                    <div x-show="drawer.http3UpgradeNeeded" style="padding:10px;background:rgba(245,158,11,.07);border-radius:var(--radius);margin-bottom:12px">
+                      <div style="font-size:12px;font-weight:500;color:#92400e;margin-bottom:4px">⚠ nginx <span x-text="drawer.http3NginxVersion"></span> — distro build, no HTTP/3</div>
+                      <div style="font-size:11px;color:#78350f;margin-bottom:10px">
+                        Your nginx was installed from the distro's package repo and was not compiled with <code>--with-http_v3_module</code>.
+                        HTTP/3 requires the <strong>official nginx.org mainline package</strong> (1.25+).
+                        VortexPanel can upgrade this automatically — your existing vhost configs are preserved.
+                      </div>
+                      <button class="btn btn-primary btn-sm" @click="upgradeNginxMainline()" :disabled="drawer.http3Upgrading">
+                        <span x-show="!drawer.http3Upgrading">🔄 Upgrade to nginx.org Mainline</span>
+                        <span x-show="drawer.http3Upgrading">Upgrading nginx… (may take 30s)</span>
+                      </button>
+                    </div>
+
+                    <!-- Case 2: nginx too old (< 1.25), not just repo issue -->
+                    <div x-show="!drawer.http3Capable && !drawer.http3UpgradeNeeded && drawer.http3NginxVersion" style="padding:10px;background:rgba(239,68,68,.06);border-radius:var(--radius);margin-bottom:12px;font-size:11px;color:#991b1b">
+                      ❌ nginx <span x-text="drawer.http3NginxVersion"></span> is too old for HTTP/3 (requires 1.25+). Upgrade nginx manually from nginx.org.
+                    </div>
+
+                    <!-- Case 3: capable, show enable/disable -->
+                    <div x-show="drawer.http3Capable">
+                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">
+                        HTTP/3 uses QUIC over UDP — faster connection setup and better performance on mobile and lossy networks.
+                        Requires SSL to be active. Browser falls back to HTTP/2 automatically if QUIC is blocked.
+                      </div>
+
+                      <!-- UDP 443 status -->
+                      <div x-show="drawer.http3Enabled && !drawer.http3UdpOpen" style="font-size:11px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;margin-bottom:10px">
+                        ⚠ HTTP/3 is enabled in nginx config but UDP port 443 is blocked in your firewall.
+                        Browsers won't be able to connect via QUIC until UDP 443 is open.
+                        <button class="btn btn-sm" style="margin-top:6px;display:block" @click="toggleHttp3(true)">Open UDP 443</button>
+                      </div>
+                      <div x-show="drawer.http3Enabled && drawer.http3UdpOpen" style="font-size:11px;color:var(--green);margin-bottom:10px">✓ UDP 443 is open — QUIC connections will reach this server</div>
+
+                      <div style="display:flex;gap:8px">
+                        <button class="btn btn-success btn-sm" x-show="!drawer.http3Enabled" :disabled="!drawer.sslInfo" @click="toggleHttp3(true)">Enable HTTP/3</button>
+                        <button class="btn btn-danger btn-sm" x-show="drawer.http3Enabled" @click="toggleHttp3(false)">Disable HTTP/3</button>
+                        <span x-show="!drawer.sslInfo && !drawer.http3Enabled" style="font-size:11px;color:var(--text-muted);align-self:center">Enable SSL first</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
