@@ -2678,34 +2678,7 @@
                         <option :value="v.value" x-text="v.label"></option>
                       </template>
                     </select>
-                    <button class="btn btn-primary btn-sm"
-                            @click="async () => {
-                              if (!settingsModal.switchVer) { toast('Select a version first', 'error'); return; }
-                              const modName = settingsModal.mod?.name || settingsModal.mod?.id;
-                              const label   = 'Switching ' + modName + ' to v' + settingsModal.switchVer;
-                              const r = await post('/api/modules/'+settingsModal.mod.id+'/settings', {action:'switch_version', version:settingsModal.switchVer});
-                              if (r.ok && r.job_id) {
-                                settingsModal.show = false;
-                                jobModal = {show:true, title:label, lines:[], done:false, success:false, action:'switch_version', installedVer:''};
-                                const es = new EventSource('/api/modules/job/'+r.job_id);
-                                es.onmessage = (e) => {
-                                  const d = JSON.parse(e.data);
-                                  if (d.line) jobModal.lines.push(d.line);
-                                  if (d.done) {
-                                    es.close();
-                                    jobModal.done    = true;
-                                    jobModal.success = d.success;
-                                    jobModal.installedVer = d.installedVer || settingsModal.switchVer;
-                                    if (d.success) {
-                                      settingsModal.version = d.installedVer || settingsModal.switchVer;
-                                    }
-                                  }
-                                  $nextTick(() => { const t = document.querySelector('.job-terminal'); if (t) t.scrollTop = t.scrollHeight; });
-                                };
-                              } else {
-                                toast(r.error || 'Failed to start switch', 'error');
-                              }
-                            }">Switch</button>
+                    <button class="btn btn-primary btn-sm" @click="settingsSwitchVersion()">Switch</button>
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);line-height:1.7">
                     ⚠ Switching version will stop and restart the service. A live progress terminal will show the output.<br>

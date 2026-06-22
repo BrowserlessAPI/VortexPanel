@@ -2110,6 +2110,38 @@ function modulesPage() {
       toast(r.ok?'PHP version updated':'Failed: '+(r.error||''), r.ok?'success':'error');
     },
 
+    async settingsSwitchVersion() {
+      const sm = this.settingsModal;
+      if (!sm.switchVer) { toast('Select a version first','error'); return; }
+      const modName = sm.mod?.name || sm.mod?.id;
+      const label   = `Switching ${modName} to v${sm.switchVer}`;
+      const r = await post(`/api/modules/${sm.mod.id}/settings`, {
+        action: 'switch_version', version: sm.switchVer,
+      });
+      if (!r.ok) { toast(r.error || 'Failed to start switch', 'error'); return; }
+      sm.show = false;
+      this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action:'switch_version', installedVer:''};
+      const es = new EventSource(`/api/modules/job/${r.job_id}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.line) this.jobModal.lines.push(d.line);
+        if (d.done) {
+          es.close();
+          this.jobModal.done    = true;
+          this.jobModal.success = d.success;
+          this.jobModal.installedVer = d.installedVer || sm.switchVer;
+          if (d.success) sm.version = d.installedVer || sm.switchVer;
+          setTimeout(() => this.load(), 1200);
+        }
+        if (d.error) { es.close(); toast(d.error, 'error'); }
+        this.$nextTick(() => {
+          const t = document.querySelector('.job-terminal');
+          if (t) t.scrollTop = t.scrollHeight;
+        });
+      };
+      es.onerror = () => es.close();
+    },
+
     settingsTabs(modId) {
       const tabs = {
         nginx:      ['service','config','optimization','switch_version','logs'],
