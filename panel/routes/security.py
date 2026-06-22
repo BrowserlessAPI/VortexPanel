@@ -622,12 +622,24 @@ def lb_save():
     method  = d.get('method', 'roundrobin')
     domain  = d.get('domain', '_')
     port    = d.get('port', '80')
+    cookie_name = d.get('cookie_name', 'VORTEX_LB')
     if not servers: return jsonify({'ok':False,'error':'At least one server required'}), 400
 
     # Build upstream block
     method_directive = ''
     if method == 'leastconn': method_directive = '    least_conn;\n'
     if method == 'iphash':    method_directive = '    ip_hash;\n'
+    if method == 'cookie':
+        # Open-source nginx has no nginx-plus "sticky cookie" directive, but
+        # the standard `hash` directive with `consistent` minimizes
+        # redistribution when servers are added/removed — using the
+        # client's existing session cookie as the hash key gives the same
+        # practical session-affinity result without needing nginx-plus.
+        # The backend application must already be setting this cookie
+        # (e.g. PHPSESSID, JSESSIONID, or a custom session cookie name).
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', cookie_name):
+            return jsonify({'ok':False,'error':'Invalid cookie name'}), 400
+        method_directive = f'    hash $cookie_{cookie_name} consistent;\n'
 
     server_lines = '\n'.join([
         f"    server {s['address']} weight={s.get('weight',1)};"
@@ -636,8 +648,9 @@ def lb_save():
     if not server_lines:
         return jsonify({'ok':False,'error':'At least one valid server address required'}), 400
 
+    method_comment = f'cookie ({cookie_name})' if method == 'cookie' else method
     conf = f"""# VortexPanel Load Balancer — managed by VortexPanel
-# Method: {method}
+# Method: {method_comment}
 upstream vortex_backend {{
 {method_directive}{server_lines}
     keepalive 32;
@@ -687,6 +700,17 @@ server {{
             except: pass
         return jsonify({'ok':False,'error':test}), 400
     sh('systemctl reload nginx 2>/dev/null')
+
+    # Keep health-check's server list in sync if health checking is active,
+    # so newly added/removed servers are picked up without a separate step.
+    try:
+        hcfg = _load_json(LB_HEALTH_CONFIG, None)
+        if hcfg and hcfg.get('enabled'):
+            hcfg['servers'] = [s['address'] for s in servers if s.get('address')]
+            _save_json(LB_HEALTH_CONFIG, hcfg)
+    except Exception:
+        pass
+
     return jsonify({'ok':True})
 
 @security_bp.route('/api/security/loadbalancer', methods=['DELETE'])
@@ -696,3 +720,399 @@ def lb_delete():
     except: pass
     sh('systemctl reload nginx 2>/dev/null')
     return jsonify({'ok':True})
+
+
+# ── Load Balancer: shared JSON helpers ────────────────────────────────────────
+def _load_json(path, default):
+    try: return __import__('json').load(open(path))
+    except Exception: return default
+
+def _save_json(path, data):
+    import json
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    try: os.chmod(path, 0o600)
+    except Exception: pass
+
+
+# ── Load Balancer: TCP / Stream ────────────────────────────────────────────────
+LB_STREAM_DIR  = '/etc/nginx/stream.d'
+LB_STREAM_CONF = '/etc/nginx/stream.d/vortex_tcp_lb.conf'
+
+def _nginx_has_stream_module():
+    out, _, _ = sh('nginx -V 2>&1')
+    if '--with-stream' in out: return True
+    # Debian/Ubuntu ship it as a separate dynamic module package
+    return os.path.exists('/usr/lib/nginx/modules/ngx_stream_module.so') or \
+           bool(sh('find /etc/nginx/modules-enabled -name "*stream*" 2>/dev/null')[0])
+
+def _ensure_stream_block():
+    """Add a top-level `stream { include .../stream.d/*.conf; }` block to
+    nginx.conf if one doesn't already exist. Required once — TCP/stream
+    load balancing cannot live inside conf.d (that's only included from
+    within the http {} block)."""
+    os.makedirs(LB_STREAM_DIR, exist_ok=True)
+    conf_path = '/etc/nginx/nginx.conf'
+    if not os.path.exists(conf_path):
+        return False, 'nginx.conf not found'
+    content = open(conf_path).read()
+    if re.search(r'^\s*stream\s*\{', content, re.MULTILINE):
+        return True, ''
+    addition = f"\nstream {{\n    include {LB_STREAM_DIR}/*.conf;\n}}\n"
+    with open(conf_path, 'a') as f:
+        f.write(addition)
+    return True, ''
+
+@security_bp.route('/api/security/loadbalancer/tcp')
+def lb_tcp_status():
+    if not req(): return jsonify({'ok':False}), 401
+    has_module = _nginx_has_stream_module()
+    if not os.path.exists(LB_STREAM_CONF):
+        return jsonify({'ok':True,'configured':False,'servers':[],'method':'roundrobin',
+                        'stream_module_available':has_module})
+    content = open(LB_STREAM_CONF).read()
+    servers = re.findall(r'^\s*server\s+([^\s;{}]+)(?:\s+weight=(\d+))?\s*;', content, re.MULTILINE)
+    method = 'roundrobin'
+    if 'least_conn' in content: method = 'leastconn'
+    if re.search(r'\bhash\b', content): method = 'hash'
+    port_m = re.search(r'^\s*listen\s+(\d+)', content, re.MULTILINE)
+    server_list = [{'address':s[0],'weight':int(s[1]) if s[1] else 1} for s in servers]
+    return jsonify({'ok':True,'configured':True,'servers':server_list,'method':method,
+                    'port':port_m.group(1) if port_m else '', 'stream_module_available':has_module})
+
+@security_bp.route('/api/security/loadbalancer/tcp', methods=['PUT'])
+def lb_tcp_save():
+    if not req(): return jsonify({'ok':False}), 401
+    if not _nginx_has_stream_module():
+        return jsonify({'ok':False,
+            'error':"nginx's stream module isn't installed. On Debian/Ubuntu run: "
+                    "apt-get install libnginx-mod-stream — on RHEL-family: "
+                    "dnf install nginx-mod-stream — then try again."}), 400
+
+    d       = request.get_json() or {}
+    servers = d.get('servers', [])
+    method  = d.get('method', 'roundrobin')   # roundrobin | leastconn | hash (by source IP)
+    port    = d.get('port', '9000')
+    if not servers: return jsonify({'ok':False,'error':'At least one server required'}), 400
+    try:
+        port_n = int(port)
+        if not (1 <= port_n <= 65535): raise ValueError()
+    except ValueError:
+        return jsonify({'ok':False,'error':'Invalid port'}), 400
+
+    ok, err = _ensure_stream_block()
+    if not ok: return jsonify({'ok':False,'error':err}), 500
+
+    method_directive = ''
+    if method == 'leastconn': method_directive = '    least_conn;\n'
+    if method == 'hash':      method_directive = '    hash $remote_addr consistent;\n'
+
+    server_lines = '\n'.join([
+        f"    server {s['address']} weight={s.get('weight',1)};"
+        for s in servers if s.get('address')
+    ])
+    if not server_lines:
+        return jsonify({'ok':False,'error':'At least one valid server address required'}), 400
+
+    conf = f"""# VortexPanel TCP Load Balancer — managed by VortexPanel
+# Method: {method}
+upstream vortex_tcp_backend {{
+{method_directive}{server_lines}
+}}
+
+server {{
+    listen {port_n};
+    proxy_pass vortex_tcp_backend;
+    proxy_timeout 10m;
+    proxy_connect_timeout 5s;
+    proxy_next_upstream on;
+}}
+"""
+    os.makedirs(LB_STREAM_DIR, exist_ok=True)
+    existed = os.path.exists(LB_STREAM_CONF)
+    backup = open(LB_STREAM_CONF).read() if existed else None
+
+    with open(LB_STREAM_CONF, 'w') as f: f.write(conf)
+    test_out, test_err, test_rc = sh('nginx -t 2>&1')
+    test = test_out + test_err
+    if test_rc != 0 or 'failed' in test.lower():
+        if existed:
+            with open(LB_STREAM_CONF, 'w') as f: f.write(backup)
+        else:
+            try: os.unlink(LB_STREAM_CONF)
+            except: pass
+        return jsonify({'ok':False,'error':test}), 400
+    sh('systemctl reload nginx 2>/dev/null')
+
+    # Open the port in the firewall (best-effort, both UFW and firewalld)
+    sh(f'ufw allow {port_n}/tcp 2>/dev/null')
+    sh(f'firewall-cmd --add-port={port_n}/tcp --permanent 2>/dev/null; firewall-cmd --reload 2>/dev/null')
+
+    return jsonify({'ok':True})
+
+@security_bp.route('/api/security/loadbalancer/tcp', methods=['DELETE'])
+def lb_tcp_delete():
+    if not req(): return jsonify({'ok':False}), 401
+    try: os.unlink(LB_STREAM_CONF)
+    except Exception: pass
+    sh('systemctl reload nginx 2>/dev/null')
+    return jsonify({'ok':True})
+
+
+# ── Load Balancer: Active Health Checks ────────────────────────────────────────
+LB_HEALTH_CONFIG = '/opt/vortexpanel/lb_health.json'
+LB_HEALTH_STATE  = '/opt/vortexpanel/lb_health_state.json'
+LB_HEALTH_LOG    = '/opt/vortexpanel/lb_health.log'
+LB_HEALTH_SCRIPT = '/opt/vortexpanel/scripts/lb_healthcheck.py'
+LB_HEALTH_SERVICE_FILE = '/etc/systemd/system/vortex-lb-healthcheck.service'
+LB_HEALTH_SERVICE_NAME = 'vortex-lb-healthcheck'
+
+_HEALTHCHECK_SCRIPT_BODY = '''#!/usr/bin/env python3
+"""
+VortexPanel Load Balancer — active health check daemon.
+
+Open-source nginx has no built-in active health checking (that's an
+nginx-plus-only feature). This script provides the same practical
+result: it periodically probes each backend, and when one crosses the
+configured failure threshold it comments that server out of the
+upstream block, validates the new config with `nginx -t`, and reloads
+nginx — then reverses the process automatically once the backend
+recovers. Runs as a long-lived systemd service, not cron, so the
+check interval can be sub-minute.
+"""
+import json, os, re, socket, subprocess, time, urllib.request
+
+CONFIG  = "/opt/vortexpanel/lb_health.json"
+STATE   = "/opt/vortexpanel/lb_health_state.json"
+LOG     = "/opt/vortexpanel/lb_health.log"
+LB_CONF = "/etc/nginx/conf.d/loadbalancer.conf"
+
+def log(msg):
+    try:
+        with open(LOG, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\\n")
+        lines = open(LOG).readlines()
+        if len(lines) > 500:
+            with open(LOG, "w") as f:
+                f.writelines(lines[-500:])
+    except Exception:
+        pass
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+def save_json(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+def check_http(address, path, timeout):
+    try:
+        host, port = address.rsplit(":", 1)
+        url = "http://" + host + ":" + port + path
+        req = urllib.request.Request(url, headers={"User-Agent": "VortexPanel-HealthCheck"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 400
+    except Exception:
+        return False
+
+def check_tcp(address, timeout):
+    try:
+        host, port = address.rsplit(":", 1)
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+def rewrite_upstream(healthy_servers):
+    if not os.path.exists(LB_CONF):
+        return
+    content = open(LB_CONF).read()
+    new_lines = []
+    changed = False
+    for line in content.split("\\n"):
+        m = re.match(r"^(\\s*)(#\\s*)?server\\s+([^\\s;{}]+)(\\s+weight=\\d+)?\\s*;.*$", line)
+        if m:
+            indent, was_commented, addr, weight = m.group(1), m.group(2), m.group(3), m.group(4) or ""
+            is_healthy = addr in healthy_servers
+            if is_healthy and was_commented:
+                new_lines.append(indent + "server " + addr + weight + ";")
+                changed = True
+            elif not is_healthy and not was_commented:
+                new_lines.append(indent + "#server " + addr + weight + "; # VortexPanel: marked unhealthy")
+                changed = True
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+    if not changed:
+        return
+    new_content = "\\n".join(new_lines)
+    with open(LB_CONF, "w") as f:
+        f.write(new_content)
+    test = subprocess.run("nginx -t", shell=True, capture_output=True, text=True)
+    if test.returncode == 0:
+        subprocess.run("systemctl reload nginx", shell=True)
+        log("upstream updated, healthy=" + ",".join(healthy_servers))
+    else:
+        with open(LB_CONF, "w") as f:
+            f.write(content)
+        log("nginx -t failed after health-check rewrite, rolled back: " + test.stderr[:200])
+
+def run_once():
+    cfg = load_json(CONFIG, None)
+    if not cfg or not cfg.get("enabled"):
+        return
+    servers = cfg.get("servers", [])
+    if not servers:
+        return
+    state = load_json(STATE, {})
+    healthy = []
+    for addr in servers:
+        s = state.get(addr, {"fail": 0, "ok": 0, "healthy": True})
+        timeout = cfg.get("timeout_seconds", 3)
+        if cfg.get("protocol", "http") == "tcp":
+            up = check_tcp(addr, timeout)
+        else:
+            up = check_http(addr, cfg.get("check_path", "/"), timeout)
+        if up:
+            s["ok"] += 1
+            s["fail"] = 0
+            if s["ok"] >= cfg.get("healthy_threshold", 2):
+                if not s["healthy"]:
+                    log(addr + " recovered, marking HEALTHY")
+                s["healthy"] = True
+        else:
+            s["fail"] += 1
+            s["ok"] = 0
+            if s["fail"] >= cfg.get("unhealthy_threshold", 3):
+                if s["healthy"]:
+                    log(addr + " failed " + str(s["fail"]) + " checks, marking UNHEALTHY")
+                s["healthy"] = False
+        state[addr] = s
+        if s["healthy"]:
+            healthy.append(addr)
+    save_json(STATE, state)
+
+    if not healthy:
+        # Fail open: never remove every backend from rotation even if all
+        # checks fail (e.g. a network blip affecting the checker itself) —
+        # a false-positive total outage is worse than serving through an
+        # unconfirmed-healthy backend.
+        log("WARNING: all backends report unhealthy — failing open, keeping all in rotation")
+        healthy = servers
+
+    rewrite_upstream(healthy)
+
+def main():
+    log("health check daemon started")
+    while True:
+        try:
+            run_once()
+        except Exception as e:
+            log("error in check loop: " + str(e))
+        cfg = load_json(CONFIG, {})
+        time.sleep(max(5, cfg.get("interval_seconds", 10)))
+
+if __name__ == "__main__":
+    main()
+'''
+
+def _install_health_service():
+    os.makedirs(os.path.dirname(LB_HEALTH_SCRIPT), exist_ok=True)
+    with open(LB_HEALTH_SCRIPT, 'w') as f:
+        f.write(_HEALTHCHECK_SCRIPT_BODY)
+    os.chmod(LB_HEALTH_SCRIPT, 0o700)
+
+    service = f"""[Unit]
+Description=VortexPanel Load Balancer Active Health Check
+After=network.target nginx.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {LB_HEALTH_SCRIPT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+    with open(LB_HEALTH_SERVICE_FILE, 'w') as f:
+        f.write(service)
+    sh('systemctl daemon-reload')
+
+@security_bp.route('/api/security/loadbalancer/health')
+def lb_health_status():
+    if not req(): return jsonify({'ok':False}), 401
+    cfg   = _load_json(LB_HEALTH_CONFIG, {'enabled':False,'check_path':'/','protocol':'http',
+                                          'interval_seconds':10,'timeout_seconds':3,
+                                          'unhealthy_threshold':3,'healthy_threshold':2,'servers':[]})
+    state = _load_json(LB_HEALTH_STATE, {})
+    service_active, _, _ = sh(f'systemctl is-active {LB_HEALTH_SERVICE_NAME} 2>/dev/null')
+    log_tail = ''
+    if os.path.exists(LB_HEALTH_LOG):
+        try: log_tail = ''.join(open(LB_HEALTH_LOG).readlines()[-30:])
+        except Exception: pass
+    return jsonify({'ok':True, 'config':cfg, 'state':state,
+                    'service_active': service_active.strip()=='active', 'log': log_tail})
+
+@security_bp.route('/api/security/loadbalancer/health', methods=['PUT'])
+def lb_health_save():
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+
+    # Pull current LB server list automatically so health checks always
+    # match whatever's actually configured in the load balancer.
+    current = _load_json(LB_HEALTH_CONFIG, {})
+    lb = lb_status_data()
+    servers = [s['address'] for s in lb.get('servers', [])]
+
+    cfg = {
+        'enabled':              bool(d.get('enabled', False)),
+        'protocol':             d.get('protocol', 'http') if d.get('protocol') in ('http','tcp') else 'http',
+        'check_path':           d.get('check_path', '/') or '/',
+        'interval_seconds':     max(5, min(300, int(d.get('interval_seconds', 10)))),
+        'timeout_seconds':      max(1, min(30, int(d.get('timeout_seconds', 3)))),
+        'unhealthy_threshold':  max(1, min(10, int(d.get('unhealthy_threshold', 3)))),
+        'healthy_threshold':    max(1, min(10, int(d.get('healthy_threshold', 2)))),
+        'servers':              servers,
+    }
+    _save_json(LB_HEALTH_CONFIG, cfg)
+
+    if not os.path.exists(LB_HEALTH_SCRIPT):
+        _install_health_service()
+
+    if cfg['enabled']:
+        sh(f'systemctl enable {LB_HEALTH_SERVICE_NAME} 2>/dev/null')
+        sh(f'systemctl restart {LB_HEALTH_SERVICE_NAME} 2>/dev/null')
+    else:
+        sh(f'systemctl stop {LB_HEALTH_SERVICE_NAME} 2>/dev/null')
+        # Restore any servers that were commented out, since checking is now off
+        if os.path.exists(LB_CONF):
+            content = open(LB_CONF).read()
+            restored = re.sub(r'#server ([^\s;{}]+)(\s+weight=\d+)?; # VortexPanel: marked unhealthy',
+                              r'server \1\2;', content)
+            if restored != content:
+                with open(LB_CONF, 'w') as f: f.write(restored)
+                out, err, rc = sh('nginx -t 2>&1')
+                if rc == 0: sh('systemctl reload nginx 2>/dev/null')
+
+    return jsonify({'ok':True, 'config':cfg})
+
+
+def lb_status_data():
+    """Internal helper — same logic as lb_status() but returns plain dict
+    for reuse by other routes instead of a Flask Response."""
+    if not os.path.exists(LB_CONF):
+        return {'configured':False,'servers':[],'method':'roundrobin'}
+    content = open(LB_CONF).read()
+    servers = re.findall(r'^\s*server\s+([^\s;{}]+)(?:\s+weight=(\d+))?\s*;', content, re.MULTILINE)
+    method = 'roundrobin'
+    if 'least_conn' in content: method = 'leastconn'
+    if 'ip_hash'    in content: method = 'iphash'
+    server_list = [{'address':s[0],'weight':int(s[1]) if s[1] else 1} for s in servers]
+    return {'configured':True,'servers':server_list,'method':method}

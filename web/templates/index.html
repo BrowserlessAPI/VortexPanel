@@ -719,11 +719,27 @@
                 </div>
 
                 <!-- Manual SSL -->
-                <div class="card">
+                <div class="card" style="margin-bottom:14px">
                   <div class="card-hd"><div class="card-title">📋 Install Custom SSL</div></div>
                   <div class="form-group"><label class="form-label">Private Key (KEY)</label><textarea class="form-input" x-model="drawer.sslKey" placeholder="-----BEGIN PRIVATE KEY-----" style="min-height:80px;font-family:monospace;font-size:11px"></textarea></div>
                   <div class="form-group"><label class="form-label">Certificate (CRT)</label><textarea class="form-input" x-model="drawer.sslCert" placeholder="-----BEGIN CERTIFICATE-----" style="min-height:80px;font-family:monospace;font-size:11px"></textarea></div>
                   <button class="btn btn-primary btn-sm" @click="saveManualSSL()">Install SSL</button>
+                </div>
+
+                <!-- HTTP/3 (QUIC) -->
+                <div class="card">
+                  <div class="card-hd">
+                    <div class="card-title">⚡ HTTP/3 (QUIC)</div>
+                    <span :class="'badge badge-'+(drawer.http3Enabled?'green':'gray')" x-text="drawer.http3Enabled?'Enabled':'Disabled'"></span>
+                  </div>
+                  <div x-show="!drawer.http3Capable" style="font-size:11px;color:#92400e;background:rgba(245,158,11,.08);border-radius:var(--radius);padding:10px;margin-bottom:10px">
+                    ⚠ Your nginx (<span x-text="drawer.http3NginxVersion"></span>) doesn't include HTTP/3 support. This requires nginx 1.25+ built with QUIC — usually means installing from
+                    <a href="https://nginx.org/en/linux_packages.html#mainline" target="_blank" style="color:inherit;text-decoration:underline">nginx.org's official mainline repository</a>
+                    instead of your distro's default package.
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">HTTP/3 uses QUIC over UDP for faster connection setup and better performance on lossy networks. Requires SSL to be enabled first.</div>
+                  <button class="btn btn-success btn-sm" x-show="!drawer.http3Enabled" :disabled="!drawer.http3Capable || !drawer.sslInfo" @click="toggleHttp3(true)">Enable HTTP/3</button>
+                  <button class="btn btn-danger btn-sm" x-show="drawer.http3Enabled" @click="toggleHttp3(false)">Disable HTTP/3</button>
                 </div>
               </div>
 
@@ -4413,13 +4429,156 @@
 
         </div>
         <div x-show="tab==='lb'" style="margin-top:14px">
-          <div class="card"><div class="card-hd"><div class="card-title">⚖ Load Balancer</div><span :class="'badge badge-'+(lb.configured?'green':'gray')" x-text="lb.configured?'Active':'Not Configured'"></span></div>
-            <div class="form-group"><label class="form-label">Algorithm</label><select class="form-input" x-model="lb.method"><option value="roundrobin">Round Robin</option><option value="leastconn">Least Connections</option><option value="iphash">IP Hash (Sticky)</option></select></div>
-            <div class="form-group"><div style="display:flex;justify-content:space-between;margin-bottom:6px"><label class="form-label" style="margin:0">Backend Servers</label><button class="btn btn-ghost btn-xs" @click="lb.servers.push({address:'127.0.0.1:8001',weight:1})">+</button></div>
-              <template x-for="(s,i) in lb.servers" :key="i"><div style="display:flex;gap:6px;margin-bottom:6px"><input class="form-input" x-model="s.address" placeholder="127.0.0.1:8001" style="flex:2;font-family:var(--font-mono)"><input class="form-input" type="number" x-model.number="s.weight" style="width:70px" min="1"><button class="btn btn-ghost btn-xs" @click="lb.servers.splice(i,1)" x-show="lb.servers.length>1">✕</button></div></template>
-            </div>
-            <div style="display:flex;gap:8px"><button class="btn btn-primary" @click="saveLB()">Apply</button><button class="btn btn-danger" x-show="lb.configured" @click="deleteLB()">Remove</button></div>
+
+          <!-- Sub-tabs -->
+          <div style="display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:14px">
+            <div class="tab" :class="{active:lbTab==='http'}" @click="lbTab='http'">HTTP</div>
+            <div class="tab" :class="{active:lbTab==='tcp'}" @click="lbTab='tcp';loadTcpLB()">TCP / Stream</div>
+            <div class="tab" :class="{active:lbTab==='health'}" @click="lbTab='health';loadHealthCheck()">Active Health Checks</div>
           </div>
+
+          <!-- ═══ HTTP LOAD BALANCER ═══ -->
+          <div x-show="lbTab==='http'">
+            <div class="card">
+              <div class="card-hd"><div class="card-title">⚖ HTTP Load Balancer</div><span :class="'badge badge-'+(lb.configured?'green':'gray')" x-text="lb.configured?'Active':'Not Configured'"></span></div>
+              <div class="form-row form-row-2">
+                <div class="form-group"><label class="form-label">Domain</label><input class="form-input" x-model="lb.domain" placeholder="lb.example.com or _"></div>
+                <div class="form-group"><label class="form-label">Listen Port</label><input class="form-input" x-model="lb.port" placeholder="80"></div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Method</label>
+                <select class="form-input" x-model="lb.method">
+                  <option value="roundrobin">Round Robin</option>
+                  <option value="leastconn">Least Connections</option>
+                  <option value="iphash">IP Hash (sticky by client IP)</option>
+                  <option value="cookie">Cookie-based (sticky by session cookie)</option>
+                </select>
+              </div>
+              <div class="form-group" x-show="lb.method==='cookie'">
+                <label class="form-label">Session Cookie Name</label>
+                <input class="form-input" x-model="lb.cookie_name" placeholder="PHPSESSID, JSESSIONID, or your app's session cookie" style="font-family:var(--font-mono)">
+                <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Your backend application must already set this cookie — nginx uses its value to consistently route the same client to the same backend.</div>
+              </div>
+              <div class="form-group">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px"><label class="form-label" style="margin:0">Backend Servers</label><button class="btn btn-ghost btn-xs" @click="lb.servers.push({address:'127.0.0.1:8001',weight:1})">+ Add</button></div>
+                <template x-for="(s,i) in lb.servers" :key="i">
+                  <div style="display:flex;gap:6px;margin-bottom:6px">
+                    <input class="form-input" x-model="s.address" placeholder="127.0.0.1:8001" style="flex:2;font-family:var(--font-mono)">
+                    <input class="form-input" type="number" x-model.number="s.weight" style="width:70px" min="1" title="Weight">
+                    <button class="btn btn-ghost btn-xs" @click="lb.servers.splice(i,1)" x-show="lb.servers.length>1">✕</button>
+                  </div>
+                </template>
+              </div>
+              <div style="display:flex;gap:8px"><button class="btn btn-primary" @click="saveLB()">Apply</button><button class="btn btn-danger" x-show="lb.configured" @click="deleteLB()">Remove</button></div>
+            </div>
+          </div>
+
+          <!-- ═══ TCP / STREAM LOAD BALANCER ═══ -->
+          <div x-show="lbTab==='tcp'">
+            <div x-show="!tcpLb.stream_module_available" class="card" style="background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)">
+              <div style="font-size:12px;color:#92400e">
+                ⚠ nginx's <strong>stream module</strong> isn't installed. On Debian/Ubuntu: <code>apt-get install libnginx-mod-stream</code> — on RHEL-family: <code>dnf install nginx-mod-stream</code>. Install it, then refresh this page.
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-hd"><div class="card-title">🔌 TCP / Stream Load Balancer</div><span :class="'badge badge-'+(tcpLb.configured?'green':'gray')" x-text="tcpLb.configured?'Active':'Not Configured'"></span></div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Load-balances raw TCP connections — for non-HTTP services like databases, game servers, custom protocols, or MQTT brokers. Works at the connection level, not the request level.</div>
+              <div class="form-row form-row-2">
+                <div class="form-group"><label class="form-label">Listen Port</label><input class="form-input" x-model="tcpLb.port" placeholder="9000"></div>
+                <div class="form-group">
+                  <label class="form-label">Method</label>
+                  <select class="form-input" x-model="tcpLb.method">
+                    <option value="roundrobin">Round Robin</option>
+                    <option value="leastconn">Least Connections</option>
+                    <option value="hash">Hash by Source IP (sticky)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px"><label class="form-label" style="margin:0">Backend Servers</label><button class="btn btn-ghost btn-xs" @click="tcpLb.servers.push({address:'127.0.0.1:3306',weight:1})">+ Add</button></div>
+                <template x-for="(s,i) in tcpLb.servers" :key="i">
+                  <div style="display:flex;gap:6px;margin-bottom:6px">
+                    <input class="form-input" x-model="s.address" placeholder="127.0.0.1:3306" style="flex:2;font-family:var(--font-mono)">
+                    <input class="form-input" type="number" x-model.number="s.weight" style="width:70px" min="1" title="Weight">
+                    <button class="btn btn-ghost btn-xs" @click="tcpLb.servers.splice(i,1)" x-show="tcpLb.servers.length>1">✕</button>
+                  </div>
+                </template>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-primary" :disabled="!tcpLb.stream_module_available" @click="saveTcpLB()">Apply</button>
+                <button class="btn btn-danger" x-show="tcpLb.configured" @click="deleteTcpLB()">Remove</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═══ ACTIVE HEALTH CHECKS ═══ -->
+          <div x-show="lbTab==='health'">
+            <div class="card">
+              <div class="card-hd">
+                <div class="card-title">💓 Active Health Checks</div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span :class="'badge badge-'+(health.service_active?'green':'gray')" x-text="health.service_active?'Running':'Stopped'"></span>
+                </div>
+              </div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">
+                Periodically probes each backend in your HTTP Load Balancer. A backend that fails enough consecutive checks is automatically removed from rotation — and restored once it recovers. Open-source nginx has no built-in active health checking, so this runs as its own lightweight background service.
+              </div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+                <div>
+                  <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Enable health checking</div>
+                  <div style="font-size:11px;color:var(--text-muted)" x-text="(health.config.servers||[]).length+' backend(s) from your HTTP Load Balancer'"></div>
+                </div>
+                <label style="position:relative;width:38px;height:20px;display:inline-block">
+                  <input type="checkbox" style="opacity:0;width:0;height:0" x-model="health.config.enabled">
+                  <span style="position:absolute;cursor:pointer;inset:0;border-radius:10px;transition:.2s" :style="health.config.enabled?'background:var(--accent)':'background:#cbd5e1'">
+                    <span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="health.config.enabled?'left:21px':'left:3px'"></span>
+                  </span>
+                </label>
+              </div>
+
+              <div class="form-row form-row-2" style="margin-top:12px">
+                <div class="form-group">
+                  <label class="form-label">Protocol</label>
+                  <select class="form-input" x-model="health.config.protocol">
+                    <option value="http">HTTP (checks a URL path)</option>
+                    <option value="tcp">TCP (checks port is open)</option>
+                  </select>
+                </div>
+                <div class="form-group" x-show="health.config.protocol==='http'">
+                  <label class="form-label">Health Check Path</label>
+                  <input class="form-input" x-model="health.config.check_path" placeholder="/health" style="font-family:var(--font-mono)">
+                </div>
+              </div>
+
+              <div class="form-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+                <div class="form-group"><label class="form-label" style="font-size:10px">Interval (s)</label><input class="form-input" type="number" x-model.number="health.config.interval_seconds" min="5" max="300"></div>
+                <div class="form-group"><label class="form-label" style="font-size:10px">Timeout (s)</label><input class="form-input" type="number" x-model.number="health.config.timeout_seconds" min="1" max="30"></div>
+                <div class="form-group"><label class="form-label" style="font-size:10px">Unhealthy after</label><input class="form-input" type="number" x-model.number="health.config.unhealthy_threshold" min="1" max="10"></div>
+                <div class="form-group"><label class="form-label" style="font-size:10px">Healthy after</label><input class="form-input" type="number" x-model.number="health.config.healthy_threshold" min="1" max="10"></div>
+              </div>
+
+              <button class="btn btn-primary btn-sm" @click="saveHealthCheck()">Save</button>
+
+              <!-- Live status per backend -->
+              <div x-show="Object.keys(health.state||{}).length>0" style="margin-top:16px">
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px">Backend Status</div>
+                <template x-for="(addr) in Object.keys(health.state||{})" :key="addr">
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--bg-raised);border-radius:var(--radius);margin-bottom:6px">
+                    <span style="font-family:var(--font-mono);font-size:12px" x-text="addr"></span>
+                    <span :class="health.state[addr].healthy?'badge badge-green':'badge badge-red'" x-text="health.state[addr].healthy?'● Healthy':'● Unhealthy'"></span>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Live log -->
+              <div x-show="health.log" style="margin-top:14px">
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:6px">Recent Activity</div>
+                <pre style="background:#0d0e18;color:#94a3b8;border-radius:var(--radius);padding:10px;font-size:10px;max-height:160px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)" x-text="health.log"></pre>
+              </div>
+            </div>
+          </div>
+
         </div>
         <div x-show="tab==='ports'" style="margin-top:14px"><div class="card"><div class="card-hd"><div class="card-title">Open Ports</div><button class="btn btn-ghost btn-xs" @click="loadPorts()">↻</button></div><div class="code-block" style="font-size:12px;max-height:300px;overflow-y:auto" x-text="portsOutput||'Click ↻ to scan'"></div></div></div>
       </div>

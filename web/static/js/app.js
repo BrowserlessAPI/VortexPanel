@@ -278,6 +278,7 @@ function websitesPage() {
       show:false,site:null,tab:'config',
       confContent:'',confPath:'',
       sslTab:'le',sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',
+      http3Enabled:false, http3Capable:false, http3NginxVersion:'',
       phpVer:'8.3',
       proxies:[],showAddProxy:false,
       proxyForm:{name:'',path:'/',target:'',sent_domain:'$host'},
@@ -357,7 +358,12 @@ function websitesPage() {
     async loadDrawerTab() {
       const d=this.drawer; const domain=d.site?.domain; if(!domain) return;
       if(d.tab==='config'){const r=await get('/api/websites/'+domain+'/config');if(r.ok){d.confContent=r.content;d.confPath=r.path;}}
-      else if(d.tab==='ssl'){const r=await get('/api/websites/'+domain+'/ssl/info');if(r.ok)d.sslInfo=r.info;}
+      else if(d.tab==='ssl'){
+        const r=await get('/api/websites/'+domain+'/ssl/info');
+        if(r.ok)d.sslInfo=r.info;
+        const r2=await get('/api/websites/'+domain+'/http3');
+        if(r2.ok){ d.http3Enabled=r2.enabled; d.http3Capable=r2.nginx_supports_http3; d.http3NginxVersion=r2.nginx_version; }
+      }
       else if(d.tab==='proxy'){const r=await get('/api/websites/'+domain+'/proxy');if(r.ok)d.proxies=r.proxies;}
       else if(d.tab==='nodejs'){
         const r=await get('/api/websites/'+domain+'/nodejs');
@@ -420,6 +426,11 @@ function websitesPage() {
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/ssl/manual',{key:this.drawer.sslKey,cert:this.drawer.sslCert});
       this.drawer.loading=false;
       toast(r.ok?'SSL installed!':r.error||'Failed',r.ok?'success':'error');
+    },
+    async toggleHttp3(enable){
+      const r=await post('/api/websites/'+this.drawer.site?.domain+'/http3',{enable});
+      if(r.ok){ this.drawer.http3Enabled=enable; toast(enable?'HTTP/3 enabled':'HTTP/3 disabled','success'); }
+      else toast(r.error||'Failed','error');
     },
     async savePhpVer(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/php',{version:this.drawer.phpVer});toast(r.ok?'PHP applied':'Failed',r.ok?'success':'error');if(r.ok)await this.load();},
     async addProxy(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/proxy',this.drawer.proxyForm);if(r.ok){toast('Proxy added','success');this.drawer.showAddProxy=false;await this.loadDrawerTab();}else toast(r.error||'Failed','error');},
@@ -2931,8 +2942,14 @@ function securityPage() {
     newUser: {username:'', password:'', pubkey:'', loading:false, result:'', ok:false},
     f2bJails: [], attempts: [], portsOutput: '',
     modsec: {installed:false, enabled:false, state:'Off', rules:0, crs_version:'', paranoia_level:1, custom_rules:'', site_overrides:{}, audit_log:false, auditEntries:[], updating:false},
-    lb: {configured:false, method:'roundrobin', domain:'_', port:'80',
+    lb: {configured:false, method:'roundrobin', domain:'_', port:'80', cookie_name:'PHPSESSID',
          servers:[{address:'127.0.0.1:8001',weight:1},{address:'127.0.0.1:8002',weight:1}]},
+    lbTab: 'http',
+    tcpLb: {configured:false, method:'roundrobin', port:'9000', stream_module_available:true,
+            servers:[{address:'127.0.0.1:3306',weight:1}]},
+    health: {config:{enabled:false, protocol:'http', check_path:'/health', interval_seconds:10,
+                     timeout_seconds:3, unhealthy_threshold:3, healthy_threshold:2, servers:[]},
+             state:{}, service_active:false, log:''},
 
     async init() { await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
 
@@ -3101,6 +3118,7 @@ function securityPage() {
         method:  this.lb.method,
         domain:  this.lb.domain||'_',
         port:    this.lb.port||'80',
+        cookie_name: this.lb.cookie_name||'PHPSESSID',
       });
       if (r.ok) { toast('Load balancer configured!','success'); this.lb.configured=true; }
       else toast(r.error||'Failed','error');
@@ -3110,6 +3128,57 @@ function securityPage() {
       if (!confirm('Remove load balancer config?')) return;
       const r = await del('/api/security/loadbalancer');
       if (r.ok) { toast('Removed','success'); this.lb.configured=false; }
+    },
+
+    // ── TCP / Stream Load Balancer ─────────────────────────────────────────────
+    async loadTcpLB() {
+      const r = await get('/api/security/loadbalancer/tcp');
+      if (r.ok) {
+        this.tcpLb.stream_module_available = r.stream_module_available;
+        if (r.configured) {
+          this.tcpLb.configured = true;
+          this.tcpLb.servers = r.servers?.length ? r.servers : this.tcpLb.servers;
+          this.tcpLb.method = r.method || 'roundrobin';
+          this.tcpLb.port = r.port || this.tcpLb.port;
+        }
+      }
+    },
+
+    async saveTcpLB() {
+      if (!this.tcpLb.servers.length) { toast('Add at least one server','error'); return; }
+      const r = await put('/api/security/loadbalancer/tcp', {
+        servers: this.tcpLb.servers,
+        method:  this.tcpLb.method,
+        port:    this.tcpLb.port||'9000',
+      });
+      if (r.ok) { toast('TCP load balancer configured!','success'); this.tcpLb.configured=true; }
+      else toast(r.error||'Failed','error');
+    },
+
+    async deleteTcpLB() {
+      if (!confirm('Remove TCP load balancer config?')) return;
+      const r = await del('/api/security/loadbalancer/tcp');
+      if (r.ok) { toast('Removed','success'); this.tcpLb.configured=false; }
+    },
+
+    // ── Active Health Checks ───────────────────────────────────────────────────
+    async loadHealthCheck() {
+      const r = await get('/api/security/loadbalancer/health');
+      if (r.ok) {
+        this.health.config = {...this.health.config, ...r.config};
+        this.health.state = r.state || {};
+        this.health.service_active = r.service_active;
+        this.health.log = r.log || '';
+      }
+    },
+
+    async saveHealthCheck() {
+      const r = await put('/api/security/loadbalancer/health', this.health.config);
+      if (r.ok) {
+        toast(this.health.config.enabled ? 'Health checking enabled' : 'Health checking disabled', 'success');
+        this.health.config = {...this.health.config, ...r.config};
+        await this.loadHealthCheck();
+      } else toast(r.error||'Failed','error');
     },
   };
 }

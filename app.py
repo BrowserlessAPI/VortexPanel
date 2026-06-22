@@ -18,6 +18,7 @@ from panel.routes.websites_ssl import *  # noqa
 from panel.routes.websites_proxy import *  # noqa
 from panel.routes.websites_security import *  # noqa
 from panel.routes.websites_nodejs import *  # noqa
+from panel.routes.http3 import *  # noqa
 from panel.routes.websites_deploy import *  # noqa
 from panel.routes.websites_composer import *  # noqa
 from panel.routes.websites_integrity import *  # noqa
