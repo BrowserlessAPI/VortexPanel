@@ -4476,8 +4476,14 @@
           <!-- ═══ TCP / STREAM LOAD BALANCER ═══ -->
           <div x-show="lbTab==='tcp'">
             <div x-show="!tcpLb.stream_module_available" class="card" style="background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)">
-              <div style="font-size:12px;color:#92400e">
-                ⚠ nginx's <strong>stream module</strong> isn't installed. On Debian/Ubuntu: <code>apt-get install libnginx-mod-stream</code> — on RHEL-family: <code>dnf install nginx-mod-stream</code>. Install it, then refresh this page.
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                <div style="font-size:12px;color:#92400e">
+                  ⚠ nginx's <strong>stream module</strong> isn't installed. Required for TCP load balancing.
+                </div>
+                <button class="btn btn-primary btn-sm" @click="installStreamModule()" :disabled="tcpLb.installingStream" style="white-space:nowrap">
+                  <span x-show="!tcpLb.installingStream">Install Now</span>
+                  <span x-show="tcpLb.installingStream">Installing…</span>
+                </button>
               </div>
             </div>
             <div class="card">

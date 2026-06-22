@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request, session
 import subprocess, re, os
+from panel.routes.os_utils import get_os
 
 security_bp = Blueprint('security', __name__)
 def req(): return 'user' in session
@@ -740,12 +741,66 @@ def _save_json(path, data):
 LB_STREAM_DIR  = '/etc/nginx/stream.d'
 LB_STREAM_CONF = '/etc/nginx/stream.d/vortex_tcp_lb.conf'
 
+def _find_stream_module_so():
+    """Locate ngx_stream_module.so on disk — varies by distro and nginx source."""
+    candidates = [
+        '/usr/lib/nginx/modules/ngx_stream_module.so',       # Debian/Ubuntu
+        '/usr/lib64/nginx/modules/ngx_stream_module.so',     # RHEL/CentOS/Alma/Rocky
+        '/usr/share/nginx/modules/ngx_stream_module.so',     # some RHEL builds
+    ]
+    for p in candidates:
+        if os.path.exists(p): return p
+    # last resort: find it
+    out, _, _ = sh('find /usr -name "ngx_stream_module.so" 2>/dev/null | head -1')
+    return out or ''
+
 def _nginx_has_stream_module():
+    """Check if nginx can use the stream module right now."""
+    # 1) compiled-in (static module)
     out, _, _ = sh('nginx -V 2>&1')
-    if '--with-stream' in out: return True
-    # Debian/Ubuntu ship it as a separate dynamic module package
-    return os.path.exists('/usr/lib/nginx/modules/ngx_stream_module.so') or \
-           bool(sh('find /etc/nginx/modules-enabled -name "*stream*" 2>/dev/null')[0])
+    if '--with-stream' in out and '--with-stream=dynamic' not in out:
+        return True
+    # 2) dynamic module .so exists on disk
+    if not _find_stream_module_so():
+        return False
+    # 3) already enabled in modules-enabled (Debian auto-symlink)
+    if sh('find /etc/nginx/modules-enabled -name "*stream*" 2>/dev/null')[0]:
+        return True
+    # 4) load_module directive already in nginx.conf
+    try:
+        conf = open('/etc/nginx/nginx.conf').read()
+        if re.search(r'^\s*load_module\s+.*ngx_stream_module', conf, re.MULTILINE):
+            return True
+    except: pass
+    return False
+
+def _ensure_stream_load_module():
+    """Ensure the load_module directive for stream is in nginx.conf.
+    On Debian, apt auto-creates a symlink in modules-enabled so this
+    is a no-op. On RHEL-family it must be added manually."""
+    conf_path = '/etc/nginx/nginx.conf'
+    if not os.path.exists(conf_path):
+        return False, 'nginx.conf not found'
+    content = open(conf_path).read()
+    # Already has load_module or modules-enabled symlink covers it
+    if re.search(r'^\s*load_module\s+.*ngx_stream_module', content, re.MULTILINE):
+        return True, ''
+    if sh('find /etc/nginx/modules-enabled -name "*stream*" 2>/dev/null')[0]:
+        return True, ''
+    # Find the .so path
+    so_path = _find_stream_module_so()
+    if not so_path:
+        return False, 'stream module .so not found after install'
+    # Use relative path if under standard modules dir, absolute otherwise
+    if '/modules/ngx_stream_module.so' in so_path:
+        directive = 'load_module modules/ngx_stream_module.so;'
+    else:
+        directive = f'load_module {so_path};'
+    # Insert at top of nginx.conf (before any other blocks)
+    new_content = directive + '\n' + content
+    with open(conf_path, 'w') as f:
+        f.write(new_content)
+    return True, ''
 
 def _ensure_stream_block():
     """Add a top-level `stream { include .../stream.d/*.conf; }` block to
@@ -781,14 +836,83 @@ def lb_tcp_status():
     return jsonify({'ok':True,'configured':True,'servers':server_list,'method':method,
                     'port':port_m.group(1) if port_m else '', 'stream_module_available':has_module})
 
+@security_bp.route('/api/security/loadbalancer/tcp/install-stream', methods=['POST'])
+def lb_tcp_install_stream():
+    """Auto-install nginx stream module for any supported distro."""
+    if not req(): return jsonify({'ok':False}), 401
+    if _nginx_has_stream_module():
+        return jsonify({'ok':True,'message':'Stream module already available'})
+
+    os_info = get_os()
+    family  = os_info['family']
+    pkg_mgr = os_info['pkg']
+    steps   = []
+
+    # ── Step 1: install the package ──
+    if family == 'debian':
+        cmd = f'DEBIAN_FRONTEND=noninteractive apt-get install -y libnginx-mod-stream'
+        out, err, rc = sh(cmd, t=120)
+        steps.append({'cmd': cmd, 'rc': rc, 'out': out, 'err': err})
+        if rc != 0:
+            # Try apt update first then retry
+            sh('apt-get update -qq', t=60)
+            out, err, rc = sh(cmd, t=120)
+            steps.append({'cmd': cmd + ' (retry after update)', 'rc': rc})
+            if rc != 0:
+                return jsonify({'ok':False,
+                    'error':f'Failed to install libnginx-mod-stream: {err}',
+                    'steps':steps}), 500
+
+    elif family in ('rhel', 'fedora'):
+        # Official nginx.org packages bundle stream in the main package.
+        # The .so may already exist — just needs load_module.
+        so_path = _find_stream_module_so()
+        if not so_path:
+            # Try installing the distro's stream module package
+            pkg_name = 'nginx-mod-stream'
+            cmd = f'{pkg_mgr} install -y {pkg_name}'
+            out, err, rc = sh(cmd, t=120)
+            steps.append({'cmd': cmd, 'rc': rc, 'out': out, 'err': err})
+            if rc != 0:
+                # Package doesn't exist — nginx was likely built from source
+                # or from a repo that bundles everything. Check one more time.
+                so_path = _find_stream_module_so()
+                if not so_path:
+                    return jsonify({'ok':False,
+                        'error':f'Could not install stream module. '
+                                f'Package "{pkg_name}" not found in repos. '
+                                f'If nginx was compiled from source, rebuild with --with-stream.',
+                        'steps':steps}), 500
+    else:
+        return jsonify({'ok':False,
+            'error':f'Unsupported OS family: {family}'}), 400
+
+    # ── Step 2: ensure load_module directive exists ──
+    ok, err = _ensure_stream_load_module()
+    steps.append({'action': 'ensure_load_module', 'ok': ok, 'err': err})
+    if not ok:
+        return jsonify({'ok':False, 'error':f'load_module failed: {err}', 'steps':steps}), 500
+
+    # ── Step 3: test nginx config ──
+    out, err, rc = sh('nginx -t 2>&1')
+    steps.append({'cmd': 'nginx -t', 'rc': rc, 'out': out, 'err': err})
+    if rc != 0:
+        return jsonify({'ok':False,
+            'error':f'nginx -t failed after install: {out} {err}',
+            'steps':steps}), 500
+
+    # ── Step 4: reload nginx ──
+    sh('systemctl reload nginx', t=10)
+    steps.append({'action': 'nginx reloaded'})
+
+    return jsonify({'ok':True, 'message':'Stream module installed and loaded', 'steps':steps})
+
 @security_bp.route('/api/security/loadbalancer/tcp', methods=['PUT'])
 def lb_tcp_save():
     if not req(): return jsonify({'ok':False}), 401
     if not _nginx_has_stream_module():
         return jsonify({'ok':False,
-            'error':"nginx's stream module isn't installed. On Debian/Ubuntu run: "
-                    "apt-get install libnginx-mod-stream — on RHEL-family: "
-                    "dnf install nginx-mod-stream — then try again."}), 400
+            'error':"nginx stream module not available. Use the Install button to set it up automatically."}), 400
 
     d       = request.get_json() or {}
     servers = d.get('servers', [])

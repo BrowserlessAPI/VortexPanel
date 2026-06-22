@@ -2946,7 +2946,7 @@ function securityPage() {
          servers:[{address:'127.0.0.1:8001',weight:1},{address:'127.0.0.1:8002',weight:1}]},
     lbTab: 'http',
     tcpLb: {configured:false, method:'roundrobin', port:'9000', stream_module_available:true,
-            servers:[{address:'127.0.0.1:3306',weight:1}]},
+            installingStream:false, servers:[{address:'127.0.0.1:3306',weight:1}]},
     health: {config:{enabled:false, protocol:'http', check_path:'/health', interval_seconds:10,
                      timeout_seconds:3, unhealthy_threshold:3, healthy_threshold:2, servers:[]},
              state:{}, service_active:false, log:''},
@@ -3142,6 +3142,20 @@ function securityPage() {
           this.tcpLb.port = r.port || this.tcpLb.port;
         }
       }
+    },
+
+    async installStreamModule() {
+      this.tcpLb.installingStream = true;
+      try {
+        const r = await post('/api/security/loadbalancer/tcp/install-stream', {});
+        if (r.ok) {
+          toast(r.message || 'Stream module installed!', 'success');
+          this.tcpLb.stream_module_available = true;
+        } else {
+          toast(r.error || 'Installation failed', 'error');
+        }
+      } catch(e) { toast('Installation failed: ' + e, 'error'); }
+      this.tcpLb.installingStream = false;
     },
 
     async saveTcpLB() {
