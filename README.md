@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.2-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.2">
+<img src="https://img.shields.io/badge/VortexPanel-v3.3-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.3">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
 <img src="https://img.shields.io/badge/Alpine.js-3.14-8bc0d0?style=for-the-badge">
@@ -85,7 +85,9 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 
 ### 📦 App Store
 - 25+ one-click installs: Nginx, Apache, OpenLiteSpeed, Caddy, PHP (multi-version), MySQL, MariaDB, PostgreSQL, MongoDB, Redis, Docker, Node.js, Python, Composer, Fail2ban, ClamAV, ModSecurity, Roundcube, Supervisor, Pure-FTPd, BIND9 DNS, and more
+- **Live installation terminal** — every install, uninstall, and version switch streams real-time output line-by-line (like aaPanel's task terminal)
 - Automatic conflict detection, RHEL-family package manager support
+- **Safe database version policy** — databases (MariaDB/MySQL/PostgreSQL/MongoDB) require uninstall-first to prevent data corruption; version switching kept for non-data modules
 
 ### ⚙ Settings — redesigned card-based control center
 - **Network & Access** — panel port (auto-updates firewall), custom domain, webroot
@@ -132,7 +134,7 @@ The installer auto-detects your OS and package manager. On RHEL 8-family systems
 
 | Distro | Versions |
 |---|---|
-| **Ubuntu** | 20.04, 22.04, 24.04 |
+| **Ubuntu** | 20.04, 22.04, 24.04, 26.04 |
 | **Debian** | 11, 12 |
 | **AlmaLinux** | 8, 9, 10 |
 | **Rocky Linux** | 8, 9, 10 |
@@ -178,12 +180,26 @@ python3 app.py   # runs on :8888
 
 ## 🗺 Roadmap
 
+**v3.3 (current) — shipped:**
+- [x] Visual design overhaul — coloured stat cards, sidebar icon pills
+- [x] HTTP/3 QUIC — full multi-webserver support (nginx upgrade, Caddy/OLS auto, Apache blocked)
+- [x] Live installation terminal — real-time SSE streaming for all App Store actions
+- [x] Two-webserver conflict detection — dashboard warning banner
+- [x] Mail forwarding domain selector + log filter/search
+- [x] Session persistence across gunicorn restarts (flask-session filesystem)
+- [x] nginx stream module auto-install across all 9 distros
+- [x] MariaDB 12.x versions added; optimization tab fixed
+- [x] Node.js v24 as default LTS; EOL v18/v20 removed; switch bug fixed
+
+**v3.4 (next):**
+- [ ] Bandwidth Monitor — per-domain traffic graphs (daily/weekly/monthly)
+- [ ] Website-level Backup — files + database together in one click per domain
+- [ ] Dark mode — toggle with full dark variable set
+- [ ] Onboarding wizard — guided first-run flow
+- [ ] Mobile responsiveness — sidebar + layout for small screens
+- [ ] PHP Webshell Scanner — scan web roots for obfuscated shells
 - [ ] Disk usage analyzer (visual tree, delete from panel)
-- [ ] Per-site website analytics (traffic, top URIs, status codes, bot detection)
-- [ ] Alerting — CPU/RAM/SSL-expiry push to Telegram/Discord/email/webhook
-- [ ] Multi-user / role-based access control
-- [ ] Let's Encrypt auto-renewal cron
-- [ ] Load balancer node health checks + TCP/stream load balancing
+- [ ] Alerting — CPU/RAM/SSL-expiry notifications (email/webhook)
 
 ---
 
