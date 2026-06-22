@@ -39,7 +39,60 @@ def translate_install_cmd(cmd):
     return os_cmd(cmd)
 
 def req(): return 'user' in session
-_jobs = {}
+
+# ── Job store: file-based so all gunicorn workers share state ──────────────
+# In-memory dict fails with --workers > 1 because each worker has its own
+# memory space. A small JSON file per job in /tmp/vortex_jobs/ is shared
+# across all workers via the filesystem.
+_JOBS_DIR = '/tmp/vortex_jobs'
+os.makedirs(_JOBS_DIR, exist_ok=True)
+_jobs_lock = threading.Lock()
+
+def _job_path(job_id):
+    return os.path.join(_JOBS_DIR, f'{job_id}.json')
+
+def _job_get(job_id):
+    try:
+        with open(_job_path(job_id)) as f:
+            return json.load(f)
+    except: return None
+
+def _job_set(job_id, data):
+    with _jobs_lock:
+        try:
+            with open(_job_path(job_id), 'w') as f:
+                json.dump(data, f)
+        except: pass
+
+def _job_append_line(job_id, line):
+    with _jobs_lock:
+        try:
+            path = _job_path(job_id)
+            with open(path) as f: data = json.load(f)
+            data['lines'].append(line)
+            with open(path, 'w') as f: json.dump(data, f)
+        except: pass
+
+def _job_finish(job_id, success, installed, inst_ver=''):
+    with _jobs_lock:
+        try:
+            path = _job_path(job_id)
+            with open(path) as f: data = json.load(f)
+            data.update({'done':True,'success':success,'installed':installed,
+                         'installedVer':inst_ver,'status':'done'})
+            with open(path, 'w') as f: json.dump(data, f)
+        except: pass
+
+def _job_create(job_id, initial_installed=False):
+    _job_set(job_id, {'status':'running','lines':[],'done':False,
+                      'success':False,'installed':initial_installed,'installedVer':''})
+
+# Legacy compatibility — keep _jobs as a shim for any direct access
+class _JobsShim:
+    def get(self, job_id, default=None): return _job_get(job_id) or default
+    def __setitem__(self, job_id, val): _job_set(job_id, val)
+    def __getitem__(self, job_id): return _job_get(job_id)
+_jobs = _JobsShim()
 
 def sh(c, t=10):
     try:
@@ -903,22 +956,22 @@ def install_module(mod_id):
     if not cmd: return jsonify({'ok':False, 'error':'No install command defined'}), 400
 
     job_id = str(uuid.uuid4())[:8]
-    _jobs[job_id] = {'status':'running', 'lines':[], 'done':False, 'success':False, 'installed':False}
+    _job_create(job_id, initial_installed=False)
 
     def run_job():
-        _jobs[job_id]['lines'].append(f'[VortexPanel] Installing {mod["name"]} {ver}...')
+        _job_append_line(job_id, f'[VortexPanel] Installing {mod["name"]} {ver}...')
         _final_cmd = translate_install_cmd(cmd)
         proc = subprocess.Popen(f'DEBIAN_FRONTEND=noninteractive {_final_cmd} 2>&1',
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in proc.stdout:
-            _jobs[job_id]['lines'].append(line.rstrip())
+            _job_append_line(job_id, line.rstrip())
         proc.wait()
         installed     = is_installed(mod['check'])
         inst_ver      = get_version(mod['id']) if installed else ''
-        _jobs[job_id].update({'installed':installed,'installedVer':inst_ver,'done':True,'success':installed,'status':'done'})
-        _jobs[job_id]['lines'].append(
+        _job_append_line(job_id,
             f'[VortexPanel] {"✓ Installed successfully! Version: "+inst_ver if installed else "⚠ Installation may have failed — check output above."}'
         )
+        _job_finish(job_id, success=installed, installed=installed, inst_ver=inst_ver)
         panel_cache.invalidate('modules_list')
 
     threading.Thread(target=run_job, daemon=True).start()
@@ -943,29 +996,27 @@ def uninstall_module(mod_id):
     if not cmd: return jsonify({'ok':False, 'error':'No uninstall command defined'}), 400
 
     job_id = str(uuid.uuid4())[:8]
-    _jobs[job_id] = {'status':'running', 'lines':[], 'done':False, 'success':False, 'installed':True}
+    _job_create(job_id, initial_installed=True)
 
     def run_job():
-        _jobs[job_id]['lines'].append(f'[VortexPanel] Removing {mod["name"]} {ver}...')
+        _job_append_line(job_id, f'[VortexPanel] Removing {mod["name"]} {ver}...')
         proc = subprocess.Popen(f'DEBIAN_FRONTEND=noninteractive {cmd} 2>&1',
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in proc.stdout:
-            _jobs[job_id]['lines'].append(line.rstrip())
+            _job_append_line(job_id, line.rstrip())
         proc.wait()
-        # For versioned modules (PHP, Python), check version-specific binary
         if ver and mod_id in ('php','python'):
             ver_binary = f'php{ver}' if mod_id=='php' else f'python{ver}'
             still_installed = bool(sh(f'which {ver_binary} 2>/dev/null'))
         else:
             still_installed = is_installed(mod['check'])
         removed = not still_installed
-        # For PHP: overall 'installed' = any PHP still present
         if mod_id == 'php':
             any_php = is_installed(mod['check'])
-            _jobs[job_id].update({'installed':any_php,'done':True,'success':removed,'status':'done'})
+            _job_finish(job_id, success=removed, installed=any_php)
         else:
-            _jobs[job_id].update({'installed':still_installed,'done':True,'success':removed,'status':'done'})
-        _jobs[job_id]['lines'].append(
+            _job_finish(job_id, success=removed, installed=still_installed)
+        _job_append_line(job_id,
             f'[VortexPanel] {"✓ Removed successfully!" if removed else "⚠ May not be fully removed — check output above."}'
         )
         panel_cache.invalidate('modules_list')
@@ -977,15 +1028,19 @@ def uninstall_module(mod_id):
 def job_stream(job_id):
     def generate():
         sent = 0
-        while True:
-            job = _jobs.get(job_id)
+        for _ in range(600):  # max 3 minutes (600 × 0.3s)
+            job = _job_get(job_id)
             if not job:
                 yield f'data: {json.dumps({"error":"Job not found"})}\n\n'; break
-            while sent < len(job['lines']):
-                yield f'data: {json.dumps({"line": job["lines"][sent]})}\n\n'
+            lines = job.get('lines', [])
+            while sent < len(lines):
+                yield f'data: {json.dumps({"line": lines[sent]})}\n\n'
                 sent += 1
-            if job['done']:
+            if job.get('done'):
                 yield f'data: {json.dumps({"done":True,"success":job["success"],"installed":job["installed"],"installedVer":job.get("installedVer","")})}\n\n'
+                # Clean up job file after a short delay
+                try: os.remove(_job_path(job_id))
+                except: pass
                 break
             time.sleep(0.3)
     return Response(generate(), mimetype='text/event-stream',
@@ -1846,27 +1901,24 @@ def save_module_settings(mod_id):
 
         # Run as a streaming job — same system as install/uninstall
         job_id = str(uuid.uuid4())[:8]
-        _jobs[job_id] = {'status':'running','lines':[],'done':False,'success':False,'installed':True}
+        _job_create(job_id, initial_installed=True)
 
         def run_switch():
             mod_name = mod['name'] if mod else mod_id
-            _jobs[job_id]['lines'].append(f'[VortexPanel] Switching {mod_name} to version {ver}...')
+            _job_append_line(job_id, f'[VortexPanel] Switching {mod_name} to version {ver}...')
             proc = subprocess.Popen(
                 f'DEBIAN_FRONTEND=noninteractive {script} 2>&1',
                 shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
             )
             for line in proc.stdout:
-                _jobs[job_id]['lines'].append(line.rstrip())
+                _job_append_line(job_id, line.rstrip())
             proc.wait()
             success = proc.returncode == 0
             new_ver = sh(ver_check_cmd) if ver_check_cmd else ver
-            _jobs[job_id]['lines'].append(
+            _job_append_line(job_id,
                 f'[VortexPanel] {"✓ Switched to " + new_ver + " successfully!" if success else "⚠ Switch may have failed — check output above."}'
             )
-            _jobs[job_id].update({
-                'done': True, 'success': success, 'status': 'done',
-                'installed': True, 'installedVer': new_ver,
-            })
+            _job_finish(job_id, success=success, installed=True, inst_ver=new_ver)
             panel_cache.invalidate('modules_list')
 
         threading.Thread(target=run_switch, daemon=True).start()
