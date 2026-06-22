@@ -50,7 +50,7 @@ def save_config(cfg):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE,'w') as f: json.dump(cfg, f, indent=2)
 
-# ── Gunicorn bind management ──────────────────────────────────────────────────
+# --- Gunicorn bind management ---------------------------------------------------
 def _set_gunicorn_bind(host, port):
     """Rewrite the systemd unit's --bind/-b directive to host:port and restart."""
     if not os.path.exists(SERVICE_FILE):
@@ -95,7 +95,7 @@ def _safe_restart_panel():
     else:
         sh('(sleep 2 && systemctl restart vortexpanel) >/dev/null 2>&1 &')
 
-# ── SSL helpers ───────────────────────────────────────────────────────────────
+# --- SSL helpers ----------------------------------------------------------------
 def _ssl_status():
     cert = os.path.join(SSL_DIR, 'panel.crt')
     key  = os.path.join(SSL_DIR, 'panel.key')
@@ -223,9 +223,9 @@ def _run_cutover_script(script_body, unit_name='vortexpanel-ssl-apply'):
         return True
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # ROUTES
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 
 @settings_bp.route('/api/settings')
 def get_settings():
@@ -302,7 +302,7 @@ def change_port():
                     'message':f'Port changed to {new_port}.' + (' Panel restarting…' if not cfg.get('ssl_enabled') else '')})
 
 
-# ── SSL ────────────────────────────────────────────────────────────────────────
+# --- SSL -------------------------------------------------------------------------
 
 @settings_bp.route('/api/settings/ssl')
 def ssl_status():
@@ -491,7 +491,7 @@ echo "Listening: $(ss -tln 2>/dev/null | grep -E ':{external_port} ')"
     return jsonify({'ok':True, 'message': 'Disabling HTTPS — reverting to plain HTTP. Reconnect at http://<ip>:'+str(external_port)+' in a few seconds.'})
 
 
-# ── PHP Webshell Scanner ───────────────────────────────────────────────────────
+# --- PHP Webshell Scanner --------------------------------------------------------
 
 WEBSHELL_PATTERNS = [
     # Classic eval-based webshells
@@ -589,7 +589,7 @@ def webshell_scan_paths():
     return jsonify({'ok':True,'paths':paths})
 
 
-# ── Existing routes ────────────────────────────────────────────────────────────
+# --- Existing routes -------------------------------------------------------------
 
 @settings_bp.route('/api/settings/password', methods=['POST'])
 def change_password():

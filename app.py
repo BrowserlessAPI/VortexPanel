@@ -56,7 +56,7 @@ from panel.routes.terminal_ws import sock as terminal_sock
 from panel.routes.cloud_backup import cloud_backup_bp
 from panel.routes.logs import logs_bp
 
-# ── Secret key: auto-generate and persist on first run ───────────────────────
+# -- Secret key: auto-generate and persist on first run -----------------------
 _SECRET_KEY_FILE = '/opt/vortexpanel/secret.key'
 
 def _get_secret_key() -> bytes:
@@ -87,17 +87,17 @@ def _get_secret_key() -> bytes:
 def create_app():
     app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 
-    # ── Secret key ────────────────────────────────────────────────────────────
+    # -- Secret key ------------------------------------------------------------
     # ENV var override available for Docker/container deployments
     app.secret_key = os.environ.get('SECRET_KEY', '').encode() or _get_secret_key()
 
-    # ── Session hardening ─────────────────────────────────────────────────────
+    # -- Session hardening -----------------------------------------------------
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
     app.config['SESSION_COOKIE_HTTPONLY']    = True
     app.config['SESSION_COOKIE_SAMESITE']    = 'Lax'
     # Don't force Secure flag — panel may run HTTP; let admin configure HTTPS
 
-    # ── Server-side sessions (survives gunicorn restarts / nginx reloads) ─────
+    # -- Server-side sessions (survives gunicorn restarts / nginx reloads) -----
     # flask-session stores session data in files on disk; the cookie only holds
     # the session ID. This means:
     #   1. Sessions are NOT lost when gunicorn restarts or workers are recycled.
@@ -113,7 +113,7 @@ def create_app():
         app.config['SESSION_PERMANENT']         = True
         FlaskSession(app)
 
-    # ── Gzip compression ──────────────────────────────────────────────────────
+    # -- Gzip compression ------------------------------------------------------
     if _compress_available:
         app.config['COMPRESS_MIMETYPES'] = [
             'text/html', 'application/json', 'application/javascript',
@@ -123,7 +123,7 @@ def create_app():
         app.config['COMPRESS_MIN_SIZE'] = 500
         Compress(app)
 
-    # ── Register blueprints ───────────────────────────────────────────────────
+    # -- Register blueprints ---------------------------------------------------
     for bp in [auth_bp, dashboard_bp, websites_bp, databases_bp, files_bp,
                php_bp, services_bp, firewall_bp, terminal_bp, backups_bp,
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
@@ -133,7 +133,7 @@ def create_app():
         app.register_blueprint(bp)
     terminal_sock.init_app(app)
 
-    # ── IP allowlist enforcement on EVERY API request ────────────────────────
+    # -- IP allowlist enforcement on EVERY API request ------------------------
     # The allowlist in auth.py is also checked at login, but checking every
     # API call prevents use of a stolen session cookie from an unlisted IP.
     @app.before_request
@@ -149,7 +149,7 @@ def create_app():
             return jsonify({'ok': False, 'error': 'Access denied from this IP address'}), 403
         return None
 
-    # ── Security headers on every response ───────────────────────────────────
+    # -- Security headers on every response -----------------------------------
     @app.after_request
     def add_security_headers(response):
         response.headers['X-Frame-Options']        = 'SAMEORIGIN'
@@ -169,7 +169,7 @@ def create_app():
         )
         return response
 
-    # ── Auto-init built-in features ───────────────────────────────────────────
+    # -- Auto-init built-in features -------------------------------------------
     try:
         os.makedirs('/opt/vortexpanel', exist_ok=True)
         for _cfg in ['/opt/vortexpanel/cdn_config.json',

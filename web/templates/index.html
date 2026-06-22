@@ -376,7 +376,7 @@
 
         <!-- SITE MANAGEMENT MODAL -->
         
-        <!-- ═══ SITE MANAGEMENT MODAL (aaPanel-style) ═══ -->
+        <!-- === SITE MANAGEMENT MODAL (aaPanel-style) === -->
         <div x-show="drawer.show" class="modal-overlay" style="z-index:200;padding:20px"
              @keydown.escape.window="drawer.show=false"
              @click.self="drawer.show=false">
@@ -409,7 +409,7 @@
               <div style="flex:1;overflow-y:auto;padding:20px;min-height:0">
 
 
-              <!-- ── DOMAIN MANAGER TAB ── -->
+              <!-- -- DOMAIN MANAGER TAB -- -->
               <div x-show="drawer.tab==='domains'">
                 <div style="font-weight:600;font-size:13px;margin-bottom:4px">Domain Manager</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">A domain per line, default port is 80. Wildcard: *.domain.com · Custom port: domain.com:8080</div>
@@ -436,7 +436,7 @@
                 </div>
               </div>
 
-              <!-- ── DIRECTORY TAB ── -->
+              <!-- -- DIRECTORY TAB -- -->
               <div x-show="drawer.tab==='directory'">
                 <div style="font-weight:600;font-size:13px;margin-bottom:20px">Directory</div>
                 <div style="display:grid;gap:16px;max-width:560px">
@@ -462,7 +462,7 @@
                 </div>
               </div>
 
-              <!-- ── URL REWRITE TAB ── -->
+              <!-- -- URL REWRITE TAB -- -->
               <div x-show="drawer.tab==='rewrite'">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                   <div style="font-weight:600;font-size:13px">URL Rewrite</div>
@@ -487,7 +487,7 @@
                 </div>
               </div>
 
-              <!-- ── DEFAULT DOCUMENT TAB ── -->
+              <!-- -- DEFAULT DOCUMENT TAB -- -->
               <div x-show="drawer.tab==='defaultdoc'">
                 <div style="font-weight:600;font-size:13px;margin-bottom:12px">Default Document</div>
                 <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:12px" x-model="drawer.defaultDoc" placeholder="index.php&#10;index.html&#10;index.htm"></textarea>
@@ -495,7 +495,7 @@
                 <button class="btn btn-primary btn-sm" @click="put('/api/websites/'+drawer.site?.domain+'/config',{action:'set_index',indexes:drawer.defaultDoc}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
               </div>
 
-              <!-- ── LIMIT ACCESS TAB ── -->
+              <!-- -- LIMIT ACCESS TAB -- -->
               <div x-show="drawer.tab==='limit'">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
                   <div style="font-weight:600;font-size:13px">Limit Access</div>
@@ -531,7 +531,7 @@
                 </div>
               </div>
 
-              <!-- ── HOTLINK PROTECTION TAB ── -->
+              <!-- -- HOTLINK PROTECTION TAB -- -->
               <div x-show="drawer.tab==='hotlink'">
                 <div style="font-weight:600;font-size:13px;margin-bottom:20px">Hotlink Protection</div>
                 <div style="display:grid;gap:14px;max-width:560px">
@@ -561,7 +561,7 @@
                 </div>
               </div>
 
-              <!-- ── COMPOSER TAB ── -->
+              <!-- -- COMPOSER TAB -- -->
               <div x-show="drawer.tab==='composer'">
                 <div style="font-weight:600;font-size:13px;margin-bottom:4px">Composer</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">PHP dependency manager — run Composer commands for <strong x-text="drawer.site?.domain"></strong></div>
@@ -634,7 +634,7 @@
                 </div>
               </div>
 
-              <!-- ── RESPONSE LOG TAB ── -->
+              <!-- -- RESPONSE LOG TAB -- -->
               <div x-show="drawer.tab==='logs'">
                 <div style="display:flex;gap:8px;margin-bottom:16px">
                   <button class="btn btn-sm" :class="drawer.logType==='access'?'btn-primary':'btn-ghost'" @click="drawer.logType='access'">Access log</button>
@@ -644,7 +644,7 @@
                 <div style="background:#0d0e18;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#94a3b8;min-height:300px;max-height:500px;overflow-y:auto;white-space:pre-wrap;line-height:1.6"
                      x-text="drawer.logType==='access'?drawer.accessLog||'No access logs':drawer.errorLog||'No error logs'"></div>
               </div>
-              <!-- ── TAMPER-PROOF TAB ── -->
+              <!-- -- TAMPER-PROOF TAB -- -->
               <div x-show="drawer.tab==='integrity'">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
                   <div>
@@ -702,7 +702,7 @@
                 </div>
               </div>
 
-              <!-- ── CONFIG TAB ── -->
+              <!-- -- CONFIG TAB -- -->
               <div x-show="drawer.tab==='config'">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                   <div>
@@ -726,7 +726,7 @@
                 </div>
               </div>
 
-              <!-- ── SSL TAB ── -->
+              <!-- -- SSL TAB -- -->
               <div x-show="drawer.tab==='ssl'">
                 <!-- SSL info card -->
                 <div x-show="drawer.sslInfo" style="background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px" x-text="drawer.sslInfo"></div>
@@ -762,7 +762,7 @@
                     <span x-show="drawer.http3Support==='manual'" :class="'badge badge-'+(drawer.http3Enabled?'green':'gray')" x-text="drawer.http3Enabled?'Enabled':'Disabled'"></span>
                   </div>
 
-                  <!-- ── CADDY: auto, nothing to do ── -->
+                  <!-- -- CADDY: auto, nothing to do -- -->
                   <div x-show="drawer.http3Webserver==='caddy'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
                     ✅ <strong>Caddy</strong> enables HTTP/3 automatically whenever SSL is active. No configuration needed.
                     <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;font-size:11px">
@@ -772,7 +772,7 @@
                     <div x-show="drawer.http3UdpOpen" style="margin-top:6px;font-size:11px;color:var(--green)">✓ UDP 443 is open</div>
                   </div>
 
-                  <!-- ── OPENLITESPEED: auto, nothing to do ── -->
+                  <!-- -- OPENLITESPEED: auto, nothing to do -- -->
                   <div x-show="drawer.http3Webserver==='openlitespeed'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
                     ✅ <strong>OpenLiteSpeed</strong> enables HTTP/3 by default. No configuration needed.
                     <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;font-size:11px">
@@ -782,13 +782,13 @@
                     <div x-show="drawer.http3UdpOpen" style="margin-top:6px;font-size:11px;color:var(--green)">✓ UDP 443 is open — HTTP/3 is active</div>
                   </div>
 
-                  <!-- ── APACHE: not supported ── -->
+                  <!-- -- APACHE: not supported -- -->
                   <div x-show="drawer.http3Webserver==='apache'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
                     ❌ <strong>Apache</strong> does not have native HTTP/3 support. There is no configuration VortexPanel can apply to enable it.
                     <div style="margin-top:6px;font-size:11px;color:var(--text-muted)">If HTTP/3 is critical, consider switching to nginx or Caddy as your web server.</div>
                   </div>
 
-                  <!-- ── NGINX: full manual flow ── -->
+                  <!-- -- NGINX: full manual flow -- -->
                   <div x-show="drawer.http3Webserver==='nginx'">
 
                     <!-- Case 1: distro nginx, needs upgrade -->
@@ -835,7 +835,7 @@
                 </div>
               </div>
 
-              <!-- ── PHP VERSION TAB ── -->
+              <!-- -- PHP VERSION TAB -- -->
               <div x-show="drawer.tab==='php'">
                 <div style="font-size:13px;color:var(--text-muted);margin-bottom:16px">Select which PHP-FPM version processes requests for <strong x-text="drawer.site?.domain"></strong></div>
                 <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
@@ -862,7 +862,7 @@
                 <button class="btn btn-primary" style="width:100%;justify-content:center" @click="savePhpVer()">Apply PHP Version</button>
               </div>
 
-              <!-- ── REVERSE PROXY TAB ── -->
+              <!-- -- REVERSE PROXY TAB -- -->
               <div x-show="drawer.tab==='proxy'">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
                   <div style="font-size:13px;font-weight:600">Proxy Rules</div>
@@ -883,7 +883,7 @@
                 </div>
               </div>
 
-              <!-- ── REDIRECT TAB ── -->
+              <!-- -- REDIRECT TAB -- -->
               <div x-show="drawer.tab==='redirect'">
                 <div class="card">
                   <div class="form-group"><label class="form-label">Redirect Target URL</label><input class="form-input" x-model="drawer.redirectForm.target" placeholder="https://www.example.com"></div>
@@ -901,7 +901,7 @@
                 </div>
               </div>
 
-              <!-- ── NODE.JS TAB ── -->
+              <!-- -- NODE.JS TAB -- -->
               <div x-show="drawer.tab==='nodejs'">
                 <div x-show="!drawer.nodejsEnabled" class="card">
                   <div class="card-title" style="margin-bottom:12px">🚀 Run an App (Node.js / Python / Go)</div>
@@ -976,7 +976,7 @@
                 </div>
               </div>
 
-              <!-- ── MAINTENANCE TAB ── -->
+              <!-- -- MAINTENANCE TAB -- -->
               <div x-show="drawer.tab==='maintenance'">
                 <div class="card">
                   <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
@@ -999,9 +999,9 @@
       </div>
 
       <!-- DATABASES -->
-      <!-- ══════════════════════════════════════════════════════════════════ -->
+      <!-- ================================================================== -->
       <!-- WP TOOLKIT PAGE                                                    -->
-      <!-- ══════════════════════════════════════════════════════════════════ -->
+      <!-- ================================================================== -->
       <div x-show="page==='wp'" x-data="wpPage()">
 
         <!-- Page Header -->
@@ -1116,7 +1116,7 @@
           </template>
         </div>
 
-        <!-- ═══ SITE DETAIL DRAWER ═══ -->
+        <!-- === SITE DETAIL DRAWER === -->
         <div x-show="drawer.show" @click.self="drawer.show=false" class="modal-overlay"
              style="z-index:100;align-items:stretch;justify-content:flex-end">
           <div style="width:700px;background:var(--bg-card);height:100%;display:flex;flex-direction:column;overflow:hidden;box-shadow:-4px 0 24px rgba(0,0,0,.2)">
@@ -1468,7 +1468,7 @@
           </div>
         </div>
 
-        <!-- ═══ INSTALL MODAL ═══ -->
+        <!-- === INSTALL MODAL === -->
         <div x-show="showInstall" @click.self="showInstall=false" class="modal-overlay" style="z-index:200">
           <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:88vh;overflow-y:auto;border:1px solid var(--border);box-shadow:var(--shadow-lg)">
             <!-- Modal header -->
@@ -2341,7 +2341,7 @@
           </div>
         </div>
 
-        <!-- ══ PHP UNINSTALL MODAL ══ -->
+        <!-- == PHP UNINSTALL MODAL == -->
         <div class="modal-overlay" x-show="phpUninstallModal.show" @click.self="phpUninstallModal.show=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd">
@@ -2373,7 +2373,7 @@
           </div>
         </div>
 
-        <!-- ══ APP SETTINGS MODAL (aaPanel-style left-sidebar tabs) ══════════════ -->
+        <!-- == APP SETTINGS MODAL (aaPanel-style left-sidebar tabs) ============== -->
         <div x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
              class="modal-overlay" style="z-index:99999;padding:20px;display:flex;align-items:center;justify-content:center"
              @click.self="settingsModal.show=false">
@@ -2578,7 +2578,7 @@
                   <pre style="background:var(--bg-base);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;color:var(--text-secondary);overflow-x:auto;white-space:pre-wrap" x-text="settingsModal.dockerInfo||'Loading…'"></pre>
                 </div>
 
-                <!-- ══ STORAGE LOCATION tab ══ -->
+                <!-- == STORAGE LOCATION tab == -->
                 <div x-show="settingsModal.tab==='storage'">
                   <div style="font-weight:600;font-size:14px;margin-bottom:16px">Storage Location</div>
                   <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px">
@@ -2595,7 +2595,7 @@
                   </div>
                 </div>
 
-                <!-- ══ PORT tab ══ -->
+                <!-- == PORT tab == -->
                 <div x-show="settingsModal.tab==='port'">
                   <div style="font-weight:600;font-size:14px;margin-bottom:16px">Port Configuration</div>
                   <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -2609,7 +2609,7 @@
                   </div>
                 </div>
 
-                <!-- ══ CURRENT STATUS tab (MySQL) ══ -->
+                <!-- == CURRENT STATUS tab (MySQL) == -->
                 <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='mysql'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                     <div style="font-weight:600;font-size:14px">Current Status</div>
@@ -2639,7 +2639,7 @@
                   </table>
                 </div>
 
-                <!-- ══ CURRENT STATUS tab (Redis) ══ -->
+                <!-- == CURRENT STATUS tab (Redis) == -->
                 <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='redis'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                     <div style="font-weight:600;font-size:14px">Current Status</div>
@@ -2659,7 +2659,7 @@
                   </table>
                 </div>
 
-                <!-- ══ SLOW LOG tab ══ -->
+                <!-- == SLOW LOG tab == -->
                 <div x-show="settingsModal.tab==='slow_log'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <div style="font-weight:600;font-size:13px">Slow Query Log</div>
@@ -2668,7 +2668,7 @@
                   <div style="background:#080a0e;border:1px solid #1a1d28;border-radius:8px;padding:14px;font-family:var(--font-mono);font-size:11px;color:#fde68a;white-space:pre-wrap;max-height:450px;overflow-y:auto;line-height:1.6" x-text="settingsModal.slowLog||'Slow log not enabled or empty'"></div>
                 </div>
 
-                <!-- ══ SWITCH VERSION tab (Redis/FTP) ══ -->
+                <!-- == SWITCH VERSION tab (Redis/FTP) == -->
                 <div x-show="settingsModal.tab==='switch_version'">
                   <div style="font-weight:600;font-size:14px;margin-bottom:16px">Switch Version</div>
                   <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
@@ -2686,7 +2686,7 @@
                   </div>
                 </div>
 
-                <!-- ══ SET PERSISTENCE tab (Redis) ══ -->
+                <!-- == SET PERSISTENCE tab (Redis) == -->
                 <div x-show="settingsModal.tab==='persistence'">
                   <div style="font-weight:600;font-size:14px;margin-bottom:16px">Set Persistence</div>
                   <div class="card" style="margin-bottom:16px">
@@ -2723,7 +2723,7 @@
                   </div>
                 </div>
 
-                <!-- ══ REDIS OPTIMIZATION tab ══ -->
+                <!-- == REDIS OPTIMIZATION tab == -->
                 <div x-show="settingsModal.tab==='optimization' && settingsModal.mod?.id==='redis'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">Redis Optimization</div>
                   <div style="display:grid;gap:12px;max-width:600px;margin-bottom:20px">
@@ -2744,7 +2744,7 @@
                   </div>
                 </div>
 
-                <!-- ══ PHP EXTENSIONS tab ══ -->
+                <!-- == PHP EXTENSIONS tab == -->
                 <div x-show="settingsModal.tab==='extensions'">
                   <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
                     PHP <span x-text="settingsModal.selPhpVer||settingsModal.version"></span> Extensions
@@ -2781,7 +2781,7 @@
                   </div>
                 </div>
 
-                <!-- ══ PHP CONFIG tab ══ -->
+                <!-- == PHP CONFIG tab == -->
                 <div x-show="settingsModal.tab==='config' && settingsModal.mod?.id==='php'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">PHP Configuration (Quick Edit)</div>
                   <div style="display:grid;gap:12px;max-width:600px;margin-bottom:16px">
@@ -2798,7 +2798,7 @@
                   </button>
                 </div>
 
-                <!-- ══ PHP INI (Configuration File) tab ══ -->
+                <!-- == PHP INI (Configuration File) tab == -->
                 <div x-show="settingsModal.tab==='ini'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <div>
@@ -2822,7 +2822,7 @@
                   </div>
                 </div>
 
-                <!-- ══ FPM PROFILE tab ══ -->
+                <!-- == FPM PROFILE tab == -->
                 <div x-show="settingsModal.tab==='fpm'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <div>
@@ -2846,7 +2846,7 @@
                   </div>
                 </div>
 
-                <!-- ══ LIMIT OF UPLOAD tab ══ -->
+                <!-- == LIMIT OF UPLOAD tab == -->
                 <div x-show="settingsModal.tab==='upload_limit'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Limit of Upload</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px" x-text="settingsModal.iniPath"></div>
@@ -2870,7 +2870,7 @@
                   </button>
                 </div>
 
-                <!-- ══ LIMIT OF TIMEOUT tab ══ -->
+                <!-- == LIMIT OF TIMEOUT tab == -->
                 <div x-show="settingsModal.tab==='timeout_limit'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Limit of Timeout</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px" x-text="settingsModal.iniPath"></div>
@@ -2894,7 +2894,7 @@
                   </button>
                 </div>
 
-                <!-- ══ DISABLED FUNCTIONS tab ══ -->
+                <!-- == DISABLED FUNCTIONS tab == -->
                 <div x-show="settingsModal.tab==='disabled_functions'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Disabled Functions</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px" x-text="settingsModal.iniPath"></div>
@@ -2909,7 +2909,7 @@
                   </button>
                 </div>
 
-                <!-- ══ LOAD AVERAGE tab ══ -->
+                <!-- == LOAD AVERAGE tab == -->
                 <div x-show="settingsModal.tab==='load_average'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Load Average</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px" x-text="settingsModal.fpmConf"></div>
@@ -2943,7 +2943,7 @@
                   </button>
                 </div>
 
-                <!-- ══ SESSION CONFIG tab ══ -->
+                <!-- == SESSION CONFIG tab == -->
                 <div x-show="settingsModal.tab==='session_config'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Session Configuration</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px" x-text="settingsModal.iniPath"></div>
@@ -2963,7 +2963,7 @@
                   </button>
                 </div>
 
-                <!-- ══ SLOW LOG tab ══ -->
+                <!-- == SLOW LOG tab == -->
                 <div x-show="settingsModal.tab==='slow_log'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">Slow Log</div>
                   <div style="display:grid;gap:14px;max-width:560px;margin-bottom:20px">
@@ -2982,7 +2982,7 @@
                        x-text="settingsModal.slowLog||'No slow log entries.'"></div>
                 </div>
 
-                <!-- ══ phpinfo tab ══ -->
+                <!-- == phpinfo tab == -->
                 <div x-show="settingsModal.tab==='phpinfo'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">PHP Information</div>
                   <div class="card" style="margin-bottom:12px">
@@ -3106,7 +3106,7 @@
                 </div>
 
 
-                <!-- ══ BIND9: ZONE LIST tab ══ -->
+                <!-- == BIND9: ZONE LIST tab == -->
                 <div x-show="settingsModal.tab==='dns_zones'">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
                     <div style="font-weight:600;font-size:13px">DNS Zones</div>
@@ -3149,7 +3149,7 @@
                   </div>
                 </div>
 
-                <!-- ══ BIND9: DNS RECORDS tab ══ -->
+                <!-- == BIND9: DNS RECORDS tab == -->
                 <div x-show="settingsModal.tab==='dns_records'" x-init="$watch('$el.style.display', v => { if(v!=='none' && !settingsModal.dnsSelZone && settingsModal.dnsZones?.length) { settingsModal.dnsSelZone=settingsModal.dnsZones[0].domain; get('/api/dns/zones/'+settingsModal.dnsSelZone+'/records').then(r=>{if(r.ok)settingsModal.dnsRecords=r.records||[];}); } })">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
                     <div>
@@ -3207,7 +3207,7 @@
                   </div>
                 </div>
 
-                <!-- ══ BIND9: CONFIG tab ══ -->
+                <!-- == BIND9: CONFIG tab == -->
                 <div x-show="settingsModal.tab==='dns_config'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <div>
@@ -3229,7 +3229,7 @@
                   <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">• Do not modify if you don't understand BIND configuration rules</div>
                 </div>
 
-                <!-- ══ BIND9: PRIVATE DNS tab ══ -->
+                <!-- == BIND9: PRIVATE DNS tab == -->
                 <div x-show="settingsModal.tab==='dns_private'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Private DNS</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px">Configure BIND9 as an internal/private DNS resolver for your network</div>
@@ -3269,7 +3269,7 @@
                   </div>
                 </div>
 
-                <!-- ══ DDNS: DOMAIN LIST tab ══ -->
+                <!-- == DDNS: DOMAIN LIST tab == -->
                 <div x-show="settingsModal.tab==='ddns_domains'">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
                     <div style="font-weight:600;font-size:13px">Domain List</div>
@@ -3335,7 +3335,7 @@
                   </div>
                 </div>
 
-                <!-- ══ DDNS: SERVER tab ══ -->
+                <!-- == DDNS: SERVER tab == -->
                 <div x-show="settingsModal.tab==='ddns_server'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:20px">DDNS Server</div>
                   <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
@@ -3361,7 +3361,7 @@
                   </div>
                 </div>
 
-                <!-- ══ DDNS: LOG tab ══ -->
+                <!-- == DDNS: LOG tab == -->
                 <div x-show="settingsModal.tab==='ddns_log'">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
                     <div style="font-weight:600;font-size:13px">DDNS Log</div>
@@ -3371,7 +3371,7 @@
                        x-text="settingsModal.ddnsLog||'No log entries yet'"></div>
                 </div>
 
-                <!-- ══ CADDY: CADDYFILE tab ══ -->
+                <!-- == CADDY: CADDYFILE tab == -->
                 <div x-show="settingsModal.tab==='caddyfile'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <div>
@@ -3395,7 +3395,7 @@
                   </div>
                 </div>
 
-                <!-- ══ CADDY: GLOBAL OPTIONS tab ══ -->
+                <!-- == CADDY: GLOBAL OPTIONS tab == -->
                 <div x-show="settingsModal.tab==='global_opts'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Global Options</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:20px">These are set in the <code style="font-size:11px;background:var(--bg-raised);padding:1px 5px;border-radius:3px">{global}</code> block of your Caddyfile</div>
@@ -3440,7 +3440,7 @@
                   </div>
                 </div>
 
-                <!-- ══ CADDY: AUTO HTTPS tab ══ -->
+                <!-- == CADDY: AUTO HTTPS tab == -->
                 <div x-show="settingsModal.tab==='auto_https'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:4px">Auto HTTPS</div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">Caddy automatically provisions and renews TLS certificates via Let's Encrypt / ZeroSSL</div>
@@ -3480,7 +3480,7 @@
                   </div>
                 </div>
 
-                <!-- ══ FTP USER MANAGEMENT tab ══ -->
+                <!-- == FTP USER MANAGEMENT tab == -->
                 <div x-show="settingsModal.tab==='users'">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
                     <div style="font-weight:600;font-size:13px">FTP Accounts</div>
@@ -3530,7 +3530,7 @@
                   </div>
                 </div>
 
-                <!-- ══ FAIL2BAN Website/Server Protection tab ══ -->
+                <!-- == FAIL2BAN Website/Server Protection tab == -->
                 <div x-show="['website_protection','server_protection'].includes(settingsModal.tab)">
                   <div style="font-weight:600;font-size:13px;margin-bottom:14px" x-text="settingsModal.tab==='website_protection'?'Website Protection':'Server Protection'"></div>
                   <div x-show="settingsModal.status!=='active'" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:14px;color:var(--red);font-size:13px;text-align:center">
@@ -3563,7 +3563,7 @@
                   </div>
                 </div>
 
-                <!-- ══ FAIL2BAN Black IP tab ══ -->
+                <!-- == FAIL2BAN Black IP tab == -->
                 <div x-show="settingsModal.tab==='black_ip'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:12px">Black IP List</div>
                   <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:12px"
@@ -3576,7 +3576,7 @@
                   <div style="margin-top:10px;font-size:11px;color:var(--text-muted)">One IP or CIDR range per line</div>
                 </div>
 
-                <!-- ══ FAIL2BAN White IP tab ══ -->
+                <!-- == FAIL2BAN White IP tab == -->
                 <div x-show="settingsModal.tab==='white_ip'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:12px">White IP List</div>
                   <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:12px"
@@ -4550,7 +4550,7 @@
             <div class="tab" :class="{active:lbTab==='health'}" @click="lbTab='health';loadHealthCheck()">Active Health Checks</div>
           </div>
 
-          <!-- ═══ HTTP LOAD BALANCER ═══ -->
+          <!-- === HTTP LOAD BALANCER === -->
           <div x-show="lbTab==='http'">
             <div class="card">
               <div class="card-hd"><div class="card-title">⚖ HTTP Load Balancer</div><span :class="'badge badge-'+(lb.configured?'green':'gray')" x-text="lb.configured?'Active':'Not Configured'"></span></div>
@@ -4586,7 +4586,7 @@
             </div>
           </div>
 
-          <!-- ═══ TCP / STREAM LOAD BALANCER ═══ -->
+          <!-- === TCP / STREAM LOAD BALANCER === -->
           <div x-show="lbTab==='tcp'">
             <div x-show="!tcpLb.stream_module_available" class="card" style="background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
@@ -4630,7 +4630,7 @@
             </div>
           </div>
 
-          <!-- ═══ ACTIVE HEALTH CHECKS ═══ -->
+          <!-- === ACTIVE HEALTH CHECKS === -->
           <div x-show="lbTab==='health'">
             <div class="card">
               <div class="card-hd">
@@ -5442,7 +5442,7 @@
         <!-- DASHBOARD VIEW -->
         <div x-show="view==='dashboard' && selectedProvider">
 
-          <!-- ── CLOUDFLARE DASHBOARD ── -->
+          <!-- -- CLOUDFLARE DASHBOARD -- -->
           <div x-show="selectedProvider?.id==='cloudflare'">
             <!-- Zone selector -->
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
@@ -5570,7 +5570,7 @@
             </div>
           </div>
 
-          <!-- ── BUNNYCDN DASHBOARD ── -->
+          <!-- -- BUNNYCDN DASHBOARD -- -->
           <div x-show="selectedProvider?.id==='bunnycdn'">
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
               <label class="form-label" style="margin:0">Pull Zone:</label>
@@ -5613,7 +5613,7 @@
             </div>
           </div>
 
-          <!-- ── GENERIC CDN DASHBOARD (KeyCDN/Akamai/etc.) ── -->
+          <!-- -- GENERIC CDN DASHBOARD (KeyCDN/Akamai/etc.) -- -->
           <div x-show="selectedProvider && selectedProvider.id!=='cloudflare' && selectedProvider.id!=='bunnycdn'">
             <div class="grid-2">
               <div class="card">
@@ -5685,7 +5685,7 @@
           </div>
         </div>
 
-        <!-- ══ CARD GRID ══ -->
+        <!-- == CARD GRID == -->
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
 
           <!-- 1. Network & Access -->
@@ -5973,7 +5973,7 @@
 
         </div><!-- card grid -->
 
-        <!-- ── Security sub-section (unchanged, shown when stab=security) ── -->
+        <!-- -- Security sub-section (unchanged, shown when stab=security) -- -->
         <div x-show="stab==='security'" style="margin-top:16px">
           <div style="font-size:14px;font-weight:700;color:var(--text-primary);margin-bottom:12px">🔐 Security Settings</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
@@ -6050,7 +6050,7 @@
 </div><!-- app-layout -->
 
 
-  <!-- ── PANEL UPDATE MODAL ─────────────────────────────────────────────── -->
+  <!-- -- PANEL UPDATE MODAL ----------------------------------------------- -->
   <div class="modal-overlay" x-show="updateModal.show" style="z-index:500"
        x-data="updateModalData()"
        @click.self="updateModal.show=false">
@@ -6182,7 +6182,7 @@
 
 
 
-  <!-- ── NEONCODEX AI PANEL (inside main layout) ─────────────────────────── -->
+  <!-- -- NEONCODEX AI PANEL (inside main layout) --------------------------- -->
   <div x-show="loggedIn" x-data="aiAssistant()" style="position:relative">
 
     <!-- AI slide-in panel — appears from right edge inside the panel -->

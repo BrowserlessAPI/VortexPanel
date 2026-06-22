@@ -35,7 +35,7 @@
   --shadow-lg: 0 4px 24px rgba(0,0,0,0.5);
   --sidebar-w: 220px;
   --topbar-h:  56px;
-  /* ── Stat card colors ── */
+  /* --- Stat card colors --- */
   --stat-cpu:         #3b82f6;
   --stat-cpu-bg:      #dbeafe;
   --stat-ram:         #8b5cf6;
@@ -209,7 +209,7 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 @media(max-width:900px){.grid-4{grid-template-columns:repeat(2,1fr)}.grid-3{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:640px){.sidebar{position:fixed;inset:0 auto 0 0;left:-220px;transition:left .25s;z-index:200}.sidebar.open{left:0}.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}.form-row-2{grid-template-columns:1fr}}
 
-/* ── FILE MANAGER ─────────────────────────────────────────────────────────── */
+/* -- FILE MANAGER ----------------------------------------------------------- */
 .ctx-menu {
   position: fixed;
   background: var(--bg-card);
@@ -290,7 +290,7 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
   padding: 8px 0;
 }
 
-/* ── PHP Version Switcher ───────────────────────────── */
+/* -- PHP Version Switcher ----------------------------- */
 .php-version-pills {
   display: flex;
   align-items: center;

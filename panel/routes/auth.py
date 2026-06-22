@@ -5,7 +5,7 @@ from datetime import datetime
 
 auth_bp = Blueprint('auth', __name__)
 
-# ── Credential file locations ─────────────────────────────────────────────────
+# --- Credential file locations --------------------------------------------------
 CREDS_LOCATIONS = [
     '/opt/vortexpanel/credentials.json',
     '/opt/vortexpanel/config/credentials.json',
@@ -17,7 +17,7 @@ AUDIT_FILE   = '/opt/vortexpanel/login_audit.log'
 CONFIG_FILE  = '/opt/vortexpanel/config.json'
 LOCKOUT_FILE = '/opt/vortexpanel/lockout.json'
 
-# ── Argon2id (preferred) → bcrypt fallback → SHA-256 legacy ──────────────────
+# --- Argon2id (preferred) → bcrypt fallback → SHA-256 legacy -------------------
 try:
     from argon2 import PasswordHasher as _PH
     from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
@@ -33,14 +33,14 @@ try:
 except ImportError:
     _BCRYPT = False
 
-# ── TOTP / 2FA ────────────────────────────────────────────────────────────────
+# --- TOTP / 2FA -----------------------------------------------------------------
 try:
     import pyotp as _pyotp
     _PYOTP = True
 except ImportError:
     _PYOTP = False
 
-# ── Brute-force lockout ───────────────────────────────────────────────────────
+# --- Brute-force lockout --------------------------------------------------------
 _LOCKOUT_ATTEMPTS = 5
 _LOCKOUT_WINDOW   = 900   # 15 minutes
 _attempts = defaultdict(list)   # in-memory: ip -> [monotonic timestamps]
@@ -102,7 +102,7 @@ def _attempts_remaining(ip):
     recent = [t for t in _attempts[ip] if now - t < _LOCKOUT_WINDOW]
     return max(0, _LOCKOUT_ATTEMPTS - len(recent))
 
-# ── Password helpers ──────────────────────────────────────────────────────────
+# --- Password helpers -----------------------------------------------------------
 def _hash_password(password: str) -> str:
     """Hash with Argon2id (preferred) → bcrypt → SHA-256 fallback."""
     if _ARGON2:
@@ -138,14 +138,14 @@ def _needs_upgrade(stored: str) -> bool:
     """True if stored hash should be upgraded to Argon2id."""
     return _ARGON2 and not stored.startswith('$argon2')
 
-# ── Session fingerprint ───────────────────────────────────────────────────────
+# --- Session fingerprint --------------------------------------------------------
 def _session_fingerprint():
     """Bind session to IP + User-Agent to detect session hijacking."""
     ip = _client_ip()
     ua = request.headers.get('User-Agent', '')[:200]
     return hashlib.sha256(f'{ip}:{ua}'.encode()).hexdigest()[:16]
 
-# ── IP allowlist ──────────────────────────────────────────────────────────────
+# --- IP allowlist ---------------------------------------------------------------
 _ALWAYS_ALLOWED = {'127.0.0.1', '::1', 'localhost', '::ffff:127.0.0.1'}
 
 def _ip_allowed(ip):
@@ -179,7 +179,7 @@ def check_ip_and_session():
         return False
     return True
 
-# ── Credentials ───────────────────────────────────────────────────────────────
+# --- Credentials ----------------------------------------------------------------
 def find_creds_file():
     for p in CREDS_LOCATIONS:
         if os.path.exists(p): return p
@@ -207,7 +207,7 @@ def save_credentials(creds):
     try: os.chmod(CREDS_FILE, 0o600)
     except: pass
 
-# ── Panel config ──────────────────────────────────────────────────────────────
+# --- Panel config ---------------------------------------------------------------
 def _get_config():
     try: return json.load(open(CONFIG_FILE))
     except: return {}
@@ -216,7 +216,7 @@ def _save_config(cfg):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(cfg, f, indent=2)
 
-# ── Audit log ─────────────────────────────────────────────────────────────────
+# --- Audit log ------------------------------------------------------------------
 def _audit(ip, username, success, note=''):
     try:
         ts  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -232,9 +232,9 @@ def _audit(ip, username, success, note=''):
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # ROUTES
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 
 @auth_bp.route('/api/auth/check')
 def check_session():

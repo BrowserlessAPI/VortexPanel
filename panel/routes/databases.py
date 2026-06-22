@@ -11,7 +11,7 @@ def sh(cmd, timeout=15):
     except Exception as e:
         return '', str(e), 1
 
-# ── Engine detection ──────────────────────────────────────────────────────────
+# --- Engine detection -----------------------------------------------------------
 def detect_engines():
     engines = []
     # MariaDB — check first, takes priority over mysql binary
@@ -39,7 +39,7 @@ def detect_engines():
         engines.append({'id':'mongodb','name':'MongoDB','icon':'🍃','version':ver,'active':True})
     return engines
 
-# ── MySQL/MariaDB helpers ─────────────────────────────────────────────────────
+# --- MySQL/MariaDB helpers ------------------------------------------------------
 def mysql_cmd(query, db=None, timeout=15):
     import shutil as _sh, tempfile as _tmp
     bin_name = 'mariadb' if _sh.which('mariadb') else 'mysql'
@@ -80,7 +80,7 @@ def mysql_dbs():
         dbs.append({'name':name,'size_mb':size_mb,'tables':tcount,'engine':'mysql'})
     return dbs, None
 
-# ── PostgreSQL helpers ────────────────────────────────────────────────────────
+# --- PostgreSQL helpers ---------------------------------------------------------
 def pg_cmd(query, db='postgres'):
     out, err, rc = sh(f'sudo -u postgres psql -d {db} -c "{query}" -t 2>/dev/null')
     if rc == 0: return out, None
@@ -98,7 +98,7 @@ def pg_dbs():
         dbs.append({'name':name,'size_mb':size,'tables':0,'engine':'postgresql'})
     return dbs, None
 
-# ── MongoDB helpers ───────────────────────────────────────────────────────────
+# --- MongoDB helpers ------------------------------------------------------------
 def mongo_dbs():
     out, err, rc = sh("mongosh --quiet --eval 'db.adminCommand({listDatabases:1}).databases.forEach(d=>print(d.name+\"\\t\"+d.sizeOnDisk))' 2>/dev/null")
     if rc != 0:
@@ -113,7 +113,7 @@ def mongo_dbs():
         dbs.append({'name':parts[0],'size_mb':size_mb,'tables':0,'engine':'mongodb'})
     return dbs, None
 
-# ── API Routes ────────────────────────────────────────────────────────────────
+# --- API Routes -----------------------------------------------------------------
 @databases_bp.route('/api/databases/engines')
 def get_engines():
     if not req(): return jsonify({'ok':False}), 401

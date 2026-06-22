@@ -36,7 +36,7 @@ def http_request(url, method='GET', headers=None, data=None, timeout=15):
     except Exception as e:
         return {'error': str(e)}, 0
 
-# ── CDN Config ────────────────────────────────────────────────────────────────
+# --- CDN Config -----------------------------------------------------------------
 @cdn_bp.route('/api/cdn/config')
 def get_config():
     if not req(): return jsonify({'ok':False}), 401
@@ -84,7 +84,7 @@ def disconnect_cdn():
     save_config(cfg)
     return jsonify({'ok':True})
 
-# ── CLOUDFLARE ────────────────────────────────────────────────────────────────
+# --- CLOUDFLARE -----------------------------------------------------------------
 def cf_headers(cfg):
     if cfg.get('api_token'):
         return {'Authorization': f'Bearer {cfg["api_token"]}'}
@@ -196,7 +196,7 @@ def cf_analytics(zone_id):
         'unique_ips':  totals.get('uniques',{}).get('all',0),
     }})
 
-# ── BUNNYCDN ──────────────────────────────────────────────────────────────────
+# --- BUNNYCDN -------------------------------------------------------------------
 def bunny_headers(cfg):
     return {'AccessKey': cfg.get('api_key','')}
 
@@ -247,7 +247,7 @@ def bunny_stats(zone_id):
         'pull_requests':     data.get('TotalPullRequests',0),
     })
 
-# ── GENERIC CDNs (Nginx config-based integration) ─────────────────────────────
+# --- GENERIC CDNs (Nginx config-based integration) ------------------------------
 # For KeyCDN, StackPath, Akamai, CloudFront, Google CDN, Sucuri
 # These work by configuring the origin server to add cache headers
 # and setting up the CDN pull zone manually, then managing via Nginx headers

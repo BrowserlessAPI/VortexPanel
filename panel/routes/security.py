@@ -10,7 +10,7 @@ def sh(c, t=10):
         return r.stdout.strip(), r.stderr.strip(), r.returncode
     except: return '', 'timeout', 1
 
-# ── SSH ──────────────────────────────────────────────────────────────────────
+# --- SSH -----------------------------------------------------------------------
 @security_bp.route('/api/security/ssh')
 def ssh_config():
     if not req(): return jsonify({'ok':False}), 401
@@ -173,7 +173,7 @@ def add_ssh_key():
     os.chmod(auth_file, 0o600)
     return jsonify({'ok':True})
 
-# ── Fail2ban ─────────────────────────────────────────────────────────────────
+# --- Fail2ban ------------------------------------------------------------------
 @security_bp.route('/api/security/fail2ban')
 def fail2ban_status():
     if not req(): return jsonify({'ok':False}), 401
@@ -219,7 +219,7 @@ def ban_ip():
     sh(f'fail2ban-client set {jail} banip {ip} 2>/dev/null')
     return jsonify({'ok':True})
 
-# ── Login attempts ────────────────────────────────────────────────────────────
+# --- Login attempts -------------------------------------------------------------
 @security_bp.route('/api/security/login-attempts')
 def login_attempts():
     if not req(): return jsonify({'ok':False}), 401
@@ -235,20 +235,20 @@ def login_attempts():
         break
     return jsonify({'ok':True,'attempts':attempts})
 
-# ── Port scan / open ports ────────────────────────────────────────────────────
+# --- Port scan / open ports -----------------------------------------------------
 @security_bp.route('/api/security/ports')
 def open_ports():
     if not req(): return jsonify({'ok':False}), 401
     out, _, _ = sh('ss -tlnp 2>/dev/null')
     return jsonify({'ok':True,'output':out})
 
-# ── Security Score ────────────────────────────────────────────────────────────
+# --- Security Score -------------------------------------------------------------
 @security_bp.route('/api/security/score')
 def security_score():
     if not req(): return jsonify({'ok':False}), 401
     checks = []
 
-    # ── SSH ───────────────────────────────────────────────────────────────────
+    # --- SSH --------------------------------------------------------------------
     sshd = '/etc/ssh/sshd_config'
     if os.path.exists(sshd):
         with open(sshd) as f: content = f.read()
@@ -266,26 +266,26 @@ def security_score():
         checks.append({'label':'SSH on Non-default Port',
                         'pass': port != 22, 'severity':'low'})
 
-    # ── Fail2ban ──────────────────────────────────────────────────────────────
+    # --- Fail2ban ---------------------------------------------------------------
     f2b, _, _ = sh('systemctl is-active fail2ban 2>/dev/null')
     checks.append({'label':'Fail2ban Running',
                    'pass': f2b.strip() == 'active', 'severity':'high'})
 
-    # ── Firewall — check both UFW and firewalld ───────────────────────────────
+    # --- Firewall — check both UFW and firewalld --------------------------------
     ufw, _, _  = sh('ufw status 2>/dev/null | head -1')
     fwd, _, _  = sh('firewall-cmd --state 2>/dev/null')
     fw_active  = 'active' in ufw.lower() or fwd.strip() == 'running'
     checks.append({'label':'Firewall Active (UFW or firewalld)',
                    'pass': fw_active, 'severity':'high'})
 
-    # ── Auto security updates ─────────────────────────────────────────────────
+    # --- Auto security updates --------------------------------------------------
     apt_out, _, _ = sh('dpkg -l unattended-upgrades 2>/dev/null | grep -c "^ii"')
     dnf_out, _, _ = sh('dnf list installed dnf-automatic 2>/dev/null | grep -c dnf-automatic')
     auto_updates  = apt_out.strip() == '1' or dnf_out.strip() == '1'
     checks.append({'label':'Auto Security Updates Enabled',
                    'pass': auto_updates, 'severity':'medium'})
 
-    # ── Panel security ────────────────────────────────────────────────────────
+    # --- Panel security ---------------------------------------------------------
     try:
         import json as _json, hashlib as _hashlib
         creds_file = '/opt/vortexpanel/credentials.json'
@@ -308,7 +308,7 @@ def security_score():
     except Exception:
         pass
 
-    # ── Secret key not default ────────────────────────────────────────────────
+    # --- Secret key not default -------------------------------------------------
     checks.append({'label':'Panel Secret Key Auto-Generated (not default)',
                    'pass': os.path.exists('/opt/vortexpanel/secret.key'),
                    'severity':'high'})
@@ -317,7 +317,7 @@ def security_score():
     score  = round(passed / len(checks) * 100) if checks else 0
     return jsonify({'ok':True, 'checks':checks, 'score':score})
 
-# ── ModSecurity ───────────────────────────────────────────────────────────────
+# --- ModSecurity ----------------------------------------------------------------
 
 MODSEC_CONF     = '/etc/nginx/modsec/modsecurity.conf'
 MODSEC_MAIN     = '/etc/nginx/modsec/main.conf'
@@ -596,7 +596,7 @@ def modsec_per_site():
 
     return jsonify({'ok':False,'error':f'No nginx config found for {domain}'}), 404
 
-# ── Nginx Load Balancer ───────────────────────────────────────────────────────
+# --- Nginx Load Balancer --------------------------------------------------------
 LB_CONF = '/etc/nginx/conf.d/loadbalancer.conf'
 
 @security_bp.route('/api/security/loadbalancer')
@@ -723,7 +723,7 @@ def lb_delete():
     return jsonify({'ok':True})
 
 
-# ── Load Balancer: shared JSON helpers ────────────────────────────────────────
+# --- Load Balancer: shared JSON helpers -----------------------------------------
 def _load_json(path, default):
     try: return __import__('json').load(open(path))
     except Exception: return default
@@ -737,7 +737,7 @@ def _save_json(path, data):
     except Exception: pass
 
 
-# ── Load Balancer: TCP / Stream ────────────────────────────────────────────────
+# --- Load Balancer: TCP / Stream -------------------------------------------------
 LB_STREAM_DIR  = '/etc/nginx/stream.d'
 LB_STREAM_CONF = '/etc/nginx/stream.d/vortex_tcp_lb.conf'
 
@@ -848,7 +848,7 @@ def lb_tcp_install_stream():
     pkg_mgr = os_info['pkg']
     steps   = []
 
-    # ── Step 1: install the package ──
+    # --- Step 1: install the package ---
     if family == 'debian':
         cmd = f'DEBIAN_FRONTEND=noninteractive apt-get install -y libnginx-mod-stream'
         out, err, rc = sh(cmd, t=120)
@@ -887,13 +887,13 @@ def lb_tcp_install_stream():
         return jsonify({'ok':False,
             'error':f'Unsupported OS family: {family}'}), 400
 
-    # ── Step 2: ensure load_module directive exists ──
+    # --- Step 2: ensure load_module directive exists ---
     ok, err = _ensure_stream_load_module()
     steps.append({'action': 'ensure_load_module', 'ok': ok, 'err': err})
     if not ok:
         return jsonify({'ok':False, 'error':f'load_module failed: {err}', 'steps':steps}), 500
 
-    # ── Step 3: test nginx config ──
+    # --- Step 3: test nginx config ---
     out, err, rc = sh('nginx -t 2>&1')
     steps.append({'cmd': 'nginx -t', 'rc': rc, 'out': out, 'err': err})
     if rc != 0:
@@ -901,7 +901,7 @@ def lb_tcp_install_stream():
             'error':f'nginx -t failed after install: {out} {err}',
             'steps':steps}), 500
 
-    # ── Step 4: reload nginx ──
+    # --- Step 4: reload nginx ---
     sh('systemctl reload nginx', t=10)
     steps.append({'action': 'nginx reloaded'})
 
@@ -984,7 +984,7 @@ def lb_tcp_delete():
     return jsonify({'ok':True})
 
 
-# ── Load Balancer: Active Health Checks ────────────────────────────────────────
+# --- Load Balancer: Active Health Checks -----------------------------------------
 LB_HEALTH_CONFIG = '/opt/vortexpanel/lb_health.json'
 LB_HEALTH_STATE  = '/opt/vortexpanel/lb_health_state.json'
 LB_HEALTH_LOG    = '/opt/vortexpanel/lb_health.log'

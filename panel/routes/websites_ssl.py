@@ -7,7 +7,7 @@ except ImportError:
     from websites_core import websites_bp, req, sh, get_nginx_dirs, reload_nginx, pkg_install, CF_CONFIG_FILE
 
 
-# ── CLOUDFLARE HELPERS ─────────────────────────────────────────────────────────
+# --- CLOUDFLARE HELPERS ----------------------------------------------------------
 def _cf_load_token():
     try:
         with open(CF_CONFIG_FILE) as fp:
@@ -157,7 +157,7 @@ def _issue_cert(domain, email):
     return ok, out, 'http'
 
 
-# ── ROUTES ─────────────────────────────────────────────────────────────────────
+# --- ROUTES ----------------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/ssl', methods=['POST'])
 def issue_ssl(domain):
     if not req(): return jsonify({'ok':False}), 401

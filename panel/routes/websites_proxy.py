@@ -7,7 +7,7 @@ except ImportError:
     from websites_core import websites_bp, req, sh, get_nginx_dirs, reload_nginx
 
 
-# ── REVERSE PROXY ─────────────────────────────────────────────────────────────
+# --- REVERSE PROXY --------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/proxy', methods=['GET'])
 def get_proxies(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -72,7 +72,7 @@ def del_proxy(domain, name):
     return jsonify({'ok':True})
 
 
-# ── REDIRECT ──────────────────────────────────────────────────────────────────
+# --- REDIRECT -------------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/redirect', methods=['POST'])
 def set_redirect(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -115,7 +115,7 @@ def del_redirect(domain):
     reload_nginx(); return jsonify({'ok':True})
 
 
-# ── URL REWRITE ───────────────────────────────────────────────────────────────
+# --- URL REWRITE ----------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/rewrite')
 def get_rewrite(domain):
     if not req(): return jsonify({'ok':False}), 401

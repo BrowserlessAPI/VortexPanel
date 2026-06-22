@@ -85,7 +85,7 @@ def human_schedule(schedule):
         return f'Monthly on day {dom} at {hr.zfill(2)}:{mn.zfill(2)}'
     return schedule
 
-# ── PRESETS ───────────────────────────────────────────────────────────────────
+# --- PRESETS --------------------------------------------------------------------
 SCHEDULE_PRESETS = [
     {'label':'Every minute',      'value':'* * * * *'},
     {'label':'Every 5 minutes',   'value':'*/5 * * * *'},

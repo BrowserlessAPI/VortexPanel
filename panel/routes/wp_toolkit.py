@@ -13,15 +13,15 @@ except ImportError:
 
 wp_bp = Blueprint('wp_toolkit', __name__)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+# --- Paths ----------------------------------------------------------------------
 WP_BACKUP_DIR = '/opt/vortexpanel/wp_backups'
 WP_CLI        = '/usr/local/bin/wp'
 WEBROOTS      = ['/www/wwwroot', '/var/www/html', '/var/www', '/home']
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 
 def req():
     return 'user' in session
@@ -150,9 +150,9 @@ def _rand_pass(n=20):
 os.makedirs(WP_BACKUP_DIR, exist_ok=True)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # VHOST GENERATORS (Nginx / Apache / OpenLiteSpeed / Caddy)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 
 def _nginx_vhost(domain, path, php_ver):
     sock = _php_sock(php_ver)
@@ -406,9 +406,9 @@ def _delete_vhost(domain, webserver):
         sh('systemctl reload caddy 2>/dev/null')
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # WP INSTALL DETECTION
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 
 def _scan_wp_sites():
     """Scan all webroots for wp-config.php and gather site metadata."""
@@ -603,9 +603,9 @@ def _get_wp_info(path, domain=None):
     return info
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 # ROUTES
-# ═══════════════════════════════════════════════════════════════════════════════
+# ===============================================================================
 
 @wp_bp.route('/api/wp/sites')
 def list_sites():
@@ -812,7 +812,7 @@ def one_click_login(domain):
     return jsonify({'ok': True, 'login_url': login_url.strip()})
 
 
-# ── Plugins ───────────────────────────────────────────────────────────────────
+# --- Plugins --------------------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>/plugins')
 def list_plugins(domain):
@@ -879,7 +879,7 @@ def update_all_plugins(domain):
     return jsonify({'ok': rc == 0, 'output': (out + err)[-1000:]})
 
 
-# ── Themes ────────────────────────────────────────────────────────────────────
+# --- Themes ---------------------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>/themes')
 def list_themes(domain):
@@ -918,7 +918,7 @@ def theme_action(domain, theme):
     return jsonify({'ok': rc == 0, 'output': (out + err)[-500:]})
 
 
-# ── Core update ───────────────────────────────────────────────────────────────
+# --- Core update ----------------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>/update-core', methods=['POST'])
 def update_core(domain):
@@ -931,7 +931,7 @@ def update_core(domain):
     return jsonify({'ok': rc == 0, 'output': (out + err + out2 + err2)[-1000:]})
 
 
-# ── Security scanner ──────────────────────────────────────────────────────────
+# --- Security scanner -----------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>/security')
 def security_scan(domain):
@@ -1086,7 +1086,7 @@ def security_fix(domain):
     return jsonify({'ok': True, 'output': out})
 
 
-# ── Settings ──────────────────────────────────────────────────────────────────
+# --- Settings -------------------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>/settings', methods=['PUT'])
 def save_settings(domain):
@@ -1164,7 +1164,7 @@ def save_settings(domain):
     return jsonify({'ok': True, 'updated': results})
 
 
-# ── Backups ───────────────────────────────────────────────────────────────────
+# --- Backups --------------------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>/backups')
 def list_backups(domain):
@@ -1230,7 +1230,7 @@ def delete_backup(domain, filename):
     return jsonify({'ok': True})
 
 
-# ── Staging / Clone ───────────────────────────────────────────────────────────
+# --- Staging / Clone ------------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>/clone', methods=['POST'])
 def clone_site(domain):
@@ -1341,7 +1341,7 @@ def push_staging(domain):
     return jsonify({'ok': True, 'backup': os.path.basename(bak), 'message': 'Staging pushed to live'})
 
 
-# ── Delete site ───────────────────────────────────────────────────────────────
+# --- Delete site ----------------------------------------------------------------
 
 @wp_bp.route('/api/wp/<domain>', methods=['DELETE'])
 def delete_site(domain):
@@ -1377,7 +1377,7 @@ def delete_site(domain):
     return jsonify({'ok': True})
 
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
+# --- Utilities ------------------------------------------------------------------
 
 @wp_bp.route('/api/wp/install-wpcli', methods=['POST'])
 def install_wpcli_route():

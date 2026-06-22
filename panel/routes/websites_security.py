@@ -7,7 +7,7 @@ except ImportError:
     from websites_core import websites_bp, req, sh, get_nginx_dirs, reload_nginx
 
 
-# ── HOTLINK PROTECTION ────────────────────────────────────────────────────────
+# --- HOTLINK PROTECTION ---------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/hotlink')
 def get_hotlink(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -65,7 +65,7 @@ def set_hotlink(domain):
     return jsonify({'ok':True,'enabled':enable})
 
 
-# ── LIMIT ACCESS ──────────────────────────────────────────────────────────────
+# --- LIMIT ACCESS ---------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/limit-access')
 def get_limit_access(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -145,7 +145,7 @@ def delete_limit_access(domain, name):
         return jsonify({'ok':False,'error':str(e)})
 
 
-# ── MAINTENANCE MODE ──────────────────────────────────────────────────────────
+# --- MAINTENANCE MODE -----------------------------------------------------------
 MAINTENANCE_HTML = '''<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">

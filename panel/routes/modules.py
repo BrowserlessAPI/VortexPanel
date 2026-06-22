@@ -40,7 +40,7 @@ def translate_install_cmd(cmd):
 
 def req(): return 'user' in session
 
-# ── Job store: JSONL append-only files shared across all gunicorn workers ───
+# --- Job store: JSONL append-only files shared across all gunicorn workers ----
 # Each job = one .jsonl file where every line is a complete JSON object.
 # Appending one JSON line is atomic for small writes — no read-modify-write,
 # no corruption, no locks needed between workers.
@@ -160,7 +160,7 @@ def is_installed(check_cmd):
     except: return False
 
 MODULES = [
-    # ── Web Servers ──────────────────────────────────────────────────────────
+    # --- Web Servers -----------------------------------------------------------
     {
         'id':'nginx', 'name':'Nginx', 'icon':'🌐', 'category':'Web Server',
         'desc':'High-performance HTTP & reverse proxy server',
@@ -218,7 +218,7 @@ systemctl enable lsws && systemctl start lsws''',
         'uninstall':'/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; apt-get remove -y openlitespeed 2>/dev/null; rm -rf /usr/local/lsws',
         'service':'lsws', 'manage':True,
     },
-    # ── Databases ────────────────────────────────────────────────────────────
+    # --- Databases -------------------------------------------------------------
     {
         'id':'caddy', 'name':'Caddy', 'icon':'🟩', 'category':'Web Server',
         'desc':'Auto-HTTPS web server — HTTP/3, zero-config TLS via Lets Encrypt',
@@ -340,7 +340,7 @@ systemctl enable --now mariadb''',
         'uninstall':'apt-get remove -y --purge postgresql postgresql-* && apt-get autoremove -y && rm -rf /etc/postgresql /var/lib/postgresql',
         'service':'postgresql', 'manage':True,
     },
-    # ── PHP ──────────────────────────────────────────────────────────────────
+    # --- PHP -------------------------------------------------------------------
     {
         'id':'php', 'name':'PHP', 'icon':'🐘', 'category':'PHP',
         'desc':'PHP-FPM — multiple versions supported side by side',
@@ -379,7 +379,7 @@ done
 apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
     },
-    # ── FTP ──────────────────────────────────────────────────────────────────
+    # --- FTP -------------------------------------------------------------------
     {
         'id':'pure-ftpd', 'name':'Pure-FTPd', 'icon':'📂', 'category':'FTP',
         'desc':'Simple, fast and secure FTP server',
@@ -391,7 +391,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'uninstall':'apt-get remove -y --purge pure-ftpd pure-ftpd-common && apt-get autoremove -y',
         'service':'pure-ftpd', 'manage':True,
     },
-    # ── Admin Tools ──────────────────────────────────────────────────────────
+    # --- Admin Tools -----------------------------------------------------------
     {
         'id':'phpmyadmin', 'name':'phpMyAdmin', 'icon':'🗄', 'category':'Admin Tools',
         'desc':'Web-based MySQL/MariaDB admin — auto-configured at port 8082',
@@ -469,7 +469,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         ),
         'manage':False,
     },
-    # ── Security ─────────────────────────────────────────────────────────────
+    # --- Security --------------------------------------------------------------
     {
         'id':'fail2ban', 'name':'Fail2ban', 'icon':'🛡', 'category':'Security',
         'desc':'Intrusion prevention & brute-force protection',
@@ -505,7 +505,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         'uninstall':'apt-get remove -y --purge clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
         'service':'clamav-daemon', 'manage':True,
     },
-    # ── DNS ──────────────────────────────────────────────────────────────────
+    # --- DNS -------------------------------------------------------------------
     {
         'id':'ddns', 'name':'DDNS Manager', 'icon':'🌍', 'category':'DNS',
         'desc':'Dynamic DNS — automatic IP update service (Built-in)',
@@ -550,7 +550,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         ),
         'service':'named', 'manage':True,
     },
-    # ── Runtimes ─────────────────────────────────────────────────────────────
+    # --- Runtimes --------------------------------------------------------------
     {
         'id':'nodejs', 'name':'Node.js', 'icon':'🟢', 'category':'Runtime',
         'desc':'JavaScript runtime built on Chrome V8 engine',
@@ -590,7 +590,7 @@ done
 apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
     },
-    # ── Containers ───────────────────────────────────────────────────────────
+    # --- Containers ------------------------------------------------------------
     {
         'id':'docker', 'name':'Docker', 'icon':'🐳', 'category':'Containers',
         'desc':'Container platform — build, ship, run anywhere',
@@ -604,7 +604,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'uninstall':'apt-get remove -y --purge docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && apt-get autoremove -y',
         'service':'docker', 'manage':True,
     },
-    # ── Dev ──────────────────────────────────────────────────────────────────
+    # --- Dev -------------------------------------------------------------------
     {
         'id':'composer', 'name':'Composer', 'icon':'🎼', 'category':'Dev',
         'desc':'PHP dependency & package manager',
@@ -628,7 +628,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'uninstall':'rm -f /usr/local/bin/composer',
         'manage':False,
     },
-    # ── Cache ────────────────────────────────────────────────────────────────
+    # --- Cache -----------------------------------------------------------------
     {
         'id':'redis', 'name':'Redis', 'icon':'🔴', 'category':'Cache',
         'desc':'In-memory data store, cache & message broker',
@@ -648,7 +648,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'uninstall':'apt-get remove -y --purge redis-server redis-tools && apt-get autoremove -y',
         'service':'redis-server', 'manage':True,
     },
-    # ── Server Tools ─────────────────────────────────────────────────────────
+    # --- Server Tools ----------------------------------------------------------
     {
         'id':'supervisor', 'name':'Supervisor', 'icon':'⚙', 'category':'Server',
         'desc':'Process control — keep programs running',
@@ -666,7 +666,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'uninstall':'apt-get remove -y --purge supervisor && apt-get autoremove -y',
         'service':'supervisor', 'manage':True,
     },
-    # ── Webmail ───────────────────────────────────────────────────────────────
+    # --- Webmail ----------------------------------------------------------------
     {
         'id':'roundcube', 'name':'Roundcube', 'icon':'📨', 'category':'Mail',
         'desc':'Modern web-based IMAP email client',
@@ -687,7 +687,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
         'uninstall':'rm -rf /var/www/roundcube',
         'manage':True,
     },
-    # ── WAF / Security ────────────────────────────────────────────────────────
+    # --- WAF / Security ---------------------------------------------------------
     {
         'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'🔥', 'category':'Security',
         'desc':'OWASP CRS v4 Web Application Firewall — Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)',
@@ -702,7 +702,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
             {'label':'v2 + OWASP CRS v4 (Apache legacy)', 'value':'2'},
         ],
         'install_tpl':(
-            # ── Step 1: install libmodsecurity3 + nginx connector ──────────────
+            # --- Step 1: install libmodsecurity3 + nginx connector ---------------
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  apt-get update -qq && apt-get install -y libmodsecurity3 libmodsecurity-dev '
@@ -712,7 +712,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
             '  dnf install -y mod_security mod_security_crs 2>/dev/null || true; '
             '  dnf install -y nginx-mod-modsecurity 2>/dev/null || true; '
             'fi && '
-            # ── Step 2: download latest OWASP CRS ─────────────────────────────
+            # --- Step 2: download latest OWASP CRS ------------------------------
             'CRS_TAG=$(curl -s https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
             '  | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null) && '
             'CRS_TAG=${CRS_TAG:-v4.0.0} && '
@@ -721,23 +721,23 @@ chown -R www-data:www-data /var/www/roundcube/''',
             '  -O /tmp/crs.tar.gz && '
             'tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 && '
             'rm -f /tmp/crs.tar.gz && '
-            # ── Step 3: download modsecurity.conf ─────────────────────────────
+            # --- Step 3: download modsecurity.conf ------------------------------
             'wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended '
             '  -O /etc/nginx/modsec/modsecurity.conf && '
             'sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf && '
             'sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf && '
-            # ── Step 4: build main.conf ────────────────────────────────────────
+            # --- Step 4: build main.conf -----------------------------------------
             'cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf && '
             'cat > /etc/nginx/modsec/main.conf << \'MCEOF\'\n'
             'Include /etc/nginx/modsec/modsecurity.conf\n'
             'Include /etc/nginx/modsec/crs/crs-setup.conf\n'
             'Include /etc/nginx/modsec/crs/rules/*.conf\n'
             'MCEOF\n'
-            # ── Step 5: enable in nginx.conf ──────────────────────────────────
+            # --- Step 5: enable in nginx.conf -----------------------------------
             'grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null || '
             '  sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;" '
             '  /etc/nginx/nginx.conf 2>/dev/null || true && '
-            # ── Step 6: auto-update cron (weekly) ─────────────────────────────
+            # --- Step 6: auto-update cron (weekly) ------------------------------
             'echo "0 3 * * 0 root /bin/bash -c \\"'
             'CRS_TAG=\\$(curl -s https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
             '| python3 -c \\"import json,sys; print(json.load(sys.stdin)[chr(39)+chr(116)+chr(97)+chr(103)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101)+chr(39)])\\" 2>/dev/null) && '
@@ -764,7 +764,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
         ),
         'manage':False,
     },
-    # ── Load Balancer ─────────────────────────────────────────────────────────
+    # --- Load Balancer ----------------------------------------------------------
     {
         'id':'nginx-lb', 'name':'Nginx Load Balancer', 'icon':'⚖', 'category':'Web Server',
         'desc':'Configure Nginx upstream load balancing (Round Robin, Least Conn, IP Hash)',
@@ -826,7 +826,7 @@ nginx -t && systemctl reload nginx''',
         'manage':False,
     },
 
-    # ── CDN ───────────────────────────────────────────────────────────────────
+    # --- CDN --------------------------------------------------------------------
     {
         'id':'cdn', 'name':'CDN Manager', 'icon':'⚡', 'category':'Network',
         'desc':'Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri — HOT MODULE',
@@ -844,7 +844,7 @@ def _get_mod(mod_id):
     return next((m for m in MODULES if m['id'] == mod_id), None)
 
 
-# ── Conflict groups — only one from each group can be installed ──────────────
+# --- Conflict groups — only one from each group can be installed ---------------
 CONFLICT_GROUPS = {
     'webserver': ['nginx', 'apache2', 'openlitespeed', 'caddy'],
     'database':  ['mysql', 'mariadb', 'mongodb', 'postgresql'],
@@ -1110,7 +1110,7 @@ def control_module(mod_id):
     return jsonify({'ok':False, 'error':'No service defined'})
 
 
-# ── App Settings Modal endpoints ─────────────────────────────────────────────
+# --- App Settings Modal endpoints ----------------------------------------------
 
 @modules_bp.route('/api/modules/<mod_id>/settings')
 def get_module_settings(mod_id):

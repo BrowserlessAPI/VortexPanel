@@ -255,7 +255,7 @@ def webroot():
     return jsonify({'ok':True, 'path':get_webroot()})
 
 
-# ── DOMAIN MANAGER ────────────────────────────────────────────────────────────
+# --- DOMAIN MANAGER -------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/domains')
 def get_domains(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -306,7 +306,7 @@ def remove_domain_binding(domain, target):
     return jsonify({'ok':True})
 
 
-# ── PHP VERSIONS FOR DOMAIN ───────────────────────────────────────────────────
+# --- PHP VERSIONS FOR DOMAIN ----------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/php-versions')
 def get_php_versions_for_domain(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -326,7 +326,7 @@ def get_php_versions_for_domain(domain):
     return jsonify({'ok':True,'versions':versions,'current':current})
 
 
-# ── PHP VERSION PER DOMAIN (set) ──────────────────────────────────────────────
+# --- PHP VERSION PER DOMAIN (set) -----------------------------------------------
 @websites_bp.route('/api/websites/<domain>/php', methods=['PUT'])
 def set_php_version(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -346,7 +346,7 @@ def set_php_version(domain):
     reload_nginx(); return jsonify({'ok':True,'sock':sock})
 
 
-# ── DIRECTORY ─────────────────────────────────────────────────────────────────
+# --- DIRECTORY ------------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/directory')
 def get_directory(domain):
     if not req(): return jsonify({'ok':False}), 401
@@ -382,7 +382,7 @@ def set_directory(domain):
     return jsonify({'ok':True})
 
 
-# ── LOGS ──────────────────────────────────────────────────────────────────────
+# --- LOGS -----------------------------------------------------------------------
 @websites_bp.route('/api/websites/<domain>/logs')
 def get_site_logs(domain):
     if not req(): return jsonify({'ok':False}), 401

@@ -19,7 +19,7 @@ def docker_ok():
     _, _, rc = sh('docker info 2>/dev/null', t=5)
     return rc == 0
 
-# ── STATUS ────────────────────────────────────────────────────────────────────
+# --- STATUS ---------------------------------------------------------------------
 @docker_bp.route('/api/docker/status')
 def status():
     if not req(): return jsonify({'ok': False}), 401
@@ -30,7 +30,7 @@ def status():
         version, _, _ = sh('docker --version 2>/dev/null')
     return jsonify({'ok': True, 'installed': installed, 'running': running, 'version': version})
 
-# ── CONTAINERS ────────────────────────────────────────────────────────────────
+# --- CONTAINERS -----------------------------------------------------------------
 @docker_bp.route('/api/docker/containers')
 def list_containers():
     if not req(): return jsonify({'ok': False}), 401
@@ -82,7 +82,7 @@ def container_stats(cid):
     except:
         return jsonify({'ok': False, 'error': 'Parse failed'}), 400
 
-# ── IMAGES ────────────────────────────────────────────────────────────────────
+# --- IMAGES ---------------------------------------------------------------------
 @docker_bp.route('/api/docker/images')
 def list_images():
     if not req(): return jsonify({'ok': False}), 401
@@ -109,7 +109,7 @@ def remove_image(image_id):
     _, err, rc = sh(f'docker rmi {image_id} 2>&1')
     return jsonify({'ok': rc == 0, 'error': err})
 
-# ── PULL & RUN (with job streaming) ──────────────────────────────────────────
+# --- PULL & RUN (with job streaming) -------------------------------------------
 @docker_bp.route('/api/docker/pull', methods=['POST'])
 def pull_image():
     if not req(): return jsonify({'ok': False}), 401
@@ -204,7 +204,7 @@ def job_status(job_id):
     if not job: return jsonify({'ok': False, 'error': 'Job not found'}), 404
     return jsonify({'ok': True, **job})
 
-# ── VOLUMES & NETWORKS ────────────────────────────────────────────────────────
+# --- VOLUMES & NETWORKS ---------------------------------------------------------
 @docker_bp.route('/api/docker/volumes')
 def list_volumes():
     if not req(): return jsonify({'ok': False}), 401

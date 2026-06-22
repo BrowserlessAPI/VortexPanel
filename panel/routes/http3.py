@@ -22,7 +22,7 @@ except ImportError:
     from os_utils import get_os, pkg_install
 
 
-# ── Webserver detection ──────────────────────────────────────────────────────
+# --- Webserver detection -------------------------------------------------------
 
 def _active_webserver():
     """Return the active webserver: nginx | apache | openlitespeed | caddy"""
@@ -38,7 +38,7 @@ def _active_webserver():
     return 'nginx'
 
 
-# ── Nginx-specific helpers ───────────────────────────────────────────────────
+# --- Nginx-specific helpers ----------------------------------------------------
 
 def _nginx_version():
     out = sh('nginx -v 2>&1')
@@ -64,7 +64,7 @@ def _nginx_version_tuple():
         return (0, 0, 0)
 
 
-# ── Firewall helpers ─────────────────────────────────────────────────────────
+# --- Firewall helpers ----------------------------------------------------------
 
 def _open_udp_443():
     """Open UDP 443 in whatever firewall is active (UFW or firewalld)."""
@@ -100,7 +100,7 @@ def _udp_443_open():
     return False
 
 
-# ── Nginx upgrade to nginx.org mainline ──────────────────────────────────────
+# --- Nginx upgrade to nginx.org mainline ---------------------------------------
 
 def _upgrade_nginx_to_mainline():
     """
@@ -152,7 +152,7 @@ def _upgrade_nginx_to_mainline():
     return True, 'nginx upgraded to mainline with HTTP/3 support', steps
 
 
-# ── Status endpoint ──────────────────────────────────────────────────────────
+# --- Status endpoint -----------------------------------------------------------
 
 @websites_bp.route('/api/websites/<domain>/http3')
 def http3_status(domain):
@@ -228,7 +228,7 @@ def http3_status(domain):
     })
 
 
-# ── Toggle endpoint ──────────────────────────────────────────────────────────
+# --- Toggle endpoint -----------------------------------------------------------
 
 @websites_bp.route('/api/websites/<domain>/http3', methods=['POST'])
 def http3_toggle(domain):
@@ -320,7 +320,7 @@ def http3_toggle(domain):
     })
 
 
-# ── Nginx mainline upgrade endpoint ─────────────────────────────────────────
+# --- Nginx mainline upgrade endpoint ------------------------------------------
 
 @websites_bp.route('/api/nginx/upgrade-mainline', methods=['POST'])
 def nginx_upgrade_mainline():

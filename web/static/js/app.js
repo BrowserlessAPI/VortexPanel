@@ -1,4 +1,4 @@
-// ── UTILITIES ─────────────────────────────────────────────────────────────────
+// --- UTILITIES ------------------------------------------------------------------
 // CodeMirror instance kept OUTSIDE Alpine's reactive data on purpose: Alpine
 // deep-proxies object properties, and CodeMirror's internal closures hold
 // references to the raw instance. Mixing raw + proxied references to the same
@@ -39,7 +39,7 @@ function fmtDate(ts) {
 }
 function fmtSize(bytes) { return fmtBytes(bytes); }
 
-// ── ROOT APP (single Alpine scope — handles auth + panel) ─────────────────────
+// --- ROOT APP (single Alpine scope — handles auth + panel) ----------------------
 function rootApp() {
   return {
     // Auth state
@@ -109,7 +109,7 @@ function rootApp() {
       this.authChecked = true;
     },
 
-    // ── Login ────────────────────────────────────────────────────────────────
+    // --- Login -----------------------------------------------------------------
     async doLogin() {
       if (!this.loginUser || !this.loginPass) {
         this.loginErr = 'Enter username and password'; return;
@@ -182,7 +182,7 @@ function rootApp() {
       document.dispatchEvent(new CustomEvent('vortex-logged-in'));
     },
 
-    // ── Panel navigation ──────────────────────────────────────────────────────
+    // --- Panel navigation -------------------------------------------------------
     go(id) {
       this.page = id;
       this.sidebarOpen = false;
@@ -215,7 +215,7 @@ function rootApp() {
         .then(() => { this.loggedIn=false; this.loginUser=''; this.loginPass=''; this.loginErr=''; });
     },
 
-    // ── Update ────────────────────────────────────────────────────────────────
+    // --- Update -----------------------------------------------------------------
     async silentUpdateCheck() {
       try {
         const r = await get('/api/update/check');
@@ -241,7 +241,7 @@ function rootApp() {
 }
 
 
-// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+// --- DASHBOARD ------------------------------------------------------------------
 function dashboardPage() {
   return {
     stats:{cpu:0,ram:0,disk:0,uptime:'',load:'',ramTotal:'',diskTotal:'',network:''},
@@ -269,7 +269,7 @@ function dashboardPage() {
   };
 }
 
-// ── WEBSITES ──────────────────────────────────────────────────────────────────
+// --- WEBSITES -------------------------------------------------------------------
 function websitesPage() {
   return {
     sites:[], phpVersions:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
@@ -522,7 +522,7 @@ function websitesPage() {
   };
 }
 
-// ── DATABASES ─────────────────────────────────────────────────────────────────
+// --- DATABASES ------------------------------------------------------------------
 function wpPage() {
   return {
     sites: [], loading: false, scanning: false,
@@ -822,7 +822,7 @@ function databasesPage() {
   };
 }
 
-// ── FILES ─────────────────────────────────────────────────────────────────────
+// --- FILES ----------------------------------------------------------------------
 function filesPage() {
   return {
     path: '/www/wwwroot', webroot: '/www/wwwroot',
@@ -854,7 +854,7 @@ function filesPage() {
     // Virus scan
     showScanResult: false, scanLoading: false, scanResult: null, scanTarget: '',
 
-    // ── EDITOR state ──────────────────────────────────────────────────────
+    // --- EDITOR state -------------------------------------------------------
     editorOpen: false,
     editorTabs: [],      // [{path, name, content, original, modified}]
     activeTab: null,
@@ -941,7 +941,7 @@ function filesPage() {
       else { this.sortKey = key; this.sortDir = 1; }
     },
 
-    // ── File type helpers ───────────────────────────────────────────────────
+    // --- File type helpers ----------------------------------------------------
     getIcon(name) {
       const ext = name.split('.').pop().toLowerCase();
       const icons = {
@@ -987,7 +987,7 @@ function filesPage() {
       return editable.includes(ext);
     },
 
-    // ── Selection ────────────────────────────────────────────────────────────
+    // --- Selection -------------------------------------------------------------
     toggleSelect(p) {
       if (this.selected.includes(p)) this.selected = this.selected.filter(s => s !== p);
       else this.selected.push(p);
@@ -998,7 +998,7 @@ function filesPage() {
       else this.selected = [];
     },
 
-    // ── Code Editor ──────────────────────────────────────────────────────────
+    // --- Code Editor -----------------------------------------------------------
     async openEditor(f) {
       if (!this.isEditable(f.name)) { toast('Cannot edit binary files', 'error'); return; }
       const existing = this.editorTabs.find(t => t.path === f.path);
@@ -1260,7 +1260,7 @@ function filesPage() {
       toast('Replaced ' + count + ' occurrence(s)', 'success');
     },
 
-    // ── Editor file tree ─────────────────────────────────────────────────────
+    // --- Editor file tree ------------------------------------------------------
     async loadEditorTreeChildren(dirPath) {
       const r = await get('/api/files/list?path=' + encodeURIComponent(dirPath));
       if (!r.ok) return [];
@@ -1314,7 +1314,7 @@ function filesPage() {
       }
     },
 
-    // ── File operations ──────────────────────────────────────────────────────
+    // --- File operations -------------------------------------------------------
     async deleteItem(f) {
       if (!confirm('Delete "' + f.name + '"?')) return;
       const r = await post('/api/files/delete', { path: f.path });
@@ -1441,7 +1441,7 @@ function filesPage() {
       if (!r.results?.length) toast('No files found', 'info');
     },
 
-    // ── Upload ────────────────────────────────────────────────────────────────
+    // --- Upload -----------------------------------------------------------------
     handleFileUpload(e) {
       this.uploadQueue = [...e.target.files].map(f => ({ name: f.name, size: f.size, file: f, status: '' }));
     },
@@ -1476,7 +1476,7 @@ function filesPage() {
       else toast(r.error || 'Failed', 'error');
     },
 
-    // ── Context menu ──────────────────────────────────────────────────────────
+    // --- Context menu -----------------------------------------------------------
     openCtx(e, f) {
       this.ctxTarget = f;
       this.ctxMenu = { show: true, x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 300) };
@@ -1508,7 +1508,7 @@ function filesPage() {
   };
 }
 
-// ── NEONCODEX AI ASSISTANT ────────────────────────────────────────────────────
+// --- NEONCODEX AI ASSISTANT -----------------------------------------------------
 function aiAssistant() {
   return {
     open:        false,
@@ -1684,7 +1684,7 @@ function aiAssistant() {
   };
 }
 
-// ── PHP ───────────────────────────────────────────────────────────────────────
+// --- PHP ------------------------------------------------------------------------
 function phpPage() {
   return {
     versions:[], selVer:'',
@@ -1813,7 +1813,7 @@ function phpPage() {
   };
 }
 
-// ── SERVICES ──────────────────────────────────────────────────────────────────
+// --- SERVICES -------------------------------------------------------------------
 function servicesPage() {
   return {
     services: [],
@@ -1842,7 +1842,7 @@ function servicesPage() {
   };
 }
 
-// ── MODULES ───────────────────────────────────────────────────────────────────
+// --- MODULES --------------------------------------------------------------------
 function modulesPage() {
   return {
     modules: [], cat: '',
@@ -1957,7 +1957,7 @@ function modulesPage() {
       if (r.ok) { m.svcStatus=r.status; toast(`${action} ${m.name}`,'success'); }
     },
 
-    // ── App Settings Modal ────────────────────────────────────────────────────
+    // --- App Settings Modal -----------------------------------------------------
     settingsModal: {
       show: false, mod: null, tab: 'service',
       loading: false, saving: false,
@@ -2201,7 +2201,7 @@ function modulesPage() {
   };
 }
 
-// ── FIREWALL ──────────────────────────────────────────────────────────────────
+// --- FIREWALL -------------------------------------------------------------------
 function firewallPage() {
   return {
     rules: [], status: '', showAdd: false,
@@ -2238,7 +2238,7 @@ function firewallPage() {
   };
 }
 
-// ── TERMINAL (xterm.js + WebSocket PTY) ─────────────────────────────────────
+// --- TERMINAL (xterm.js + WebSocket PTY) --------------------------------------
 function terminalPage() {
   return {
     connected: false,
@@ -2309,7 +2309,7 @@ function terminalPage() {
     },
   };
 }
-// ── BACKUPS ───────────────────────────────────────────────────────────────────
+// --- BACKUPS --------------------------------------------------------------------
 function backupsPage() {
   return {
     tab:'local', cloudConfig:{connected:false}, cloudForm:{provider:'aws',region:'us-east-1',endpoint_url:'',access_key:'',secret_key:'',bucket:''}, cloudSaving:false, cloudList:[],
@@ -2446,7 +2446,7 @@ function backupsPage() {
   };
 }
 
-// ── DNS ───────────────────────────────────────────────────────────────────────
+// --- DNS ------------------------------------------------------------------------
 function dnsPage() {
   return {
     zones: [], selZone: null, records: [],
@@ -2492,7 +2492,7 @@ function dnsPage() {
   };
 }
 
-// ── MAIL ──────────────────────────────────────────────────────────────────────
+// --- MAIL -----------------------------------------------------------------------
 function mailPage() {
   return {
     status: {postfix:'', dovecot:''},
@@ -2585,7 +2585,7 @@ function mailPage() {
   };
 }
 
-// ── FTP ───────────────────────────────────────────────────────────────────────
+// --- FTP ------------------------------------------------------------------------
 function ftpPage() {
   return {
     accounts: [], ftpStatus: {installed:false, daemon:'', status:'', accounts_count:0},
@@ -2642,7 +2642,7 @@ function ftpPage() {
   };
 }
 
-// ── SETTINGS ──────────────────────────────────────────────────────────────────
+// --- SETTINGS -------------------------------------------------------------------
 function settingsPage() {
   return {
     stab: 'none',  // 'none' = card grid visible, 'security' = security sub-section
@@ -2745,7 +2745,7 @@ function settingsPage() {
       toast(r.ok?'Rebooting in 3 seconds…':'Failed', r.ok?'success':'error');
     },
 
-    // ── SSL ───────────────────────────────────────────────────────────────────
+    // --- SSL --------------------------------------------------------------------
     async genSelfSigned() {
       this.ssl.loading=true; this.ssl.type_loading='selfsigned'; this.ssl.msg='Applying changes — this takes about 5-10 seconds…';
       const r = await post('/api/settings/ssl/self-signed', {domain:this.sslDomain});
@@ -2823,7 +2823,7 @@ function settingsPage() {
       await this.pollSslApply('none', 'http');
     },
 
-    // ── Webshell scanner ──────────────────────────────────────────────────────
+    // --- Webshell scanner -------------------------------------------------------
     async runWebshellScan() {
       this.scanner.loading=true; this.scanner.done=false;
       const r = await post('/api/settings/webshell-scan', {path:this.scanPath});
@@ -2836,7 +2836,7 @@ function settingsPage() {
       } else toast(r.error||'Scan failed','error');
     },
 
-    // ── 2FA ───────────────────────────────────────────────────────────────────
+    // --- 2FA --------------------------------------------------------------------
     async setup2FA() {
       this.twofa.setupLoading=true;
       const r = await post('/api/auth/2fa/setup', {});
@@ -2863,7 +2863,7 @@ function settingsPage() {
       else toast(r.error||'Failed','error');
     },
 
-    // ── Allowlist + session ───────────────────────────────────────────────────
+    // --- Allowlist + session ----------------------------------------------------
     async saveAllowlist() {
       const ips = this.allowlistText.split('\n').map(s=>s.trim()).filter(Boolean);
       const r = await post('/api/auth/security-settings', {allowed_ips:ips});
@@ -2875,7 +2875,7 @@ function settingsPage() {
       toast(r.ok?'Session timeout saved':'Failed', r.ok?'success':'error');
     },
 
-    // ── Password ──────────────────────────────────────────────────────────────
+    // --- Password ---------------------------------------------------------------
     async changePw() {
       if (this.pwForm.newpw!==this.pwForm.confirm) { toast('Passwords do not match','error'); return; }
       if (this.pwForm.newpw.length<8) { toast('Minimum 8 characters','error'); return; }
@@ -2884,7 +2884,7 @@ function settingsPage() {
       else toast(r.error||'Failed','error');
     },
 
-    // ── AI ────────────────────────────────────────────────────────────────────
+    // --- AI ---------------------------------------------------------------------
     async loadAiConfig() {
       const r = await get('/api/ai/config');
       if (r.ok) { this.aiConfig={...this.aiConfig,...r.config}; if(this.aiConfig.api_key==='***')this.aiConfig.api_key=''; }
@@ -2964,7 +2964,7 @@ function monitoringPage() {
   };
 }
 
-// ── BANDWIDTH ─────────────────────────────────────────────────────────────────
+// --- BANDWIDTH ------------------------------------------------------------------
 function bandwidthPage() {
   return {
     summary: {interface:'', total_rx:0, total_tx:0, daily:[], monthly:[]},
@@ -3004,7 +3004,7 @@ function bandwidthPage() {
   };
 }
 
-// ── SECURITY ──────────────────────────────────────────────────────────────────
+// --- SECURITY -------------------------------------------------------------------
 function securityPage() {
   return {
     tab: 'ssh', score: 0, checks: [],
@@ -3201,7 +3201,7 @@ function securityPage() {
       if (r.ok) { toast('Removed','success'); this.lb.configured=false; }
     },
 
-    // ── TCP / Stream Load Balancer ─────────────────────────────────────────────
+    // --- TCP / Stream Load Balancer ----------------------------------------------
     async loadTcpLB() {
       const r = await get('/api/security/loadbalancer/tcp');
       if (r.ok) {
@@ -3246,7 +3246,7 @@ function securityPage() {
       if (r.ok) { toast('Removed','success'); this.tcpLb.configured=false; }
     },
 
-    // ── Active Health Checks ───────────────────────────────────────────────────
+    // --- Active Health Checks ----------------------------------------------------
     async loadHealthCheck() {
       const r = await get('/api/security/loadbalancer/health');
       if (r.ok) {
@@ -3268,8 +3268,8 @@ function securityPage() {
   };
 }
 
-// ── DOCKER ────────────────────────────────────────────────────────────────────
-// ── DOCKER CATALOG ────────────────────────────────────────────────────────────
+// --- DOCKER ---------------------------------------------------------------------
+// --- DOCKER CATALOG -------------------------------------------------------------
 const DOCKER_CATALOG = [
   {id:'nginx', icon:'🌐', name:'Nginx', hardened:false, image:'nginx', tag:'latest', cat:'Web Server',
    desc:'High-performance web server and reverse proxy.',
@@ -3673,7 +3673,7 @@ function dockerPage() {
   };
 }
 
-// ── CRON ─────────────────────────────────────────────────────────────────────
+// --- CRON ----------------------------------------------------------------------
 function cronPage() {
   return {
     jobs: [], templates: [], schedulePresets: [],
@@ -3792,7 +3792,7 @@ function cronPage() {
   };
 }
 
-// ── CADDY ─────────────────────────────────────────────────────────────────────
+// --- CADDY ----------------------------------------------------------------------
 function caddyPage() {
   return {
     status: {installed:false, version:'', status:'inactive'},
@@ -3866,7 +3866,7 @@ function caddyPage() {
   };
 }
 
-// ── CDN ───────────────────────────────────────────────────────────────────────
+// --- CDN ------------------------------------------------------------------------
 function cdnPage() {
   return {
     providers: [], activeCdn: '',
@@ -3995,7 +3995,7 @@ function cdnPage() {
   };
 }
 
-// ── UPDATE MODAL ──────────────────────────────────────────────────────────────
+// --- UPDATE MODAL ---------------------------------------------------------------
 function updateModalData() {
   return {
     checkState: 'checking',
