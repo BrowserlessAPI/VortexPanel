@@ -202,8 +202,10 @@ systemctl enable caddy && systemctl start caddy''',
         'check':'systemctl is-active mariadb 2>/dev/null | grep -q "^active" && echo found || (which mariadbd 2>/dev/null && mariadbd --version 2>/dev/null | grep -c MariaDB)',
         'versions':[
             {'label':'10.11.11 (LTS)',  'value':'10.11'},
-            {'label':'11.4.5 (LTS)',    'value':'11.4'},
-            {'label':'11.7.2 (Latest Stable)', 'value':'11.7'},
+            {'label':'12.3.2 (Latest Stable)', 'value':'12.3'},
+            {'label':'11.8.8',                 'value':'11.8'},
+            {'label':'11.4.5 (LTS)',            'value':'11.4'},
+            {'label':'10.11 (LTS)',             'value':'10.11'},
         ],
         'install_tpl':'''curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
 bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
@@ -1165,7 +1167,7 @@ def get_module_settings(mod_id):
             'logs':logs,'log_path':log_path,
             'port':port,'datadir':datadir,
             'current_status':current_status,'optimization':optimization,'slow_log':slow_log,
-            'versions':[{'label':'11.7 (Latest)','value':'11.7'},{'label':'11.4 (LTS)','value':'11.4'},{'label':'10.11 (LTS)','value':'10.11'},{'label':'10.6 (LTS)','value':'10.6'}]})
+            'versions':[{'label':'12.3 (Latest)','value':'12.3'},{'label':'11.8','value':'11.8'},{'label':'11.7','value':'11.7'},{'label':'11.4 (LTS)','value':'11.4'},{'label':'10.11 (LTS)','value':'10.11'},{'label':'10.6 (LTS)','value':'10.6'}]})
 
     elif mod_id == 'redis':
         status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis') or 'inactive'
