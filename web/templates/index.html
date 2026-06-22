@@ -111,9 +111,11 @@
         <div class="nav-group-label" x-text="group.group"></div>
         <template x-for="item in group.items" :key="item.id">
           <div class="nav-item" :class="{active: page===item.id}"
-               :style="!pageAvailable(item.id)?'opacity:0.5':' '"
+               :style="!pageAvailable(item.id)?'opacity:0.5':''"
                @click="go(item.id)">
-            <span class="nav-icon" x-text="item.icon"></span>
+            <span class="nav-icon-pill"
+                  :style="'background:'+(page===item.id ? item.color : item.colorBg)+';color:'+(page===item.id ? '#fff' : item.color)"
+                  x-text="item.icon"></span>
             <span x-text="item.label"></span>
             <span x-show="!pageAvailable(item.id)"
                   style="margin-left:auto;font-size:10px;color:var(--text-muted)"
@@ -172,27 +174,35 @@
           <div><div class="page-title">Dashboard</div><div class="page-sub">Server overview & real-time metrics</div></div>
         </div>
         <div class="grid-4" style="margin-bottom:16px">
-          <div class="stat-card">
+          <div class="stat-card stat-card-cpu">
+            <div class="stat-accent" style="background:var(--stat-cpu)"></div>
+            <div class="stat-icon">🖥</div>
             <div class="stat-label">CPU Usage</div>
-            <div class="stat-value" x-text="stats.cpu+'%'">0%</div>
-            <div class="stat-bar"><div class="stat-fill cpu" :style="'width:'+stats.cpu+'%'"></div></div>
+            <div class="stat-value" style="color:var(--stat-cpu)" x-text="stats.cpu+'%'">0%</div>
+            <div class="stat-bar stat-bar-cpu"><div class="stat-fill cpu" :style="'width:'+stats.cpu+'%'"></div></div>
             <div class="stat-sub">Load: <span x-text="(stats.load||[]).join(' ')"></span></div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card stat-card-ram">
+            <div class="stat-accent" style="background:var(--stat-ram)"></div>
+            <div class="stat-icon">🧠</div>
             <div class="stat-label">RAM</div>
-            <div class="stat-value" x-text="fmtBytes(stats.ram?.used)">0</div>
-            <div class="stat-bar"><div class="stat-fill ram" :style="'width:'+ramPct()+'%'"></div></div>
+            <div class="stat-value" style="color:var(--stat-ram)" x-text="fmtBytes(stats.ram?.used)">0</div>
+            <div class="stat-bar stat-bar-ram"><div class="stat-fill ram" :style="'width:'+ramPct()+'%'"></div></div>
             <div class="stat-sub" x-text="fmtBytes(stats.ram?.used)+' / '+fmtBytes(stats.ram?.total)"></div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card stat-card-disk">
+            <div class="stat-accent" style="background:var(--stat-disk)"></div>
+            <div class="stat-icon">💾</div>
             <div class="stat-label">Disk</div>
-            <div class="stat-value" x-text="diskPct()+'%'">0%</div>
-            <div class="stat-bar"><div class="stat-fill disk" :style="'width:'+diskPct()+'%'"></div></div>
+            <div class="stat-value" style="color:var(--stat-disk)" x-text="diskPct()+'%'">0%</div>
+            <div class="stat-bar stat-bar-disk"><div class="stat-fill disk" :style="'width:'+diskPct()+'%'"></div></div>
             <div class="stat-sub" x-text="fmtBytes(stats.disk?.used)+' / '+fmtBytes(stats.disk?.total)"></div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card stat-card-uptime">
+            <div class="stat-accent" style="background:var(--stat-uptime)"></div>
+            <div class="stat-icon">⏱</div>
             <div class="stat-label">Uptime</div>
-            <div class="stat-value" style="font-size:18px;padding-top:4px" x-text="stats.uptime||'—'"></div>
+            <div class="stat-value" style="font-size:18px;padding-top:4px;color:var(--stat-uptime)" x-text="stats.uptime||'—'"></div>
             <div class="stat-sub">Network ↓<span x-text="fmtBytes(stats.net?.rx)"></span> ↑<span x-text="fmtBytes(stats.net?.tx)"></span></div>
           </div>
         </div>
