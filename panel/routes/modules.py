@@ -1853,9 +1853,9 @@ def save_module_settings(mod_id):
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
                 'systemctl stop mariadb 2>/dev/null && '
-                f'curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} && '
-                'apt-get update -qq && '
-                'apt-get install -y mariadb-server && '
+                f'curl -fsSL --max-time 30 https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} && '
+                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
+                'apt-get install -y -o Dpkg::Options::="--force-confnew" mariadb-server && '
                 'systemctl start mariadb'
             )
             ver_check_cmd = "mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
@@ -1876,7 +1876,7 @@ def save_module_settings(mod_id):
                 'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
                 'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
                 f'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && '
-                'apt-get update -qq && '
+                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
                 f'apt-get install -y postgresql-{ver} && '
                 'systemctl restart postgresql'
             )
@@ -1890,7 +1890,7 @@ def save_module_settings(mod_id):
                 f'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.asc && '
                 f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.asc && '
                 f'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-                'apt-get update -qq && '
+                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
                 'apt-get install -y mongodb-org && '
                 'systemctl start mongod'
             )
@@ -1900,7 +1900,7 @@ def save_module_settings(mod_id):
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
                 'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null && '
-                'apt-get update -qq && '
+                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
                 f'apt-get install -y --allow-downgrades apache2={ver}-* 2>/dev/null || apt-get install -y apache2 && '
                 'systemctl restart apache2'
             )
@@ -1954,17 +1954,30 @@ def save_module_settings(mod_id):
         def run_switch():
             mod_name = mod['name'] if mod else mod_id
             _job_append_line(job_id, f'[VortexPanel] Switching {mod_name} to version {ver}...')
+            env = os.environ.copy()
+            env['DEBIAN_FRONTEND'] = 'noninteractive'
+            # Prevent apt-get from hanging indefinitely on slow/unreachable mirrors
+            env['APT_LISTCHANGES_FRONTEND'] = 'none'
             proc = subprocess.Popen(
-                f'DEBIAN_FRONTEND=noninteractive {script} 2>&1',
-                shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+                script,
+                shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, env=env
             )
+            # Max 8 minutes — kills hanging apt-get update etc.
+            MAX_SECONDS = 480
+            import time as _time
+            start = _time.time()
             for line in proc.stdout:
                 _job_append_line(job_id, line.rstrip())
+                if _time.time() - start > MAX_SECONDS:
+                    proc.kill()
+                    _job_append_line(job_id, '[VortexPanel] ⚠ Timed out after 8 minutes. Operation killed.')
+                    break
             proc.wait()
             success = proc.returncode == 0
             new_ver = sh(ver_check_cmd) if ver_check_cmd else ver
             _job_append_line(job_id,
-                f'[VortexPanel] {"✓ Switched to " + new_ver + " successfully!" if success else "⚠ Switch may have failed — check output above."}'
+                f'[VortexPanel] {"✓ Switched to " + new_ver + " successfully!" if success else "⚠ Switch failed — check output above."}'
             )
             _job_finish(job_id, success=success, installed=True, inst_ver=new_ver)
             panel_cache.invalidate('modules_list')
