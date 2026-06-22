@@ -555,13 +555,13 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         'desc':'JavaScript runtime built on Chrome V8 engine',
         'check':'which node 2>/dev/null || which nodejs 2>/dev/null',
         'versions':[
-            {'label':'v22 LTS  (Jod)',     'value':'22'},
-            {'label':'v24 LTS  (Krypton)', 'value':'24'},
-            {'label':'v26 Current',        'value':'26'},
+            {'label':'v24 LTS — Active (Krypton)', 'value':'24'},
+            {'label':'v22 LTS — Maintenance (Jod)', 'value':'22'},
+            {'label':'v26 Current (non-LTS)',       'value':'26'},
         ],
-        'install_tpl':'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && apt-get install -y nodejs',
-        'install':'curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs',
-        'uninstall':'apt-get remove -y --purge nodejs && apt-get autoremove -y',
+        'install_tpl':'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
+        'install':'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
+        'uninstall':'apt-get remove -y --purge nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list',
         'manage':False,
     },
     {
@@ -1555,7 +1555,11 @@ def get_module_settings(mod_id):
         npm_path  = sh('which npm 2>/dev/null') or ''
         info = f'Node.js {version}\nnpm {npm_ver}\nnode: {node_path}\nnpm: {npm_path}'
         return jsonify({'ok':True,'status':'active' if node_path else 'inactive',
-            'version':version,'info':info, 'versions': [{'label': 'v24 LTS (Jod)', 'value': '24'}, {'label': 'v22 LTS (Jod)', 'value': '22'}, {'label': 'v20 LTS (Iron)', 'value': '20'}, {'label': 'v18 LTS (Hydrogen)', 'value': '18'}]})
+            'version':version,'info':info, 'versions': [
+                {'label': 'v24 LTS — Active (Krypton)', 'value': '24'},
+                {'label': 'v22 LTS — Maintenance (Jod)', 'value': '22'},
+                {'label': 'v26 Current (non-LTS)',       'value': '26'},
+            ]})
 
     elif mod_id == 'bind9':
         status  = sh('systemctl is-active named 2>/dev/null || systemctl is-active bind9 2>/dev/null') or 'inactive'
@@ -1855,8 +1859,9 @@ def save_module_settings(mod_id):
                 'systemctl stop mariadb 2>/dev/null && '
                 f'curl -fsSL --max-time 30 https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} && '
                 'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
-                'apt-get install -y -o Dpkg::Options::="--force-confnew" mariadb-server && '
-                'systemctl start mariadb'
+                'apt-get install -y --allow-downgrades --allow-change-held-packages '
+                '-o Dpkg::Options::="--force-confnew" mariadb-server && '
+                'systemctl start mariadb && systemctl enable mariadb'
             )
             ver_check_cmd = "mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
 
@@ -1909,10 +1914,15 @@ def save_module_settings(mod_id):
         elif mod_id == 'nodejs':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
-                f'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && '
-                'apt-get install -y nodejs'
+                # Remove old nodesource repo so the new one takes precedence
+                'rm -f /etc/apt/sources.list.d/nodesource.list '
+                '/etc/apt/sources.list.d/nodejs.list '
+                '/usr/share/keyrings/nodesource.gpg '
+                '/usr/share/keyrings/nodesource-repo.gpg && '
+                f'curl -fsSL --max-time 30 https://deb.nodesource.com/setup_{ver}.x | bash - && '
+                'apt-get install -y --allow-downgrades nodejs'
             )
-            ver_check_cmd = "node --version 2>/dev/null"
+            ver_check_cmd = f"node --version 2>/dev/null | tr -d 'v'"
 
         elif mod_id == 'bind9':
             script = (
