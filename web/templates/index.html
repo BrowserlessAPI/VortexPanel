@@ -3615,7 +3615,7 @@
             </div>
             <div class="terminal-out job-terminal" style="max-height:340px;min-height:100px">
               <template x-for="(line,i) in jobModal.lines" :key="i">
-                <div :style="line.startsWith('[VortexPanel] ✓')?'color:var(--green)':line.startsWith('[VortexPanel] ⚠')?'color:var(--yellow)':line.startsWith('[VortexPanel]')?'color:var(--accent)':''" x-text="line"></div>
+                <div :style="line.startsWith('[VortexPanel] ✓') ? 'color:#4ade80;font-weight:600' : line.startsWith('[VortexPanel] ⚠') ? 'color:#fbbf24;font-weight:600' : line.startsWith('[VortexPanel]') ? 'color:#67e8f9;font-weight:500' : 'color:#d1fae5'" x-text="line"></div>
               </template>
             </div>
             <div class="modal-ft">
@@ -3854,7 +3854,7 @@
         <div class="modal-overlay" x-show="jobModal.show">
           <div class="modal" style="max-width:560px">
             <div class="modal-hd"><div style="display:flex;align-items:center;gap:8px"><span x-show="!jobModal.done" class="loading-spinner"></span><span x-show="jobModal.done&&jobModal.success" style="color:var(--green)">✓</span><div class="modal-title" x-text="jobModal.title"></div></div></div>
-            <div class="terminal-out" style="max-height:240px"><template x-for="(l,i) in jobModal.lines" :key="i"><div x-text="l"></div></template></div>
+            <div class="terminal-out" style="max-height:240px"><template x-for="(l,i) in jobModal.lines" :key="i"><div :style="l.startsWith('[VortexPanel] ✓')?'color:#4ade80;font-weight:600':l.startsWith('[VortexPanel] ⚠')?'color:#fbbf24;font-weight:600':l.startsWith('[VortexPanel]')?'color:#67e8f9;font-weight:500':'color:#d1fae5'" x-text="l"></div></template></div>
             <div class="modal-ft"><div style="flex:1"></div><button class="btn btn-primary" @click="jobModal.show=false" :disabled="!jobModal.done">Close</button></div>
           </div>
         </div>
@@ -4993,7 +4993,7 @@
             </div>
             <div class="terminal-out" style="max-height:280px">
               <template x-for="(line,i) in jobModal.lines" :key="i">
-                <div :style="line.startsWith('✓')?'color:var(--green)':line.startsWith('✗')?'color:var(--red)':''" x-text="line"></div>
+                <div :style="line.startsWith('✓')?'color:#4ade80;font-weight:600':line.startsWith('✗')?'color:#f87171;font-weight:600':'color:#d1fae5'" x-text="line"></div>
               </template>
             </div>
             <div class="modal-ft">
