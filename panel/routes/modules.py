@@ -162,7 +162,7 @@ def is_installed(check_cmd):
 MODULES = [
     # --- Web Servers -----------------------------------------------------------
     {
-        'id':'nginx', 'name':'Nginx', 'icon':'🌐', 'category':'Web Server',
+        'id':'nginx', 'name':'Nginx', 'icon':'/static/icons/nginx.svg', 'category':'Web Server',
         'desc':'High-performance HTTP & reverse proxy server',
         'check':'which nginx 2>/dev/null',
         'versions':[
@@ -181,7 +181,7 @@ apt-get install -y nginx && systemctl enable --now nginx''',
         'service':'nginx', 'manage':True,
     },
     {
-        'id':'apache2', 'name':'Apache2', 'icon':'🔴', 'category':'Web Server',
+        'id':'apache2', 'name':'Apache2', 'icon':'/static/icons/apache.svg', 'category':'Web Server',
         'desc':'Apache HTTP Server — widely-used web server',
         'check':'which apache2 2>/dev/null',
         'versions':[
@@ -200,7 +200,7 @@ apt-get install -y nginx && systemctl enable --now nginx''',
         'service':'apache2', 'manage':True,
     },
     {
-        'id':'openlitespeed', 'name':'OpenLiteSpeed', 'icon':'⚡', 'category':'Web Server',
+        'id':'openlitespeed', 'name':'OpenLiteSpeed', 'icon':'/static/icons/litespeed.svg', 'category':'Web Server',
         'desc':'LiteSpeed open source web server',
         'check':'test -f /usr/local/lsws/bin/lshttpd && echo found',
         'versions':[
@@ -220,7 +220,7 @@ systemctl enable lsws && systemctl start lsws''',
     },
     # --- Databases -------------------------------------------------------------
     {
-        'id':'caddy', 'name':'Caddy', 'icon':'🟩', 'category':'Web Server',
+        'id':'caddy', 'name':'Caddy', 'icon':'/static/icons/caddy.svg', 'category':'Web Server',
         'desc':'Auto-HTTPS web server — HTTP/3, zero-config TLS via Lets Encrypt',
         'check':'which caddy 2>/dev/null',
         'versions':[
@@ -249,7 +249,7 @@ systemctl enable caddy && systemctl start caddy''',
         'service':'caddy', 'manage':True,
     },
     {
-        'id':'mysql', 'name':'MySQL', 'icon':'🐬', 'category':'Database',
+        'id':'mysql', 'name':'MySQL', 'icon':'/static/icons/mysql.svg', 'category':'Database',
         'desc':'The world\'s most popular open source database',
         'check':'systemctl is-active mysql 2>/dev/null | grep -q active && ! systemctl is-active mariadb 2>/dev/null | grep -q active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
         'versions':[
@@ -270,7 +270,7 @@ systemctl enable caddy && systemctl start caddy''',
         'service':'mysql', 'manage':True,
     },
     {
-        'id':'mariadb', 'name':'MariaDB', 'icon':'🦭', 'category':'Database',
+        'id':'mariadb', 'name':'MariaDB', 'icon':'/static/icons/mariadb.svg', 'category':'Database',
         'desc':'Community-developed MySQL fork by MariaDB Foundation',
         'check':'systemctl is-active mariadb 2>/dev/null | grep -q "^active" && echo found || (which mariadbd 2>/dev/null && mariadbd --version 2>/dev/null | grep -c MariaDB)',
         'versions':[
@@ -289,7 +289,7 @@ systemctl enable --now mariadb''',
         'service':'mariadb', 'manage':True,
     },
     {
-        'id':'mongodb', 'name':'MongoDB', 'icon':'🍃', 'category':'Database',
+        'id':'mongodb', 'name':'MongoDB', 'icon':'/static/icons/mongodb.svg', 'category':'Database',
         'desc':'Document-oriented NoSQL database',
         'check':'which mongod 2>/dev/null',
         'versions':[
@@ -315,7 +315,7 @@ systemctl enable --now mariadb''',
         'service':'mongod', 'manage':True,
     },
     {
-        'id':'postgresql', 'name':'PostgreSQL', 'icon':'🐘', 'category':'Database',
+        'id':'postgresql', 'name':'PostgreSQL', 'icon':'/static/icons/postgresql.svg', 'category':'Database',
         'desc':'Advanced open source relational database',
         'check':'which psql 2>/dev/null',
         'versions':[
@@ -342,7 +342,7 @@ systemctl enable --now mariadb''',
     },
     # --- PHP -------------------------------------------------------------------
     {
-        'id':'php', 'name':'PHP', 'icon':'🐘', 'category':'PHP',
+        'id':'php', 'name':'PHP', 'icon':'/static/icons/php.svg', 'category':'PHP',
         'desc':'PHP-FPM — multiple versions supported side by side',
         'check':'which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 2>/dev/null | head -1',
         'versions':[
@@ -381,7 +381,7 @@ apt-get autoremove -y 2>/dev/null || true''',
     },
     # --- FTP -------------------------------------------------------------------
     {
-        'id':'pure-ftpd', 'name':'Pure-FTPd', 'icon':'📂', 'category':'FTP',
+        'id':'pure-ftpd', 'name':'Pure-FTPd', 'icon':'/static/icons/filezilla.svg', 'category':'FTP',
         'desc':'Simple, fast and secure FTP server',
         'check':'which pure-ftpd 2>/dev/null',
         'versions':[
@@ -393,7 +393,7 @@ apt-get autoremove -y 2>/dev/null || true''',
     },
     # --- Admin Tools -----------------------------------------------------------
     {
-        'id':'phpmyadmin', 'name':'phpMyAdmin', 'icon':'🗄', 'category':'Admin Tools',
+        'id':'phpmyadmin', 'name':'phpMyAdmin', 'icon':'/static/icons/phpmyadmin.svg', 'category':'Admin Tools',
         'desc':'Web-based MySQL/MariaDB admin — auto-configured at port 8082',
         'check':'test -d /usr/share/phpmyadmin && echo found',
         'versions':[
@@ -471,7 +471,7 @@ apt-get autoremove -y 2>/dev/null || true''',
     },
     # --- Security --------------------------------------------------------------
     {
-        'id':'fail2ban', 'name':'Fail2ban', 'icon':'🛡', 'category':'Security',
+        'id':'fail2ban', 'name':'Fail2ban', 'icon':'/static/icons/fail2ban.svg', 'category':'Security',
         'desc':'Intrusion prevention & brute-force protection',
         'check':'which fail2ban-client 2>/dev/null',
         'versions':[
@@ -487,7 +487,7 @@ systemctl enable fail2ban && systemctl start fail2ban''',
         'service':'fail2ban', 'manage':True,
     },
     {
-        'id':'clamav', 'name':'ClamAV', 'icon':'🦠', 'category':'Security',
+        'id':'clamav', 'name':'ClamAV', 'icon':'/static/icons/clamav.svg', 'category':'Security',
         'desc':'Open source antivirus engine for mail gateways',
         'check':'which clamscan 2>/dev/null',
         'versions':[
@@ -507,7 +507,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
     },
     # --- DNS -------------------------------------------------------------------
     {
-        'id':'ddns', 'name':'DDNS Manager', 'icon':'🌍', 'category':'DNS',
+        'id':'ddns', 'name':'DDNS Manager', 'icon':'/static/icons/cloudflare.svg', 'category':'DNS',
         'desc':'Dynamic DNS — automatic IP update service (Built-in)',
         'check':'echo found',  # Built-in, always available
         'builtin':True,
@@ -519,7 +519,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         'manage':False,
     },
         {
-        'id':'bind9', 'name':'BIND9 DNS', 'icon':'🌐', 'category':'DNS',
+        'id':'bind9', 'name':'BIND9 DNS', 'icon':'/static/icons/isc.svg', 'category':'DNS',
         'desc':'Industry standard authoritative DNS server',
         'check':'which named 2>/dev/null',
         'versions':[
@@ -552,7 +552,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
     },
     # --- Runtimes --------------------------------------------------------------
     {
-        'id':'nodejs', 'name':'Node.js', 'icon':'🟢', 'category':'Runtime',
+        'id':'nodejs', 'name':'Node.js', 'icon':'/static/icons/nodejs.svg', 'category':'Runtime',
         'desc':'JavaScript runtime built on Chrome V8 engine',
         'check':'which node 2>/dev/null || which nodejs 2>/dev/null',
         'versions':[
@@ -566,7 +566,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         'manage':False,
     },
     {
-        'id':'python', 'name':'Python Manager', 'icon':'🐍', 'category':'Runtime',
+        'id':'python', 'name':'Python Manager', 'icon':'/static/icons/python.svg', 'category':'Runtime',
         'desc':'Python 3 runtime + pip + venv',
         'check':'which python3 2>/dev/null',
         'versions':[
@@ -592,7 +592,7 @@ apt-get autoremove -y 2>/dev/null || true''',
     },
     # --- Containers ------------------------------------------------------------
     {
-        'id':'docker', 'name':'Docker', 'icon':'🐳', 'category':'Containers',
+        'id':'docker', 'name':'Docker', 'icon':'/static/icons/docker.svg', 'category':'Containers',
         'desc':'Container platform — build, ship, run anywhere',
         'check':'which docker 2>/dev/null',
         'versions':[
@@ -606,7 +606,7 @@ apt-get autoremove -y 2>/dev/null || true''',
     },
     # --- Dev -------------------------------------------------------------------
     {
-        'id':'composer', 'name':'Composer', 'icon':'🎼', 'category':'Dev',
+        'id':'composer', 'name':'Composer', 'icon':'/static/icons/composer.svg', 'category':'Dev',
         'desc':'PHP dependency & package manager',
         'check':'which composer 2>/dev/null',
         'versions':[
@@ -630,7 +630,7 @@ apt-get autoremove -y 2>/dev/null || true''',
     },
     # --- Cache -----------------------------------------------------------------
     {
-        'id':'redis', 'name':'Redis', 'icon':'🔴', 'category':'Cache',
+        'id':'redis', 'name':'Redis', 'icon':'/static/icons/redis.svg', 'category':'Cache',
         'desc':'In-memory data store, cache & message broker',
         'check':'which redis-server 2>/dev/null',
         'versions':[
@@ -650,7 +650,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
     },
     # --- Server Tools ----------------------------------------------------------
     {
-        'id':'supervisor', 'name':'Supervisor', 'icon':'⚙', 'category':'Server',
+        'id':'supervisor', 'name':'Supervisor', 'icon':'/static/icons/supervisor.svg', 'category':'Server',
         'desc':'Process control — keep programs running',
         'check':'which supervisord 2>/dev/null',
         'versions':[
@@ -668,7 +668,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
     },
     # --- Webmail ----------------------------------------------------------------
     {
-        'id':'roundcube', 'name':'Roundcube', 'icon':'📨', 'category':'Mail',
+        'id':'roundcube', 'name':'Roundcube', 'icon':'/static/icons/roundcube.svg', 'category':'Mail',
         'desc':'Modern web-based IMAP email client',
         'check':'test -d /var/www/roundcube && echo found',
         'versions':[
@@ -689,7 +689,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
     },
     # --- WAF / Security ---------------------------------------------------------
     {
-        'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'🔥', 'category':'Security',
+        'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'/static/icons/modsecurity.svg', 'category':'Security',
         'desc':'OWASP CRS v4 Web Application Firewall — Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)',
         'check':(
             'test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 && echo found || '
@@ -766,7 +766,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
     },
     # --- Load Balancer ----------------------------------------------------------
     {
-        'id':'nginx-lb', 'name':'Nginx Load Balancer', 'icon':'⚖', 'category':'Web Server',
+        'id':'nginx-lb', 'name':'Nginx Load Balancer', 'icon':'/static/icons/nginx.svg', 'category':'Web Server',
         'desc':'Configure Nginx upstream load balancing (Round Robin, Least Conn, IP Hash)',
         'check':'test -f /etc/nginx/conf.d/loadbalancer.conf && echo found',
         'versions':[
@@ -828,7 +828,7 @@ nginx -t && systemctl reload nginx''',
 
     # --- CDN --------------------------------------------------------------------
     {
-        'id':'cdn', 'name':'CDN Manager', 'icon':'⚡', 'category':'Network',
+        'id':'cdn', 'name':'CDN Manager', 'icon':'/static/icons/cloudflare.svg', 'category':'Network',
         'desc':'Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri — HOT MODULE',
         'check':'echo found',  # Always available — built-in panel feature
         'versions':[
