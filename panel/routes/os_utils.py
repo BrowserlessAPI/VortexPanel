@@ -110,8 +110,24 @@ def add_repo_key(url, keyring_path):
     )
 
 def nginx_install_script(channel='stable'):
-    """Nginx official install script for all distros"""
+    """Nginx official install script for all distros.
+    Also:
+    - Opens UDP 443 in firewall (required for HTTP/3 QUIC)
+    - Adds stream {} block to nginx.conf (required for TCP load balancing)
+    """
     os_info = get_os()
+    stream_setup = (
+        # Add stream block if missing — needed for TCP LB
+        'grep -q "^stream" /etc/nginx/nginx.conf 2>/dev/null || '
+        'echo -e "\\nstream {\\n    include /etc/nginx/stream.d/*.conf;\\n}" >> /etc/nginx/nginx.conf; '
+        'mkdir -p /etc/nginx/stream.d; '
+        # Open UDP 443 for HTTP/3 QUIC — idempotent
+        '(ufw status 2>/dev/null | grep -q "Status: active" && ufw allow 443/udp 2>/dev/null); '
+        '(firewall-cmd --state 2>/dev/null | grep -q running && '
+        'firewall-cmd --add-port=443/udp --permanent 2>/dev/null && '
+        'firewall-cmd --reload 2>/dev/null); '
+        'true'
+    )
     if os_info['family'] == 'debian':
         repo = 'http://nginx.org/packages/ubuntu' if channel == 'stable' else 'http://nginx.org/packages/mainline/ubuntu'
         return (
@@ -119,9 +135,10 @@ def nginx_install_script(channel='stable'):
             f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} {os_info["codename"]} nginx" > /etc/apt/sources.list.d/nginx.list && '
             f'{pkg_update()} && '
             f'{pkg_install("nginx")} && '
-            f'systemctl enable nginx && systemctl start nginx'
+            f'systemctl enable nginx && systemctl start nginx && '
+            f'{stream_setup}'
         )
-    elif os_info['family'] in ('rhel','fedora'):
+    elif os_info['family'] in ('rhel', 'fedora'):
         return (
             f'cat > /etc/yum.repos.d/nginx.repo << EOF\n'
             f'[nginx-{channel}]\n'
@@ -132,9 +149,13 @@ def nginx_install_script(channel='stable'):
             f'gpgkey=https://nginx.org/keys/nginx_signing.key\n'
             f'EOF\n'
             f'{pkg_install("nginx")} && '
-            f'systemctl enable nginx && systemctl start nginx'
+            f'systemctl enable nginx && systemctl start nginx && '
+            f'{stream_setup}'
         )
-    return f'{pkg_install("nginx")} && systemctl enable nginx && systemctl start nginx'
+    return (
+        f'{pkg_install("nginx")} && systemctl enable nginx && systemctl start nginx && '
+        f'{stream_setup}'
+    )
 
 def php_install_script(ver):
     """PHP install script for all distros"""
@@ -271,9 +292,10 @@ def docker_install_script():
         )
     return 'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker'
 
-def nodejs_install_script(ver='22'):
+def nodejs_install_script(ver='24'):
     """Node.js official install script for all distros"""
     return (
+        f'rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg /usr/share/keyrings/nodesource-repo.gpg 2>/dev/null; '
         f'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - 2>/dev/null || '
         f'curl -fsSL https://rpm.nodesource.com/setup_{ver}.x | bash - 2>/dev/null; '
         f'{pkg_install("nodejs")}'
