@@ -220,7 +220,8 @@ def postgresql_install_script(ver='17'):
     elif os_info['family'] in ('rhel','fedora'):
         major = ver.split('.')[0]
         return (
-            f'dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-$(rpm -E %rhel)-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null; '
+            f'PGARCH=$(uname -m) && '
+            f'dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-$(rpm -E %rhel)-${{PGARCH}}/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null; '
             f'dnf -qy module disable postgresql 2>/dev/null; '
             f'{pkg_install(f"postgresql{major}-server postgresql{major}-contrib")} && '
             f'/usr/pgsql-{major}/bin/postgresql-{major}-setup initdb 2>/dev/null; '
@@ -262,9 +263,10 @@ def mongodb_install_script(ver='8.0'):
         )
     elif os_info['family'] in ('rhel','fedora'):
         return (
+            f'MGARCH=$(uname -m) && '
             f'cat > /etc/yum.repos.d/mongodb-org-{ver}.repo << EOF\n'
             f'[mongodb-org-{ver}]\nname=MongoDB Repository\n'
-            f'baseurl=https://repo.mongodb.org/yum/redhat/$releasever/mongodb-org/{ver}/x86_64/\n'
+            f'baseurl=https://repo.mongodb.org/yum/redhat/$releasever/mongodb-org/{ver}/${{MGARCH}}/\n'
             f'gpgcheck=1\nenabled=1\n'
             f'gpgkey=https://pgp.mongodb.com/server-{ver}.asc\nEOF\n'
             f'{pkg_install("mongodb-org")} && '

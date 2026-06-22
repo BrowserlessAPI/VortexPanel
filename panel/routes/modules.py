@@ -497,7 +497,8 @@ systemctl enable fail2ban && systemctl start fail2ban''',
 CLAM_VER=$(curl -s https://api.github.com/repos/Cisco-Talos/clamav/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
 CLAM_VER=${CLAM_VER:-clamav-1.4.2} && \
 CLAM_NUM=${CLAM_VER#clamav-} && \
-curl -fsSL https://www.clamav.net/downloads/production/clamav-${CLAM_NUM}.linux.x86_64.deb -o /tmp/clamav.deb 2>/dev/null && \
+CLAM_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x86_64/') && \
+curl -fsSL https://www.clamav.net/downloads/production/clamav-${CLAM_NUM}.linux.${CLAM_ARCH}.deb -o /tmp/clamav.deb 2>/dev/null && \
 (dpkg -i /tmp/clamav.deb 2>/dev/null || apt-get install -y clamav clamav-daemon) && \
 apt-get install -f -y && \
 systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl start clamav-daemon''',
