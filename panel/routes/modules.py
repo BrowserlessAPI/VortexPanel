@@ -40,58 +40,78 @@ def translate_install_cmd(cmd):
 
 def req(): return 'user' in session
 
-# ── Job store: file-based so all gunicorn workers share state ──────────────
-# In-memory dict fails with --workers > 1 because each worker has its own
-# memory space. A small JSON file per job in /tmp/vortex_jobs/ is shared
-# across all workers via the filesystem.
+# ── Job store: JSONL append-only files shared across all gunicorn workers ───
+# Each job = one .jsonl file where every line is a complete JSON object.
+# Appending one JSON line is atomic for small writes — no read-modify-write,
+# no corruption, no locks needed between workers.
+# Format per line:
+#   {"line": "apt-get output..."}          — progress output line
+#   {"done": true, "success": true/false,  — final status (last line)
+#    "installed": true, "installedVer": "x.y.z"}
 _JOBS_DIR = '/tmp/vortex_jobs'
 os.makedirs(_JOBS_DIR, exist_ok=True)
-_jobs_lock = threading.Lock()
 
 def _job_path(job_id):
-    return os.path.join(_JOBS_DIR, f'{job_id}.json')
+    return os.path.join(_JOBS_DIR, f'{job_id}.jsonl')
 
-def _job_get(job_id):
-    try:
-        with open(_job_path(job_id)) as f:
-            return json.load(f)
-    except: return None
-
-def _job_set(job_id, data):
-    with _jobs_lock:
-        try:
-            with open(_job_path(job_id), 'w') as f:
-                json.dump(data, f)
-        except: pass
+def _job_create(job_id, **_):
+    """Create empty job file so SSE stream knows it exists."""
+    open(_job_path(job_id), 'w').close()
 
 def _job_append_line(job_id, line):
-    with _jobs_lock:
-        try:
-            path = _job_path(job_id)
-            with open(path) as f: data = json.load(f)
-            data['lines'].append(line)
-            with open(path, 'w') as f: json.dump(data, f)
-        except: pass
+    """Append one output line. Atomic for small writes."""
+    try:
+        with open(_job_path(job_id), 'a') as f:
+            f.write(json.dumps({'line': line}) + '\n')
+    except Exception as e:
+        pass  # non-fatal; best-effort streaming
 
 def _job_finish(job_id, success, installed, inst_ver=''):
-    with _jobs_lock:
-        try:
-            path = _job_path(job_id)
-            with open(path) as f: data = json.load(f)
-            data.update({'done':True,'success':success,'installed':installed,
-                         'installedVer':inst_ver,'status':'done'})
-            with open(path, 'w') as f: json.dump(data, f)
-        except: pass
+    """Append final status line to job file."""
+    try:
+        with open(_job_path(job_id), 'a') as f:
+            f.write(json.dumps({
+                'done': True, 'success': success,
+                'installed': installed, 'installedVer': inst_ver,
+            }) + '\n')
+    except Exception:
+        pass
 
-def _job_create(job_id, initial_installed=False):
-    _job_set(job_id, {'status':'running','lines':[],'done':False,
-                      'success':False,'installed':initial_installed,'installedVer':''})
+def _job_get(job_id):
+    """Read all lines from JSONL job file. Returns dict with lines[], done, etc."""
+    path = _job_path(job_id)
+    if not os.path.exists(path):
+        return None
+    lines = []
+    done = False
+    success = False
+    installed = True
+    inst_ver = ''
+    try:
+        with open(path) as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if 'line' in obj:
+                    lines.append(obj['line'])
+                elif obj.get('done'):
+                    done = True
+                    success = obj.get('success', False)
+                    installed = obj.get('installed', True)
+                    inst_ver = obj.get('installedVer', '')
+    except Exception:
+        pass
+    return {'lines': lines, 'done': done, 'success': success,
+            'installed': installed, 'installedVer': inst_ver}
 
-# Legacy compatibility — keep _jobs as a shim for any direct access
+# Shim so existing _jobs[job_id] reads still work (used nowhere new, but safe)
 class _JobsShim:
     def get(self, job_id, default=None): return _job_get(job_id) or default
-    def __setitem__(self, job_id, val): _job_set(job_id, val)
-    def __getitem__(self, job_id): return _job_get(job_id)
 _jobs = _JobsShim()
 
 def sh(c, t=10):
@@ -1027,24 +1047,51 @@ def uninstall_module(mod_id):
 @modules_bp.route('/api/modules/job/<job_id>')
 def job_stream(job_id):
     def generate():
-        sent = 0
-        for _ in range(600):  # max 3 minutes (600 × 0.3s)
-            job = _job_get(job_id)
-            if not job:
-                yield f'data: {json.dumps({"error":"Job not found"})}\n\n'; break
-            lines = job.get('lines', [])
-            while sent < len(lines):
-                yield f'data: {json.dumps({"line": lines[sent]})}\n\n'
-                sent += 1
-            if job.get('done'):
-                yield f'data: {json.dumps({"done":True,"success":job["success"],"installed":job["installed"],"installedVer":job.get("installedVer","")})}\n\n'
-                # Clean up job file after a short delay
-                try: os.remove(_job_path(job_id))
-                except: pass
+        path = _job_path(job_id)
+        # Wait up to 5s for the job file to appear (handles race between
+        # POST creating the job and the EventSource connecting)
+        for _ in range(50):
+            if os.path.exists(path):
                 break
+            time.sleep(0.1)
+        else:
+            yield f'data: {json.dumps({"error": "Job not found"})}\n\n'
+            return
+
+        sent = 0  # number of JSONL lines already sent to client
+        for _ in range(1200):  # max 6 minutes (1200 × 0.3s)
+            try:
+                with open(path) as f:
+                    all_lines = f.readlines()
+            except Exception:
+                time.sleep(0.3)
+                continue
+
+            # Stream any new lines since last poll
+            for raw in all_lines[sent:]:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except json.JSONDecodeError:
+                    sent += 1
+                    continue
+                if 'line' in obj:
+                    yield f'data: {json.dumps({"line": obj["line"]})}\n\n'
+                elif obj.get('done'):
+                    yield f'data: {json.dumps({"done": True, "success": obj.get("success", False), "installed": obj.get("installed", True), "installedVer": obj.get("installedVer", "")})}\n\n'
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+                    return
+                sent += 1
+
             time.sleep(0.3)
+
     return Response(generate(), mimetype='text/event-stream',
-                    headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 @modules_bp.route('/api/modules/<mod_id>/control', methods=['POST'])
 def control_module(mod_id):
