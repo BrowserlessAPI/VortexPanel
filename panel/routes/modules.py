@@ -280,11 +280,10 @@ systemctl enable caddy && systemctl start caddy''',
         'desc':'Community-developed MySQL fork by MariaDB Foundation',
         'check':'systemctl is-active mariadb 2>/dev/null | grep -q "^active" && echo found || (which mariadbd 2>/dev/null && mariadbd --version 2>/dev/null | grep -c MariaDB)',
         'versions':[
-            {'label':'10.11.11 (LTS)',  'value':'10.11'},
             {'label':'12.3.2 (Latest Stable)', 'value':'12.3'},
             {'label':'11.8.8',                 'value':'11.8'},
-            {'label':'11.4.5 (LTS)',            'value':'11.4'},
-            {'label':'10.11 (LTS)',             'value':'10.11'},
+            {'label':'11.4.5 (LTS)',           'value':'11.4'},
+            {'label':'10.11.11 (LTS)',         'value':'10.11'},
         ],
         'install_tpl':'''curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
 bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
@@ -835,8 +834,9 @@ nginx -t && systemctl reload nginx''',
     # --- CDN --------------------------------------------------------------------
     {
         'id':'cdn', 'name':'CDN Manager', 'icon':'/static/icons/cloudflare.svg', 'category':'Network',
-        'desc':'Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri — HOT MODULE',
-        'check':'echo found',  # Always available — built-in panel feature
+        'desc':'Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri',
+        'check':'echo found',
+        'builtin':True,
         'versions':[
             {'label':'Built-in', 'value':'builtin'},
         ],

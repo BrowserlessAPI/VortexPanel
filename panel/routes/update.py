@@ -15,7 +15,7 @@ except ImportError:
 update_bp = Blueprint('update', __name__)
 def req(): return 'user' in session
 
-GITHUB_REPO   = 'BrowserlessAPI/Vortexpanel'
+GITHUB_REPO   = 'BrowserlessAPI/VortexPanel'
 CURRENT_VERSION = 'v3.3.0'
 VERSION_FILE  = '/opt/vortexpanel/version.txt'
 INSTALL_DIR   = '/opt/vortexpanel'
