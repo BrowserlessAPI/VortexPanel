@@ -166,8 +166,8 @@ MODULES = [
         'desc':'High-performance HTTP & reverse proxy server',
         'check':'which nginx 2>/dev/null',
         'versions':[
-            {'label':'1.30.2 (Stable)',   'value':'stable'},
-            {'label':'1.31.1 (Mainline)', 'value':'mainline'},
+            {'label':'1.30.3 (Stable)',   'value':'stable'},
+            {'label':'1.31.2 (Mainline)', 'value':'mainline'},
         ],
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
@@ -1131,8 +1131,8 @@ def get_module_settings(mod_id):
         log_path = next((p for p in ['/var/log/nginx/error.log','/www/wwwlogs/nginx_error.log'] if os.path.exists(p)), '')
         logs = sh('tail -100 ' + log_path) if log_path else 'No error log found'
         nginx_versions = [
-            {'label':'1.30.2 (Stable)','value':'stable'},
-            {'label':'1.31.1 (Mainline)','value':'mainline'},
+            {'label':'1.30.3 (Stable)','value':'stable'},
+            {'label':'1.31.2 (Mainline)','value':'mainline'},
         ]
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'log_path':log_path,
