@@ -19,7 +19,13 @@ def os_cmd(apt_cmd):
     cmd = cmd.replace('apt-get update -qq', 'dnf check-update -q; true')
     cmd = cmd.replace('apt-get update -q', 'dnf check-update -q; true')
     cmd = cmd.replace('apt-get update', 'dnf check-update; true')
+    # Strip dpkg-specific options that don't apply to dnf
+    import re as _re
+    cmd = _re.sub(r"-o Dpkg::Options::='[^']*'\s*", '', cmd)
+    cmd = _re.sub(r'-o Dpkg::Options::="[^"]*"\s*', '', cmd)
+    cmd = _re.sub(r'-o Dpkg::Options::=\S+\s*', '', cmd)
     cmd = cmd.replace('apt-get remove -y --purge', 'dnf remove -y')
+    cmd = cmd.replace('apt-get remove -y', 'dnf remove -y')
     cmd = cmd.replace('apt-get autoremove -y', 'dnf autoremove -y')
     cmd = cmd.replace('add-apt-repository -y', 'true #')
     cmd = cmd.replace('add-apt-repository', 'true #')
@@ -177,7 +183,7 @@ echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] $REPO $(lsb_
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && \
 apt-get install -y nginx && systemctl enable --now nginx''',
         'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
-        'uninstall':'apt-get remove -y --purge nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
+        'uninstall':'systemctl stop nginx 2>/dev/null; systemctl disable nginx 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
         'service':'nginx', 'manage':True,
     },
     {
@@ -196,7 +202,7 @@ apt-get install -y nginx && systemctl enable --now nginx''',
             'systemctl enable apache2 && systemctl start apache2'
         ),
         'install':'export DEBIAN_FRONTEND=noninteractive && apt-get install -y apache2 && systemctl enable apache2 && systemctl start apache2',
-        'uninstall':'apt-get remove -y --purge apache2 apache2-utils apache2-bin && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold apache2 apache2-utils apache2-bin && apt-get autoremove -y',
         'service':'apache2', 'manage':True,
     },
     {
@@ -215,7 +221,7 @@ systemctl enable lsws && systemctl start lsws''',
         'install':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed && \
 systemctl enable lsws && systemctl start lsws''',
-        'uninstall':'/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; apt-get remove -y openlitespeed 2>/dev/null; rm -rf /usr/local/lsws',
+        'uninstall':'/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; apt-get remove -y -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' openlitespeed 2>/dev/null; rm -rf /usr/local/lsws',
         'service':'lsws', 'manage':True,
     },
     # --- Databases -------------------------------------------------------------
@@ -245,7 +251,7 @@ chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && \
 systemctl enable caddy && systemctl start caddy''',
-        'uninstall':'apt-get remove -y --purge caddy && apt-get autoremove -y && rm -rf /etc/caddy',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold caddy && apt-get autoremove -y && rm -rf /etc/caddy',
         'service':'caddy', 'manage':True,
     },
     {
@@ -266,7 +272,7 @@ systemctl enable caddy && systemctl start caddy''',
             'apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server && '
             'systemctl enable --now mysql'
         ),
-        'uninstall':'apt-get remove -y --purge mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
         'service':'mysql', 'manage':True,
     },
     {
@@ -285,7 +291,7 @@ bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
 apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && \
 systemctl enable --now mariadb''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && systemctl enable mariadb && systemctl start mariadb',
-        'uninstall':'apt-get remove -y --purge mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
         'service':'mariadb', 'manage':True,
     },
     {
@@ -311,7 +317,7 @@ systemctl enable --now mariadb''',
             'systemctl enable mongod && systemctl start mongod'
         ),
         'install':'',  # always uses install_tpl
-        'uninstall':'apt-get remove -y --purge mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb',
         'service':'mongod', 'manage':True,
     },
     {
@@ -337,7 +343,7 @@ systemctl enable --now mariadb''',
             'apt-get install -y postgresql-{ver} postgresql-contrib && '
             'systemctl enable postgresql && systemctl start postgresql'),
         'install':'apt-get install -y postgresql postgresql-contrib && systemctl enable postgresql && systemctl start postgresql',
-        'uninstall':'apt-get remove -y --purge postgresql postgresql-* && apt-get autoremove -y && rm -rf /etc/postgresql /var/lib/postgresql',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold postgresql postgresql-* && apt-get autoremove -y && rm -rf /etc/postgresql /var/lib/postgresql',
         'service':'postgresql', 'manage':True,
     },
     # --- PHP -------------------------------------------------------------------
@@ -368,13 +374,13 @@ systemctl restart php{ver}-fpm''',
         'install':'',
         'uninstall_tpl':'''systemctl stop php{ver}-fpm 2>/dev/null || true && \
 systemctl disable php{ver}-fpm 2>/dev/null || true && \
-apt-get remove -y --purge php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql \
+apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql \
 php{ver}-xml php{ver}-curl php{ver}-gd php{ver}-mbstring php{ver}-zip php{ver}-bcmath \
 php{ver}-intl php{ver}-soap php{ver}-cli php{ver}-readline php{ver}-* 2>/dev/null || true && \
 apt-get autoremove -y 2>/dev/null || true''',
         'uninstall':'''for ver in 7.4 8.1 8.2 8.3 8.4; do
   systemctl stop php$ver-fpm 2>/dev/null || true
-  apt-get remove -y --purge php$ver php$ver-* 2>/dev/null || true
+  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold php$ver php$ver-* 2>/dev/null || true
 done
 apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
@@ -388,7 +394,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'1.0.52 (Latest Stable)', 'value':'latest'},
         ],
         'install':'apt-get install -y pure-ftpd pure-ftpd-common && systemctl enable pure-ftpd && systemctl start pure-ftpd',
-        'uninstall':'apt-get remove -y --purge pure-ftpd pure-ftpd-common && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pure-ftpd pure-ftpd-common && apt-get autoremove -y',
         'service':'pure-ftpd', 'manage':True,
     },
     # --- Admin Tools -----------------------------------------------------------
@@ -483,7 +489,7 @@ F2B_VER=${F2B_VER:-1.1.0} && \
 curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
 (dpkg -i /tmp/fail2ban.deb 2>/dev/null || apt-get install -y fail2ban) && \
 systemctl enable fail2ban && systemctl start fail2ban''',
-        'uninstall':'apt-get remove -y --purge fail2ban && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold fail2ban && apt-get autoremove -y',
         'service':'fail2ban', 'manage':True,
     },
     {
@@ -502,7 +508,7 @@ curl -fsSL https://www.clamav.net/downloads/production/clamav-${CLAM_NUM}.linux.
 (dpkg -i /tmp/clamav.deb 2>/dev/null || apt-get install -y clamav clamav-daemon) && \
 apt-get install -f -y && \
 systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl start clamav-daemon''',
-        'uninstall':'apt-get remove -y --purge clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
         'service':'clamav-daemon', 'manage':True,
     },
     # --- DNS -------------------------------------------------------------------
@@ -515,7 +521,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
             {'label':'3.11.2 (Latest)', 'value':'latest'},
         ],
         'install':'apt-get install -y ddclient',
-        'uninstall':'apt-get remove -y --purge ddclient && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold ddclient && apt-get autoremove -y',
         'manage':False,
     },
         {
@@ -545,7 +551,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         ),
         'uninstall':(
             'systemctl stop named 2>/dev/null; systemctl stop bind9 2>/dev/null; '
-            'apt-get remove -y --purge bind9 bind9utils bind9-doc && '
+            'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold bind9 bind9utils bind9-doc && '
             'apt-get autoremove -y && rm -rf /etc/bind/zones'
         ),
         'service':'named', 'manage':True,
@@ -562,7 +568,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         ],
         'install_tpl':'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
         'install':'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
-        'uninstall':'apt-get remove -y --purge nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list',
         'manage':False,
     },
     {
@@ -580,12 +586,12 @@ add-apt-repository -y ppa:deadsnakes/ppa && apt-get update -q && \
 apt-get install -y python{ver} python{ver}-venv python{ver}-dev && \
 curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true''',
         'install':'apt-get install -y python3 python3-pip python3-venv python3-dev',
-        'uninstall_tpl':'''apt-get remove -y --purge python{ver} python{ver}-venv python{ver}-dev \
+        'uninstall_tpl':'''apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python{ver} python{ver}-venv python{ver}-dev \
 python{ver}-distutils python{ver}-lib2to3 2>/dev/null || true && \
 apt-get autoremove -y 2>/dev/null || true && \
 update-alternatives --remove python /usr/bin/python{ver} 2>/dev/null || true''',
         'uninstall':'''for ver in 3.10 3.11 3.12 3.13; do
-  apt-get remove -y --purge python$ver python$ver-* 2>/dev/null || true
+  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python$ver python$ver-* 2>/dev/null || true
 done
 apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
@@ -601,7 +607,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'v29 CE (Latest)',  'value':'29'},
         ],
         'install':'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker',
-        'uninstall':'apt-get remove -y --purge docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && apt-get autoremove -y',
         'service':'docker', 'manage':True,
     },
     # --- Dev -------------------------------------------------------------------
@@ -645,7 +651,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
 apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
-        'uninstall':'apt-get remove -y --purge redis-server redis-tools && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold redis-server redis-tools && apt-get autoremove -y',
         'service':'redis-server', 'manage':True,
     },
     # --- Server Tools ----------------------------------------------------------
@@ -663,7 +669,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
             'systemctl start supervisord 2>/dev/null || systemctl start supervisor'
         ),
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable supervisor && systemctl start supervisor',
-        'uninstall':'apt-get remove -y --purge supervisor && apt-get autoremove -y',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold supervisor && apt-get autoremove -y',
         'service':'supervisor', 'manage':True,
     },
     # --- Webmail ----------------------------------------------------------------
@@ -753,7 +759,7 @@ chown -R www-data:www-data /var/www/roundcube/''',
         'uninstall':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            '  apt-get remove -y --purge libmodsecurity3 libmodsecurity-dev libnginx-mod-http-modsecurity 2>/dev/null || true; '
+            '  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold libmodsecurity3 libmodsecurity-dev libnginx-mod-http-modsecurity 2>/dev/null || true; '
             '  apt-get autoremove -y 2>/dev/null || true; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
             '  dnf remove -y mod_security nginx-mod-modsecurity 2>/dev/null || true; '
@@ -982,11 +988,27 @@ def install_module(mod_id):
     def run_job():
         _job_append_line(job_id, f'[VortexPanel] Installing {mod["name"]} {ver}...')
         _final_cmd = translate_install_cmd(cmd)
-        proc = subprocess.Popen(f'DEBIAN_FRONTEND=noninteractive {_final_cmd} 2>&1',
-            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+        env = os.environ.copy()
+        env['DEBIAN_FRONTEND'] = 'noninteractive'
+        env['APT_LISTCHANGES_FRONTEND'] = 'none'
+        env['UCF_FORCE_CONFFOLD'] = '1'
+
+        proc = subprocess.Popen(_final_cmd,
+            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=env)
+
+        import time as _time
+        start = _time.time()
+        MAX_SECONDS = 600  # 10 min max for install
         for line in proc.stdout:
             _job_append_line(job_id, line.rstrip())
+            if _time.time() - start > MAX_SECONDS:
+                proc.kill()
+                _job_append_line(job_id, '[VortexPanel] ⚠ Timed out after 10 minutes. Process killed.')
+                break
         proc.wait()
+
         installed     = is_installed(mod['check'])
         inst_ver      = get_version(mod['id']) if installed else ''
         _job_append_line(job_id,
@@ -1021,11 +1043,33 @@ def uninstall_module(mod_id):
 
     def run_job():
         _job_append_line(job_id, f'[VortexPanel] Removing {mod["name"]} {ver}...')
-        proc = subprocess.Popen(f'DEBIAN_FRONTEND=noninteractive {cmd} 2>&1',
-            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+
+        # Stop the service first to prevent dpkg from hanging on restart triggers
+        svc = mod.get('service', mod_id)
+        if svc:
+            _job_append_line(job_id, f'[VortexPanel] Stopping {svc} service...')
+            subprocess.run(f'systemctl stop {svc} 2>/dev/null || true', shell=True, timeout=15)
+
+        env = os.environ.copy()
+        env['DEBIAN_FRONTEND'] = 'noninteractive'
+        env['APT_LISTCHANGES_FRONTEND'] = 'none'
+        env['UCF_FORCE_CONFFOLD'] = '1'
+
+        proc = subprocess.Popen(cmd,
+            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, env=env)
+
+        import time as _time
+        start = _time.time()
+        MAX_SECONDS = 300  # 5 min max for uninstall
         for line in proc.stdout:
             _job_append_line(job_id, line.rstrip())
+            if _time.time() - start > MAX_SECONDS:
+                proc.kill()
+                _job_append_line(job_id, '[VortexPanel] ⚠ Timed out after 5 minutes. Process killed.')
+                break
         proc.wait()
+
         if ver and mod_id in ('php','python'):
             ver_binary = f'php{ver}' if mod_id=='php' else f'python{ver}'
             still_installed = bool(sh(f'which {ver_binary} 2>/dev/null'))
