@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, session
 import subprocess, re, time
-from concurrent.futures import ThreadPoolExecutor
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -13,30 +12,35 @@ _STATS_TTL   = 1.5
 
 def _get_stats():
     def _proc_stat():
-        line1 = open('/proc/stat').readline()
-        v1 = list(map(int, line1.split()[1:]))
-        time.sleep(0.1)
-        line2 = open('/proc/stat').readline()
-        v2 = list(map(int, line2.split()[1:]))
-        idle_d  = (v2[3] + v2[4]) - (v1[3] + v1[4])
-        total_d = sum(v2) - sum(v1)
-        return round((1 - idle_d / total_d) * 100, 1) if total_d else 0.0
+        try:
+            a = open('/proc/stat').readline().split()[1:]
+            time.sleep(0.08)
+            b = open('/proc/stat').readline().split()[1:]
+            da = [int(b[i]) - int(a[i]) for i in range(min(len(a), len(b)))]
+            idle = da[3] if len(da) > 3 else 0
+            total = sum(da) or 1
+            return round((1 - idle / total) * 100, 1)
+        except:
+            return 0.0
 
     def _proc_mem():
-        mem = open('/proc/meminfo').read()
-        def mi(k):
-            m = re.search(rf'^{k}:\s+(\d+)', mem, re.M)
-            return int(m.group(1)) * 1024 if m else 0
-        total = mi('MemTotal')
-        return total, total - mi('MemAvailable')
+        try:
+            info = {}
+            for line in open('/proc/meminfo').readlines()[:5]:
+                k, v = line.split(':')
+                info[k.strip()] = int(v.strip().split()[0]) * 1024
+            total = info.get('MemTotal', 1)
+            avail = info.get('MemAvailable', info.get('MemFree', 0))
+            return total, total - avail
+        except:
+            return 0, 0
 
     def _disk():
         try:
-            out = subprocess.check_output(
-                'df / --output=size,used 2>/dev/null | tail -1',
-                shell=True, text=True, stderr=subprocess.DEVNULL
-            ).split()
-            return int(out[0]) * 1024, int(out[1]) * 1024
+            st = __import__('os').statvfs('/')
+            total = st.f_blocks * st.f_frsize
+            used  = (st.f_blocks - st.f_bfree) * st.f_frsize
+            return total, used
         except:
             return 0, 0
 
@@ -46,7 +50,7 @@ def _get_stats():
             d, h, m = sec // 86400, (sec % 86400) // 3600, (sec % 3600) // 60
             return f"{d}d {h}h {m}m"
         except:
-            return '—'
+            return '---'
 
     def _proc_net():
         try:
@@ -64,19 +68,22 @@ def _get_stats():
                 'php8.5-fpm', 'php8.4-fpm', 'php8.3-fpm', 'php8.2-fpm',
                 'php8.1-fpm', 'php7.4-fpm',
                 'redis-server', 'docker', 'fail2ban', 'supervisor']
-        r = subprocess.run(
-            'systemctl is-active ' + ' '.join(svcs) + ' 2>/dev/null',
-            shell=True, capture_output=True, text=True
-        )
-        lines = r.stdout.strip().split('\n')
-        out = {}
-        for i, svc in enumerate(svcs):
-            state = lines[i].strip() if i < len(lines) else ''
-            if state in ('active', 'inactive', 'failed'): out[svc] = state
-        return {k: v for k, v in out.items() if v}
+        try:
+            r = subprocess.run(
+                'systemctl is-active ' + ' '.join(svcs) + ' 2>/dev/null',
+                shell=True, capture_output=True, text=True, timeout=5
+            )
+            lines = r.stdout.strip().split('\n')
+            out = {}
+            for i, svc in enumerate(svcs):
+                state = lines[i].strip() if i < len(lines) else ''
+                if state in ('active', 'inactive', 'failed'):
+                    out[svc] = state
+            return {k: v for k, v in out.items() if v}
+        except:
+            return {}
 
     def _webserver_conflicts():
-        """Detect multiple webservers running simultaneously."""
         webservers = {
             'nginx':         'systemctl is-active nginx 2>/dev/null',
             'apache2':       'systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null',
@@ -84,38 +91,37 @@ def _get_stats():
             'caddy':         'systemctl is-active caddy 2>/dev/null',
         }
         active = []
-        for name, cmd in webservers.items():
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            if 'active' in result.stdout:
-                active.append(name)
+        try:
+            for name, cmd in webservers.items():
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3)
+                if 'active' in result.stdout:
+                    active.append(name)
+        except:
+            pass
         if len(active) > 1:
             return {'conflict': True, 'active': active,
-                    'message': f"Multiple webservers running simultaneously: {', '.join(active)}. "
-                               f"This causes port 80/443 conflicts. Stop all but one."}
+                    'message': "Multiple webservers running: " + ', '.join(active) + ". Stop all but one."}
         return {'conflict': False, 'active': active}
 
-    cpu_result = [0.0]; disk_result = [(0,0)]; svc_result = [{}]; ws_result = [{}]
-    def _get_cpu():  cpu_result[0]  = _proc_stat()
-    def _get_disk(): disk_result[0] = _disk()
-    def _get_svcs(): svc_result[0]  = _services()
-    def _get_ws():   ws_result[0]   = _webserver_conflicts()
-
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        for f in [ex.submit(_get_cpu), ex.submit(_get_disk), ex.submit(_get_svcs), ex.submit(_get_ws)]:
-            f.result()
-
+    # Sequential calls only. /proc reads are instant (<1ms each),
+    # systemctl calls take ~30ms total. No need for threads.
+    # ThreadPoolExecutor caused RuntimeError crashes during gunicorn worker shutdown.
+    cpu   = _proc_stat()
     ram_total, ram_used   = _proc_mem()
-    disk_total, disk_used = disk_result[0]
-    rx, tx = _proc_net()
+    disk_total, disk_used = _disk()
+    rx, tx   = _proc_net()
+    svcs     = _services()
+    ws       = _webserver_conflicts()
+
     return {
-        'ok': True, 'cpu': cpu_result[0],
+        'ok': True, 'cpu': cpu,
         'ram':  {'used': ram_used,  'total': ram_total},
         'disk': {'used': disk_used, 'total': disk_total},
         'load': open('/proc/loadavg').read().split()[:3],
         'uptime': _proc_uptime(),
-        'services': svc_result[0],
+        'services': svcs,
         'net': {'rx': rx, 'tx': tx},
-        'webserver_conflict': ws_result[0],
+        'webserver_conflict': ws,
     }
 
 
