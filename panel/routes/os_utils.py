@@ -131,7 +131,7 @@ def nginx_install_script(channel='stable'):
     if os_info['family'] == 'debian':
         repo = 'http://nginx.org/packages/ubuntu' if channel == 'stable' else 'http://nginx.org/packages/mainline/ubuntu'
         return (
-            f'curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && '
+            f'rm -f /usr/share/keyrings/nginx-archive-keyring.gpg && curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --no-tty --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && '
             f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} {os_info["codename"]} nginx" > /etc/apt/sources.list.d/nginx.list && '
             f'{pkg_update()} && '
             f'{pkg_install("nginx")} && '

@@ -1926,7 +1926,9 @@ function modulesPage() {
       m.loading = true;
       const r = await post(`/api/modules/${m.id}/${action}`, {version: ver});
       if (!r.ok) { m.loading=false; toast(r.error||'Failed','error'); return; }
-      const label = `${action==='install'?'Installing':'Removing'}: ${m.name}${ver?' v'+ver:''}`;
+      const isChannel = ver && ['stable','mainline','latest','builtin'].includes(ver.toLowerCase());
+      const verLabel  = ver ? (isChannel ? ' ('+ver+')' : ' v'+ver) : '';
+      const label = `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel}`;
       this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:''};
       const es = new EventSource(`/api/modules/job/${r.job_id}`);
       es.onmessage = (e) => {
