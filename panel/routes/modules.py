@@ -176,6 +176,7 @@ MODULES = [
             {'label':'1.31.2 (Mainline)', 'value':'mainline'},
         ],
         'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
+rm -f /usr/share/keyrings/nginx-archive-keyring.gpg && \
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
 REPO="http://nginx.org/packages/{ver}/ubuntu" && \
 [ "{ver}" = "stable" ] && REPO="http://nginx.org/packages/ubuntu" || true && \
@@ -202,7 +203,7 @@ apt-get install -y nginx && systemctl enable --now nginx''',
             'systemctl enable apache2 && systemctl start apache2'
         ),
         'install':'export DEBIAN_FRONTEND=noninteractive && apt-get install -y apache2 && systemctl enable apache2 && systemctl start apache2',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold apache2 apache2-utils apache2-bin && apt-get autoremove -y',
+        'uninstall':'systemctl stop apache2 2>/dev/null; systemctl disable apache2 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold apache2 apache2-utils apache2-bin && apt-get autoremove -y',
         'service':'apache2', 'manage':True,
     },
     {
@@ -221,7 +222,7 @@ systemctl enable lsws && systemctl start lsws''',
         'install':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed && \
 systemctl enable lsws && systemctl start lsws''',
-        'uninstall':'/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; apt-get remove -y -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' openlitespeed 2>/dev/null; rm -rf /usr/local/lsws',
+        'uninstall':'systemctl stop lsws 2>/dev/null; systemctl disable lsws 2>/dev/null; /usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; apt-get remove -y -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' openlitespeed 2>/dev/null; rm -rf /usr/local/lsws',
         'service':'lsws', 'manage':True,
     },
     # --- Databases -------------------------------------------------------------
@@ -251,7 +252,7 @@ chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && \
 systemctl enable caddy && systemctl start caddy''',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold caddy && apt-get autoremove -y && rm -rf /etc/caddy',
+        'uninstall':'systemctl stop caddy 2>/dev/null; systemctl disable caddy 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold caddy && apt-get autoremove -y && rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null; apt-get update -qq 2>/dev/null; true && rm -rf /etc/caddy',
         'service':'caddy', 'manage':True,
     },
     {
@@ -272,7 +273,7 @@ systemctl enable caddy && systemctl start caddy''',
             'apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server && '
             'systemctl enable --now mysql'
         ),
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
+        'uninstall':'systemctl stop mysql 2>/dev/null; systemctl disable mysql 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
         'service':'mysql', 'manage':True,
     },
     {
@@ -342,7 +343,7 @@ systemctl enable --now mariadb''',
             'apt-get install -y postgresql-{ver} postgresql-contrib && '
             'systemctl enable postgresql && systemctl start postgresql'),
         'install':'apt-get install -y postgresql postgresql-contrib && systemctl enable postgresql && systemctl start postgresql',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold postgresql postgresql-* && apt-get autoremove -y && rm -rf /etc/postgresql /var/lib/postgresql',
+        'uninstall':'systemctl stop postgresql 2>/dev/null; systemctl disable postgresql 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold postgresql postgresql-* && apt-get autoremove -y && rm -rf /etc/postgresql /var/lib/postgresql /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'postgresql', 'manage':True,
     },
     # --- PHP -------------------------------------------------------------------
@@ -393,7 +394,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'1.0.52 (Latest Stable)', 'value':'latest'},
         ],
         'install':'apt-get install -y pure-ftpd pure-ftpd-common && systemctl enable pure-ftpd && systemctl start pure-ftpd',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pure-ftpd pure-ftpd-common && apt-get autoremove -y',
+        'uninstall':'systemctl stop pure-ftpd 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pure-ftpd pure-ftpd-common && apt-get autoremove -y',
         'service':'pure-ftpd', 'manage':True,
     },
     # --- Admin Tools -----------------------------------------------------------
@@ -488,7 +489,7 @@ F2B_VER=${F2B_VER:-1.1.0} && \
 curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
 (dpkg -i /tmp/fail2ban.deb 2>/dev/null || apt-get install -y fail2ban) && \
 systemctl enable fail2ban && systemctl start fail2ban''',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold fail2ban && apt-get autoremove -y',
+        'uninstall':'systemctl stop fail2ban 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold fail2ban && apt-get autoremove -y',
         'service':'fail2ban', 'manage':True,
     },
     {
@@ -507,7 +508,7 @@ curl -fsSL https://www.clamav.net/downloads/production/clamav-${CLAM_NUM}.linux.
 (dpkg -i /tmp/clamav.deb 2>/dev/null || apt-get install -y clamav clamav-daemon) && \
 apt-get install -f -y && \
 systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl start clamav-daemon''',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
+        'uninstall':'systemctl stop clamav-daemon clamav-freshclam 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
         'service':'clamav-daemon', 'manage':True,
     },
     # --- DNS -------------------------------------------------------------------
@@ -605,7 +606,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'v29 CE (Latest)',  'value':'29'},
         ],
         'install':'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && apt-get autoremove -y',
+        'uninstall':'systemctl stop docker 2>/dev/null; systemctl disable docker 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && apt-get autoremove -y && rm -f /usr/share/keyrings/docker-archive-keyring.gpg /etc/apt/sources.list.d/docker.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'docker', 'manage':True,
     },
     # --- Dev -------------------------------------------------------------------
@@ -667,7 +668,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
             'systemctl start supervisord 2>/dev/null || systemctl start supervisor'
         ),
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable supervisor && systemctl start supervisor',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold supervisor && apt-get autoremove -y',
+        'uninstall':'systemctl stop supervisor 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold supervisor && apt-get autoremove -y',
         'service':'supervisor', 'manage':True,
     },
     # --- Webmail ----------------------------------------------------------------
