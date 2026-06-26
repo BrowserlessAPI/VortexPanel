@@ -183,7 +183,7 @@ echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] $REPO $(lsb_
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && \
 apt-get install -y nginx && systemctl enable --now nginx''',
         'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
-        'uninstall':'systemctl stop nginx 2>/dev/null; systemctl disable nginx 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx',
+        'uninstall':'systemctl stop nginx 2>/dev/null; systemctl disable nginx 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx /usr/share/keyrings/nginx-archive-keyring.gpg /etc/apt/sources.list.d/nginx.list /etc/apt/sources.list.d/nginx-mainline.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'nginx', 'manage':True,
     },
     {
@@ -290,7 +290,7 @@ bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
 apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && \
 systemctl enable --now mariadb''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && systemctl enable mariadb && systemctl start mariadb',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
+        'uninstall':'systemctl stop mariadb 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'mariadb', 'manage':True,
     },
     {
@@ -316,7 +316,7 @@ systemctl enable --now mariadb''',
             'systemctl enable mongod && systemctl start mongod'
         ),
         'install':'',  # always uses install_tpl
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb',
+        'uninstall':'systemctl stop mongod 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb /usr/share/keyrings/mongodb-server-*.gpg /etc/apt/sources.list.d/mongodb-org-*.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'mongod', 'manage':True,
     },
     {
@@ -566,7 +566,7 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         ],
         'install_tpl':'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
         'install':'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg /usr/share/keyrings/nodesource-repo.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'manage':False,
     },
     {
@@ -649,7 +649,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
 apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold redis-server redis-tools && apt-get autoremove -y',
+        'uninstall':'systemctl stop redis-server 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold redis-server redis-tools && apt-get autoremove -y && rm -f /usr/share/keyrings/redis-archive-keyring.gpg /etc/apt/sources.list.d/redis.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'redis-server', 'manage':True,
     },
     # --- Server Tools ----------------------------------------------------------
