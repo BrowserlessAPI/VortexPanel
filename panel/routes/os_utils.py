@@ -117,9 +117,11 @@ def nginx_install_script(channel='stable'):
     """
     os_info = get_os()
     stream_setup = (
-        # Add stream block if missing — needed for TCP LB and HTTP/3
-        'grep -q "^stream" /etc/nginx/nginx.conf 2>/dev/null || '
+        # Only add stream block if nginx.conf exists AND stream block is not already present.
+        # Use printf (not echo -e) — echo -e prints "-e" literally in dash/sh on Ubuntu.
+        'if [ -f /etc/nginx/nginx.conf ] && ! grep -q "^stream" /etc/nginx/nginx.conf; then '
         'printf "\\nstream {\\n    include /etc/nginx/stream.d/*.conf;\\n}\\n" >> /etc/nginx/nginx.conf; '
+        'fi; '
         'mkdir -p /etc/nginx/stream.d; '
         # Open UDP 443 for HTTP/3 QUIC — idempotent
         '(ufw status 2>/dev/null | grep -q "Status: active" && ufw allow 443/udp 2>/dev/null); '
