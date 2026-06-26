@@ -1533,7 +1533,7 @@ def get_module_settings(mod_id):
 
     elif mod_id == 'mongodb':
         status  = sh('systemctl is-active mongod') or 'inactive'
-        version = sh('mongod --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
+        version = sh('mongod --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+" | head -1') or ''
         conf_path = '/etc/mongod.conf'
         try:
             with open(conf_path) as f: conf_content = f.read()

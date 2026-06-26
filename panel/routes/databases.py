@@ -122,39 +122,46 @@ def get_engines():
 @databases_bp.route('/api/databases')
 def list_dbs():
     if not req(): return jsonify({'ok':False}), 401
-    engine = request.args.get('engine', 'auto')
+    engine  = request.args.get('engine', 'auto')
     engines = detect_engines()
-    if not engines:
-        return jsonify({'ok':True, 'databases':[], 'engines':[], 'no_engine':True})
 
-    if engine == 'auto': engine = engines[0]['id']
+    if not engines:
+        return jsonify({'ok':True,'databases':[],'engines':[],'no_engine':True})
+
+    # Auto-select first available engine, or validate requested engine exists
+    available_ids = [e['id'] for e in engines]
+    if engine == 'auto' or engine not in available_ids:
+        engine = available_ids[0]
 
     if engine in ('mysql','mariadb'):
         dbs, err = mysql_dbs()
-        if err: return jsonify({'ok':False,'error':err,'databases':[]})
-        # version/connection info
+        if err:
+            return jsonify({'ok':False,'error':err,'databases':[],'engines':engines,'active_engine':engine})
         ver_raw, _ = mysql_cmd('SELECT VERSION();')
-        ver = ver_raw.split('\n')[-1].strip() if ver_raw else ''
-        conn_raw, _ = mysql_cmd("SHOW STATUS LIKE 'Threads_connected';")
-        conns = conn_raw.split('\n')[-1].split('\t')[-1].strip() if conn_raw else '0'
-        size_raw, _ = mysql_cmd("SELECT ROUND(SUM(data_length+index_length)/1024/1024,2) FROM information_schema.tables;")
+        ver   = ver_raw.split('\n')[-1].strip() if ver_raw else ''
+        conns_raw, _ = mysql_cmd("SHOW STATUS LIKE 'Threads_connected';")
+        conns = conns_raw.split('\n')[-1].split('\t')[-1].strip() if conns_raw else '0'
+        size_raw, _  = mysql_cmd("SELECT ROUND(SUM(data_length+index_length)/1024/1024,2) FROM information_schema.tables;")
         total = size_raw.split('\n')[-1].strip() if size_raw else '0'
         return jsonify({'ok':True,'databases':dbs,'engines':engines,'active_engine':engine,
             'info':{'version':ver,'connections':conns,'total_size_mb':total}})
 
     elif engine == 'postgresql':
         dbs, err = pg_dbs()
-        if err: return jsonify({'ok':False,'error':err,'databases':[]})
-        ver_raw, _ = pg_cmd('SELECT version();')
+        if err:
+            return jsonify({'ok':False,'error':err,'databases':[],'engines':engines,'active_engine':engine})
+        ver_raw, _, _ = pg_cmd('SELECT version();')
         ver = ver_raw.strip().split(' ')[1] if ver_raw else ''
         return jsonify({'ok':True,'databases':dbs,'engines':engines,'active_engine':engine,
             'info':{'version':ver,'connections':'N/A','total_size_mb':'N/A'}})
 
     elif engine == 'mongodb':
         dbs, err = mongo_dbs()
-        if err: return jsonify({'ok':False,'error':err,'databases':[]})
+        if err:
+            return jsonify({'ok':False,'error':err,'databases':[],'engines':engines,'active_engine':engine})
+        ver, _, _ = sh('mongod --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+" | head -1')
         return jsonify({'ok':True,'databases':dbs,'engines':engines,'active_engine':engine,
-            'info':{'version':'','connections':'N/A','total_size_mb':'N/A'}})
+            'info':{'version':ver or '','connections':'N/A','total_size_mb':'N/A'}})
 
     return jsonify({'ok':True,'databases':[],'engines':engines,'active_engine':engine})
 

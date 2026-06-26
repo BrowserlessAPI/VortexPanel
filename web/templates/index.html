@@ -1634,7 +1634,7 @@
 
       <div x-show="page==='databases'" x-data="databasesPage()">
         <div class="page-header">
-          <div><div class="page-title">Databases</div><div class="page-sub">MySQL / MariaDB management</div></div>
+          <div><div class="page-title">Databases</div><div class="page-sub" x-text="engines.length ? (engines.find(e=>e.id===activeEngine)?.name || activeEngine) + ' management' : 'Database management'"></div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="showImport=true">⬆ Import</button>
             <button class="btn btn-primary" @click="showAdd=true">+ Create DB</button>
@@ -1673,21 +1673,30 @@
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
           <input class="form-input" style="max-width:280px" x-model="searchQuery" placeholder="🔍 Search databases...">
           <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
-          <button class="btn btn-primary btn-sm" @click="showAddUser=true">+ Add User</button>
+          <button class="btn btn-primary btn-sm" x-show="isMysql || isPg" @click="showAddUser=true">+ Add User</button>
         </div>
         <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
           <table class="data-table">
-            <thead><tr><th>Database</th><th>Username</th><th>Size</th><th>Tables</th><th>Charset</th><th>Actions</th></tr></thead>
+            <thead><tr>
+              <th>Database</th>
+              <th x-show="isMysql || isPg">Username</th>
+              <th>Size</th>
+              <th x-show="isMysql">Tables</th>
+              <th x-show="isMongo">Collections</th>
+              <th x-show="isMysql">Charset</th>
+              <th>Actions</th>
+            </tr></thead>
             <tbody>
               <template x-for="row in combined" :key="row.db.name">
                 <tr>
                   <td style="font-weight:600;font-family:var(--font-mono)" x-text="row.db.name"></td>
-                  <td style="font-family:var(--font-mono);color:var(--text-muted)">
+                  <td x-show="isMysql || isPg" style="font-family:var(--font-mono);color:var(--text-muted)">
                     <span x-text="row.user?row.user.user+' ('+row.user.host+')':'—'"></span>
                   </td>
                   <td x-text="(row.db.size_mb||0)+' MB'"></td>
-                  <td x-text="row.db.tables||0"></td>
-                  <td><span class="badge badge-gray" style="font-size:10px">utf8mb4</span></td>
+                  <td x-show="isMysql" x-text="row.db.tables||0"></td>
+                  <td x-show="isMongo" x-text="row.db.collections||0"></td>
+                  <td x-show="isMysql"><span class="badge badge-gray" style="font-size:10px" x-text="row.db.charset||'utf8mb4'"></span></td>
                   <td style="min-width:240px">
                     <div style="display:flex;gap:4px;flex-wrap:wrap">
                       <button class="btn btn-ghost btn-xs" @click="exportDb(row.db.name)">Export</button>
@@ -2461,6 +2470,28 @@
                       <button class="btn btn-ghost btn-xs" @click="settingsControl('reload')" x-show="settingsModal.mod?.id==='nginx'||settingsModal.mod?.id==='apache2'">Reload</button>
                     </div>
                   </div>
+
+                  <!-- Nginx/Apache: show config test output when failed -->
+                  <div x-show="settingsModal.status==='failed' && (settingsModal.mod?.id==='nginx'||settingsModal.mod?.id==='apache2')"
+                       style="margin-bottom:16px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                      <div style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;letter-spacing:.4px">⚠ Config Test Error</div>
+                      <button class="btn btn-ghost btn-xs" @click="async()=>{
+                        const svc = settingsModal.mod.id;
+                        const cmd = svc==='nginx' ? 'nginx -t 2>&1' : 'apache2ctl configtest 2>&1';
+                        const r = await post('/api/terminal/run', {cmd});
+                        settingsModal.configTestOutput = r.output || r.error || 'Could not run config test';
+                      }">↻ Run Test</button>
+                    </div>
+                    <pre x-show="settingsModal.configTestOutput"
+                         style="background:#0d1117;color:#f97316;font-size:11px;padding:12px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;max-height:200px;overflow-y:auto;font-family:var(--font-mono)"
+                         x-text="settingsModal.configTestOutput"></pre>
+                    <div x-show="!settingsModal.configTestOutput"
+                         style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:12px;font-size:12px;color:var(--red)">
+                      Service failed to start. Click <strong>Run Test</strong> to see the config error, or open the <strong>Error Log</strong> tab for details. Common causes: port 80 already in use, syntax error in nginx.conf, or a broken site config in /etc/nginx/conf.d/.
+                    </div>
+                  </div>
+
                   <div style="background:var(--bg-base);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text-secondary)">
                     <div style="font-weight:600;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;font-size:11px;letter-spacing:.4px">Service Info</div>
                     <div x-text="'Service name: '+(settingsModal.mod?.id==='php'?(settingsModal.phpServiceName||'php'+settingsModal.selPhpVer+'-fpm'):(settingsModal.mod?.service||settingsModal.mod?.id))"></div>

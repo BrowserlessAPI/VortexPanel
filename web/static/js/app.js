@@ -746,7 +746,7 @@ function wpPage() {
 function databasesPage() {
   return {
     dbs:[], users:[], showAdd:false, showAddUser:false,
-    engines:[], activeEngine:'mysql', dbInfo:{}, noEngine:false,
+    engines:[], activeEngine:'auto', dbInfo:{}, noEngine:false,
     form:{name:'',user:'',pass:'',charset:'utf8mb4'},
     userForm:{name:'',pass:'',host:'localhost'},
     selUser:null, showUserDetail:false, newPass:'', grantDb:'',
@@ -754,7 +754,7 @@ function databasesPage() {
     searchQuery:'',
     get filteredDbs(){ return this.dbs.filter(d=>d.name.toLowerCase().includes(this.searchQuery.toLowerCase())); },
     get combined(){
-      const systemUsers=['mysql','mariadb.sys','postgres'];
+      const systemUsers=['mysql','mariadb.sys','postgres','admin'];
       const filtered=this.users.filter(u=>!systemUsers.includes(u.user));
       return this.filteredDbs.map(db=>{
         let owners=filtered.filter(u=>Array.isArray(u.databases)&&u.databases.includes(db.name));
@@ -762,22 +762,30 @@ function databasesPage() {
         return {db,user,owners};
       });
     },
+    get isMysql(){ return this.activeEngine==='mysql'||this.activeEngine==='mariadb'; },
+    get isMongo(){ return this.activeEngine==='mongodb'; },
+    get isPg(){ return this.activeEngine==='postgresql'; },
     async init(){ await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
     async load(){
       const r=await get('/api/databases?engine='+this.activeEngine);
+      // Always update engines list regardless of ok status
+      if(r.engines) this.engines=r.engines;
+      if(r.no_engine) this.noEngine=true;
+      if(r.active_engine) this.activeEngine=r.active_engine;
       if(r.ok){
         this.dbs=r.databases||[];
-        this.engines=r.engines||[];
         this.noEngine=r.no_engine||false;
-        if(r.active_engine) this.activeEngine=r.active_engine;
         if(r.info) this.dbInfo=r.info;
-        if(this.engines.length && !this.noEngine) {
+        if(this.engines.length && !this.noEngine){
           const u=await get('/api/databases/users?engine='+this.activeEngine);
           if(u.ok) this.users=u.users||[];
         }
+      } else {
+        this.dbs=[];
+        if(r.error) toast(r.error,'error');
       }
     },
-    async switchEngine(e){ this.activeEngine=e; this.dbs=[]; this.users=[]; await this.load(); },
+    async switchEngine(e){ this.activeEngine=e; this.dbs=[]; this.users=[]; this.dbInfo={}; await this.load(); },
     async create(){
       const r=await post('/api/databases',{...this.form,engine:this.activeEngine});
       if(r.ok){toast('Database created','success');this.showAdd=false;this.form={name:'',user:'',pass:'',charset:'utf8mb4'};await this.load();}
@@ -1996,6 +2004,7 @@ function modulesPage() {
         ...this.settingsModal,
         show: true, mod: m, tab: defaultTab, rcData: {},
         loading: true, confContent: '', logs: '', status: '',
+        configTestOutput: '',
       };
       const r = await get('/api/modules/'+m.id+'/settings');
       this.settingsModal.loading = false;
