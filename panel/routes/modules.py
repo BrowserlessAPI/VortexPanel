@@ -513,11 +513,10 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
     # --- DNS -------------------------------------------------------------------
     {
         'id':'ddns', 'name':'DDNS Manager', 'icon':'/static/icons/cloudflare.svg', 'category':'DNS',
-        'desc':'Dynamic DNS — automatic IP update service (Built-in)',
-        'check':'echo found',  # Built-in, always available
-        'builtin':True,
+        'desc':'Dynamic DNS — automatic IP update service via ddclient (Cloudflare, DynDNS and more)',
+        'check':'which ddclient 2>/dev/null',
         'versions':[
-            {'label':'3.11.2 (Latest)', 'value':'latest'},
+            {'label':'Latest (apt)', 'value':'latest'},
         ],
         'install':'apt-get install -y ddclient',
         'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold ddclient && apt-get autoremove -y',
@@ -835,8 +834,7 @@ nginx -t && systemctl reload nginx''',
     {
         'id':'cdn', 'name':'CDN Manager', 'icon':'/static/icons/cloudflare.svg', 'category':'Network',
         'desc':'Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri',
-        'check':'echo found',
-        'builtin':True,
+        'check':'test -f /opt/vortexpanel/cdn_config.json && echo found',
         'versions':[
             {'label':'Built-in', 'value':'builtin'},
         ],

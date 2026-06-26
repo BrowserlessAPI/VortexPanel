@@ -2288,21 +2288,19 @@
                           </template>
                         </select>
                       </div>
-                      <template x-if="!getConflict(m)">
-                        <button class="btn btn-primary btn-xs" @click="install(m)" :disabled="m.loading">
-                          <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
-                          <span x-text="m.loading?'Installing…':'Install'"></span>
+                      <!-- Install button — hidden if conflict exists -->
+                      <button class="btn btn-primary btn-xs" x-show="!getConflict(m)" @click="install(m)" :disabled="m.loading">
+                        <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
+                        <span x-text="m.loading?'Installing…':'Install'"></span>
+                      </button>
+                      <!-- Conflict warning -->
+                      <div x-show="getConflict(m)" style="text-align:right">
+                        <button class="btn btn-xs" style="background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3);font-size:10px;cursor:not-allowed"
+                                @click="toast('Uninstall '+getConflict(m)?.name+' first before installing '+m.name,'error')">
+                          ⚠ Conflict
                         </button>
-                      </template>
-                      <template x-if="getConflict(m)">
-                        <div style="text-align:right">
-                          <button class="btn btn-xs" style="background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3);font-size:10px;cursor:not-allowed"
-                                  @click="toast('Uninstall '+getConflict(m)?.name+' first before installing '+m.name,'error')">
-                            ⚠ Conflict
-                          </button>
-                          <div style="font-size:10px;color:var(--red);margin-top:2px" x-text="getConflict(m)?.name+' installed'"></div>
-                        </div>
-                      </template>
+                        <div style="font-size:10px;color:var(--red);margin-top:2px" x-text="(getConflict(m)?.name||'')+' installed'"></div>
+                      </div>
                     </div>
                   </td>
                 </tr>

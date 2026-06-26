@@ -24,17 +24,16 @@ REPO_DIR      = '/root/Vortexpanel'
 _update_job = {'running': False, 'lines': [], 'done': False, 'success': False, 'error': ''}
 
 def get_current_version():
+    # 1. Check explicit version file written on update
     if os.path.exists(VERSION_FILE):
         v = open(VERSION_FILE).read().strip()
-        if v: return v
-    # Also check git tag
-    try:
-        import subprocess
-        result = subprocess.run('cd /root/Vortexpanel && git describe --tags --abbrev=0 2>/dev/null || git log --oneline -1 2>/dev/null | cut -c1-7', 
-                               shell=True, capture_output=True, text=True, timeout=5)
-        tag = result.stdout.strip()
-        if tag: return tag
-    except: pass
+        if v and v.startswith('v'): return v
+    # 2. Check VERSION file in install dir
+    vf = os.path.join(INSTALL_DIR, 'VERSION')
+    if os.path.exists(vf):
+        v = open(vf).read().strip()
+        if v: return 'v' + v.lstrip('v')
+    # 3. Default to hardcoded constant — always valid semver
     return CURRENT_VERSION
 
 def save_current_version(version):

@@ -1849,7 +1849,7 @@ function modulesPage() {
     verModal:  {show:false, mod:null, selVer:'', action:'install'},
     phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
-    async init() { await this.load(); document.addEventListener('vortex-logged-in', () => { if (this.modules.length === 0) this.load(); }); },
+    installingStream: false,
     async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
 
     async load() {
@@ -1857,10 +1857,8 @@ function modulesPage() {
       if (r.ok) this.modules = r.modules.map(m=>({
         ...m,
         loading:   false,
-        // Normalize svcStatus: 'active (running)' → 'active'
         svcStatus: m.svcStatus ? (m.svcStatus.startsWith('active') ? 'active' : m.svcStatus) : m.svcStatus,
-        // Pre-select the middle version in dropdown (best default)
-        selVer:    m.versions?.length ? m.versions[Math.floor(m.versions.length/2)].value : '',
+        selVer:    m.versions?.length ? m.versions[0].value : '',
       }));
     },
 
@@ -1868,7 +1866,6 @@ function modulesPage() {
     filtered()   { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
 
     async uninstall(m) {
-      // For multi-version modules (PHP, Python), ask WHICH version to remove
       if (m.id==='php') {
         const r = await get('/api/php/installed');
         const installed = r.versions || [];
@@ -1881,7 +1878,6 @@ function modulesPage() {
         this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'uninstall'};
         return;
       }
-      // Single-version: confirm then remove directly
       if (!confirm(`Uninstall ${m.name}? This cannot be undone.`)) return;
       await this._startJob(m, 'uninstall', '');
     },
@@ -1893,7 +1889,7 @@ function modulesPage() {
       };
       for (const [group, members] of Object.entries(groups)) {
         if (!members.includes(m.id)) continue;
-        const conflict = this.mods.find(x => x.id !== m.id && members.includes(x.id) && x.installed);
+        const conflict = this.modules.find(x => x.id !== m.id && members.includes(x.id) && x.installed);
         if (conflict) return {group, name: conflict.name, id: conflict.id};
       }
       return null;
