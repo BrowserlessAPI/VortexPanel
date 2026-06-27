@@ -39,6 +39,7 @@ document.addEventListener('alpine:init', () => {
     // File picker
     picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
   });
+}); // end alpine:init
 
 function toast(msg, type='info') {
   const c = document.getElementById('toast-container');
@@ -4572,7 +4573,6 @@ function filePickerModal() {
 }
 
 // ============================================================
-// Alpine.store: Global modal state (outside page-content overflow)
+// Alpine.store: Global modal state - initialized at top of file in alpine:init
 // ============================================================
 
-});
