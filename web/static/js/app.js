@@ -767,7 +767,27 @@ function databasesPage() {
     get isMysql(){ return this.activeEngine==='mysql'||this.activeEngine==='mariadb'; },
     get isMongo(){ return this.activeEngine==='mongodb'; },
     get isPg(){ return this.activeEngine==='postgresql'; },
-    async init(){ await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init(){
+      await this.load();
+      document.addEventListener('vortex-logged-in', () => { this.init(); });
+      // Listen for modal submit event from global portal
+      window.addEventListener('vp-submit-nodejs-add', async () => {
+        const s = Alpine.store('vp').nodeAdd;
+        if(!s.name || !s.path){ window._toast && window._toast('Name and path required','error'); return; }
+        s.loading = true;
+        const r = await post('/api/nodejs/projects', {
+          name:s.name, path:s.path, pm2:s.mode==='pm2',
+          port:s.port, user:s.user, node_version:s.node_version,
+          domain:s.domain, startup_file:s.startup_file, run_cmd:s.run_cmd,
+          package_manager:s.pkg_mgr, clusters:s.clusters, memory_limit:s.mem_limit,
+          auto_restart:s.auto_restart, no_pkg_install:s.no_pkg_install,
+          env_vars:s.env_vars, remark:s.remark,
+        });
+        s.loading = false;
+        if(r.ok){ s.show=false; toast('Project created successfully','success'); await this.load(); }
+        else toast(r.error||'Failed to create project','error');
+      });
+    },
     async load(){
       const r=await get('/api/databases?engine='+this.activeEngine);
       // Always update engines list regardless of ok status
@@ -4173,15 +4193,7 @@ function nodeProjectsPage() {
     },
 
     openAddModal(mode='default'){
-      this.addModal = {show:true, mode,
-        name:'',path:'/www/wwwroot',startup_file:'',run_opt:'',run_cmd:'',
-        port:'',user:'www',node_version:'',domain:'',remark:'',
-        package_manager:'npm',clusters:1,memory_limit:1024,
-        auto_restart:true,no_pkg_install:false,env_vars:'',
-        show_more:false, scripts:[], loading:false
-      };
-      // Detect active webserver for proxy info
-      get('/api/nodejs/webserver').then(r=>{ this.wsInfo = r; });
+      this.$dispatch('vp-open-nodejs-add', {mode});
     },
 
     async submitAdd(){
@@ -4234,9 +4246,9 @@ function nodeProjectsPage() {
     },
 
     async showLogs(p){
-      this.logsModal={show:true, name:p.name, logs:'Loading...'};
+      Alpine.store('vp').nodeLogs = {show:true, name:p.name, logs:'Loading...'};
       const r = await get(`/api/nodejs/projects/${p.id}/logs`);
-      this.logsModal.logs = r.logs||'No logs available';
+      Alpine.store('vp').nodeLogs.logs = r.logs||'No logs available';
     },
 
     async gitPull(p){
@@ -4322,34 +4334,22 @@ function goProjectsPage() {
     },
 
     openAdd(){
-      this.addModal = {show:true, loading:false, name:'', exec_file:'',
-        port:'', exec_cmd:'', user:'www', domain:'', env_vars:'', remark:'',
-        release_port:false, show_more:false};
+      this.$dispatch('vp-open-go-add', {});
     },
 
     async submitAdd(){
-      if(!this.addModal.name)      { toast('Project name required','error'); return; }
-      if(!this.addModal.exec_file) { toast('Executable file path required','error'); return; }
-      this.addModal.loading=true;
+      const s = Alpine.store('vp').goAdd;
+      if(!s.name){ toast('Project name required','error'); return; }
+      if(!s.exec_file){ toast('Executable file path required','error'); return; }
+      s.loading=true;
       const r = await post('/api/go/projects', {
-        name:         this.addModal.name,
-        exec_file:    this.addModal.exec_file,
-        port:         this.addModal.port,
-        exec_cmd:     this.addModal.exec_cmd,
-        user:         this.addModal.user,
-        domain:       this.addModal.domain,
-        env_vars:     this.addModal.env_vars,
-        remark:       this.addModal.remark,
-        release_port: this.addModal.release_port,
+        name:s.name, exec_file:s.exec_file, port:s.port, exec_cmd:s.exec_cmd,
+        user:s.user, domain:s.domain, env_vars:s.env_vars, remark:s.remark,
+        release_port:s.release_port,
       });
-      this.addModal.loading=false;
-      if(r.ok){
-        toast('Go project created and started','success');
-        this.addModal.show=false;
-        await this.load();
-      } else {
-        toast(r.error||'Failed to create project','error');
-      }
+      s.loading=false;
+      if(r.ok){ s.show=false; toast('Go project created and started','success'); await this.load(); }
+      else toast(r.error||'Failed to create project','error');
     },
 
     settingsModal:{show:false, project:null, tab:'service'},
@@ -4497,3 +4497,27 @@ function filePickerModal() {
     },
   };
 }
+
+// ============================================================
+// Alpine.store: Global modal state (outside page-content overflow)
+// ============================================================
+document.addEventListener('alpine:init', () => {
+  Alpine.store('vp', {
+    // Node.js add/logs modals
+    nodeAdd:  { show:false, mode:'default', name:'', path:'/www/wwwroot', startup_file:'',
+                run_opt:'', run_cmd:'', port:'', user:'www', node_version:'', domain:'',
+                pkg_mgr:'npm', clusters:1, mem_limit:1024, auto_restart:true,
+                no_pkg_install:false, env_vars:'', remark:'', show_more:false,
+                loading:false, scripts:[], wsInfo:null },
+    nodeLogs: { show:false, name:'', logs:'' },
+    // Go add/edit/settings/logs modals
+    goAdd:    { show:false, loading:false, name:'', exec_file:'', port:'', exec_cmd:'',
+                user:'www', domain:'', env_vars:'', remark:'', release_port:false, show_more:false },
+    goEdit:   { show:false, project:null, port:'', exec_cmd:'', domain:'', user:'www',
+                env_vars:'', release_port:false },
+    goSettings:{ show:false, project:null, tab:'service' },
+    goLogs:   { show:false, name:'', logs:'' },
+    // File picker
+    picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
+  });
+});

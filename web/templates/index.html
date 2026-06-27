@@ -20,7 +20,7 @@
   <style>[x-cloak]{display:none!important}</style>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js"></script>
-  <script src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
+  <script src="https://unpkg.com/alpinejs@3.15.12/dist/cdn.min.js" defer></script>
 </head>
 <body>
 
@@ -6917,13 +6917,255 @@
 </div><!-- app-layout -->
 
 
-    </div><!-- page-content -->
-  </div><!-- main-area -->
-</div><!-- app-layout -->
+  <!-- ═══ GLOBAL MODAL PORTAL ═══════════════════════════════════════════════
+       All modals live here — OUTSIDE page-content's overflow-y:auto,
+       so position:fixed works correctly relative to the viewport.
+  ═══════════════════════════════════════════════════════════════════════════ -->
 
+  <!-- ── FILE PICKER ─────────────────────────────────────────────────────── -->
+  <div x-show="$store.vp.picker.show"
+       style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center"
+       @click.self="$store.vp.picker.show=false"
+       @vp-open-picker.window="async (e)=>{
+         const p=e.detail; $store.vp.picker.mode=p.mode||'dir'; $store.vp.picker.cb=p.cb;
+         $store.vp.picker.selected=p.path||''; $store.vp.picker.show=true;
+         const dir=p.path&&p.path.includes('/')?p.path.substring(0,p.path.lastIndexOf('/'))||'/':'/www/wwwroot';
+         $store.vp.picker.path=dir;
+         $store.vp.picker.loading=true;
+         const r=await(await fetch('/api/files/list?path='+encodeURIComponent(dir))).json();
+         $store.vp.picker.items=r.items||[]; $store.vp.picker.loading=false;
+       }">
+    <div style="background:var(--bg-card);border-radius:12px;width:560px;height:480px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <div style="font-weight:600;font-size:14px" x-text="$store.vp.picker.mode==='file'?'Select File':'Select Directory'"></div>
+        <button @click="$store.vp.picker.show=false" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--text-muted)">×</button>
+      </div>
+      <div style="padding:8px 16px;background:var(--bg-base);border-bottom:1px solid var(--border);display:flex;gap:4px;flex-wrap:wrap;font-size:12px;align-items:center">
+        <template x-for="(part,i) in ($store.vp.picker.path.split('/').filter(Boolean).reduce((a,p,j,arr)=>[...a,{label:p,path:'/'+arr.slice(0,j+1).join('/')}],[{label:'/',path:'/'}]))" :key="part.path">
+          <span style="display:flex;align-items:center;gap:3px">
+            <span x-show="part.label!='/'" style="color:var(--text-muted)">/</span>
+            <button @click="async()=>{$store.vp.picker.path=part.path;$store.vp.picker.loading=true;const r=await(await fetch('/api/files/list?path='+encodeURIComponent(part.path))).json();$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=part.path;}"
+                    style="background:none;border:none;cursor:pointer;color:var(--accent);padding:0;font-size:12px" x-text="part.label"></button>
+          </span>
+        </template>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:6px">
+        <div x-show="$store.vp.picker.loading" style="text-align:center;padding:30px;color:var(--text-muted)">Loading...</div>
+        <template x-for="item in $store.vp.picker.items" :key="item.path">
+          <div @click="if(item.type==='dir'&&$store.vp.picker.mode==='dir'){$store.vp.picker.selected=item.path;}else if(item.type==='file'&&$store.vp.picker.mode==='file'){$store.vp.picker.selected=item.path;}"
+               @dblclick="async()=>{if(item.type==='dir'){$store.vp.picker.path=item.path;$store.vp.picker.loading=true;const r=await(await fetch('/api/files/list?path='+encodeURIComponent(item.path))).json();$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=item.path;}}"
+               :style="'display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;'+($store.vp.picker.selected===item.path?'background:rgba(99,102,241,.12)':'')">
+            <span x-text="item.type==='dir'?'📁':'📄'" style="font-size:15px"></span>
+            <span x-text="item.name" :style="item.type==='dir'?'':'color:var(--text-secondary)'"></span>
+          </div>
+        </template>
+      </div>
+      <div style="padding:12px 16px;border-top:1px solid var(--border);background:var(--bg-base)">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Selected: <span style="font-family:var(--font-mono);color:var(--text)" x-text="$store.vp.picker.selected||'—'"></span></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" @click="$store.vp.picker.show=false">Cancel</button>
+          <button class="btn btn-primary btn-sm" @click="if($store.vp.picker.cb)$store.vp.picker.cb($store.vp.picker.selected);$store.vp.picker.show=false;" :disabled="!$store.vp.picker.selected">Select</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <!-- -- PANEL UPDATE MODAL ----------------------------------------------- -->
-  <div class="modal-overlay" x-show="updateModal.show" style="z-index:500"
+  <!-- ── NODE.JS ADD PROJECT MODAL ────────────────────────────────────────── -->
+  <div x-show="$store.vp.nodeAdd.show"
+       style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center"
+       @click.self="$store.vp.nodeAdd.show=false"
+       @vp-open-nodejs-add.window="(e)=>{Object.assign($store.vp.nodeAdd,{show:true,mode:e.detail.mode||'default',name:'',path:'/www/wwwroot',startup_file:'app.js',run_cmd:'',port:'3000',user:'www',node_version:'',domain:'',pkg_mgr:'npm',clusters:1,mem_limit:1024,auto_restart:true,no_pkg_install:false,env_vars:'',remark:'',show_more:false,loading:false,wsInfo:null});fetch('/api/nodejs/webserver').then(r=>r.json()).then(d=>$store.vp.nodeAdd.wsInfo=d);}">
+    <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+        <div style="font-size:18px;font-weight:700">Add Node.js Project</div>
+        <button @click="$store.vp.nodeAdd.show=false" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-muted)">×</button>
+      </div>
+      <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:18px">
+        <button @click="$store.vp.nodeAdd.mode='default'" :style="$store.vp.nodeAdd.mode==='default'?'background:var(--accent);color:#fff':''" style="flex:1;padding:8px;border:none;cursor:pointer;font-size:13px;font-weight:600">Default Project (systemd)</button>
+        <button @click="$store.vp.nodeAdd.mode='pm2'" :style="$store.vp.nodeAdd.mode==='pm2'?'background:var(--accent);color:#fff':''" style="flex:1;padding:8px;border:none;cursor:pointer;font-size:13px;font-weight:600">PM2 Project</button>
+      </div>
+      <div style="display:grid;gap:14px">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Path *</label>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <input class="form-input" x-model="$store.vp.nodeAdd.path" placeholder="/www/wwwroot/myapp">
+            <button class="btn btn-ghost btn-sm" style="flex-shrink:0;white-space:nowrap"
+                    @click="$dispatch('vp-open-picker',{path:$store.vp.nodeAdd.path,mode:'dir',cb:p=>{$store.vp.nodeAdd.path=p}})">📁 Browse</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Directory where package.json is located</div>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Name *</label>
+          <input class="form-input" x-model="$store.vp.nodeAdd.name" placeholder="my-app" style="margin-top:4px">
+        </div>
+        <div x-show="$store.vp.nodeAdd.mode==='pm2'">
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Startup File *</label>
+          <input class="form-input" x-model="$store.vp.nodeAdd.startup_file" placeholder="app.js" style="margin-top:4px">
+        </div>
+        <div x-show="$store.vp.nodeAdd.mode==='default'">
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Run Command</label>
+          <input class="form-input" x-model="$store.vp.nodeAdd.run_cmd" placeholder="node server.js" style="margin-top:4px">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Port</label>
+            <input class="form-input" x-model="$store.vp.nodeAdd.port" placeholder="3000" style="margin-top:4px">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Run User</label>
+            <select class="form-input" x-model="$store.vp.nodeAdd.user" style="margin-top:4px">
+              <option value="www">www</option><option value="root">root</option><option value="nobody">nobody</option>
+            </select>
+          </div>
+        </div>
+        <div x-show="$store.vp.nodeAdd.mode==='pm2'" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Cluster Instances</label>
+            <input class="form-input" type="number" min="1" x-model="$store.vp.nodeAdd.clusters" style="margin-top:4px">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Memory Limit (MB)</label>
+            <input class="form-input" type="number" x-model="$store.vp.nodeAdd.mem_limit" style="margin-top:4px">
+          </div>
+        </div>
+        <div x-show="$store.vp.nodeAdd.mode==='pm2'" style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" x-model="$store.vp.nodeAdd.auto_restart">
+          <label style="font-size:13px">Auto Restart on crash</label>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Package Manager</label>
+          <div style="display:flex;gap:8px;margin-top:4px;align-items:center">
+            <select class="form-input" style="max-width:140px" x-model="$store.vp.nodeAdd.pkg_mgr">
+              <option value="npm">npm</option><option value="yarn">yarn</option><option value="pnpm">pnpm</option>
+            </select>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" x-model="$store.vp.nodeAdd.no_pkg_install"> Skip install</label>
+          </div>
+        </div>
+        <button @click="$store.vp.nodeAdd.show_more=!$store.vp.nodeAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.nodeAdd.show_more?'▾ Hide settings':'▸ More settings (domain, env vars)'"></button>
+        <div x-show="$store.vp.nodeAdd.show_more" style="display:grid;gap:14px">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain Name
+              <span x-show="$store.vp.nodeAdd.wsInfo" style="font-weight:400;margin-left:6px"
+                    :style="$store.vp.nodeAdd.wsInfo?.webserver?'color:var(--green)':'color:var(--red)'"
+                    x-text="$store.vp.nodeAdd.wsInfo?.webserver?'→ proxy via '+$store.vp.nodeAdd.wsInfo.webserver:'⚠ No webserver'"></span>
+            </label>
+            <textarea class="form-input" x-model="$store.vp.nodeAdd.domain" rows="2" style="margin-top:4px;resize:vertical" placeholder="myapp.com&#10;*.myapp.com"></textarea>
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
+            <textarea class="form-input" x-model="$store.vp.nodeAdd.env_vars" rows="3" style="margin-top:4px;resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder="NODE_ENV=production"></textarea>
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Remark</label>
+            <input class="form-input" x-model="$store.vp.nodeAdd.remark" placeholder="Optional note" style="margin-top:4px">
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+        <button class="btn btn-ghost" @click="$store.vp.nodeAdd.show=false">Cancel</button>
+        <button class="btn btn-primary" @click="$dispatch('vp-submit-nodejs-add')" :disabled="$store.vp.nodeAdd.loading">
+          <span x-show="$store.vp.nodeAdd.loading">Creating...</span><span x-show="!$store.vp.nodeAdd.loading">Confirm</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── NODE.JS LOGS MODAL ─────────────────────────────────────────────── -->
+  <div x-show="$store.vp.nodeLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.nodeLogs.show=false">
+    <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+      <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+        <div style="font-weight:600">Logs — <span x-text="$store.vp.nodeLogs.name"></span></div>
+        <button @click="$store.vp.nodeLogs.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+      </div>
+      <pre style="flex:1;overflow-y:auto;padding:16px;margin:0;background:#0d1117;color:#d1fae5;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap" x-text="$store.vp.nodeLogs.logs"></pre>
+    </div>
+  </div>
+
+  <!-- ── GO ADD PROJECT MODAL ──────────────────────────────────────────── -->
+  <div x-show="$store.vp.goAdd.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goAdd.show=false"
+       @vp-open-go-add.window="(e)=>{Object.assign($store.vp.goAdd,{show:true,loading:false,name:'',exec_file:'',port:'3000',exec_cmd:'',user:'www',domain:'',env_vars:'',remark:'',release_port:false,show_more:false,wsInfo:null});fetch('/api/go/webserver').then(r=>r.json()).then(d=>$store.vp.goAdd.wsInfo=d);}">
+    <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+        <div style="font-size:18px;font-weight:700">Add Go Project</div>
+        <button @click="$store.vp.goAdd.show=false" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-muted)">×</button>
+      </div>
+      <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:12px">
+        ℹ Go Project only supports <strong>compiled binary files</strong>. Compile your app first, then select the binary.
+      </div>
+      <div style="display:grid;gap:14px">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Executable File *</label>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <input class="form-input" x-model="$store.vp.goAdd.exec_file" placeholder="/www/wwwroot/myapp/myapp" style="font-family:var(--font-mono)">
+            <button class="btn btn-ghost btn-sm" style="flex-shrink:0;white-space:nowrap"
+                    @click="$dispatch('vp-open-picker',{path:$store.vp.goAdd.exec_file,mode:'file',cb:p=>{$store.vp.goAdd.exec_file=p}})">📁 Browse</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Full path to compiled binary. Permissions auto-fixed.</div>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Name *</label>
+          <input class="form-input" x-model="$store.vp.goAdd.name" placeholder="my-go-app" style="margin-top:4px">
+        </div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Execution Command</label>
+            <input class="form-input" x-model="$store.vp.goAdd.exec_cmd" :placeholder="$store.vp.goAdd.exec_file||'/path/to/binary web'" style="margin-top:4px;font-family:var(--font-mono)">
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Port</label>
+            <input class="form-input" type="number" x-model="$store.vp.goAdd.port" style="margin-top:4px">
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+            <input type="checkbox" x-model="$store.vp.goAdd.release_port">
+            Release port <span style="font-size:11px;color:var(--text-muted)">(firewall)</span>
+          </label>
+          <select class="form-input" x-model="$store.vp.goAdd.user" style="max-width:130px">
+            <option value="www">www</option><option value="root">root</option><option value="nobody">nobody</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain Name
+            <span x-show="$store.vp.goAdd.wsInfo" style="font-weight:400;margin-left:6px"
+                  :style="$store.vp.goAdd.wsInfo?.webserver?'color:var(--green)':'color:var(--red)'"
+                  x-text="$store.vp.goAdd.wsInfo?.webserver?'→ proxy via '+$store.vp.goAdd.wsInfo.webserver:'⚠ No webserver'"></span>
+          </label>
+          <textarea class="form-input" x-model="$store.vp.goAdd.domain" rows="2" style="margin-top:4px;resize:vertical" placeholder="myapp.com — leave blank for port-only"></textarea>
+        </div>
+        <button @click="$store.vp.goAdd.show_more=!$store.vp.goAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.goAdd.show_more?'▾ Hide':'▸ More settings (env vars, remark)'"></button>
+        <div x-show="$store.vp.goAdd.show_more" style="display:grid;gap:14px">
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
+            <textarea class="form-input" x-model="$store.vp.goAdd.env_vars" rows="3" style="margin-top:4px;resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder="GIN_MODE=release"></textarea>
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Remark</label>
+            <input class="form-input" x-model="$store.vp.goAdd.remark" placeholder="Optional" style="margin-top:4px">
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+        <button class="btn btn-ghost" @click="$store.vp.goAdd.show=false">Cancel</button>
+        <button class="btn btn-primary" @click="$dispatch('vp-submit-go-add')" :disabled="$store.vp.goAdd.loading">
+          <span x-show="$store.vp.goAdd.loading">Creating...</span><span x-show="!$store.vp.goAdd.loading">Confirm</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GO LOGS MODAL ─────────────────────────────────────────────────── -->
+  <div x-show="$store.vp.goLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goLogs.show=false">
+    <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+      <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+        <div style="font-weight:600">Logs — <span x-text="$store.vp.goLogs.name"></span></div>
+        <button @click="$store.vp.goLogs.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+      </div>
+      <pre style="flex:1;overflow-y:auto;padding:16px;margin:0;background:#0d1117;color:#86efac;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap" x-text="$store.vp.goLogs.logs"></pre>
+    </div>
+  </div>
+
+  <!-- -- PANEL UPDATE MODAL
        x-data="updateModalData()"
        @click.self="updateModal.show=false">
     <div class="modal" style="max-width:600px">
