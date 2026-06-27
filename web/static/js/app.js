@@ -4193,7 +4193,29 @@ function nodeProjectsPage() {
     },
 
     openAddModal(mode='default'){
-      window.dispatchEvent(new CustomEvent('vp-open-nodejs-add', {bubbles:true, detail:{mode}}));
+      const s = Alpine.store('vp').nodeAdd;
+      s.show       = true;
+      s.mode       = mode || 'default';
+      s.name       = '';
+      s.path       = '/www/wwwroot';
+      s.startup_file = 'app.js';
+      s.run_cmd    = '';
+      s.port       = '3000';
+      s.user       = 'www';
+      s.node_version = '';
+      s.domain     = '';
+      s.pkg_mgr    = 'npm';
+      s.clusters   = 1;
+      s.mem_limit  = 1024;
+      s.auto_restart = true;
+      s.no_pkg_install = false;
+      s.env_vars   = '';
+      s.remark     = '';
+      s.show_more  = false;
+      s.loading    = false;
+      s.scripts    = [];
+      s.wsInfo     = null;
+      fetch('/api/nodejs/webserver').then(r=>r.json()).then(d=>{ s.wsInfo = d; });
     },
 
     async submitAdd(){
@@ -4349,7 +4371,21 @@ function goProjectsPage() {
     },
 
     openAdd(){
-      window.dispatchEvent(new CustomEvent('vp-open-go-add', {bubbles:true, detail:{}}));
+      const s = Alpine.store('vp').goAdd;
+      s.show         = true;
+      s.loading      = false;
+      s.name         = '';
+      s.exec_file    = '';
+      s.port         = '3000';
+      s.exec_cmd     = '';
+      s.user         = 'www';
+      s.domain       = '';
+      s.env_vars     = '';
+      s.remark       = '';
+      s.release_port = false;
+      s.show_more    = false;
+      s.wsInfo       = null;
+      fetch('/api/go/webserver').then(r=>r.json()).then(d=>{ s.wsInfo = d; });
     },
 
     async submitAdd(){
