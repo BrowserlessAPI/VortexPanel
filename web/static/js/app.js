@@ -4193,7 +4193,7 @@ function nodeProjectsPage() {
     },
 
     openAddModal(mode='default'){
-      this.$dispatch('vp-open-nodejs-add', {mode});
+      window.dispatchEvent(new CustomEvent('vp-open-nodejs-add', {bubbles:true, detail:{mode}}));
     },
 
     async submitAdd(){
@@ -4311,6 +4311,21 @@ function goProjectsPage() {
       await this.load();
       get('/api/go/webserver').then(r=>{ this.wsInfo = r; });
       document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
+      // Listen for submit from global portal modal
+      window.addEventListener('vp-submit-go-add', async () => {
+        const s = Alpine.store('vp').goAdd;
+        if(!s.name){ toast('Project name required','error'); return; }
+        if(!s.exec_file){ toast('Executable file path required','error'); return; }
+        s.loading = true;
+        const r = await post('/api/go/projects', {
+          name:s.name, exec_file:s.exec_file, port:s.port,
+          exec_cmd:s.exec_cmd, user:s.user, domain:s.domain,
+          env_vars:s.env_vars, remark:s.remark, release_port:s.release_port,
+        });
+        s.loading = false;
+        if(r.ok){ s.show=false; toast('Go project created','success'); await this.load(); }
+        else toast(r.error||'Failed to create project','error');
+      });
     },
 
     async load(){
@@ -4334,7 +4349,7 @@ function goProjectsPage() {
     },
 
     openAdd(){
-      this.$dispatch('vp-open-go-add', {});
+      window.dispatchEvent(new CustomEvent('vp-open-go-add', {bubbles:true, detail:{}}));
     },
 
     async submitAdd(){
