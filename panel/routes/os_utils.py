@@ -137,7 +137,7 @@ def nginx_install_script(channel='stable'):
             f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} {os_info["codename"]} nginx" > /etc/apt/sources.list.d/nginx.list && '
             f'{pkg_update()} && '
             f'{pkg_install("nginx")} && '
-            f'systemctl enable nginx && systemctl start nginx && '
+            f'systemctl enable nginx && nginx -t && systemctl start nginx && '
             f'{stream_setup}'
         )
     elif os_info['family'] in ('rhel', 'fedora'):
@@ -151,11 +151,11 @@ def nginx_install_script(channel='stable'):
             f'gpgkey=https://nginx.org/keys/nginx_signing.key\n'
             f'EOF\n'
             f'{pkg_install("nginx")} && '
-            f'systemctl enable nginx && systemctl start nginx && '
+            f'systemctl enable nginx && nginx -t && systemctl start nginx && '
             f'{stream_setup}'
         )
     return (
-        f'{pkg_install("nginx")} && systemctl enable nginx && systemctl start nginx && '
+        f'{pkg_install("nginx")} && systemctl enable nginx && nginx -t && systemctl start nginx && '
         f'{stream_setup}'
     )
 

@@ -235,18 +235,18 @@ systemctl enable lsws && systemctl start lsws''',
             {'label':'v2.11.2 (Stable)',         'value':'2.11.2'},
         ],
         'install_tpl':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
   rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
   tee /etc/apt/sources.list.d/caddy-stable.list && \
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && \
 systemctl enable caddy && systemctl start caddy''',
         'install':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
+curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
   rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
+curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
   tee /etc/apt/sources.list.d/caddy-stable.list && \
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
 chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
@@ -286,7 +286,7 @@ systemctl enable caddy && systemctl start caddy''',
             {'label':'11.4.5 (LTS)',           'value':'11.4'},
             {'label':'10.11.11 (LTS)',         'value':'10.11'},
         ],
-        'install_tpl':'''curl -LsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
+        'install_tpl':'''curl -fLsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
 bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
 apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && \
 systemctl enable --now mariadb''',
@@ -484,7 +484,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'1.1.0 (Latest Stable)', 'value':'latest'},
         ],
         'install':r'''apt-get install -y python3 python3-pip curl gzip && \
-F2B_VER=$(curl -s https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
+F2B_VER=$(curl -fsSL https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
 F2B_VER=${F2B_VER:-1.1.0} && \
 curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
 (dpkg -i /tmp/fail2ban.deb 2>/dev/null || apt-get install -y fail2ban) && \
@@ -500,7 +500,7 @@ systemctl enable fail2ban && systemctl start fail2ban''',
             {'label':'1.4.2 (Latest Stable)', 'value':'latest'},
         ],
         'install':r'''apt-get install -y curl && \
-CLAM_VER=$(curl -s https://api.github.com/repos/Cisco-Talos/clamav/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
+CLAM_VER=$(curl -fsSL https://api.github.com/repos/Cisco-Talos/clamav/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
 CLAM_VER=${CLAM_VER:-clamav-1.4.2} && \
 CLAM_NUM=${CLAM_VER#clamav-} && \
 CLAM_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x86_64/') && \
@@ -618,13 +618,13 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'2.8 (Latest Stable)', 'value':'2'},
         ],
         'install_tpl':(
-            'curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && '
+            'curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php && '
             'php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && '
             'rm /tmp/composer-setup.php && '
             'chmod +x /usr/local/bin/composer'
         ),
         'install':(
-            'curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php && '
+            'curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php && '
             'php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && '
             'rm /tmp/composer-setup.php && '
             'chmod +x /usr/local/bin/composer'
