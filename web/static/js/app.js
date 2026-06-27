@@ -4352,6 +4352,13 @@ function goProjectsPage() {
       }
     },
 
+    settingsModal:{show:false, project:null, tab:'service'},
+
+    openSettings(p){
+      this.settingsModal={show:true, project:p, tab:'service'};
+      this.openEdit(p);
+    },
+
     openEdit(p){
       this.editModal={show:true, project:p,
         port: p.port||'', exec_cmd: p.exec_cmd||'',
@@ -4431,5 +4438,62 @@ function goProjectsPage() {
 
     statusColor(s){ return s==='active'?'var(--green)':s==='inactive'||s==='stopped'?'var(--text-muted)':'var(--red)'; },
     statusDot(s){   return s==='active'?'dot-green':'dot-gray'; },
+  };
+}
+
+// ============================================================
+// File Picker (reusable for Node.js/Go project path selection)
+// ============================================================
+function filePickerModal() {
+  return {
+    show: false, mode: 'dir', // 'dir' or 'file'
+    path: '/', items: [], loading: false, selected: '',
+    callback: null,
+
+    async open(currentPath, mode, cb) {
+      this.mode    = mode || 'dir';
+      this.path    = currentPath && currentPath !== '' ? (currentPath.includes('/') ? currentPath.substring(0, currentPath.lastIndexOf('/')) || '/' : '/') : '/www/wwwroot';
+      this.callback= cb;
+      this.selected= currentPath || '';
+      this.show    = true;
+      await this.browse(this.path);
+    },
+
+    async browse(dir) {
+      this.loading=true;
+      const r = await get('/api/files/list?path='+encodeURIComponent(dir));
+      if(r.ok){
+        this.path  = dir;
+        this.items = r.items||[];
+        if(this.mode==='dir') this.selected = dir;
+      }
+      this.loading=false;
+    },
+
+    select(item) {
+      if(item.type==='dir'){
+        if(this.mode==='dir') this.selected=item.path;
+        else this.browse(item.path);
+      } else {
+        if(this.mode==='file') this.selected=item.path;
+      }
+    },
+
+    dblclick(item) {
+      if(item.type==='dir') this.browse(item.path);
+    },
+
+    confirm() {
+      if(this.callback) this.callback(this.selected);
+      this.show=false;
+    },
+
+    pathParts() {
+      const parts = this.path.split('/').filter(Boolean);
+      const result = [{label:'/', path:'/'}];
+      let cur = '';
+      for(const p of parts){ cur += '/'+p; result.push({label:p, path:cur}); }
+      return result;
+    },
   };
 }
