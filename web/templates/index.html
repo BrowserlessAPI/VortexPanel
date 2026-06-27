@@ -1217,7 +1217,7 @@
                   <span>Maintenance mode</span>
                   <label style="position:relative;width:34px;height:18px;display:inline-block">
                     <input type="checkbox" style="opacity:0;width:0;height:0" :checked="drawer.site?.maintenance" @change="saveSettings({maintenance:$event.target.checked})">
-                    <span style="position:absolute;cursor:pointer;inset:0;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.maintenance?'background:var(--accent)':''">
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.maintenance?'background:var(--accent)':''">
                       <span style="position:absolute;height:12px;width:12px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="drawer.site?.maintenance?'transform:translateX(16px)':''"></span>
                     </span>
                   </label>
@@ -1226,7 +1226,7 @@
                   <span>Search engine visibility</span>
                   <label style="position:relative;width:34px;height:18px;display:inline-block">
                     <input type="checkbox" style="opacity:0;width:0;height:0" :checked="drawer.site?.search_visible" @change="saveSettings({search_visible:$event.target.checked})">
-                    <span style="position:absolute;cursor:pointer;inset:0;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.search_visible?'background:var(--accent)':''">
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.search_visible?'background:var(--accent)':''">
                       <span style="position:absolute;height:12px;width:12px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="drawer.site?.search_visible?'transform:translateX(16px)':''"></span>
                     </span>
                   </label>
@@ -1844,7 +1844,7 @@
         </div>
 
         <!-- ADD PROJECT MODAL -->
-        <div x-show="addModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
+        <div x-show="addModal.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
               <div style="font-size:18px;font-weight:700">Add Node.js Project</div>
@@ -2019,7 +2019,7 @@
         </div>
 
         <!-- LOGS MODAL -->
-        <div x-show="logsModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="logsModal.show=false">
+        <div x-show="logsModal.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="logsModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">
             <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
               <div style="font-weight:600">Logs — <span x-text="logsModal.name"></span></div>
@@ -2185,7 +2185,7 @@
         </div>
 
         <!-- ADD PROJECT MODAL -->
-        <div x-show="addModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
+        <div x-show="addModal.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
               <div style="font-size:18px;font-weight:700">Add Go Project</div>
@@ -2288,7 +2288,7 @@
         </div>
 
         <!-- EDIT MODAL -->
-        <div x-show="editModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="editModal.show=false">
+        <div x-show="editModal.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="editModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:520px;padding:28px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
               <div style="font-size:18px;font-weight:700">Edit Project — <span x-text="editModal.project?.name"></span></div>
@@ -2332,7 +2332,7 @@
         </div>
 
         <!-- SETTINGS MODAL (post-creation management) -->
-        <div x-show="settingsModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="settingsModal.show=false">
+        <div x-show="settingsModal.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="settingsModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:680px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">
             <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
               <div>
@@ -2427,7 +2427,7 @@
 
       <!-- GLOBAL FILE PICKER (used by Node.js + Go project modals) -->
       <div x-data="filePickerModal()" x-show="show" @file-picker.window="open($event.detail.path, $event.detail.mode, $event.detail.cb)"
-           style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center" @click.self="show=false">
+           style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center" @click.self="show=false">
         <div style="background:var(--bg-card);border-radius:12px;width:560px;height:480px;display:flex;flex-direction:column;overflow:hidden">
           <!-- Header -->
           <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
@@ -2904,7 +2904,7 @@
         </div>
 
         <!-- Code Editor (floating window with file tree) -->
-        <div x-show="editorOpen" x-cloak style="position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center">
+        <div x-show="editorOpen" x-cloak style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:400;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center">
           <div style="width:94vw;height:90vh;background:#161722;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden">
             <!-- Editor topbar -->
             <div style="height:42px;background:#161722;border-bottom:1px solid #1e2030;display:flex;align-items:center;gap:8px;padding:0 12px;flex-shrink:0">
@@ -2966,7 +2966,7 @@
               </div>
               <!-- CodeMirror host -->
               <div style="flex:1;min-width:0;overflow:hidden;position:relative">
-                <div x-show="!cmReady" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;background:#0d0e14">Loading editor…</div>
+                <div x-show="!cmReady" style="position:absolute;top:0;left:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;background:#0d0e14">Loading editor…</div>
                 <div x-ref="cmHost" style="height:100%"></div>
               </div>
             </div>
@@ -5135,7 +5135,7 @@
                        :checked="ssh.root_login==='no'"
                        :disabled="ssh.root_login==='yes' && (!ssh.sudo_users || ssh.sudo_users.length===0)"
                        @change="ssh.root_login=$event.target.checked?'no':'yes'">
-                <span style="position:absolute;cursor:pointer;inset:0;border-radius:11px;transition:.2s"
+                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
                       :style="ssh.root_login==='no'?'background:var(--accent)':'background:#cbd5e1'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.root_login==='no'?'left:23px':'left:3px'"></span>
@@ -5155,7 +5155,7 @@
                 <input type="checkbox" style="opacity:0;width:0;height:0"
                        :checked="ssh.password_auth==='no'"
                        @change="if($event.target.checked && !ssh.keys_exist){toast('Add your SSH key first!','error');$event.target.checked=false;return;} ssh.password_auth=$event.target.checked?'no':'yes'">
-                <span style="position:absolute;cursor:pointer;inset:0;border-radius:11px;transition:.2s"
+                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
                       :style="ssh.password_auth==='no'?'background:var(--accent)':'background:#cbd5e1'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.password_auth==='no'?'left:23px':'left:3px'"></span>
@@ -5173,7 +5173,7 @@
                 <input type="checkbox" style="opacity:0;width:0;height:0"
                        :checked="ssh.pubkey_auth==='yes'"
                        @change="ssh.pubkey_auth=$event.target.checked?'yes':'no'">
-                <span style="position:absolute;cursor:pointer;inset:0;border-radius:11px;transition:.2s"
+                <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
                       :style="ssh.pubkey_auth==='yes'?'background:var(--accent)':'background:#cbd5e1'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.pubkey_auth==='yes'?'left:23px':'left:3px'"></span>
@@ -5339,7 +5339,7 @@
                     <input type="checkbox" style="opacity:0;width:0;height:0"
                            :checked="(modsec.site_overrides||{})[site.domain]!=='off'"
                            @change="toggleSiteWAF(site.domain, $event.target.checked)">
-                    <span style="position:absolute;cursor:pointer;inset:0;border-radius:9px;transition:.2s"
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:9px;transition:.2s"
                           :style="(modsec.site_overrides||{})[site.domain]!=='off'?'background:var(--accent)':'background:#cbd5e1'">
                       <span style="position:absolute;height:12px;width:12px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                             :style="(modsec.site_overrides||{})[site.domain]!=='off'?'left:19px':'left:3px'"></span>
@@ -5519,7 +5519,7 @@
                 </div>
                 <label style="position:relative;width:38px;height:20px;display:inline-block">
                   <input type="checkbox" style="opacity:0;width:0;height:0" x-model="health.config.enabled">
-                  <span style="position:absolute;cursor:pointer;inset:0;border-radius:10px;transition:.2s" :style="health.config.enabled?'background:var(--accent)':'background:#cbd5e1'">
+                  <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="health.config.enabled?'background:var(--accent)':'background:#cbd5e1'">
                     <span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="health.config.enabled?'left:21px':'left:3px'"></span>
                   </span>
                 </label>
@@ -6109,7 +6109,7 @@
         </div>
 
         <!-- SITE CONFIG DRAWER -->
-        <div x-show="drawerShow" style="position:fixed;inset:0;z-index:150;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px)" @click.self="drawerShow=false">
+        <div x-show="drawerShow" style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:150;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);backdrop-filter:blur(4px)" @click.self="drawerShow=false">
           <div style="width:min(720px,95vw);max-height:88vh;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;overflow:hidden">
             <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0">
               <div style="flex:1">
@@ -6769,7 +6769,7 @@
             <!-- Auto update -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
               <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Auto update panel</div><div style="font-size:11px;color:var(--text-muted)">Check for VortexPanel updates automatically</div></div>
-              <label style="position:relative;width:38px;height:20px;display:inline-block"><input type="checkbox" style="opacity:0;width:0;height:0" :checked="cfg.auto_update" @change="cfg.auto_update=$event.target.checked;saveSettings()"><span style="position:absolute;cursor:pointer;inset:0;border-radius:10px;transition:.2s" :style="cfg.auto_update?'background:var(--accent)':'background:#cbd5e1'"><span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="cfg.auto_update?'left:21px':'left:3px'"></span></span></label>
+              <label style="position:relative;width:38px;height:20px;display:inline-block"><input type="checkbox" style="opacity:0;width:0;height:0" :checked="cfg.auto_update" @change="cfg.auto_update=$event.target.checked;saveSettings()"><span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="cfg.auto_update?'background:var(--accent)':'background:#cbd5e1'"><span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="cfg.auto_update?'left:21px':'left:3px'"></span></span></label>
             </div>
             <!-- Timezone -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
@@ -6921,7 +6921,7 @@
 
   <!-- ── FILE PICKER ─────────────────────────────────────────────────────── -->
   <div x-data="{}" x-show="$store.vp.picker.show"
-       style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center"
+       style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center"
        @click.self="$store.vp.picker.show=false"
        @vp-open-picker.window="async (e)=>{
          const p=e.detail; $store.vp.picker.mode=p.mode||'dir'; $store.vp.picker.cb=p.cb;
@@ -6969,7 +6969,7 @@
 
   <!-- ── NODE.JS ADD PROJECT MODAL ────────────────────────────────────────── -->
   <div x-data="{}" x-show="$store.vp.nodeAdd.show"
-       style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center"
+       style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center"
        @click.self="$store.vp.nodeAdd.show=false">>
     <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
@@ -7067,7 +7067,7 @@
   </div>
 
   <!-- ── NODE.JS LOGS MODAL ─────────────────────────────────────────────── -->
-  <div x-data="{}" x-show="$store.vp.nodeLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.nodeLogs.show=false">
+  <div x-data="{}" x-show="$store.vp.nodeLogs.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.nodeLogs.show=false">
     <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
       <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
         <div style="font-weight:600">Logs — <span x-text="$store.vp.nodeLogs.name"></span></div>
@@ -7078,7 +7078,7 @@
   </div>
 
   <!-- ── GO ADD PROJECT MODAL ──────────────────────────────────────────── -->
-  <div x-data="{}" x-show="$store.vp.goAdd.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goAdd.show=false">>
+  <div x-data="{}" x-show="$store.vp.goAdd.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goAdd.show=false">>
     <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
         <div style="font-size:18px;font-weight:700">Add Go Project</div>
@@ -7150,7 +7150,7 @@
   </div>
 
   <!-- ── GO LOGS MODAL ─────────────────────────────────────────────────── -->
-  <div x-data="{}" x-show="$store.vp.goLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goLogs.show=false">
+  <div x-data="{}" x-show="$store.vp.goLogs.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goLogs.show=false">
     <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
       <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
         <div style="font-weight:600">Logs — <span x-text="$store.vp.goLogs.name"></span></div>
