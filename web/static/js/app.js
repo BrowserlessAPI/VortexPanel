@@ -170,7 +170,7 @@ function rootApp() {
       const validPages = ['dashboard','websites','databases','files','modules',
                           'services','firewall','terminal','backups','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy',
-                          'cdn','logs','settings'];
+                          'cdn','logs','settings','node-projects','go-projects','wp'];
       if (hash && validPages.includes(hash)) {
         this.page = hash;
       }

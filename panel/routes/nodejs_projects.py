@@ -287,11 +287,19 @@ def nvm_available():
         {'version':'v26.x', 'lts':'Current (not LTS yet)',  'value':'26', 'status':'current',     'recommended':False},
         {'version':'v24.x', 'lts':'Active LTS — Krypton',   'value':'24', 'status':'active-lts',  'recommended':True},
         {'version':'v22.x', 'lts':'Maintenance LTS — Jod',  'value':'22', 'status':'maintenance', 'recommended':False},
-        {'version':'v20.x', 'lts':'EOL — Apr 30 2026',      'value':'20', 'status':'eol',         'recommended':False},
-        {'version':'v18.x', 'lts':'EOL — Apr 30 2025',      'value':'18', 'status':'eol',         'recommended':False},
     ]
+    # EOL versions are intentionally excluded — v20 EOL Apr 2026, v18 EOL Apr 2025
+
     installed_out, _, _ = sh('nvm ls --no-colors 2>/dev/null', nvm=True)
     installed_vers = set(re.findall(r'v(\d+)\.\d+\.\d+', installed_out))
+
+    # Also check system Node.js (installed via App Store/nodesource — NOT via nvm)
+    sys_node, _, _ = sh('node --version 2>/dev/null')
+    if sys_node:
+        m = re.match(r'v(\d+)', sys_node)
+        if m:
+            installed_vers.add(m.group(1))
+
     for v in versions:
         v['installed'] = v['value'] in installed_vers
     return jsonify({'ok': True, 'versions': versions})

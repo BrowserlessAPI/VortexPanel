@@ -1638,7 +1638,7 @@
         <div class="page-header">
           <div>
             <div class="page-title">Node.js Projects</div>
-            <div class="page-sub">Manage Node.js and PM2 projects with nginx reverse proxy</div>
+            <div class="page-sub">Deploy and manage Node.js apps with PM2 or systemd — proxy via nginx, Apache, OLS or Caddy</div>
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="tab='versions';loadVersions()">⚙ Node Version Manager</button>
@@ -1727,6 +1727,13 @@
             <button class="btn btn-ghost btn-sm" @click="loadVersions()">↻ Refresh</button>
           </div>
 
+          <!-- App Store integration note -->
+          <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+            <strong style="color:var(--accent)">ℹ App Store integration:</strong>
+            Node.js installed from App Store works directly in Node.js Projects — no extra steps needed.
+            Use the version manager below only if you need <strong>multiple Node.js versions</strong> side-by-side via nvm.
+          </div>
+
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
             <!-- Installed versions -->
             <div class="card">
@@ -1762,10 +1769,6 @@
                           style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">
                       ★ Recommended
                     </span>
-                    <span x-show="v.status==='eol'"
-                          style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(239,68,68,.12);color:var(--red)">
-                      ⚠ EOL
-                    </span>
                     <span x-show="v.status==='maintenance'"
                           style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(245,158,11,.12);color:#d97706">
                       Maintenance
@@ -1776,12 +1779,11 @@
                     </span>
                   </div>
                   <div>
-                    <span x-show="v.installed" class="badge" style="background:rgba(34,197,94,.15);color:var(--green);font-size:10px">Installed</span>
-                    <button x-show="!v.installed && v.status!=='eol'" class="btn btn-xs btn-primary" @click="installVersion(v.value)">Install</button>
-                    <button x-show="!v.installed && v.status==='eol'" class="btn btn-xs"
-                            style="opacity:0.5;cursor:not-allowed;background:var(--bg-hover);border:1px solid var(--border);color:var(--text-muted)"
-                            title="EOL — no longer receives security patches. Upgrade to v24."
-                            @click="toast('v'+v.value+' is End-of-Life. Install v24 (Active LTS) instead.','error')">
+                    <span x-show="v.installed"
+                          style="font-size:11px;padding:3px 10px;border-radius:6px;background:rgba(34,197,94,.12);color:var(--green);font-weight:600">
+                      ✓ Installed
+                    </span>
+                    <button x-show="!v.installed" class="btn btn-xs btn-primary" @click="installVersion(v.value)">
                       Install
                     </button>
                   </div>
@@ -1900,7 +1902,7 @@
               <div>
                 <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Port</label>
                 <input class="form-input" x-model="addModal.port" placeholder="3000" style="margin-top:4px">
-                <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Port the app listens on (used for nginx reverse proxy)</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Port the app listens on — used for webserver reverse proxy</div>
               </div>
 
               <!-- Cluster + Memory (PM2 only) -->
@@ -1971,7 +1973,7 @@
                   </label>
                   <textarea class="form-input" x-model="addModal.domain" rows="3" style="margin-top:4px;resize:vertical"
                             placeholder="One domain per line&#10;myapp.com&#10;*.myapp.com&#10;myapp.com:8080"></textarea>
-                  <div style="font-size:11px;color:var(--text-muted);margin-top:3px">nginx reverse proxy will be created automatically</div>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Reverse proxy config will be created automatically for your active webserver</div>
                 </div>
 
                 <!-- Environment variables -->
