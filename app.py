@@ -55,6 +55,8 @@ from panel.routes.bandwidth import bandwidth_bp
 from panel.routes.terminal_ws import sock as terminal_sock
 from panel.routes.cloud_backup import cloud_backup_bp
 from panel.routes.logs import logs_bp
+from panel.routes.nodejs_projects import nodejs_bp
+from panel.routes.go_projects import go_bp
 
 # -- Secret key: auto-generate and persist on first run -----------------------
 _SECRET_KEY_FILE = '/opt/vortexpanel/secret.key'
@@ -129,7 +131,7 @@ def create_app():
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
                caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
-               logs_bp, wp_bp]:
+               logs_bp, wp_bp, nodejs_bp, go_bp]:
         app.register_blueprint(bp)
     terminal_sock.init_app(app)
 

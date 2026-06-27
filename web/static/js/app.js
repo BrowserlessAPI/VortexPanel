@@ -66,11 +66,13 @@ function rootApp() {
     },
     nav: [
       { group: 'Overview', items: [
-        { id:'dashboard', icon:'▦', label:'Dashboard',    color:'#2563eb', colorBg:'#dbeafe' },
-        { id:'websites',  icon:'🌐', label:'Websites',    color:'#16a34a', colorBg:'#dcfce7' },
-        { id:'wp',        icon:'🔷', label:'WP Toolkit',  color:'#2563eb', colorBg:'#dbeafe' },
-        { id:'databases', icon:'🗄', label:'Databases',   color:'#d97706', colorBg:'#fef3c7' },
-        { id:'files',     icon:'📁', label:'File Manager',color:'#db2777', colorBg:'#fce7f3' },
+        { id:'dashboard',    icon:'▦', label:'Dashboard',        color:'#2563eb', colorBg:'#dbeafe' },
+        { id:'websites',     icon:'🌐', label:'Websites',        color:'#16a34a', colorBg:'#dcfce7' },
+        { id:'wp',           icon:'🔷', label:'WP Toolkit',      color:'#2563eb', colorBg:'#dbeafe' },
+        { id:'node-projects',icon:'💚', label:'Node.js Projects',color:'#16a34a', colorBg:'#dcfce7' },
+        { id:'go-projects',  icon:'🔵', label:'Go Projects',     color:'#0369a1', colorBg:'#e0f2fe' },
+        { id:'databases',    icon:'🗄', label:'Databases',       color:'#d97706', colorBg:'#fef3c7' },
+        { id:'files',        icon:'📁', label:'File Manager',    color:'#db2777', colorBg:'#fce7f3' },
       ]},
       { group: 'Server', items: [
         { id:'services',  icon:'⚙', label:'Services',    color:'#7c3aed', colorBg:'#ede9fe' },
@@ -4098,5 +4100,177 @@ function logsPage() {
         }
       }
     },
+  };
+}
+
+// ============================================================
+// Node.js Project Manager
+// ============================================================
+function nodeProjectsPage() {
+  return {
+    projects:[], tab:'projects', loading:false, search:'', wsInfo:null,
+    // Version manager
+    versions:[], availableVersions:[], versionLoading:false,
+    // PM2 monitor
+    pm2Procs:[], pm2Total:{cpu:0,memory:0,count:0},
+    // Add project modal
+    addModal:{show:false, mode:'default', // 'default' or 'pm2'
+      name:'',path:'/www/wwwroot',startup_file:'',run_opt:'',run_cmd:'',
+      port:'',user:'www',node_version:'',domain:'',remark:'',
+      package_manager:'npm',clusters:1,memory_limit:1024,
+      auto_restart:true,no_pkg_install:false,env_vars:'',
+      show_more:false, scripts:[]
+    },
+    // Logs modal
+    logsModal:{show:false, name:'', logs:''},
+    // Edit modal
+    editModal:{show:false, project:null, port:'', domain:'', remark:''},
+
+    get filteredProjects(){ return this.projects.filter(p => p.name.toLowerCase().includes(this.search.toLowerCase())); },
+
+    async init(){
+      await this.load();
+      document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
+    },
+
+    async load(){
+      this.loading=true;
+      const r = await get('/api/nodejs/projects');
+      if(r.ok) this.projects = r.projects||[];
+      this.loading=false;
+    },
+
+    async loadVersions(){
+      this.versionLoading=true;
+      const r = await get('/api/nodejs/versions');
+      if(r.ok) this.versions=r.installed||[];
+      const av = await get('/api/nodejs/versions/available');
+      if(av.ok) this.availableVersions=av.versions||[];
+      this.versionLoading=false;
+    },
+
+    async loadPM2Monitor(){
+      const r = await get('/api/nodejs/pm2/list');
+      if(r.ok){
+        this.pm2Procs=r.processes||[];
+        this.pm2Total={
+          count:this.pm2Procs.length,
+          cpu:this.pm2Procs.reduce((s,p)=>s+p.cpu,0).toFixed(1),
+          memory:this.pm2Procs.reduce((s,p)=>s+p.memory_mb,0).toFixed(1),
+        };
+      }
+    },
+
+    async loadScripts(){
+      if(!this.addModal.path) return;
+      const r = await get('/api/nodejs/projects');
+      // Fetch scripts from package.json path
+      try {
+        const resp = await fetch('/api/nodejs/pkg-scripts?path='+encodeURIComponent(this.addModal.path));
+        const d = await resp.json();
+        if(d.ok) this.addModal.scripts = d.scripts||[];
+      } catch(e){}
+    },
+
+    openAddModal(mode='default'){
+      this.addModal = {show:true, mode,
+        name:'',path:'/www/wwwroot',startup_file:'',run_opt:'',run_cmd:'',
+        port:'',user:'www',node_version:'',domain:'',remark:'',
+        package_manager:'npm',clusters:1,memory_limit:1024,
+        auto_restart:true,no_pkg_install:false,env_vars:'',
+        show_more:false, scripts:[], loading:false
+      };
+      // Detect active webserver for proxy info
+      get('/api/nodejs/webserver').then(r=>{ this.wsInfo = r; });
+    },
+
+    async submitAdd(){
+      if(!this.addModal.name || !this.addModal.path){
+        toast('Name and path are required','error'); return;
+      }
+      this.addModal.loading=true;
+      const r = await post('/api/nodejs/projects', {
+        name:            this.addModal.name,
+        path:            this.addModal.path,
+        pm2:             this.addModal.mode==='pm2',
+        port:            this.addModal.port,
+        user:            this.addModal.user,
+        node_version:    this.addModal.node_version,
+        domain:          this.addModal.domain,
+        startup_file:    this.addModal.startup_file,
+        run_cmd:         this.addModal.run_cmd,
+        run_opt:         this.addModal.run_opt,
+        package_manager: this.addModal.package_manager,
+        clusters:        this.addModal.clusters,
+        memory_limit:    this.addModal.memory_limit,
+        auto_restart:    this.addModal.auto_restart,
+        no_pkg_install:  this.addModal.no_pkg_install,
+        env_vars:        this.addModal.env_vars,
+        remark:          this.addModal.remark,
+      });
+      this.addModal.loading=false;
+      if(r.ok){
+        toast('Project created successfully','success');
+        this.addModal.show=false;
+        await this.load();
+      } else {
+        toast(r.error||'Failed to create project','error');
+      }
+    },
+
+    async control(p, action){
+      const r = await post(`/api/nodejs/projects/${p.id}/control`,{action});
+      if(r.ok) toast(`${action} OK`,'success');
+      else toast(r.error||`${action} failed`,'error');
+      await this.load();
+    },
+
+    async remove(p){
+      if(!confirm(`Delete project "${p.name}"? The files will NOT be deleted.`)) return;
+      const r = await del(`/api/nodejs/projects/${p.id}`);
+      if(r.ok) toast('Project deleted','success');
+      else toast(r.error||'Delete failed','error');
+      await this.load();
+    },
+
+    async showLogs(p){
+      this.logsModal={show:true, name:p.name, logs:'Loading...'};
+      const r = await get(`/api/nodejs/projects/${p.id}/logs`);
+      this.logsModal.logs = r.logs||'No logs available';
+    },
+
+    async gitPull(p){
+      toast('Pulling from git...','info');
+      const r = await post(`/api/nodejs/projects/${p.id}/git-pull`,{});
+      if(r.ok) toast('Git pull successful: '+r.output.substring(0,100),'success');
+      else toast('Git pull failed: '+(r.output||r.error||'').substring(0,150),'error');
+    },
+
+    async installVersion(ver){
+      toast('Installing Node.js '+ver+' via nvm...','info');
+      const r = await post('/api/nodejs/versions/install',{version:ver});
+      if(r.ok) toast('Node.js '+ver+' installed','success');
+      else toast('Install failed: '+r.error,'error');
+      await this.loadVersions();
+    },
+
+    async useVersion(ver){
+      const r = await post('/api/nodejs/versions/use',{version:ver});
+      if(r.ok) toast('Switched to '+ver,'success');
+      else toast('Failed: '+r.error,'error');
+      await this.loadVersions();
+    },
+
+    async uninstallVersion(ver){
+      if(!confirm('Uninstall '+ver+'?')) return;
+      const r = await post('/api/nodejs/versions/uninstall',{version:ver});
+      if(r.ok) toast(ver+' uninstalled','success');
+      else toast('Failed: '+r.error,'error');
+      await this.loadVersions();
+    },
+
+    statusColor(s){ return s==='online'||s==='active'?'var(--green)':s==='stopped'?'var(--text-muted)':'var(--red)'; },
+    statusDot(s){   return s==='online'||s==='active'?'dot-green':s==='stopped'?'dot-gray':'dot-red'; },
+    formatBytes(mb){ return mb>=1024 ? (mb/1024).toFixed(1)+' GB' : mb.toFixed(0)+' MB'; },
   };
 }

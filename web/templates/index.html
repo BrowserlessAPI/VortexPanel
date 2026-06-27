@@ -1632,6 +1632,376 @@
       </div>
       <!-- END WP TOOLKIT PAGE -->
 
+      <!-- NODE.JS PROJECTS PAGE -->
+      <div x-show="page==='node-projects'" x-data="nodeProjectsPage()" @keydown.escape.window="addModal.show=false;logsModal.show=false">
+
+        <div class="page-header">
+          <div>
+            <div class="page-title">Node.js Projects</div>
+            <div class="page-sub">Manage Node.js and PM2 projects with nginx reverse proxy</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" @click="tab='versions';loadVersions()">⚙ Node Version Manager</button>
+            <button class="btn btn-ghost btn-sm" @click="tab='pm2';loadPM2Monitor()">📊 PM2 Monitor</button>
+            <button class="btn btn-primary btn-sm" @click="openAddModal('pm2')">+ PM2 Project</button>
+            <button class="btn btn-primary btn-sm" @click="openAddModal('default')">+ Add Project</button>
+          </div>
+        </div>
+
+        <!-- TAB: PROJECTS LIST -->
+        <div x-show="tab==='projects'">
+          <!-- Toolbar -->
+          <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+            <input class="form-input" style="max-width:260px" x-model="search" placeholder="🔍 Search projects...">
+            <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
+            <span style="font-size:12px;color:var(--text-muted)" x-text="projects.length+' project(s)'"></span>
+          </div>
+
+          <!-- Empty state -->
+          <div x-show="!loading && projects.length===0" style="text-align:center;padding:60px 20px">
+            <div style="font-size:48px;margin-bottom:12px">💚</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px">No Node.js projects yet</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:20px">Deploy your first Node.js or PM2 project</div>
+            <button class="btn btn-primary" @click="openAddModal('pm2')">+ Add First Project</button>
+          </div>
+
+          <!-- Projects table -->
+          <div x-show="projects.length>0" class="card" style="padding:0;overflow:hidden">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>PID</th>
+                  <th>CPU</th>
+                  <th>RAM</th>
+                  <th>Path</th>
+                  <th>Node</th>
+                  <th>Mode</th>
+                  <th>Domain</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="p in filteredProjects" :key="p.id">
+                  <tr>
+                    <td style="font-weight:600" x-text="p.name"></td>
+                    <td>
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span :class="'dot ' + statusDot(p.status)" style="width:7px;height:7px;border-radius:50%;display:inline-block"></span>
+                        <span :style="'font-size:12px;color:'+statusColor(p.status)" x-text="p.status||'unknown'"></span>
+                      </div>
+                    </td>
+                    <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)" x-text="p.pid||'—'"></td>
+                    <td x-text="p.cpu!=null ? p.cpu+'%' : '—'"></td>
+                    <td x-text="p.memory!=null ? formatBytes(p.memory) : '—'"></td>
+                    <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-width:180px;overflow:hidden;text-overflow:ellipsis" x-text="p.path"></td>
+                    <td style="font-size:11px" x-text="p.node_version||'system'"></td>
+                    <td>
+                      <span :style="p.pm2?'color:var(--accent);font-size:11px':'color:var(--text-muted);font-size:11px'"
+                            x-text="p.pm2?'PM2':'Systemd'"></span>
+                      <span x-show="p.pm2 && p.clusters>1" style="font-size:10px;color:var(--text-muted)" x-text="' ×'+p.clusters"></span>
+                    </td>
+                    <td style="font-size:11px;color:var(--text-muted)" x-text="p.domain||'—'"></td>
+                    <td>
+                      <div style="display:flex;gap:4px;flex-wrap:wrap">
+                        <button x-show="p.status!=='online'&&p.status!=='active'" class="btn btn-xs btn-success" @click="control(p,'start')">▶ Start</button>
+                        <button x-show="p.status==='online'||p.status==='active'" class="btn btn-xs btn-danger" @click="control(p,'stop')">■ Stop</button>
+                        <button class="btn btn-xs btn-ghost" @click="control(p,'restart')">↺</button>
+                        <button class="btn btn-xs btn-ghost" @click="showLogs(p)">📋 Logs</button>
+                        <button class="btn btn-xs btn-ghost" @click="gitPull(p)" title="Git Pull">⬇ Pull</button>
+                        <button class="btn btn-xs btn-danger" @click="remove(p)">🗑</button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TAB: NODE VERSION MANAGER -->
+        <div x-show="tab==='versions'">
+          <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+            <button class="btn btn-ghost btn-sm" @click="tab='projects'">← Back to Projects</button>
+            <button class="btn btn-ghost btn-sm" @click="loadVersions()">↻ Refresh</button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <!-- Installed versions -->
+            <div class="card">
+              <div style="font-weight:600;margin-bottom:12px">Installed Versions</div>
+              <div x-show="versionLoading" style="color:var(--text-muted);font-size:13px">Loading...</div>
+              <div x-show="versions.length===0 && !versionLoading" style="color:var(--text-muted);font-size:13px">No versions installed via nvm</div>
+              <template x-for="v in versions" :key="v.version">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="font-family:var(--font-mono);font-weight:600" x-text="v.version"></span>
+                    <span x-show="v.active" class="badge" style="background:rgba(34,197,94,.15);color:var(--green);font-size:10px">Active</span>
+                    <span x-show="v.system" class="badge badge-gray" style="font-size:10px">System</span>
+                  </div>
+                  <div style="display:flex;gap:6px">
+                    <button x-show="!v.active && !v.system" class="btn btn-xs btn-ghost" @click="useVersion(v.version)">Use</button>
+                    <button x-show="!v.active && !v.system" class="btn btn-xs btn-danger" @click="uninstallVersion(v.version)">Remove</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <!-- Available to install -->
+            <div class="card">
+              <div style="font-weight:600;margin-bottom:12px">Install New Version</div>
+              <template x-for="v in availableVersions" :key="v.value">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+                  <div>
+                    <span style="font-weight:600" x-text="v.version"></span>
+                    <span style="margin-left:8px;font-size:11px;color:var(--text-muted)" x-text="'LTS: '+v.lts"></span>
+                  </div>
+                  <div>
+                    <span x-show="v.installed" class="badge" style="background:rgba(34,197,94,.15);color:var(--green);font-size:10px">Installed</span>
+                    <button x-show="!v.installed" class="btn btn-xs btn-primary" @click="installVersion(v.value)">Install</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: PM2 MONITOR -->
+        <div x-show="tab==='pm2'">
+          <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+            <button class="btn btn-ghost btn-sm" @click="tab='projects'">← Back to Projects</button>
+            <button class="btn btn-ghost btn-sm" @click="loadPM2Monitor()">↻ Refresh</button>
+          </div>
+
+          <!-- Stats cards -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+            <div class="card" style="text-align:center">
+              <div style="font-size:28px;font-weight:700;color:var(--accent)" x-text="pm2Total.count"></div>
+              <div style="font-size:12px;color:var(--text-muted)">Processes</div>
+            </div>
+            <div class="card" style="text-align:center">
+              <div style="font-size:28px;font-weight:700;color:var(--green)" x-text="pm2Total.cpu+'%'"></div>
+              <div style="font-size:12px;color:var(--text-muted)">Total CPU</div>
+            </div>
+            <div class="card" style="text-align:center">
+              <div style="font-size:28px;font-weight:700;color:var(--purple)" x-text="pm2Total.memory+' MB'"></div>
+              <div style="font-size:12px;color:var(--text-muted)">Total Memory</div>
+            </div>
+          </div>
+
+          <!-- PM2 process table -->
+          <div class="card" style="padding:0;overflow:hidden">
+            <table class="data-table">
+              <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>PID</th><th>CPU</th><th>Memory</th><th>Restarts</th><th>Path</th></tr></thead>
+              <tbody>
+                <template x-for="p in pm2Procs" :key="p.id">
+                  <tr>
+                    <td x-text="p.id"></td>
+                    <td style="font-weight:600" x-text="p.name"></td>
+                    <td>
+                      <span :style="'font-size:12px;color:'+(p.status==='online'?'var(--green)':'var(--red)')" x-text="p.status"></span>
+                    </td>
+                    <td style="font-family:var(--font-mono);font-size:11px" x-text="p.pid||'—'"></td>
+                    <td x-text="p.cpu+'%'"></td>
+                    <td x-text="p.memory_mb+' MB'"></td>
+                    <td x-text="p.restarts"></td>
+                    <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-width:180px;overflow:hidden;text-overflow:ellipsis" x-text="p.path"></td>
+                  </tr>
+                </template>
+                <tr x-show="pm2Procs.length===0">
+                  <td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px">No PM2 processes running</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ADD PROJECT MODAL -->
+        <div x-show="addModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+              <div style="font-size:18px;font-weight:700">Add Node.js Project</div>
+              <button @click="addModal.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+            </div>
+
+            <!-- Mode tabs -->
+            <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:20px">
+              <button @click="addModal.mode='default'"
+                      :style="addModal.mode==='default'?'background:var(--accent);color:#fff;':'background:none;color:var(--text)'"
+                      style="flex:1;padding:8px;border:none;cursor:pointer;font-size:13px;font-weight:600">Default Project</button>
+              <button @click="addModal.mode='pm2'"
+                      :style="addModal.mode==='pm2'?'background:var(--accent);color:#fff;':'background:none;color:var(--text)'"
+                      style="flex:1;padding:8px;border:none;cursor:pointer;font-size:13px;font-weight:600">PM2 Project</button>
+            </div>
+
+            <div style="display:grid;gap:14px">
+              <!-- Path -->
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Path *</label>
+                <div style="display:flex;gap:8px;margin-top:4px">
+                  <input class="form-input" x-model="addModal.path" placeholder="/www/wwwroot/myapp" @blur="loadScripts()">
+                </div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Directory where package.json is located</div>
+              </div>
+
+              <!-- Name -->
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Name *</label>
+                <input class="form-input" x-model="addModal.name" placeholder="my-app" style="margin-top:4px">
+              </div>
+
+              <!-- Startup file (PM2) -->
+              <div x-show="addModal.mode==='pm2'">
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Startup File *</label>
+                <input class="form-input" x-model="addModal.startup_file" placeholder="app.js" style="margin-top:4px">
+                <div style="font-size:11px;color:var(--text-muted);margin-top:3px">The JS file to start (e.g. app.js, server.js, index.js)</div>
+              </div>
+
+              <!-- Run opt (Default) -->
+              <div x-show="addModal.mode==='default'">
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Run Command</label>
+                <div style="display:flex;gap:8px;margin-top:4px">
+                  <select class="form-input" x-model="addModal.run_opt" style="max-width:220px">
+                    <option value="">Custom command</option>
+                    <template x-for="s in addModal.scripts" :key="s.name">
+                      <option :value="'npm run '+s.name" x-text="s.name+' ('+s.cmd+')'"></option>
+                    </template>
+                  </select>
+                  <input class="form-input" x-model="addModal.run_cmd" placeholder="node server.js" x-show="!addModal.run_opt">
+                </div>
+              </div>
+
+              <!-- Port -->
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Port</label>
+                <input class="form-input" x-model="addModal.port" placeholder="3000" style="margin-top:4px">
+                <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Port the app listens on (used for nginx reverse proxy)</div>
+              </div>
+
+              <!-- Cluster + Memory (PM2 only) -->
+              <div x-show="addModal.mode==='pm2'" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Cluster Instances</label>
+                  <input class="form-input" type="number" min="1" x-model="addModal.clusters" style="margin-top:4px">
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:3px">instances &gt; 1 enables cluster mode</div>
+                </div>
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Memory Limit (MB)</label>
+                  <input class="form-input" type="number" x-model="addModal.memory_limit" style="margin-top:4px">
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:3px">PM2 auto-restarts if exceeded</div>
+                </div>
+              </div>
+
+              <!-- User + Node version -->
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Run User</label>
+                  <select class="form-input" x-model="addModal.user" style="margin-top:4px">
+                    <option value="www">www</option>
+                    <option value="root">root</option>
+                    <option value="nobody">nobody</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Node Version</label>
+                  <input class="form-input" x-model="addModal.node_version" placeholder="system default" style="margin-top:4px">
+                </div>
+              </div>
+
+              <!-- Auto restart (PM2) -->
+              <div x-show="addModal.mode==='pm2'" style="display:flex;align-items:center;gap:10px">
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Auto Restart</label>
+                <input type="checkbox" x-model="addModal.auto_restart">
+                <span style="font-size:12px;color:var(--text-muted)">Restart automatically on crash</span>
+              </div>
+
+              <!-- Package manager -->
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Package Manager</label>
+                <div style="display:flex;gap:8px;margin-top:4px;align-items:center">
+                  <select class="form-input" style="max-width:140px" x-model="addModal.package_manager">
+                    <option value="npm">npm</option>
+                    <option value="yarn">yarn</option>
+                    <option value="pnpm">pnpm</option>
+                  </select>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+                    <input type="checkbox" x-model="addModal.no_pkg_install"> Skip package install
+                  </label>
+                </div>
+              </div>
+
+              <!-- More settings toggle -->
+              <button @click="addModal.show_more=!addModal.show_more"
+                      style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0">
+                <span x-text="addModal.show_more?'▾ Hide settings':'▸ More settings'"></span>
+              </button>
+
+              <div x-show="addModal.show_more" style="display:grid;gap:14px">
+                <!-- Domain -->
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain Name
+                    <span x-show="wsInfo" style="font-weight:400;margin-left:6px"
+                          :style="wsInfo.webserver?'color:var(--green)':'color:var(--red)'"
+                          x-text="wsInfo.webserver ? '→ proxy via '+wsInfo.webserver : '⚠ '+wsInfo.message"></span>
+                  </label>
+                  <textarea class="form-input" x-model="addModal.domain" rows="3" style="margin-top:4px;resize:vertical"
+                            placeholder="One domain per line&#10;myapp.com&#10;*.myapp.com&#10;myapp.com:8080"></textarea>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:3px">nginx reverse proxy will be created automatically</div>
+                </div>
+
+                <!-- Environment variables -->
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
+                  <textarea class="form-input" x-model="addModal.env_vars" rows="3" style="margin-top:4px;resize:vertical;font-family:var(--font-mono);font-size:12px"
+                            placeholder="NODE_ENV=production&#10;API_KEY=abc123"></textarea>
+                </div>
+
+                <!-- Remark -->
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Remark</label>
+                  <input class="form-input" x-model="addModal.remark" placeholder="Optional note" style="margin-top:4px">
+                </div>
+              </div>
+            </div>
+
+            <!-- Tips -->
+            <div style="margin-top:16px;padding:10px 12px;background:var(--bg-hover);border-radius:6px;font-size:11px;color:var(--text-muted)">
+              <div x-show="addModal.mode==='pm2'">
+                • <strong>PM2 Project</strong>: Startup File is the JS file PM2 runs (usually app.js or server.js)<br>
+                • <strong>Cluster</strong>: instances &gt; 1 enables load balancing across CPU cores<br>
+                • <strong>Memory Limit</strong>: PM2 auto-restarts when exceeded
+              </div>
+              <div x-show="addModal.mode==='default'">
+                • <strong>Default Project</strong>: Runs as a systemd service — lightweight, no PM2 needed<br>
+                • <strong>Run Command</strong>: Select from package.json scripts or enter a custom command
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+              <button class="btn btn-ghost" @click="addModal.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="submitAdd()" :disabled="addModal.loading">
+                <span x-show="addModal.loading">Creating...</span>
+                <span x-show="!addModal.loading">Confirm</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- LOGS MODAL -->
+        <div x-show="logsModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="logsModal.show=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">
+            <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+              <div style="font-weight:600">Logs — <span x-text="logsModal.name"></span></div>
+              <button @click="logsModal.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+            </div>
+            <pre style="flex:1;overflow-y:auto;padding:16px;margin:0;background:#0d1117;color:#d1fae5;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap" x-text="logsModal.logs"></pre>
+          </div>
+        </div>
+
+      </div>
+      <!-- END NODE.JS PROJECTS PAGE -->
+
       <div x-show="page==='databases'" x-data="databasesPage()">
         <div class="page-header">
           <div><div class="page-title">Databases</div><div class="page-sub" x-text="engines.length ? (engines.find(e=>e.id===activeEngine)?.name || activeEngine) + ' management' : 'Database management'"></div></div>
