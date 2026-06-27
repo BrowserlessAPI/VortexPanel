@@ -18,6 +18,28 @@ const post = (url, b)  => api('POST', url, b);
 const put  = (url, b)  => api('PUT', url, b);
 const del  = (url, b)  => api('DELETE', url, b);
 
+
+// Store init — must be before function definitions
+document.addEventListener('alpine:init', () => {
+  Alpine.store('vp', {
+    // Node.js add/logs modals
+    nodeAdd:  { show:false, mode:'default', name:'', path:'/www/wwwroot', startup_file:'',
+                run_opt:'', run_cmd:'', port:'', user:'www', node_version:'', domain:'',
+                pkg_mgr:'npm', clusters:1, mem_limit:1024, auto_restart:true,
+                no_pkg_install:false, env_vars:'', remark:'', show_more:false,
+                loading:false, scripts:[], wsInfo:null },
+    nodeLogs: { show:false, name:'', logs:'' },
+    // Go add/edit/settings/logs modals
+    goAdd:    { show:false, loading:false, name:'', exec_file:'', port:'', exec_cmd:'',
+                user:'www', domain:'', env_vars:'', remark:'', release_port:false, show_more:false },
+    goEdit:   { show:false, project:null, port:'', exec_cmd:'', domain:'', user:'www',
+                env_vars:'', release_port:false },
+    goSettings:{ show:false, project:null, tab:'service' },
+    goLogs:   { show:false, name:'', logs:'' },
+    // File picker
+    picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
+  });
+
 function toast(msg, type='info') {
   const c = document.getElementById('toast-container');
   const d = document.createElement('div');
@@ -4552,23 +4574,5 @@ function filePickerModal() {
 // ============================================================
 // Alpine.store: Global modal state (outside page-content overflow)
 // ============================================================
-document.addEventListener('alpine:init', () => {
-  Alpine.store('vp', {
-    // Node.js add/logs modals
-    nodeAdd:  { show:false, mode:'default', name:'', path:'/www/wwwroot', startup_file:'',
-                run_opt:'', run_cmd:'', port:'', user:'www', node_version:'', domain:'',
-                pkg_mgr:'npm', clusters:1, mem_limit:1024, auto_restart:true,
-                no_pkg_install:false, env_vars:'', remark:'', show_more:false,
-                loading:false, scripts:[], wsInfo:null },
-    nodeLogs: { show:false, name:'', logs:'' },
-    // Go add/edit/settings/logs modals
-    goAdd:    { show:false, loading:false, name:'', exec_file:'', port:'', exec_cmd:'',
-                user:'www', domain:'', env_vars:'', remark:'', release_port:false, show_more:false },
-    goEdit:   { show:false, project:null, port:'', exec_cmd:'', domain:'', user:'www',
-                env_vars:'', release_port:false },
-    goSettings:{ show:false, project:null, tab:'service' },
-    goLogs:   { show:false, name:'', logs:'' },
-    // File picker
-    picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
-  });
+
 });

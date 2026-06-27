@@ -20,7 +20,7 @@
   <style>[x-cloak]{display:none!important}</style>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js"></script>
-  <script src="https://unpkg.com/alpinejs@3.15.12/dist/cdn.min.js" defer></script>
+  <script src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
 </head>
 <body>
 
@@ -1844,7 +1844,6 @@
         </div>
 
         <!-- ADD PROJECT MODAL -->
-        <template x-teleport="body">
         <div x-show="addModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
@@ -2186,7 +2185,6 @@
         </div>
 
         <!-- ADD PROJECT MODAL -->
-        <template x-teleport="body">
         <div x-show="addModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
@@ -2334,7 +2332,6 @@
         </div>
 
         <!-- SETTINGS MODAL (post-creation management) -->
-        <template x-teleport="body">
         <div x-show="settingsModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="settingsModal.show=false">
           <div style="background:var(--bg-card);border-radius:12px;width:680px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column">
             <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
@@ -6923,7 +6920,7 @@
   ═══════════════════════════════════════════════════════════════════════════ -->
 
   <!-- ── FILE PICKER ─────────────────────────────────────────────────────── -->
-  <div x-show="$store.vp.picker.show"
+  <div x-data="{}" x-show="$store.vp.picker.show"
        style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center"
        @click.self="$store.vp.picker.show=false"
        @vp-open-picker.window="async (e)=>{
@@ -6971,7 +6968,7 @@
   </div>
 
   <!-- ── NODE.JS ADD PROJECT MODAL ────────────────────────────────────────── -->
-  <div x-show="$store.vp.nodeAdd.show"
+  <div x-data="{}" x-show="$store.vp.nodeAdd.show"
        style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center"
        @click.self="$store.vp.nodeAdd.show=false">>
     <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
@@ -7070,7 +7067,7 @@
   </div>
 
   <!-- ── NODE.JS LOGS MODAL ─────────────────────────────────────────────── -->
-  <div x-show="$store.vp.nodeLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.nodeLogs.show=false">
+  <div x-data="{}" x-show="$store.vp.nodeLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.nodeLogs.show=false">
     <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
       <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
         <div style="font-weight:600">Logs — <span x-text="$store.vp.nodeLogs.name"></span></div>
@@ -7081,7 +7078,7 @@
   </div>
 
   <!-- ── GO ADD PROJECT MODAL ──────────────────────────────────────────── -->
-  <div x-show="$store.vp.goAdd.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goAdd.show=false">>
+  <div x-data="{}" x-show="$store.vp.goAdd.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goAdd.show=false">>
     <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
         <div style="font-size:18px;font-weight:700">Add Go Project</div>
@@ -7153,7 +7150,7 @@
   </div>
 
   <!-- ── GO LOGS MODAL ─────────────────────────────────────────────────── -->
-  <div x-show="$store.vp.goLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goLogs.show=false">
+  <div x-data="{}" x-show="$store.vp.goLogs.show" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="$store.vp.goLogs.show=false">
     <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
       <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
         <div style="font-weight:600">Logs — <span x-text="$store.vp.goLogs.name"></span></div>
