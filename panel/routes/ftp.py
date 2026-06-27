@@ -19,6 +19,11 @@ def is_ftp_installed():
     daemon, _ = get_ftp_daemon()
     return daemon is not None
 
+
+@ftp_bp.route('/api/ftp/users')
+def list_users_alias():
+    return list_accounts()
+
 @ftp_bp.route('/api/ftp/status')
 def ftp_status():
     if not req(): return jsonify({'ok':False}), 401
@@ -102,7 +107,7 @@ def create_account():
     if daemon == 'pure-ftpd':
         # Pure-FTPd virtual user
         sh(f'useradd -s /bin/false -d {home} {user} 2>/dev/null || true')
-        result = sh(f'echo -e "{pwd}\\n{pwd}" | pure-pw useradd {user} -u {user} -d {home} 2>&1')
+        result = sh(f'printf "%s\n%s\n" "{pwd}" "{pwd}" | pure-pw useradd {user} -u {user} -d {home} 2>&1')
         sh('pure-pw mkdb 2>/dev/null')
         sh('systemctl reload pure-ftpd 2>/dev/null || true')
     else:
@@ -128,7 +133,7 @@ def change_password(user):
     if len(pwd) < 6: return jsonify({'ok':False,'error':'Min 6 characters'}), 400
     daemon, _ = get_ftp_daemon()
     if daemon == 'pure-ftpd':
-        sh(f'echo -e "{pwd}\\n{pwd}" | pure-pw passwd {user} 2>/dev/null && pure-pw mkdb 2>/dev/null')
+        sh(f'printf "%s\n%s\n" "{pwd}" "{pwd}" | pure-pw passwd {user} 2>/dev/null && pure-pw mkdb 2>/dev/null')
     else:
         sh(f'echo "{user}:{pwd}" | chpasswd')
     return jsonify({'ok':True})

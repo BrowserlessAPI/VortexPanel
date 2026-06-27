@@ -11,6 +11,21 @@ def sh(c, t=10):
     except: return '', 'timeout', 1
 
 # --- SSH -----------------------------------------------------------------------
+
+@security_bp.route('/api/security/status')
+def security_status():
+    from flask import jsonify, session
+    if 'user' not in session: return jsonify({'ok':False}), 401
+    import subprocess
+    def check(cmd):
+        try: r = subprocess.run(cmd,shell=True,capture_output=True,text=True,timeout=3); return r.returncode==0
+        except: return False
+    return jsonify({'ok':True,
+        'fail2ban': check('systemctl is-active fail2ban'),
+        'modsecurity': check('[ -f /etc/modsecurity/modsecurity.conf ]'),
+        'ufw': check('ufw status | grep -q active'),
+    })
+
 @security_bp.route('/api/security/ssh')
 def ssh_config():
     if not req(): return jsonify({'ok':False}), 401

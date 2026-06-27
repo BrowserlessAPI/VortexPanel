@@ -211,10 +211,9 @@ function rootApp() {
     go(id) {
       this.page = id;
       this.sidebarOpen = false;
-      // Persist page in URL hash so refresh returns to same page
-      if (history.replaceState) {
-        history.replaceState(null, '', '#' + id);
-      }
+      if (history.replaceState) history.replaceState(null, '', '#' + id);
+      // Notify page components so they refresh their data
+      window.dispatchEvent(new CustomEvent('vp:page', {detail: id}));
     },
 
     pageTitle() {
@@ -279,7 +278,7 @@ function dashboardPage() {
       {icon:'💾',label:'Create Backup',page:'backups'},
       {icon:'📦',label:'Install Modules',page:'modules'},
     ],
-    async init() { await Promise.all([this.loadStats(),this.loadServices()]); setInterval(()=>this.loadStats(),5000); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await Promise.all([this.loadStats(),this.loadServices()]); setInterval(()=>this.loadStats(),5000); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") this.load(); }); },
     async loadStats() {
       const r=await get('/api/dashboard/stats');
       if(r.ok) this.stats=r;
@@ -343,7 +342,7 @@ function websitesPage() {
       if(pv.ok) this.phpVersions=pv.versions||[];
       if(this.phpVersions.length) this.form.php=this.phpVersions[0].version;
       await this.load();
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="websites") this.load(); });
     },
     async load() { const r=await get('/api/websites'); if(r.ok) this.sites=r.sites; },
     async create() {
@@ -570,7 +569,9 @@ function wpPage() {
     },
     async init() {
       await this.load();
-      document.addEventListener('vortex-logged-in', () => { this.init(); });
+      document.addEventListener('vortex-logged-in', () => { this.init(); 
+      window.addEventListener("vp:page", (e) => { if(e.detail==="wp") this.load(); });
+    });
     },
     async load() {
       this.loading = true;
@@ -792,7 +793,9 @@ function databasesPage() {
     get isPg(){ return this.activeEngine==='postgresql'; },
     async init(){
       await this.load();
-      document.addEventListener('vortex-logged-in', () => { this.init(); });
+      document.addEventListener('vortex-logged-in', () => { this.init(); 
+      window.addEventListener("vp:page", (e) => { if(e.detail==="databases") this.load(); });
+    });
       // Listen for modal submit event from global portal
       window.addEventListener('vp-submit-nodejs-add', async () => {
         const s = Alpine.store('vp').nodeAdd;
@@ -952,7 +955,7 @@ function filesPage() {
       }
       // Fallback: load root without toast error
       await this.loadDirSilent('/');
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="files") this.load(); });
     },
 
     async loadDirSilent(p) {
@@ -1871,7 +1874,7 @@ function servicesPage() {
   return {
     services: [],
 
-    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="services") this.load(); }); },
     serviceIcon(name) {
       const m = {nginx:'🌐',apache2:'🌐',caddy:'🌐',mysql:'🗄️',mariadb:'🗄️',postgresql:'🐘',mongodb:'🍃',redis:'⚡',docker:'🐳',supervisor:'👁️',ufw:'🛡️',fail2ban:'🔒',clamav:'🦠',bind9:'📡',ssh:'🔑',sshd:'🔑',php:'🐘',vortexpanel:'🌀'};
       for(const[k,v]of Object.entries(m)){if(name.toLowerCase().includes(k))return v;}
@@ -1903,7 +1906,7 @@ function modulesPage() {
     phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
     installingStream: false,
-    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
 
     async load() {
       const r = await get('/api/modules');
@@ -2259,7 +2262,7 @@ function firewallPage() {
     rules: [], status: '', showAdd: false,
     form: {port:'', protocol:'tcp', action:'allow', comment:''},
 
-    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="firewall") this.load(); }); },
 
     async load() {
       const r = await get('/api/firewall');
@@ -2372,7 +2375,7 @@ function backupsPage() {
     showUpload:   false, uploadFile:null, uploadType:'website', uploadTarget:'',
     uploading:    false,
 
-    async init() { await Promise.all([this.load(), this.loadInfo()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await Promise.all([this.load(), this.loadInfo()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="backups") this.load(); }); },
 
     async load() {
       const r = await get('/api/backups');
@@ -2557,7 +2560,7 @@ function mailPage() {
 
     forwardingRules:[], showAddForward:false, forwardForm:{source:'',destination:''},
     logFilter:'mail', logLines:'100', logSearch:'', mailLogOutput:'', filteredMailLog:'',
-    async init() { await this.loadStatus(); await this.loadDomains(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await this.loadStatus(); await this.loadDomains(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="mail") this.load(); }); },
 
     async loadStatus() {
       const r = await get('/api/mail/status');
@@ -2649,7 +2652,7 @@ function ftpPage() {
       await this.load();
       const ws = await get('/api/websites');
       if (ws.ok) this.sites = ws.sites || [];
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="ftp") this.load(); });
     },
 
     async load() {
@@ -2728,7 +2731,7 @@ function settingsPage() {
       const sp = await get('/api/settings/webshell-scan/paths').catch(()=>({ok:false}));
       if (sp.ok) this.scanPaths = sp.paths||['/www/wwwroot'];
       if (this.scanPaths.length) this.scanPath = this.scanPaths[0];
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") this.load(); });
     },
 
     async loadSettings() {
@@ -2970,7 +2973,7 @@ function monitoringPage() {
     stats: {cpu:0,ram:'',ramPct:0,disk:0,diskStr:'',uptime:'',load:''},
     processes: [],
 
-    async init() { await this.load(); setInterval(()=>this.load(), 5000); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await this.load(); setInterval(()=>this.load(), 5000); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="monitoring") this.load(); }); },
     async killProcess(pid) {
       if (!confirm('Kill process PID '+pid+'?')) return;
       const r = await post('/api/monitoring/processes/kill', {pid});
@@ -3027,7 +3030,7 @@ function bandwidthPage() {
       await this.loadSummary();
       await this.loadDomains();
       setInterval(()=>this.loadRealtime(), 3000);
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="bandwidth") this.load(); });
     },
 
     async loadSummary() {
@@ -3074,7 +3077,7 @@ function securityPage() {
                      timeout_seconds:3, unhealthy_threshold:3, healthy_threshold:2, servers:[]},
              state:{}, service_active:false, log:''},
 
-    async init() { await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="security") this.load(); }); },
 
     async loadScore() {
       const r = await get('/api/security/score');
@@ -3623,7 +3626,7 @@ function dockerPage() {
       await this.loadStatus();
       if (this.status.running) await Promise.all([this.loadContainers(), this.loadImages()]);
       this.loading = false;
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="docker") this.load(); });
     },
 
     async loadStatus()     { const r=await get('/api/docker/status');     if(r.ok) this.status=r; },
@@ -3747,7 +3750,7 @@ function cronPage() {
       if (r.ok) { this.templates=r.templates||[]; this.schedulePresets=r.schedules||[]; }
       this.selectedTemplate = this.templates.find(t=>t.id==='shell')||null;
       await this.load();
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="cron") this.load(); });
     },
 
     async load() {
@@ -3855,7 +3858,7 @@ function caddyPage() {
     form: {domain:'', path:'', type:'static', php:'8.3', proxy_target:''},
     drawerShow: false, drawerSite: null, drawerConf: '',
 
-    async init() { await Promise.all([this.loadStatus(), this.loadSites()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await Promise.all([this.loadStatus(), this.loadSites()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="caddy") this.load(); }); },
 
     async loadStatus() {
       const r = await get('/api/caddy/status');
@@ -3934,7 +3937,7 @@ function cdnPage() {
       await this.load();
       const ws = await get('/api/websites');
       if (ws.ok) this.sites=ws.sites||[];
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="cdn") this.load(); });
     },
 
     async load() {
@@ -4128,7 +4131,7 @@ function logsPage() {
       if (r.ok) this.sources = r.sources || [];
       await this.load();
       this._interval = setInterval(() => { if (this.autoRefresh) this.load(true); }, 5000);
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="logs") this.load(); });
     },
     async load(silent) {
       const params = new URLSearchParams({source:this.source, search:this.search, lines:this.lines});
@@ -4173,7 +4176,9 @@ function nodeProjectsPage() {
 
     async init(){
       await this.load();
-      document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
+      document.addEventListener('vortex-logged-in', ()=>{ this.init(); 
+      window.addEventListener("vp:page", (e) => { if(e.detail==="node-projects") this.load(); });
+    });
     },
 
     async load(){
@@ -4354,7 +4359,9 @@ function goProjectsPage() {
 
     async init(){
       await this.load();
-      get('/api/go/webserver').then(r=>{ this.wsInfo = r; });
+      get('/api/go/webserver').then(r=>{ this.wsInfo = r; 
+      window.addEventListener("vp:page", (e) => { if(e.detail==="go-projects") this.load(); });
+    });
       document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
       // Listen for submit from global portal modal
       window.addEventListener('vp-submit-go-add', async () => {

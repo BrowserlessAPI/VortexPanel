@@ -15,6 +15,26 @@ LOG_SOURCES = {
     'syslog':       '/var/log/syslog',
 }
 
+
+@logs_bp.route('/api/logs/files')
+def log_files():
+    from flask import jsonify, session
+    import os, glob
+    if 'user' not in session: return jsonify({'ok':False}), 401
+    log_paths = [
+        '/var/log/nginx', '/var/log/apache2', '/var/log/httpd',
+        '/var/log/mysql', '/var/log/mariadb', '/var/log/mongodb',
+        '/var/log/syslog', '/var/log/auth.log',
+    ]
+    files = []
+    for p in log_paths:
+        if os.path.isdir(p):
+            for f in glob.glob(p + '/*.log') + glob.glob(p + '/*.err'):
+                files.append({'name': os.path.basename(f), 'path': f, 'dir': p})
+        elif os.path.isfile(p):
+            files.append({'name': os.path.basename(p), 'path': p})
+    return jsonify({'ok': True, 'files': files})
+
 @logs_bp.route('/api/logs/sources')
 def log_sources():
     if not req(): return jsonify({'ok':False}),401

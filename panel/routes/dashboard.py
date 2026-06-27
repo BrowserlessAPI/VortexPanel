@@ -125,6 +125,15 @@ def _get_stats():
     }
 
 
+
+@dashboard_bp.route('/api/dashboard')
+def dashboard_index():
+    return stats()
+
+@dashboard_bp.route('/api/system/info')
+def system_info():
+    return stats()
+
 @dashboard_bp.route('/api/dashboard/stats')
 def stats():
     if not req(): return jsonify({'ok': False}), 401

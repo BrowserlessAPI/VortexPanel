@@ -2427,7 +2427,7 @@
 
       <!-- GLOBAL FILE PICKER (used by Node.js + Go project modals) -->
       <div x-data="filePickerModal()" x-show="show" @file-picker.window="open($event.detail.path, $event.detail.mode, $event.detail.cb)"
-           style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center" @click.self="show=false">
+           class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:2000" @click.self="show=false">
         <div style="background:var(--bg-card);border-radius:12px;width:560px;height:480px;display:flex;flex-direction:column;overflow:hidden">
           <!-- Header -->
           <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
@@ -6924,7 +6924,7 @@
 
 <!-- ── FILE PICKER ─────────────────────────────────────────────────────── -->
 <div x-data="{}" x-show="$store.vp.picker.show"
-     style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.6);z-index:2000;display:flex;align-items:center;justify-content:center"
+     class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:2000"
      @vp-open-picker.window="async (e)=>{
        const p=e.detail; $store.vp.picker.mode=p.mode||'dir'; $store.vp.picker.cb=p.cb;
        $store.vp.picker.selected=p.path||''; $store.vp.picker.show=true;
@@ -6971,7 +6971,7 @@
 
 <!-- ── NODE.JS ADD PROJECT MODAL ────────────────────────────────────────── -->
 <div x-data="{}" x-show="$store.vp.nodeAdd.show"
-     style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center">>
+     class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">>
   <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div style="font-size:18px;font-weight:700">Add Node.js Project</div>
@@ -7068,7 +7068,7 @@
 </div>
 
 <!-- ── NODE.JS LOGS MODAL ─────────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.nodeLogs.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center">
+<div x-data="{}" x-show="$store.vp.nodeLogs.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
       <div style="font-weight:600">Logs — <span x-text="$store.vp.nodeLogs.name"></span></div>
@@ -7079,7 +7079,7 @@
 </div>
 
 <!-- ── GO ADD PROJECT MODAL ──────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.goAdd.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center">>
+<div x-data="{}" x-show="$store.vp.goAdd.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">>
   <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div style="font-size:18px;font-weight:700">Add Go Project</div>
@@ -7151,7 +7151,7 @@
 </div>
 
 <!-- ── GO LOGS MODAL ─────────────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.goLogs.show" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.55);z-index:1000;display:flex;align-items:center;justify-content:center">
+<div x-data="{}" x-show="$store.vp.goLogs.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
       <div style="font-weight:600">Logs — <span x-text="$store.vp.goLogs.name"></span></div>

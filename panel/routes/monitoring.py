@@ -7,6 +7,19 @@ def sh(c):
     try: return subprocess.check_output(c,shell=True,text=True,stderr=subprocess.DEVNULL).strip()
     except: return ''
 
+
+@monitoring_bp.route('/api/monitor/stats')
+def monitor_stats_alias():
+    return processes()
+
+@monitoring_bp.route('/api/monitor/processes')
+def monitor_processes_alias():
+    return processes()
+
+@monitoring_bp.route('/api/monitoring')
+def monitoring_root():
+    return processes()
+
 @monitoring_bp.route('/api/monitoring/processes')
 def processes():
     if not req(): return jsonify({'ok':False}),401
@@ -74,7 +87,7 @@ def monitoring_overview():
     # RAM
     try:
         mem_out = subprocess.run("free -m | awk 'NR==2{print $2,$3}'",
-                                  shell=True, capture_output=True, text=True).stdout.strip().split()
+                                  shell=True, capture_output=True, text=True, timeout=5).stdout.strip().split()
         ram_total = int(mem_out[0]) if len(mem_out)>0 else 0
         ram_used  = int(mem_out[1]) if len(mem_out)>1 else 0
         ram_pct   = round(ram_used/ram_total*100, 1) if ram_total else 0
@@ -84,18 +97,18 @@ def monitoring_overview():
     # Disk
     try:
         disk_out = subprocess.run("df / | awk 'NR==2{print $5}'",
-                                   shell=True, capture_output=True, text=True).stdout.strip().rstrip('%')
+                                   shell=True, capture_output=True, text=True, timeout=5).stdout.strip().rstrip('%')
         disk = int(disk_out) if disk_out.isdigit() else 0
     except: disk = 0
 
     # Uptime
     try:
-        uptime = subprocess.run("uptime -p", shell=True, capture_output=True, text=True).stdout.strip()
+        uptime = subprocess.run("uptime -p", shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
     except: uptime = ''
 
     # Load
     try:
-        load = subprocess.run("cat /proc/loadavg", shell=True, capture_output=True, text=True).stdout.strip().split()
+        load = subprocess.run("cat /proc/loadavg", shell=True, capture_output=True, text=True, timeout=5).stdout.strip().split()
         load_str = ' '.join(load[:3]) if load else ''
     except: load_str = ''
 
@@ -104,7 +117,7 @@ def monitoring_overview():
     try:
         proc_out = subprocess.run(
             "ps aux --sort=-%cpu | head -11 | tail -10",
-            shell=True, capture_output=True, text=True).stdout.strip()
+            shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
         for line in proc_out.split('\n'):
             parts = line.split(None, 10)
             if len(parts) >= 11:
