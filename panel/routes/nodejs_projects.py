@@ -282,11 +282,13 @@ def nvm_list():
 @nodejs_bp.route('/api/nodejs/versions/available')
 def nvm_available():
     if not req(): return jsonify({'ok':False}), 401
+    # Source: nodejs.org release schedule — verified June 2026
     versions = [
-        {'version':'v24.x', 'lts':'Krypton', 'value':'24'},
-        {'version':'v22.x', 'lts':'Jod',     'value':'22'},
-        {'version':'v20.x', 'lts':'Iron',    'value':'20'},
-        {'version':'v18.x', 'lts':'Hydrogen','value':'18'},
+        {'version':'v26.x', 'lts':'Current (not LTS yet)',  'value':'26', 'status':'current',     'recommended':False},
+        {'version':'v24.x', 'lts':'Active LTS — Krypton',   'value':'24', 'status':'active-lts',  'recommended':True},
+        {'version':'v22.x', 'lts':'Maintenance LTS — Jod',  'value':'22', 'status':'maintenance', 'recommended':False},
+        {'version':'v20.x', 'lts':'EOL — Apr 30 2026',      'value':'20', 'status':'eol',         'recommended':False},
+        {'version':'v18.x', 'lts':'EOL — Apr 30 2025',      'value':'18', 'status':'eol',         'recommended':False},
     ]
     installed_out, _, _ = sh('nvm ls --no-colors 2>/dev/null', nvm=True)
     installed_vers = set(re.findall(r'v(\d+)\.\d+\.\d+', installed_out))

@@ -1752,14 +1752,38 @@
             <div class="card">
               <div style="font-weight:600;margin-bottom:12px">Install New Version</div>
               <template x-for="v in availableVersions" :key="v.value">
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-                  <div>
-                    <span style="font-weight:600" x-text="v.version"></span>
-                    <span style="margin-left:8px;font-size:11px;color:var(--text-muted)" x-text="'LTS: '+v.lts"></span>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div>
+                      <span style="font-weight:600" x-text="v.version"></span>
+                      <span style="margin-left:8px;font-size:11px;color:var(--text-muted)" x-text="v.lts"></span>
+                    </div>
+                    <span x-show="v.recommended"
+                          style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">
+                      ★ Recommended
+                    </span>
+                    <span x-show="v.status==='eol'"
+                          style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(239,68,68,.12);color:var(--red)">
+                      ⚠ EOL
+                    </span>
+                    <span x-show="v.status==='maintenance'"
+                          style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(245,158,11,.12);color:#d97706">
+                      Maintenance
+                    </span>
+                    <span x-show="v.status==='current'"
+                          style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(99,102,241,.12);color:var(--accent)">
+                      Current
+                    </span>
                   </div>
                   <div>
                     <span x-show="v.installed" class="badge" style="background:rgba(34,197,94,.15);color:var(--green);font-size:10px">Installed</span>
-                    <button x-show="!v.installed" class="btn btn-xs btn-primary" @click="installVersion(v.value)">Install</button>
+                    <button x-show="!v.installed && v.status!=='eol'" class="btn btn-xs btn-primary" @click="installVersion(v.value)">Install</button>
+                    <button x-show="!v.installed && v.status==='eol'" class="btn btn-xs"
+                            style="opacity:0.5;cursor:not-allowed;background:var(--bg-hover);border:1px solid var(--border);color:var(--text-muted)"
+                            title="EOL — no longer receives security patches. Upgrade to v24."
+                            @click="toast('v'+v.value+' is End-of-Life. Install v24 (Active LTS) instead.','error')">
+                      Install
+                    </button>
                   </div>
                 </div>
               </template>
