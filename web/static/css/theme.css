@@ -159,7 +159,7 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 .tab:hover{color:var(--text-secondary)}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 /* MODAL */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:200;display:flex;align-items:center;justify-content:center}
+.modal-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);z-index:200;display:flex;align-items:center;justify-content:center}
 .modal{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
 .modal-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .modal-title{font-weight:700;font-size:16px}
