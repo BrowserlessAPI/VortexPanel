@@ -4274,3 +4274,162 @@ function nodeProjectsPage() {
     formatBytes(mb){ return mb>=1024 ? (mb/1024).toFixed(1)+' GB' : mb.toFixed(0)+' MB'; },
   };
 }
+
+// ============================================================
+// Go Project Manager
+// ============================================================
+function goProjectsPage() {
+  return {
+    projects:[], tab:'projects', loading:false, search:'',
+    sdkInstalled:[], sdkVersions:[], sdkLoading:false,
+    activeGoVer:'', goproxy:'',
+    wsInfo:null,
+    logsModal:{show:false, name:'', logs:''},
+    addModal:{show:false, loading:false,
+      name:'', exec_file:'', port:'', exec_cmd:'',
+      user:'www', domain:'', env_vars:'', remark:'',
+      release_port:false, show_more:false
+    },
+    editModal:{show:false, project:null, port:'', exec_cmd:'',
+               domain:'', env_vars:'', user:'www', release_port:false},
+
+    get filteredProjects(){ return this.projects.filter(p => p.name.toLowerCase().includes(this.search.toLowerCase())); },
+
+    async init(){
+      await this.load();
+      get('/api/go/webserver').then(r=>{ this.wsInfo = r; });
+      document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
+    },
+
+    async load(){
+      this.loading=true;
+      const r = await get('/api/go/projects');
+      if(r.ok) this.projects=r.projects||[];
+      this.loading=false;
+    },
+
+    async loadSDK(){
+      this.sdkLoading=true;
+      const r = await get('/api/go/sdk');
+      if(r.ok){
+        this.sdkInstalled  = r.installed||[];
+        this.activeGoVer   = r.active_version||'';
+        this.goproxy       = r.goproxy||'';
+      }
+      const av = await get('/api/go/sdk/versions');
+      if(av.ok) this.sdkVersions = av.versions||[];
+      this.sdkLoading=false;
+    },
+
+    openAdd(){
+      this.addModal = {show:true, loading:false, name:'', exec_file:'',
+        port:'', exec_cmd:'', user:'www', domain:'', env_vars:'', remark:'',
+        release_port:false, show_more:false};
+    },
+
+    async submitAdd(){
+      if(!this.addModal.name)      { toast('Project name required','error'); return; }
+      if(!this.addModal.exec_file) { toast('Executable file path required','error'); return; }
+      this.addModal.loading=true;
+      const r = await post('/api/go/projects', {
+        name:         this.addModal.name,
+        exec_file:    this.addModal.exec_file,
+        port:         this.addModal.port,
+        exec_cmd:     this.addModal.exec_cmd,
+        user:         this.addModal.user,
+        domain:       this.addModal.domain,
+        env_vars:     this.addModal.env_vars,
+        remark:       this.addModal.remark,
+        release_port: this.addModal.release_port,
+      });
+      this.addModal.loading=false;
+      if(r.ok){
+        toast('Go project created and started','success');
+        this.addModal.show=false;
+        await this.load();
+      } else {
+        toast(r.error||'Failed to create project','error');
+      }
+    },
+
+    openEdit(p){
+      this.editModal={show:true, project:p,
+        port: p.port||'', exec_cmd: p.exec_cmd||'',
+        domain: p.domain||'', user: p.user||'www',
+        env_vars: Object.entries(p.env||{}).map(([k,v])=>k+'='+v).join('\n'),
+        release_port: p.release_port||false
+      };
+    },
+
+    async submitEdit(){
+      const p = this.editModal.project;
+      const env = {};
+      for(const line of (this.editModal.env_vars||'').split('\n')){
+        const [k,...rest]=line.split('='); if(k.trim()) env[k.trim()]=rest.join('=').trim();
+      }
+      const r = await post(`/api/go/projects/${p.id}/update`, {
+        port:         this.editModal.port,
+        exec_cmd:     this.editModal.exec_cmd,
+        domain:       this.editModal.domain,
+        user:         this.editModal.user,
+        env:          env,
+        release_port: this.editModal.release_port,
+      });
+      if(r.ok){ toast('Project updated','success'); this.editModal.show=false; await this.load(); }
+      else toast(r.error||'Update failed','error');
+    },
+
+    async control(p, action){
+      const r = await post(`/api/go/projects/${p.id}/control`,{action});
+      if(r.ok) toast(`${p.name} ${action}ed`,'success');
+      else toast(r.error||`${action} failed`,'error');
+      await this.load();
+    },
+
+    async remove(p){
+      if(!confirm(`Delete project "${p.name}"? Files will NOT be deleted.`)) return;
+      const r = await del(`/api/go/projects/${p.id}`);
+      if(r.ok) toast('Project deleted','success');
+      else toast(r.error||'Delete failed','error');
+      await this.load();
+    },
+
+    async showLogs(p){
+      this.logsModal={show:true, name:p.name, logs:'Loading...'};
+      const r = await get(`/api/go/projects/${p.id}/logs`);
+      this.logsModal.logs=r.logs||'No logs';
+    },
+
+    async installSDK(ver){
+      toast('Downloading Go '+ver+' from golang.org...','info');
+      const r = await post('/api/go/sdk/install',{version:ver});
+      if(r.ok) toast('Go '+ver+' installed','success');
+      else toast('Install failed: '+r.error,'error');
+      await this.loadSDK();
+    },
+
+    async activateSDK(ver){
+      const r = await post('/api/go/sdk/activate',{version:ver});
+      if(r.ok) toast('Go '+ver+' is now active','success');
+      else toast(r.error,'error');
+      await this.loadSDK();
+    },
+
+    async removeSDK(ver){
+      if(!confirm('Remove Go '+ver+'?')) return;
+      const r = await post('/api/go/sdk/remove',{version:ver});
+      if(r.ok) toast('Go '+ver+' removed','success');
+      else toast(r.error,'error');
+      await this.loadSDK();
+    },
+
+    async setGoproxy(proxy){
+      const r = await post('/api/go/sdk/goproxy',{proxy});
+      if(r.ok) toast('GOPROXY updated','success');
+      else toast(r.error,'error');
+    },
+
+    statusColor(s){ return s==='active'?'var(--green)':s==='inactive'||s==='stopped'?'var(--text-muted)':'var(--red)'; },
+    statusDot(s){   return s==='active'?'dot-green':'dot-gray'; },
+  };
+}

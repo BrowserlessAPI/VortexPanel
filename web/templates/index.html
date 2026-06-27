@@ -2028,7 +2028,311 @@
       </div>
       <!-- END NODE.JS PROJECTS PAGE -->
 
-      <div x-show="page==='databases'" x-data="databasesPage()">
+      <!-- GO PROJECTS PAGE -->
+      <div x-show="page==='go-projects'" x-data="goProjectsPage()" @keydown.escape.window="addModal.show=false;editModal.show=false;logsModal.show=false">
+
+        <div class="page-header">
+          <div>
+            <div class="page-title">Go Projects</div>
+            <div class="page-sub">Deploy compiled Go binaries with systemd + webserver reverse proxy</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" @click="tab='sdk';loadSDK()">⚙ Go SDK Manager</button>
+            <button class="btn btn-primary btn-sm" @click="openAdd()">+ Add Project</button>
+          </div>
+        </div>
+
+        <!-- PROJECTS TAB -->
+        <div x-show="tab==='projects'">
+          <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+            <input class="form-input" style="max-width:260px" x-model="search" placeholder="🔍 Search projects...">
+            <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
+            <span style="font-size:12px;color:var(--text-muted)" x-text="projects.length+' project(s)'"></span>
+          </div>
+
+          <!-- Empty state -->
+          <div x-show="!loading && projects.length===0" style="text-align:center;padding:60px 20px">
+            <div style="font-size:48px;margin-bottom:12px">🔵</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px">No Go projects yet</div>
+            <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px">Go Project only supports <strong>compiled binary files</strong> — not source code.</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:20px">Compile your Go app → upload the binary → click Add Project</div>
+            <button class="btn btn-primary" @click="openAdd()">+ Add First Project</button>
+          </div>
+
+          <!-- Projects table -->
+          <div x-show="projects.length>0" class="card" style="padding:0;overflow:hidden">
+            <table class="data-table">
+              <thead><tr>
+                <th>Name</th><th>Status</th><th>PID</th>
+                <th>Executable</th><th>Port</th><th>Domain</th><th>User</th><th>Actions</th>
+              </tr></thead>
+              <tbody>
+                <template x-for="p in filteredProjects" :key="p.id">
+                  <tr>
+                    <td style="font-weight:600">
+                      <div x-text="p.name"></div>
+                      <div x-show="p.remark" style="font-size:10px;color:var(--text-muted)" x-text="p.remark"></div>
+                    </td>
+                    <td>
+                      <div style="display:flex;align-items:center;gap:6px">
+                        <span :class="'dot '+statusDot(p.status)" style="width:7px;height:7px;border-radius:50%;display:inline-block"></span>
+                        <span style="font-size:12px" :style="'color:'+statusColor(p.status)" x-text="p.status||'unknown'"></span>
+                      </div>
+                    </td>
+                    <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)" x-text="p.pid||'—'"></td>
+                    <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis" x-text="p.exec_file"></td>
+                    <td style="font-size:12px">
+                      <span x-text="p.port||'—'"></span>
+                      <span x-show="p.release_port && p.port" style="font-size:9px;color:var(--green);margin-left:3px">●open</span>
+                    </td>
+                    <td style="font-size:11px;color:var(--text-muted)" x-text="p.domain ? p.domain.split('\n')[0] : '—'"></td>
+                    <td style="font-size:11px" x-text="p.user||'www'"></td>
+                    <td>
+                      <div style="display:flex;gap:4px;flex-wrap:wrap">
+                        <button x-show="p.status!=='active'" class="btn btn-xs btn-success" @click="control(p,'start')">▶</button>
+                        <button x-show="p.status==='active'" class="btn btn-xs btn-danger" @click="control(p,'stop')">■</button>
+                        <button class="btn btn-xs btn-ghost" @click="control(p,'restart')">↺</button>
+                        <button class="btn btn-xs btn-ghost" @click="showLogs(p)">📋</button>
+                        <button class="btn btn-xs btn-ghost" @click="openEdit(p)">✏</button>
+                        <button class="btn btn-xs btn-danger" @click="remove(p)">🗑</button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- SDK MANAGER TAB -->
+        <div x-show="tab==='sdk'">
+          <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+            <button class="btn btn-ghost btn-sm" @click="tab='projects'">← Back to Projects</button>
+            <button class="btn btn-ghost btn-sm" @click="loadSDK()">↻ Refresh</button>
+          </div>
+
+          <!-- GOPROXY -->
+          <div class="card" style="margin-bottom:16px">
+            <div style="font-weight:600;margin-bottom:12px">GOPROXY Configuration</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Go module proxy — affects download speed and availability of packages</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <template x-for="opt in [
+                {label:'Official (Google)',  value:'https://proxy.golang.org,direct'},
+                {label:'goproxy.io',         value:'https://goproxy.io,direct'},
+                {label:'goproxy.cn (China)', value:'https://goproxy.cn,direct'},
+                {label:'Direct (no proxy)',  value:'direct'},
+              ]" :key="opt.value">
+                <button class="btn btn-sm"
+                        :style="goproxy===opt.value?'background:var(--accent);color:#fff':'background:var(--bg-hover)'"
+                        @click="goproxy=opt.value; setGoproxy(opt.value)">
+                  <span x-text="opt.label"></span>
+                </button>
+              </template>
+            </div>
+            <div style="margin-top:8px;font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="'Current: '+goproxy"></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <!-- Installed versions -->
+            <div class="card">
+              <div style="font-weight:600;margin-bottom:12px">Installed Go Versions</div>
+              <div x-show="sdkLoading" style="color:var(--text-muted);font-size:13px">Loading...</div>
+              <div x-show="!sdkLoading && sdkInstalled.length===0" style="color:var(--text-muted);font-size:13px">No Go versions installed via SDK manager</div>
+              <template x-for="v in sdkInstalled" :key="v.version">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+                  <div>
+                    <span style="font-family:var(--font-mono);font-weight:600" x-text="'Go '+v.version"></span>
+                    <span x-show="v.active" style="margin-left:8px;font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">Active</span>
+                    <div style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)" x-text="v.path"></div>
+                  </div>
+                  <div style="display:flex;gap:6px">
+                    <button x-show="!v.active" class="btn btn-xs btn-ghost" @click="activateSDK(v.version)">Use</button>
+                    <button x-show="!v.active" class="btn btn-xs btn-danger" @click="removeSDK(v.version)">Remove</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <!-- Install new versions -->
+            <div class="card">
+              <div style="font-weight:600;margin-bottom:4px">Install Go Version</div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">Downloaded from dl.google.com — supports amd64 and arm64</div>
+              <div x-show="sdkLoading" style="color:var(--text-muted);font-size:13px">Loading...</div>
+              <template x-for="v in sdkVersions" :key="v.value">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <div>
+                      <span style="font-weight:600;font-family:var(--font-mono)" x-text="'go'+v.version"></span>
+                      <span style="margin-left:8px;font-size:11px;color:var(--text-muted)" x-text="v.label.split('(')[1]?.replace(')','') || ''"></span>
+                    </div>
+                    <span x-show="v.recommended" style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">★ Recommended</span>
+                    <span x-show="v.status==='rc'" style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(99,102,241,.12);color:var(--accent)">RC</span>
+                  </div>
+                  <div>
+                    <span x-show="v.installed && v.active" style="font-size:11px;padding:3px 10px;border-radius:6px;background:rgba(34,197,94,.12);color:var(--green);font-weight:600">✓ Active</span>
+                    <span x-show="v.installed && !v.active" style="font-size:11px;padding:3px 10px;border-radius:6px;background:var(--bg-hover);color:var(--text-muted)">Installed</span>
+                    <button x-show="!v.installed" class="btn btn-xs btn-primary" @click="installSDK(v.value)">Install</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- ADD PROJECT MODAL -->
+        <div x-show="addModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="addModal.show=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+              <div style="font-size:18px;font-weight:700">Add Go Project</div>
+              <button @click="addModal.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+            </div>
+
+            <!-- Info banner -->
+            <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:6px;padding:10px 12px;margin-bottom:18px;font-size:12px;color:var(--text-secondary)">
+              ℹ Go Project only supports <strong>compiled binary files</strong>. Compile your Go app first, then select the binary here.
+            </div>
+
+            <div style="display:grid;gap:14px">
+              <!-- Executable file -->
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Executable File *</label>
+                <input class="form-input" x-model="addModal.exec_file" placeholder="/www/wwwroot/myapp/myapp" style="margin-top:4px;font-family:var(--font-mono)">
+                <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Full path to the compiled Go binary. File permissions will be fixed automatically.</div>
+              </div>
+
+              <!-- Project name -->
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Name *</label>
+                <input class="form-input" x-model="addModal.name" placeholder="my-go-app" style="margin-top:4px">
+              </div>
+
+              <!-- Execution command + port in one row -->
+              <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Execution Command</label>
+                  <input class="form-input" x-model="addModal.exec_cmd" style="margin-top:4px;font-family:var(--font-mono)"
+                         :placeholder="addModal.exec_file || '/path/to/binary web'">
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Leave blank to use executable path directly</div>
+                </div>
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Port</label>
+                  <input class="form-input" type="number" x-model="addModal.port" placeholder="3000" style="margin-top:4px">
+                </div>
+              </div>
+
+              <!-- Release port + Run user -->
+              <div style="display:flex;align-items:center;gap:16px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+                  <input type="checkbox" x-model="addModal.release_port">
+                  <span>Release port</span>
+                  <span style="font-size:11px;color:var(--text-muted)">(auto-open in firewall)</span>
+                </label>
+                <div style="flex:1">
+                  <select class="form-input" x-model="addModal.user">
+                    <option value="www">www</option>
+                    <option value="root">root</option>
+                    <option value="nobody">nobody</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Domain -->
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">
+                  Domain Name
+                  <span x-show="wsInfo" style="font-weight:400;margin-left:6px"
+                        :style="wsInfo?.webserver?'color:var(--green)':'color:var(--red)'"
+                        x-text="wsInfo?.webserver ? '→ proxy via '+wsInfo.webserver : '⚠ No webserver active'"></span>
+                </label>
+                <textarea class="form-input" x-model="addModal.domain" rows="2" style="margin-top:4px;resize:vertical"
+                          placeholder="One domain per line — leave blank for port-only access&#10;myapp.com&#10;*.myapp.com"></textarea>
+              </div>
+
+              <!-- More settings -->
+              <button @click="addModal.show_more=!addModal.show_more"
+                      style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0">
+                <span x-text="addModal.show_more?'▾ Hide settings':'▸ More settings (env vars, remark)'"></span>
+              </button>
+              <div x-show="addModal.show_more" style="display:grid;gap:14px">
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
+                  <textarea class="form-input" x-model="addModal.env_vars" rows="3" style="margin-top:4px;resize:vertical;font-family:var(--font-mono);font-size:12px"
+                            placeholder="KEY=value&#10;PORT=3000&#10;GIN_MODE=release"></textarea>
+                </div>
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Remark</label>
+                  <input class="form-input" x-model="addModal.remark" placeholder="Optional note" style="margin-top:4px">
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+              <button class="btn btn-ghost" @click="addModal.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="submitAdd()" :disabled="addModal.loading">
+                <span x-show="addModal.loading">Creating...</span>
+                <span x-show="!addModal.loading">Confirm</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- EDIT MODAL -->
+        <div x-show="editModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="editModal.show=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:520px;padding:28px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+              <div style="font-size:18px;font-weight:700">Edit Project — <span x-text="editModal.project?.name"></span></div>
+              <button @click="editModal.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+            </div>
+            <div style="display:grid;gap:14px">
+              <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Execution Command</label>
+                  <input class="form-input" x-model="editModal.exec_cmd" style="margin-top:4px;font-family:var(--font-mono)">
+                </div>
+                <div>
+                  <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Port</label>
+                  <input class="form-input" x-model="editModal.port" style="margin-top:4px">
+                </div>
+              </div>
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain</label>
+                <textarea class="form-input" x-model="editModal.domain" rows="2" style="margin-top:4px;resize:vertical"></textarea>
+              </div>
+              <div style="display:flex;align-items:center;gap:16px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+                  <input type="checkbox" x-model="editModal.release_port"> Release port (open in firewall)
+                </label>
+                <select class="form-input" x-model="editModal.user" style="max-width:120px">
+                  <option value="www">www</option>
+                  <option value="root">root</option>
+                  <option value="nobody">nobody</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
+                <textarea class="form-input" x-model="editModal.env_vars" rows="3" style="margin-top:4px;resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder="KEY=value"></textarea>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px">
+              <button class="btn btn-ghost" @click="editModal.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="submitEdit()">Save & Restart</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- LOGS MODAL -->
+        <div x-show="logsModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center" @click.self="logsModal.show=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">
+            <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+              <div style="font-weight:600">Logs — <span x-text="logsModal.name"></span></div>
+              <button @click="logsModal.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+            </div>
+            <pre style="flex:1;overflow-y:auto;padding:16px;margin:0;background:#0d1117;color:#86efac;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap" x-text="logsModal.logs"></pre>
+          </div>
+        </div>
+
+      </div>
+      <!-- END GO PROJECTS PAGE -->
         <div class="page-header">
           <div><div class="page-title">Databases</div><div class="page-sub" x-text="engines.length ? (engines.find(e=>e.id===activeEngine)?.name || activeEngine) + ' management' : 'Database management'"></div></div>
           <div style="display:flex;gap:8px">
