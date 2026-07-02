@@ -395,3 +395,33 @@ def get_site_logs(domain):
         'access': read_log(access_log), 'access_path': access_log,
         'error':  read_log(error_log),  'error_path':  error_log})
 
+
+# --- DISK USAGE -------------------------------------------------------------------
+@websites_bp.route('/api/websites/<domain>/disk-usage')
+def get_site_disk_usage(domain):
+    """Lazy on-demand disk usage — not called on the main list to avoid slow page loads
+    on servers with many/large sites. Frontend calls this when the drawer opens."""
+    if not req(): return jsonify({'ok':False}), 401
+    path = _get_site_path(domain)
+    if not path or not os.path.isdir(path):
+        return jsonify({'ok':False,'error':'Site directory not found'})
+    # du -sh with a timeout — large sites (node_modules, media) can be slow
+    out = sh(f'du -sh {path} 2>/dev/null | cut -f1', t=20)
+    size_human = out.strip() if out else 'Unknown'
+    # Also get byte count for sorting/comparison if needed later
+    out_bytes = sh(f'du -sb {path} 2>/dev/null | cut -f1', t=20)
+    try:
+        size_bytes = int(out_bytes.strip())
+    except (ValueError, AttributeError):
+        size_bytes = 0
+    # File + folder counts (fast, no size calc)
+    file_count = sh(f'find {path} -type f 2>/dev/null | wc -l', t=15)
+    dir_count  = sh(f'find {path} -type d 2>/dev/null | wc -l', t=15)
+    return jsonify({
+        'ok': True, 'domain': domain, 'path': path,
+        'size_human': size_human, 'size_bytes': size_bytes,
+        'file_count': int(file_count.strip() or 0),
+        'dir_count':  int(dir_count.strip() or 0),
+    })
+
+

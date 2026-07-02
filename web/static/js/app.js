@@ -280,18 +280,24 @@ function dashboardPage() {
       {icon:'📦',label:'Install Modules',page:'modules'},
     ],
     loading: true,
+    sslAlerts: [],
     // Rolling client-side history for charts (last 30 polls ≈ 2.5 min at 5s interval)
     _hist: { labels:[], cpu:[], ram:[], netRx:[], netTx:[] },
     _prevNet: null,
     _charts: {},
 
     async init() {
-      await Promise.all([this.loadStats(),this.loadServices()]);
+      await Promise.all([this.loadStats(),this.loadServices(),this.loadSslAlerts()]);
       this.loading = false;
       this.$nextTick(() => this._initCharts());
       setInterval(()=>this.loadStats(),5000);
+      setInterval(()=>this.loadSslAlerts(),60000); // recheck every minute, not every 5s
       document.addEventListener("vortex-logged-in", () => { this.init(); });
-      window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); } });
+      window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); this.loadSslAlerts(); } });
+    },
+    async loadSslAlerts() {
+      const r = await get('/api/dashboard/ssl-alerts').catch(()=>({ok:false}));
+      if (r.ok) this.sslAlerts = r.alerts || [];
     },
     async loadStats() {
       const r=await get('/api/dashboard/stats');
@@ -420,6 +426,7 @@ function websitesPage() {
       maintEnabled:false,maintMessage:'We are performing scheduled maintenance. Please check back soon.',
       loading:false,
       integrityStatus:{enabled:false,created:'',file_count:0},
+      diskUsage:{loading:false,size_human:'',size_bytes:0,file_count:0,dir_count:0},
       integrityScanning:false, integrityResult:null, integrityLoading:false,
     },
     drawerTabs:[
@@ -519,12 +526,25 @@ function websitesPage() {
       }
       else if(d.tab==='maintenance'){const r=await get('/api/websites/'+domain+'/maintenance');if(r.ok)d.maintEnabled=r.enabled;}
       else if(d.tab==='domains'){const r=await get('/api/websites/'+domain+'/domains');if(r.ok)d.domains=r.domains||[];}
-      else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok)d.directory.path=r.path||d.site?.path||'';}
+      else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok)d.directory.path=r.path||d.site?.path||''; this.loadDiskUsage();}
       else if(d.tab==='rewrite'){const r=await get('/api/websites/'+domain+'/rewrite');if(r.ok)d.rewriteContent=r.content||'';const rt=await get('/api/websites/'+domain+'/rewrite/templates');if(rt.ok)d.rewriteTemplates=rt.templates||[];}
       else if(d.tab==='hotlink'){const r=await get('/api/websites/'+domain+'/hotlink');if(r.ok){d.hotlink.enabled=r.enabled||false;d.hotlink.suffixes=r.suffixes||'jpg,jpeg,gif,png,js,css';d.hotlink.domains=r.domains||'';d.hotlink.response=r.response||'404';}}
       else if(d.tab==='limit'){const r=await get('/api/websites/'+domain+'/limit-access');if(r.ok)d.limitRules=r.rules||[];}
       else if(d.tab==='logs'){const r=await get('/api/websites/'+domain+'/logs');if(r.ok){d.accessLog=r.access||'No access logs';d.errorLog=r.error||'No error logs';}}
       else if(d.tab==='integrity'){await this.loadIntegrityStatus();}
+    },
+    async loadDiskUsage() {
+      const d = this.drawer;
+      if (!d.site?.domain) return;
+      d.diskUsage.loading = true;
+      const r = await get('/api/websites/'+d.site.domain+'/disk-usage');
+      if (r.ok) {
+        d.diskUsage = {loading:false, size_human:r.size_human, size_bytes:r.size_bytes,
+                       file_count:r.file_count, dir_count:r.dir_count};
+      } else {
+        d.diskUsage.loading = false;
+        d.diskUsage.size_human = 'Unavailable';
+      }
     },
     async loadIntegrityStatus() {
       const domain=this.drawer.site?.domain; if(!domain) return;

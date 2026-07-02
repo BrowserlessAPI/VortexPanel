@@ -236,6 +236,23 @@
           </div>
         </div>
 
+        <!-- SSL expiry warning banner -->
+        <div x-show="sslAlerts.length>0"
+             style="display:flex;align-items:flex-start;gap:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
+          <span style="font-size:18px;flex-shrink:0">🔒</span>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:#92400e;margin-bottom:3px"
+                 x-text="sslAlerts.length+' SSL certificate'+(sslAlerts.length>1?'s':'')+' expiring soon'"></div>
+            <div style="font-size:12px;color:#b45309;display:flex;flex-wrap:wrap;gap:6px">
+              <template x-for="a in sslAlerts" :key="a.domain">
+                <span :style="'padding:2px 8px;border-radius:10px;font-weight:600;'+(a.severity==='expired'?'background:#fee2e2;color:#991b1b':a.severity==='critical'?'background:#fed7aa;color:#9a3412':'background:#fef3c7;color:#92400e')"
+                      x-text="a.domain+' ('+(a.days_left<0?'expired':a.days_left+'d left')+')'"></span>
+              </template>
+            </div>
+          </div>
+          <button class="btn btn-sm" style="background:#fef3c7;color:#92400e;border-color:#fde68a;flex-shrink:0" @click="go('websites')">Renew →</button>
+        </div>
+
         <!-- Webserver conflict warning banner -->
         <div x-show="wsConflict.conflict"
              style="display:flex;align-items:flex-start;gap:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
@@ -471,6 +488,21 @@
               <div x-show="drawer.tab==='directory'">
                 <div style="font-weight:600;font-size:13px;margin-bottom:20px">Directory</div>
                 <div style="display:grid;gap:16px;max-width:560px">
+                  <!-- Disk usage -->
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--bg-raised);border-radius:8px;border:1px solid var(--border)">
+                    <div style="display:flex;align-items:center;gap:10px">
+                      <span style="font-size:20px">💾</span>
+                      <div>
+                        <div style="font-size:12px;font-weight:600;color:var(--text-muted)">Disk Usage</div>
+                        <div x-show="!drawer.diskUsage.loading" style="font-size:16px;font-weight:700" x-text="drawer.diskUsage.size_human||'—'"></div>
+                        <div x-show="drawer.diskUsage.loading" class="skeleton skeleton-text sm" style="width:60px"></div>
+                      </div>
+                    </div>
+                    <div style="text-align:right;font-size:11px;color:var(--text-muted)">
+                      <div x-show="!drawer.diskUsage.loading" x-text="(drawer.diskUsage.file_count||0)+' files, '+(drawer.diskUsage.dir_count||0)+' folders'"></div>
+                      <button class="btn btn-ghost btn-xs" style="margin-top:4px" @click="loadDiskUsage()" :disabled="drawer.diskUsage.loading">↻ Recalculate</button>
+                    </div>
+                  </div>
                   <div>
                     <label class="form-label">Site directory</label>
                     <div style="display:flex;gap:8px">

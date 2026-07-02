@@ -9,6 +9,30 @@ def req():
 _stats_cache = {'data': None, 'ts': 0}
 _STATS_TTL   = 1.5
 
+@dashboard_bp.route('/api/dashboard/ssl-alerts')
+def ssl_alerts():
+    """Aggregate SSL expiry across all sites for a dashboard-level warning banner.
+    Reuses list_sites() from websites_core, which already computes ssl_days per site."""
+    if not req(): return jsonify({'ok': False}), 401
+    try:
+        from panel.routes.websites_core import list_sites
+        sites = list_sites()
+    except Exception as e:
+        return jsonify({'ok': True, 'alerts': [], 'error': str(e)})
+
+    THRESHOLD_DAYS = 14
+    alerts = []
+    for s in sites:
+        days = s.get('ssl_days')
+        if s.get('ssl') and days is not None and days <= THRESHOLD_DAYS:
+            alerts.append({
+                'domain': s['domain'],
+                'days_left': days,
+                'severity': 'expired' if days < 0 else ('critical' if days <= 7 else 'warning'),
+            })
+    alerts.sort(key=lambda a: a['days_left'])
+    return jsonify({'ok': True, 'alerts': alerts, 'threshold_days': THRESHOLD_DAYS})
+
 
 def _get_stats():
     def _proc_stat():
