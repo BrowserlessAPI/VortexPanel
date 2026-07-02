@@ -348,3 +348,26 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 .CodeMirror-scroll { min-height: 100%; }
 .cm-s-material-darker.CodeMirror { background: #0d0e14; }
 .cm-s-material-darker .CodeMirror-gutters { background: #0d0e14; border-right: 1px solid #1e2030; }
+
+/* ── Loading skeleton screens ────────────────────────────────────────────── */
+@keyframes skeleton-pulse {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-raised) 25%, var(--bg-hover) 37%, var(--bg-raised) 63%);
+  background-size: 800px 100%;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+.skeleton-text     { height: 12px; width: 100%; margin-bottom: 8px; }
+.skeleton-text.sm   { height: 10px; width: 60%; }
+.skeleton-text.lg   { height: 20px; width: 40%; }
+.skeleton-card      { height: 90px; width: 100%; border-radius: var(--radius-lg, 10px); }
+.skeleton-row       { height: 42px; width: 100%; margin-bottom: 6px; }
+.skeleton-circle    { width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; }
+.skeleton-table td  { padding: 10px 14px; }
+
+/* ── Chart containers ────────────────────────────────────────────────────── */
+.chart-card { position: relative; height: 220px; }
+.chart-card canvas { max-height: 100%; }

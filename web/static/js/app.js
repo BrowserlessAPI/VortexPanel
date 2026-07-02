@@ -279,10 +279,23 @@ function dashboardPage() {
       {icon:'💾',label:'Create Backup',page:'backups'},
       {icon:'📦',label:'Install Modules',page:'modules'},
     ],
-    async init() { await Promise.all([this.loadStats(),this.loadServices()]); setInterval(()=>this.loadStats(),5000); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") this.load(); }); },
+    loading: true,
+    // Rolling client-side history for charts (last 30 polls ≈ 2.5 min at 5s interval)
+    _hist: { labels:[], cpu:[], ram:[], netRx:[], netTx:[] },
+    _prevNet: null,
+    _charts: {},
+
+    async init() {
+      await Promise.all([this.loadStats(),this.loadServices()]);
+      this.loading = false;
+      this.$nextTick(() => this._initCharts());
+      setInterval(()=>this.loadStats(),5000);
+      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); } });
+    },
     async loadStats() {
       const r=await get('/api/dashboard/stats');
-      if(r.ok) this.stats=r;
+      if(r.ok) { this.stats=r; this._pushHistory(r); }
     },
     async loadServices() {
       const r=await get('/api/services');
@@ -291,6 +304,97 @@ function dashboardPage() {
     go(page){ window.dispatchEvent(new CustomEvent('nav',{detail:{page}})); },
     ramPct()  { const r=this.stats.ram;  return (r && r.total) ? Math.round(r.used/r.total*100) : 0; },
     diskPct() { const d=this.stats.disk; return (d && d.total) ? Math.round(d.used/d.total*100) : 0; },
+
+    _pushHistory(r) {
+      const now = new Date();
+      const label = now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0')+':'+now.getSeconds().toString().padStart(2,'0');
+      const h = this._hist;
+      h.labels.push(label);
+      h.cpu.push(r.cpu || 0);
+      h.ram.push(this.ramPct());
+      // Compute network rate (bytes/sec) from cumulative counters
+      const rx = r.net?.rx || 0, tx = r.net?.tx || 0;
+      if (this._prevNet) {
+        const dt = 5; // poll interval seconds
+        h.netRx.push(Math.max(0, (rx - this._prevNet.rx) / dt));
+        h.netTx.push(Math.max(0, (tx - this._prevNet.tx) / dt));
+      } else {
+        h.netRx.push(0); h.netTx.push(0);
+      }
+      this._prevNet = {rx, tx};
+      const CAP = 30;
+      if (h.labels.length > CAP) {
+        h.labels.shift(); h.cpu.shift(); h.ram.shift(); h.netRx.shift(); h.netTx.shift();
+      }
+      this._updateCharts();
+    },
+
+    _chartColors() {
+      const css = getComputedStyle(document.documentElement);
+      return {
+        cpu:   css.getPropertyValue('--stat-cpu').trim()   || '#f97316',
+        ram:   css.getPropertyValue('--stat-ram').trim()   || '#6366f1',
+        rx:    '#22c55e',
+        tx:    '#3b82f6',
+        grid:  css.getPropertyValue('--border').trim()     || 'rgba(148,163,184,.15)',
+        text:  css.getPropertyValue('--text-muted').trim() || '#94a3b8',
+      };
+    },
+
+    _initCharts() {
+      if (typeof Chart === 'undefined') return; // CDN not loaded yet — retry next tick
+      const c = this._chartColors();
+      const baseOpts = (yMax, suffix) => ({
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { grid: {display:false}, ticks: { color: c.text, maxTicksLimit: 6, font:{size:10} } },
+          y: { min: 0, max: yMax, grid: { color: c.grid }, ticks: { color: c.text, font:{size:10},
+                callback: v => v + (suffix||'') } },
+        },
+        plugins: { legend: { labels: { color: c.text, boxWidth: 10, font:{size:11} } } },
+      });
+
+      const cpuRamEl = document.getElementById('vp-chart-cpuram');
+      if (cpuRamEl && !this._charts.cpuram) {
+        this._charts.cpuram = new Chart(cpuRamEl, {
+          type: 'line',
+          data: { labels: this._hist.labels, datasets: [
+            { label:'CPU %', data:this._hist.cpu, borderColor:c.cpu, backgroundColor:c.cpu+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'RAM %', data:this._hist.ram, borderColor:c.ram, backgroundColor:c.ram+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+          ]},
+          options: baseOpts(100, '%'),
+        });
+      }
+
+      const netEl = document.getElementById('vp-chart-net');
+      if (netEl && !this._charts.net) {
+        this._charts.net = new Chart(netEl, {
+          type: 'line',
+          data: { labels: this._hist.labels, datasets: [
+            { label:'↓ In',  data:this._hist.netRx, borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'↑ Out', data:this._hist.netTx, borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+          ]},
+          options: { ...baseOpts(undefined, ''),
+            scales: { ...baseOpts(undefined,'').scales,
+              y: { min:0, grid:{color:c.grid}, ticks:{ color:c.text, font:{size:10}, callback: v => fmtBytes(v)+'/s' } } } },
+        });
+      }
+    },
+
+    _updateCharts() {
+      if (!this._charts.cpuram) { this._initCharts(); if(!this._charts.cpuram) return; }
+      this._charts.cpuram.data.labels = this._hist.labels;
+      this._charts.cpuram.data.datasets[0].data = this._hist.cpu;
+      this._charts.cpuram.data.datasets[1].data = this._hist.ram;
+      this._charts.cpuram.update('none');
+      if (this._charts.net) {
+        this._charts.net.data.labels = this._hist.labels;
+        this._charts.net.data.datasets[0].data = this._hist.netRx;
+        this._charts.net.data.datasets[1].data = this._hist.netTx;
+        this._charts.net.update('none');
+      }
+    },
   };
 }
 
@@ -956,7 +1060,7 @@ function filesPage() {
       }
       // Fallback: load root without toast error
       await this.loadDirSilent('/');
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="files") this.load(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="files") this.loadDir(this.path||this.webroot); });
     },
 
     async loadDirSilent(p) {
@@ -2561,7 +2665,7 @@ function mailPage() {
 
     forwardingRules:[], showAddForward:false, forwardForm:{source:'',destination:''},
     logFilter:'mail', logLines:'100', logSearch:'', mailLogOutput:'', filteredMailLog:'',
-    async init() { await this.loadStatus(); await this.loadDomains(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="mail") this.load(); }); },
+    async init() { await this.loadStatus(); await this.loadDomains(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="mail") { this.loadStatus(); this.loadDomains(); } }); },
 
     async loadStatus() {
       const r = await get('/api/mail/status');
@@ -2723,16 +2827,25 @@ function settingsPage() {
     aiConfig: {enabled:true, api_key:'', base_url:'https://neoncodex.io/api/v1', model:'neoncodex-default', max_tokens:2048},
     aiModels: [], showApiKey: false,
     aiTesting: false, aiTestResult: '', aiTestOk: false,
+    auditLog: [], auditLoading: false,
 
     async init() {
       await this.loadSettings();
       await this.load2faStatus();
+      await this.loadAuditLog();
       const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
       if (sc.ok) { this.allowlistText=(sc.allowed_ips||[]).join('\n'); this.sessionHours=sc.session_hours||24; }
       const sp = await get('/api/settings/webshell-scan/paths').catch(()=>({ok:false}));
       if (sp.ok) this.scanPaths = sp.paths||['/www/wwwroot'];
       if (this.scanPaths.length) this.scanPath = this.scanPaths[0];
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") this.load(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); this.loadAuditLog(); } });
+    },
+
+    async loadAuditLog() {
+      this.auditLoading = true;
+      const r = await get('/api/auth/audit-log').catch(()=>({ok:false}));
+      if (r.ok) this.auditLog = r.entries || [];
+      this.auditLoading = false;
     },
 
     async loadSettings() {
@@ -3031,7 +3144,7 @@ function bandwidthPage() {
       await this.loadSummary();
       await this.loadDomains();
       setInterval(()=>this.loadRealtime(), 3000);
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="bandwidth") this.load(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="bandwidth") { this.loadSummary(); this.loadDomains(); } });
     },
 
     async loadSummary() {
@@ -3078,7 +3191,7 @@ function securityPage() {
                      timeout_seconds:3, unhealthy_threshold:3, healthy_threshold:2, servers:[]},
              state:{}, service_active:false, log:''},
 
-    async init() { await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="security") this.load(); }); },
+    async init() { await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="security") { this.loadScore(); this.loadSSH(); } }); },
 
     async loadScore() {
       const r = await get('/api/security/score');
@@ -3909,7 +4022,7 @@ function caddyPage() {
     form: {domain:'', path:'', type:'static', php:'8.3', proxy_target:''},
     drawerShow: false, drawerSite: null, drawerConf: '',
 
-    async init() { await Promise.all([this.loadStatus(), this.loadSites()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="caddy") this.load(); }); },
+    async init() { await Promise.all([this.loadStatus(), this.loadSites()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="caddy") { this.loadStatus(); this.loadSites(); } }); },
 
     async loadStatus() {
       const r = await get('/api/caddy/status');
