@@ -3416,6 +3416,58 @@
               <!-- Right content panel -->
               <div style="flex:1;overflow-y:auto;padding:20px">
 
+                <!-- FFMPEG VERSIONS tab -->
+                <div x-show="settingsModal.tab==='ffmpeg_versions'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <div style="font-weight:600;font-size:14px">Versions</div>
+                    <button class="btn btn-ghost btn-sm" @click="loadFfmpegVersions()">↻ Refresh</button>
+                  </div>
+                  <table class="data-table">
+                    <thead><tr><th>Version</th><th>Status</th><th style="text-align:right">OPT</th></tr></thead>
+                    <tbody>
+                      <template x-for="v in (settingsModal.ffmpegVersions||[])" :key="v.version">
+                        <tr>
+                          <td>
+                            <a href="#" @click.prevent="v.installed && ffmpegShowDetail(v.version)"
+                               :style="v.installed?'color:var(--accent);text-decoration:none':'color:var(--text-secondary)'"
+                               x-text="'ffmpeg-'+v.version"></a>
+                          </td>
+                          <td>
+                            <span :style="v.installed?'color:var(--green)':'color:var(--text-muted)'" x-text="v.installed?'Installed':'Not Installed'"></span>
+                          </td>
+                          <td style="text-align:right">
+                            <span x-show="v.installed" style="display:flex;gap:10px;justify-content:flex-end">
+                              <a href="#" @click.prevent="ffmpegShowDetail(v.version)" style="color:var(--accent);text-decoration:none;font-size:12px">Detail</a>
+                              <a href="#" @click.prevent="ffmpegUninstall(v.version)" style="color:var(--red);text-decoration:none;font-size:12px">Uninstall</a>
+                            </span>
+                            <a x-show="!v.installed" href="#" @click.prevent="ffmpegInstall(v.version)" style="color:var(--accent);text-decoration:none;font-size:12px">Install</a>
+                          </td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                  <div style="font-size:11px;color:var(--text-muted);margin-top:14px;line-height:1.6">
+                    ℹ Each version installs independently to <code>/www/server/ffmpeg/ffmpeg-{version}/</code> and is accessible via its own command alias (e.g. <code>ffmpeg6</code> for 6.1). Installing or removing one version does not affect the others.
+                  </div>
+
+                  <!-- Detail sub-modal -->
+                  <div x-show="settingsModal.ffmpegDetail" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1100;display:flex;align-items:center;justify-content:center" @click.self="settingsModal.ffmpegDetail=null">
+                    <div style="background:var(--bg-card);border-radius:12px;width:520px;padding:24px">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                        <div style="font-weight:700;font-size:15px" x-text="'ffmpeg-'+(settingsModal.ffmpegDetail?.version||'')+' Detail'"></div>
+                        <button @click="settingsModal.ffmpegDetail=null" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+                      </div>
+                      <table class="data-table">
+                        <tbody>
+                          <tr><td style="font-weight:600;width:120px">Path</td><td style="font-family:var(--font-mono);font-size:12px" x-text="settingsModal.ffmpegDetail?.path"></td></tr>
+                          <tr><td style="font-weight:600">Full command</td><td style="font-family:var(--font-mono);font-size:12px" x-text="settingsModal.ffmpegDetail?.full_command"></td></tr>
+                          <tr><td style="font-weight:600">Command</td><td style="font-family:var(--font-mono);font-size:12px" x-text="settingsModal.ffmpegDetail?.command"></td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- SERVICE tab -->
                 <div x-show="settingsModal.tab==='service'">
                   <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px">Service Status</div>
@@ -3652,6 +3704,61 @@
                       <tr><td style="font-family:var(--font-mono);font-size:12px">keyspace_misses</td><td x-text="settingsModal.currentStatus?.keyspace_misses||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Failed lookups</td></tr>
                     </tbody>
                   </table>
+                </div>
+
+                <!-- == MEMCACHED LOAD STATUS tab == -->
+                <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='memcached'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <div style="font-weight:600;font-size:14px">Load Status</div>
+                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">↻ Refresh</button>
+                  </div>
+                  <table class="data-table">
+                    <thead><tr><th>Fields</th><th>Current value</th><th>Note</th></tr></thead>
+                    <tbody>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">bind</td><td x-text="settingsModal.currentStatus?.bind||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Listening IP</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">port</td><td x-text="settingsModal.currentStatus?.port||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Listening Port</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">maxconn</td><td x-text="settingsModal.currentStatus?.maxconn||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Maximum Connection Limit</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">cachesize</td><td x-text="settingsModal.currentStatus?.cachesize||'—'"></td><td style="font-size:11px;color:var(--text-muted)">Maximum Cache Size (MB)</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">curr_connections</td><td x-text="settingsModal.currentStatus?.curr_connections||'0'"></td><td style="font-size:11px;color:var(--text-muted)">Current Open Connections</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">cmd_get</td><td x-text="settingsModal.currentStatus?.cmd_get||'0'"></td><td style="font-size:11px;color:var(--text-muted)">GET Request Count</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">get_hits</td><td x-text="settingsModal.currentStatus?.get_hits||'0'"></td><td style="font-size:11px;color:var(--text-muted)">GET Hits Count</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">get_misses</td><td x-text="settingsModal.currentStatus?.get_misses||'0'"></td><td style="font-size:11px;color:var(--text-muted)">GET Misses Count</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">bytes_read</td><td x-text="settingsModal.currentStatus?.bytes_read||'0.00 B'"></td><td style="font-size:11px;color:var(--text-muted)">Bytes Read</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">bytes_written</td><td x-text="settingsModal.currentStatus?.bytes_written||'0.00 B'"></td><td style="font-size:11px;color:var(--text-muted)">Bytes Written</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">bytes</td><td x-text="settingsModal.currentStatus?.bytes||'0.00 B'"></td><td style="font-size:11px;color:var(--text-muted)">Current Memory Usage</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">curr_items</td><td x-text="settingsModal.currentStatus?.curr_items||'0'"></td><td style="font-size:11px;color:var(--text-muted)">Current Cached Items</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">evictions</td><td x-text="settingsModal.currentStatus?.evictions||'0'"></td><td style="font-size:11px;color:var(--text-muted)">Evicted Items Due to Memory Limit</td></tr>
+                      <tr><td style="font-family:var(--font-mono);font-size:12px">hit</td><td x-text="settingsModal.currentStatus?.hit_rate||'0'"></td><td style="font-size:11px;color:var(--text-muted)">GET Hit Rate</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- == MEMCACHED OPTIMIZATION tab == -->
+                <div x-show="settingsModal.tab==='optimization' && settingsModal.mod?.id==='memcached'">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:16px">Optimization</div>
+                  <div style="display:grid;gap:16px;max-width:460px">
+                    <div class="form-group" style="margin:0">
+                      <label class="form-label">BindIp</label>
+                      <input class="form-input" x-model="settingsModal.optimization.bind" placeholder="127.0.0.1">
+                      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Listening IP, please do not modify it freely</div>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label class="form-label">PORT</label>
+                      <input class="form-input" x-model="settingsModal.optimization.port" placeholder="11211">
+                      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Listening port, generally no need to modify</div>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label class="form-label">CACHESIZE</label>
+                      <input class="form-input" x-model="settingsModal.optimization.cachesize" placeholder="64">
+                      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">MB, cache size, it is recommended not to exceed 512M</div>
+                    </div>
+                    <div class="form-group" style="margin:0">
+                      <label class="form-label">MAXCONN</label>
+                      <input class="form-input" x-model="settingsModal.optimization.maxconn" placeholder="1024">
+                      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Maximum number of connections, recommended not to exceed 40960</div>
+                    </div>
+                    <button class="btn btn-primary btn-sm" style="width:fit-content" @click="settingsSaveOptimization()">Save</button>
+                  </div>
                 </div>
 
                 <!-- == SLOW LOG tab == -->

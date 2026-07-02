@@ -2172,7 +2172,7 @@ function modulesPage() {
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal
-      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version'}[m.id] : 'service';
+      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions'}[m.id] : 'service';
       this.settingsModal = {
         ...this.settingsModal,
         show: true, mod: m, tab: defaultTab, rcData: {},
@@ -2234,6 +2234,52 @@ function modulesPage() {
       } else {
         toast(r.error || 'Failed to load settings', 'error');
       }
+      if (m.id === 'ffmpeg') {
+        this.settingsModal.ffmpegVersions = [];
+        this.settingsModal.ffmpegDetail = null;
+        await this.loadFfmpegVersions();
+      }
+    },
+
+    async loadFfmpegVersions() {
+      const r = await get('/api/modules/ffmpeg/versions');
+      if (r.ok) this.settingsModal.ffmpegVersions = r.versions || [];
+    },
+
+    async ffmpegInstall(version) {
+      const r = await post(`/api/modules/ffmpeg/versions/${version}/install`, {});
+      if (!r.ok) { toast(r.error || 'Install failed', 'error'); return; }
+      this.jobModal = {show:true, title:`Installing: ffmpeg ${version}`, lines:[], done:false, success:false, action:'install', installedVer:''};
+      const es = new EventSource(`/api/modules/job/${r.job_id}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.line) this.jobModal.lines.push(d.line);
+        if (d.done) {
+          es.close();
+          this.jobModal.done = true; this.jobModal.success = d.success;
+          toast(d.success ? `ffmpeg ${version} installed` : 'Install failed — check log', d.success ? 'success' : 'error');
+          this.loadFfmpegVersions();
+        }
+        if (d.error) { es.close(); toast(d.error, 'error'); }
+        this.$nextTick(()=>{
+          const t=document.querySelector('.job-terminal');
+          if(t) t.scrollTop=t.scrollHeight;
+        });
+      };
+      es.onerror = () => { es.close(); };
+    },
+
+    async ffmpegUninstall(version) {
+      if (!confirm(`Uninstall ffmpeg ${version}? This removes /www/server/ffmpeg/ffmpeg-${version} and its command alias.`)) return;
+      const r = await post(`/api/modules/ffmpeg/versions/${version}/uninstall`, {});
+      if (r.ok) { toast(`ffmpeg ${version} removed`, 'success'); await this.loadFfmpegVersions(); }
+      else toast(r.error || 'Uninstall failed', 'error');
+    },
+
+    async ffmpegShowDetail(version) {
+      const r = await get(`/api/modules/ffmpeg/versions/${version}/detail`);
+      if (r.ok) this.settingsModal.ffmpegDetail = {version, ...r};
+      else toast(r.error || 'Failed to load detail', 'error');
     },
 
     async settingsControl(action) {
@@ -2334,6 +2380,8 @@ function modulesPage() {
         postgresql: ['service','config','logs'],
         mongodb:    ['service','config','logs'],
         redis:      ['service','switch_version','optimization','config','current_status','persistence','logs'],
+        memcached:  ['service','config','switch_version','current_status','optimization'],
+        ffmpeg:     ['ffmpeg_versions'],
         php:        ['service','extensions','config','ini','fpm','upload_limit','timeout_limit','disabled_functions','load_average','session_config','slow_log','logs','phpinfo'],
         'pure-ftpd':['service','switch_version','users','port','config','logs'],
         fail2ban:   ['service','website_protection','server_protection','black_ip','white_ip','logs'],
@@ -2351,6 +2399,7 @@ function modulesPage() {
         info:'Info', storage:'Storage Location', port:'Port',
         current_status:'Current Status', slow_log:'Slow Log',
         switch_version:'Switch Version', persistence:'Set Persistence',
+        ffmpeg_versions:'Versions',
         extensions:'Install Extensions', ini:'Configuration File',
         fpm:'FPM Profile', phpinfo:'phpinfo',
         caddyfile:'Caddyfile', global_opts:'Global Options', auto_https:'Auto HTTPS',
