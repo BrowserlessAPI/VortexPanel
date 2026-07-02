@@ -175,16 +175,26 @@ MODULES = [
             {'label':'1.30.3 (Stable)',   'value':'stable'},
             {'label':'1.31.2 (Mainline)', 'value':'mainline'},
         ],
-        'install_tpl':'''apt-get install -y curl gnupg2 ca-certificates lsb-release && \
-rm -f /usr/share/keyrings/nginx-archive-keyring.gpg && \
-curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
-REPO="http://nginx.org/packages/{ver}/ubuntu" && \
-[ "{ver}" = "stable" ] && REPO="http://nginx.org/packages/ubuntu" || true && \
-echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] $REPO $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
-apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && \
-apt-get install -y nginx && systemctl enable --now nginx''',
+        'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian) && \
+if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
+  apt-get install -y curl gnupg2 ca-certificates lsb-release && \
+  rm -f /usr/share/keyrings/nginx-archive-keyring.gpg && \
+  curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && \
+  REPO="http://nginx.org/packages/{ver}/ubuntu" && \
+  [ "{ver}" = "stable" ] && REPO="http://nginx.org/packages/ubuntu" || true && \
+  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] $REPO $(lsb_release -cs) nginx" | tee /etc/apt/sources.list.d/nginx.list && \
+  apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && \
+  apt-get install -y nginx && systemctl enable --now nginx; \
+elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then \
+  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && \
+  REPO_PATH="rhel/$RHEL_VER" && \
+  [ "{ver}" = "mainline" ] && REPO_PATH="mainline/rhel/$RHEL_VER" || true && \
+  printf "[nginx]\nname=nginx repo\nbaseurl=http://nginx.org/packages/%s/\\$basearch/\ngpgcheck=1\nenabled=1\ngpgkey=https://nginx.org/keys/nginx_signing.key\nmodule_hotfixes=true\n" "$REPO_PATH" > /etc/yum.repos.d/nginx.repo && \
+  (dnf install -y nginx 2>/dev/null || yum install -y nginx) && \
+  systemctl enable --now nginx; \
+fi''',
         'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
-        'uninstall':'systemctl stop nginx 2>/dev/null; systemctl disable nginx 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' nginx nginx-common nginx-full nginx-core && apt-get autoremove -y && rm -rf /etc/nginx /usr/share/keyrings/nginx-archive-keyring.gpg /etc/apt/sources.list.d/nginx.list /etc/apt/sources.list.d/nginx-mainline.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop nginx 2>/dev/null; systemctl disable nginx 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' nginx nginx-common nginx-full nginx-core 2>/dev/null; dnf remove -y nginx 2>/dev/null; yum remove -y nginx 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -rf /etc/nginx /usr/share/keyrings/nginx-archive-keyring.gpg /etc/apt/sources.list.d/nginx.list /etc/apt/sources.list.d/nginx-mainline.list /etc/yum.repos.d/nginx.repo 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'nginx', 'manage':True,
     },
     {
@@ -234,25 +244,47 @@ systemctl enable lsws && systemctl start lsws''',
             {'label':'v2.11.3 (Latest Stable)', 'value':'2.11.3'},
             {'label':'v2.11.2 (Stable)',         'value':'2.11.2'},
         ],
-        'install_tpl':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
-curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
-  rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
-curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
-  tee /etc/apt/sources.list.d/caddy-stable.list && \
-chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
-chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
-(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && \
-systemctl enable caddy && systemctl start caddy''',
-        'install':'''apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && \
-curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | \
-  rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
-curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | \
-  tee /etc/apt/sources.list.d/caddy-stable.list && \
-chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && \
-chmod o+r /etc/apt/sources.list.d/caddy-stable.list && \
-(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && \
-systemctl enable caddy && systemctl start caddy''',
-        'uninstall':'systemctl stop caddy 2>/dev/null; systemctl disable caddy 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold caddy && apt-get autoremove -y && rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null; apt-get update -qq 2>/dev/null; true && rm -rf /etc/caddy',
+        'install_tpl':(
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && '
+                # FIX: previous version piped the curl'd GPG key into "rm -f" (which ignores
+                # stdin and discards it) instead of into "gpg --dearmor" — producing an empty/
+                # invalid keyring file. Corrected: remove old file first, then pipe curl -> gpg.
+            '  rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && '
+            '  curl -fsSL \'https://dl.cloudsmith.io/public/caddy/stable/gpg.key\' | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && '
+            '  curl -fsSL \'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt\' | tee /etc/apt/sources.list.d/caddy-stable.list && '
+            '  chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && '
+            '  chmod o+r /etc/apt/sources.list.d/caddy-stable.list && '
+            '  (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && '
+            '  systemctl enable caddy && systemctl start caddy; '
+            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+                # Caddy's officially documented Fedora/EL method — COPR repo.
+            '  (dnf install -y dnf-plugins-core 2>/dev/null || yum install -y dnf-plugins-core 2>/dev/null || true) && '
+            '  (dnf copr enable -y @caddy/caddy 2>/dev/null || yum copr enable -y @caddy/caddy 2>/dev/null || true) && '
+            '  (dnf install -y caddy 2>/dev/null || yum install -y caddy 2>/dev/null) && '
+            '  systemctl enable caddy && systemctl start caddy; '
+            'fi'
+        ),
+        'install':(
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl && '
+            '  rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg && '
+            '  curl -fsSL \'https://dl.cloudsmith.io/public/caddy/stable/gpg.key\' | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg && '
+            '  curl -fsSL \'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt\' | tee /etc/apt/sources.list.d/caddy-stable.list && '
+            '  chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && '
+            '  chmod o+r /etc/apt/sources.list.d/caddy-stable.list && '
+            '  (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && '
+            '  systemctl enable caddy && systemctl start caddy; '
+            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+            '  (dnf install -y dnf-plugins-core 2>/dev/null || yum install -y dnf-plugins-core 2>/dev/null || true) && '
+            '  (dnf copr enable -y @caddy/caddy 2>/dev/null || yum copr enable -y @caddy/caddy 2>/dev/null || true) && '
+            '  (dnf install -y caddy 2>/dev/null || yum install -y caddy 2>/dev/null) && '
+            '  systemctl enable caddy && systemctl start caddy; '
+            'fi'
+        ),
+        'uninstall':'systemctl stop caddy 2>/dev/null; systemctl disable caddy 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold caddy 2>/dev/null; dnf remove -y caddy 2>/dev/null; yum remove -y caddy 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null; apt-get update -qq 2>/dev/null; true && rm -rf /etc/caddy',
         'service':'caddy', 'manage':True,
     },
     {
@@ -265,15 +297,32 @@ systemctl enable caddy && systemctl start caddy''',
             {'label':'8.0.41 (LTS)',         'value':'8.0'},
         ],
         'install_tpl':(
-            'export DEBIAN_FRONTEND=noninteractive && '
-            'apt-get install -y wget lsb-release gnupg && '
-            'wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && '
-            'DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
-            'apt-get update -q && '
-            'apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server && '
-            'systemctl enable --now mysql'
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  export DEBIAN_FRONTEND=noninteractive && '
+            '  apt-get install -y wget lsb-release gnupg && '
+            '  wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && '
+            '  DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
+            '  apt-get update -q && '
+            '  apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server && '
+            '  systemctl enable --now mysql; '
+            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+                # RHEL 8+ ships MySQL directly in the built-in AppStream module stream —
+                # no external repo or GPG key needed at all, the safest possible path.
+                # Module streams only offer a couple of minor versions (not every {ver}
+                # choice maps 1:1) so we pick the closest available stream.
+            '  MYSQL_STREAM="8.0"; '
+            '  case "{ver}" in 9.*) MYSQL_STREAM="8.4";; 8.4*) MYSQL_STREAM="8.4";; esac; '
+            '  (dnf module reset -y mysql 2>/dev/null; dnf module enable -y mysql:$MYSQL_STREAM 2>/dev/null; '
+            '   dnf install -y mysql-server 2>/dev/null) || '
+                # RHEL 7 fallback (no module streams) — Oracle's official community RPM
+            '  (dnf install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null || '
+            '   yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null; '
+            '   yum install -y mysql-community-server 2>/dev/null) && '
+            '  systemctl enable --now mysqld 2>/dev/null || systemctl enable --now mysql 2>/dev/null; '
+            'fi'
         ),
-        'uninstall':'systemctl stop mysql 2>/dev/null; systemctl disable mysql 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql',
+        'uninstall':'systemctl stop mysql mysqld 2>/dev/null; systemctl disable mysql mysqld 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mysql-server mysql-client mysql-common mysql-server-core-* mysql-client-core-* 2>/dev/null; apt-get autoremove -y 2>/dev/null; dnf remove -y mysql-server mysql-community-server 2>/dev/null; yum remove -y mysql-server mysql-community-server 2>/dev/null; rm -rf /etc/mysql /var/lib/mysql',
         'service':'mysql', 'manage':True,
     },
     {
@@ -303,21 +352,30 @@ systemctl enable --now mariadb''',
             {'label':'8.0 (Latest)', 'value':'8.0'},
         ],
         'install_tpl':(
-            'export DEBIAN_FRONTEND=noninteractive && '
-            'apt-get install -y gnupg curl && '
-            'rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-            'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.key && '
-            'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.key && '
-            'rm -f /tmp/mongo.key && '
-            'echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] '
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  export DEBIAN_FRONTEND=noninteractive && '
+            '  apt-get install -y gnupg curl && '
+            '  rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
+            '  curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.key && '
+            '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.key && '
+            '  rm -f /tmp/mongo.key && '
+            '  echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] '
             'https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" '
-            '> /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-            'apt-get update -qq && '
-            'apt-get install -y mongodb-org && '
-            'systemctl enable mongod && systemctl start mongod'
+            '  > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
+            '  apt-get update -qq && '
+            '  apt-get install -y mongodb-org && '
+            '  systemctl enable mongod && systemctl start mongod; '
+            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+                # Official MongoDB-documented RHEL .repo format (repo.mongodb.org/yum/redhat)
+            '  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && '
+            '  printf "[mongodb-org-{ver}]\\nname=MongoDB Repository\\nbaseurl=https://repo.mongodb.org/yum/redhat/%s/mongodb-org/{ver}/x86_64/\\ngpgcheck=1\\nenabled=1\\ngpgkey=https://www.mongodb.org/static/pgp/server-{ver}.asc\\n" "$RHEL_VER" > /etc/yum.repos.d/mongodb-org-{ver}.repo && '
+            '  (dnf install -y mongodb-org 2>/dev/null || yum install -y mongodb-org) && '
+            '  systemctl enable mongod && systemctl start mongod; '
+            'fi'
         ),
         'install':'',  # always uses install_tpl
-        'uninstall':'systemctl stop mongod 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mongodb-org mongodb-org-* && apt-get autoremove -y && rm -rf /var/lib/mongodb /var/log/mongodb /usr/share/keyrings/mongodb-server-*.gpg /etc/apt/sources.list.d/mongodb-org-*.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop mongod 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mongodb-org mongodb-org-* 2>/dev/null; dnf remove -y mongodb-org 2>/dev/null; yum remove -y mongodb-org 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -rf /var/lib/mongodb /var/log/mongodb /usr/share/keyrings/mongodb-server-*.gpg /etc/apt/sources.list.d/mongodb-org-*.list /etc/yum.repos.d/mongodb-org-*.repo 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'mongod', 'manage':True,
     },
     {
@@ -329,21 +387,38 @@ systemctl enable --now mariadb''',
             {'label':'16 (Stable)', 'value':'16'},
             {'label':'17 (Latest)', 'value':'17'},
         ],
-        'install_tpl':('export DEBIAN_FRONTEND=noninteractive && '
-            'apt-get install -y gnupg2 curl lsb-release && '
-            'rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
-            'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc '
-            '-o /tmp/pg.asc && '
-            'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
-            'rm -f /tmp/pg.asc && '
-            'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] '
+        'install_tpl':(
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  export DEBIAN_FRONTEND=noninteractive && '
+            '  apt-get install -y gnupg2 curl lsb-release && '
+            '  rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
+            '  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
+            '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
+            '  rm -f /tmp/pg.asc && '
+            '  echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] '
             'http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" '
-            '> /etc/apt/sources.list.d/pgdg.list && '
-            'apt-get update -qq && '
-            'apt-get install -y postgresql-{ver} postgresql-contrib && '
-            'systemctl enable postgresql && systemctl start postgresql'),
+            '  > /etc/apt/sources.list.d/pgdg.list && '
+            '  apt-get update -qq && '
+            '  apt-get install -y postgresql-{ver} postgresql-contrib && '
+            '  systemctl enable postgresql && systemctl start postgresql; '
+            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+                # Official PostgreSQL-documented RHEL method — pgdg-redhat-repo RPM.
+                # RHEL/AlmaLinux/Rocky ship an OLDER "postgresql" AppStream module by
+                # default which conflicts with PGDG's own versioned packages, so it
+                # must be disabled first (this is PostgreSQL's own documented step).
+            '  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && '
+            '  (dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null || '
+            '   yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null) && '
+            '  dnf -qy module disable postgresql 2>/dev/null; '
+            '  (dnf install -y postgresql{ver}-server postgresql{ver}-contrib 2>/dev/null || '
+            '   yum install -y postgresql{ver}-server postgresql{ver}-contrib 2>/dev/null) && '
+            '  /usr/pgsql-{ver}/bin/postgresql-{ver}-setup initdb 2>/dev/null && '
+            '  systemctl enable postgresql-{ver} && systemctl start postgresql-{ver}; '
+            'fi'
+        ),
         'install':'apt-get install -y postgresql postgresql-contrib && systemctl enable postgresql && systemctl start postgresql',
-        'uninstall':'systemctl stop postgresql 2>/dev/null; systemctl disable postgresql 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold postgresql postgresql-* && apt-get autoremove -y && rm -rf /etc/postgresql /var/lib/postgresql /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop postgresql postgresql-* 2>/dev/null; systemctl disable postgresql postgresql-* 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold postgresql postgresql-* 2>/dev/null; dnf remove -y postgresql-server postgresql-contrib "postgresql*-server" "postgresql*-contrib" 2>/dev/null; yum remove -y postgresql-server postgresql-contrib 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -rf /etc/postgresql /var/lib/postgresql /var/lib/pgsql /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list /etc/yum.repos.d/pgdg-redhat-repo.repo 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'postgresql', 'manage':True,
     },
     # --- PHP -------------------------------------------------------------------
