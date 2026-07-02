@@ -3546,7 +3546,7 @@
                 </div>
 
                 <!-- OPTIMIZATION tab -->
-                <div x-show="settingsModal.tab==='optimization' && settingsModal.mod?.id!=='redis'">
+                <div x-show="settingsModal.tab==='optimization' && settingsModal.mod?.id!=='redis' && settingsModal.mod?.id!=='memcached'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">Performance Optimization</div>
                   <div style="display:grid;gap:14px;max-width:500px">
                     <template x-for="[key,val] in Object.entries(settingsModal.optimization)" :key="key">
