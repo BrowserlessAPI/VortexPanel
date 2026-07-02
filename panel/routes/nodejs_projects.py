@@ -49,10 +49,12 @@ def apache_log_dir():
 def apache_enable_modules():
     """Enable proxy modules — command differs by OS family."""
     if os_family() == 'debian':
-        sh('a2enmod proxy proxy_http headers rewrite 2>/dev/null')
+        sh('a2enmod proxy proxy_http proxy_wstunnel headers rewrite 2>/dev/null')
     else:
-        # RHEL: modules are loaded automatically if mod_proxy is installed
-        sh('dnf install -y mod_proxy 2>/dev/null || yum install -y mod_proxy 2>/dev/null || true')
+        # RHEL-family httpd ships proxy/rewrite/headers modules INSIDE the base httpd
+        # package — there's no separate 'mod_proxy' package. They load by default via
+        # LoadModule lines in /etc/httpd/conf.modules.d/. Just ensure httpd is present.
+        sh('dnf install -y httpd 2>/dev/null || yum install -y httpd 2>/dev/null || true')
 
 def apache_enable_site(name):
     """Enable a vhost config — Debian needs a2ensite, RHEL just needs the file present."""

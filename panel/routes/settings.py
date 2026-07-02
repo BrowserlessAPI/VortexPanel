@@ -272,7 +272,9 @@ def ssl_letsencrypt():
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}$', domain):
         return jsonify({'ok':False,'error':'Invalid domain format'}), 400
 
-    sh('which certbot 2>/dev/null || apt-get install -y certbot 2>/dev/null || dnf install -y certbot 2>/dev/null')
+    sh('which certbot 2>/dev/null || apt-get install -y certbot 2>/dev/null || '
+       '(dnf install -y epel-release 2>/dev/null; dnf install -y certbot 2>/dev/null) || '
+       '(yum install -y epel-release 2>/dev/null; yum install -y certbot 2>/dev/null)')
     sh('ufw allow 80/tcp 2>/dev/null; firewall-cmd --add-service=http --permanent 2>/dev/null; firewall-cmd --reload 2>/dev/null || true')
 
     _, err, rc = sh3(
