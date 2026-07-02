@@ -81,6 +81,24 @@ def close_port(port):
 
 # ─── Webserver proxy ──────────────────────────────────────────────────────────
 
+def _ensure_nginx_ws_map():
+    """nginx requires the $connection_upgrade map in http{} context, not per-site.
+    Written once to a shared conf.d file; safe to call on every proxy write."""
+    map_path = '/etc/nginx/conf.d/00-vortex-websocket-map.conf'
+    if os.path.exists(map_path):
+        return
+    conf = """# Shared by all VortexPanel-managed reverse proxies (Go/Node.js projects, Docker domains)
+# Required for WebSocket upgrade support — proxy_set_header Connection $connection_upgrade;
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+"""
+    try:
+        open(map_path, 'w').write(conf)
+    except Exception:
+        pass  # non-fatal — nginx -t will catch it if genuinely broken
+
 def detect_active_webserver():
     checks = [
         ('nginx',         'systemctl is-active nginx 2>/dev/null'),
@@ -101,9 +119,13 @@ def apache_conf_dir():
 
 def apache_enable_modules():
     if os_family() == 'debian':
-        sh('a2enmod proxy proxy_http headers 2>/dev/null')
+        sh('a2enmod proxy proxy_http proxy_wstunnel headers rewrite 2>/dev/null')
     else:
-        sh('dnf install -y mod_proxy 2>/dev/null || yum install -y mod_proxy 2>/dev/null || true')
+        # RHEL-family httpd ships proxy/proxy_wstunnel/rewrite/headers modules INSIDE the base
+        # httpd package — there is no separate 'mod_proxy' package to install. They're loaded
+        # via LoadModule lines in /etc/httpd/conf.modules.d/, uncommented by default on a
+        # standard install. We just ensure httpd itself is present; nothing to "enable" here.
+        sh('dnf install -y httpd 2>/dev/null || yum install -y httpd 2>/dev/null || true')
 
 def apache_enable_site(name):
     if os_family() == 'debian': sh(f'a2ensite {name} 2>/dev/null')
@@ -150,11 +172,17 @@ def write_proxy(p):
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # WebSocket support (gorilla/websocket, gin-contrib/websocket, gRPC-Web, etc.)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }}
 }}
 """
         conf_path = f'/etc/nginx/conf.d/vortex-go-{pid}.conf'
         open(conf_path, 'w').write(conf)
+        _ensure_nginx_ws_map()
         _, err, rc = sh('nginx -t 2>&1')
         if rc != 0:
             try: os.remove(conf_path)
@@ -175,6 +203,12 @@ def write_proxy(p):
     ProxyPassReverse / http://127.0.0.1:{port}/
     RequestHeader set X-Forwarded-Proto "http"
     RequestHeader set X-Real-IP "%{{REMOTE_ADDR}}s"
+    # WebSocket support (gorilla/websocket, gin-contrib/websocket, gRPC-Web, etc.)
+    RewriteEngine On
+    RewriteCond %{{HTTP:Upgrade}} websocket [NC]
+    RewriteCond %{{HTTP:Connection}} upgrade [NC]
+    RewriteRule ^/?(.*) "ws://127.0.0.1:{port}/$1" [P,L]
+    ProxyTimeout 3600
     ErrorLog {log_dir}/vortex-go-{pid}-error.log
     CustomLog {log_dir}/vortex-go-{pid}-access.log combined
 </VirtualHost>
@@ -398,7 +432,77 @@ def list_projects():
         pid = pid_out.split('=')[-1].strip() if '=' in pid_out else ''
         p['status'] = out.strip() or 'inactive'
         p['pid']    = pid if pid != '0' else ''
+        # Cheap resource snapshot — reads systemd's own cgroup accounting, no extra process spawned
+        mem_out, _, _ = sh(f'systemctl show {svc_name(p["id"])} --property=MemoryCurrent 2>/dev/null')
+        try:
+            mem_bytes = int(mem_out.split('=')[-1].strip())
+            p['memory_mb'] = round(mem_bytes / 1024 / 1024, 1) if mem_bytes > 0 else None
+        except (ValueError, IndexError):
+            p['memory_mb'] = None
     return jsonify({'ok':True,'projects':projects})
+
+@go_bp.route('/api/go/projects/<pid>/health')
+def project_health(pid):
+    """On-demand health check — verifies the port is actually accepting connections,
+    not just that the process exists (systemd Restart=always only catches process death,
+    not a hung/deadlocked app still holding the port open)."""
+    if not req(): return jsonify({'ok': False}), 401
+    projects = load_projects()
+    p = next((x for x in projects if x['id'] == pid), None)
+    if not p: return jsonify({'ok': False, 'error': 'Project not found'})
+    port = p.get('port', '')
+    if not port:
+        return jsonify({'ok': True, 'checked': False, 'message': 'No port configured for this project'})
+
+    import socket, time as _time
+    start = _time.time()
+    try:
+        with socket.create_connection(('127.0.0.1', int(port)), timeout=3):
+            latency_ms = round((_time.time() - start) * 1000, 1)
+            return jsonify({'ok': True, 'checked': True, 'responsive': True, 'latency_ms': latency_ms})
+    except (socket.timeout, ConnectionRefusedError, OSError) as e:
+        return jsonify({'ok': True, 'checked': True, 'responsive': False, 'error': str(e)})
+
+def _build_unit_file(p):
+    """Single source of truth for the systemd unit — used by both create and update
+    so the two paths can never drift out of sync (they had 100% duplicated code before)."""
+    name     = p['name']
+    user     = p.get('user', 'www')
+    cmd      = p.get('exec_cmd') or p['exec_file']
+    run_dir  = os.path.dirname(p['exec_file'])
+    port     = p.get('port', '')
+    env      = p.get('env') or {}
+    mem_limit = (p.get('mem_limit') or '').strip()
+    cpu_quota = (p.get('cpu_quota') or '').strip()
+
+    env_str  = '\n'.join(f'Environment="{k}={v}"' for k, v in env.items())
+    port_env = f'Environment="PORT={port}"' if port else ''
+    mem_line = f'MemoryMax={mem_limit}' if mem_limit else ''
+    cpu_line = f'CPUQuota={cpu_quota}%' if cpu_quota else ''
+
+    return f"""[Unit]
+Description=VortexPanel Go: {name}
+After=network.target
+
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={run_dir}
+ExecStart={cmd}
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+{env_str}
+{port_env}
+{mem_line}
+{cpu_line}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
 
 @go_bp.route('/api/go/projects', methods=['POST'])
 def create_project():
@@ -413,6 +517,8 @@ def create_project():
     env_raw   = d.get('env_vars','').strip()
     remark    = d.get('remark','').strip()
     release_port = d.get('release_port', False)
+    mem_limit = str(d.get('mem_limit','')).strip()   # e.g. "512M", "1G" — systemd MemoryMax format
+    cpu_quota = str(d.get('cpu_quota','')).strip()   # percent, e.g. "50" = half a core
 
     if not name:        return jsonify({'ok':False,'error':'Project name required'})
     if not exec_file:   return jsonify({'ok':False,'error':'Executable file path required'})
@@ -434,34 +540,17 @@ def create_project():
             k, _, v = line.partition('=')
             env[k.strip()] = v.strip()
 
-    # Build effective execution command
-    cmd = exec_cmd or exec_file
-    run_dir = os.path.dirname(exec_file)
+    p = {
+        'id': pid, 'name': name, 'exec_file': exec_file,
+        'exec_cmd': exec_cmd, 'port': port, 'user': user,
+        'domain': domain, 'env': env, 'remark': remark,
+        'release_port': release_port,
+        'mem_limit': mem_limit, 'cpu_quota': cpu_quota,
+    }
 
     # Write systemd unit
-    env_str  = '\n'.join(f'Environment="{k}={v}"' for k,v in env.items())
-    port_env = f'Environment="PORT={port}"' if port else ''
-    unit = f"""[Unit]
-Description=VortexPanel Go: {name}
-After=network.target
-
-[Service]
-Type=simple
-User={user}
-WorkingDirectory={run_dir}
-ExecStart={cmd}
-Restart=always
-RestartSec=5
-{env_str}
-{port_env}
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-"""
     svc = f'/etc/systemd/system/{svc_name(pid)}.service'
-    open(svc, 'w').write(unit)
+    open(svc, 'w').write(_build_unit_file(p))
     sh('systemctl daemon-reload')
     sh(f'systemctl enable {svc_name(pid)} 2>/dev/null')
     sh(f'systemctl start {svc_name(pid)} 2>/dev/null')
@@ -469,13 +558,6 @@ WantedBy=multi-user.target
     # Firewall
     if release_port and port:
         open_port(port)
-
-    p = {
-        'id': pid, 'name': name, 'exec_file': exec_file,
-        'exec_cmd': exec_cmd, 'port': port, 'user': user,
-        'domain': domain, 'env': env, 'remark': remark,
-        'release_port': release_port,
-    }
 
     # Webserver proxy
     proxy_ws = None
@@ -490,15 +572,93 @@ WantedBy=multi-user.target
     out, _, _ = sh(f'systemctl is-active {svc_name(pid)} 2>/dev/null')
     return jsonify({'ok':True,'id':pid,'status':out.strip(),'proxy_webserver':proxy_ws})
 
+GO_BACKUPS_DIR = '/opt/vortexpanel/go_backups'
+
+def _snapshot_binary(pid, exec_file):
+    """Save a copy of the current binary before (re)starting, so a bad deploy can be
+    rolled back. Skips if the file hasn't changed since the last snapshot (by hash)
+    to avoid piling up identical copies on repeated restarts."""
+    if not exec_file or not os.path.isfile(exec_file):
+        return
+    import hashlib, shutil, time as _time
+    backup_dir = os.path.join(GO_BACKUPS_DIR, pid)
+    os.makedirs(backup_dir, exist_ok=True)
+
+    with open(exec_file, 'rb') as f:
+        current_hash = hashlib.sha256(f.read()).hexdigest()[:12]
+
+    existing = sorted(os.listdir(backup_dir)) if os.path.isdir(backup_dir) else []
+    if existing and current_hash in existing[-1]:
+        return  # unchanged since last snapshot
+
+    ts = _time.strftime('%Y%m%d-%H%M%S')
+    snap_name = f'{ts}_{current_hash}.bin'
+    try:
+        shutil.copy2(exec_file, os.path.join(backup_dir, snap_name))
+    except Exception:
+        return  # non-fatal — snapshot failure shouldn't block starting the app
+
+    # Keep only the last 5 snapshots
+    all_snaps = sorted(os.listdir(backup_dir))
+    for old in all_snaps[:-5]:
+        try: os.remove(os.path.join(backup_dir, old))
+        except Exception: pass
+
 @go_bp.route('/api/go/projects/<pid>/control', methods=['POST'])
 def control_project(pid):
     if not req(): return jsonify({'ok':False}), 401
     action = (request.get_json() or {}).get('action','')
     if action not in ('start','stop','restart'):
         return jsonify({'ok':False,'error':'Invalid action'})
+    if action in ('start', 'restart'):
+        projects = load_projects()
+        p = next((x for x in projects if x['id'] == pid), None)
+        if p: _snapshot_binary(pid, p.get('exec_file', ''))
     sh(f'systemctl {action} {svc_name(pid)}')
     out, _, _ = sh(f'systemctl is-active {svc_name(pid)} 2>/dev/null')
     return jsonify({'ok':True,'status':out.strip()})
+
+@go_bp.route('/api/go/projects/<pid>/versions')
+def list_versions(pid):
+    if not req(): return jsonify({'ok': False}), 401
+    backup_dir = os.path.join(GO_BACKUPS_DIR, pid)
+    if not os.path.isdir(backup_dir):
+        return jsonify({'ok': True, 'versions': []})
+    versions = []
+    for fname in sorted(os.listdir(backup_dir), reverse=True):
+        fpath = os.path.join(backup_dir, fname)
+        try:
+            size = os.path.getsize(fpath)
+            ts_str, hash_str = fname.replace('.bin', '').split('_', 1)
+        except (ValueError, OSError):
+            continue
+        versions.append({'file': fname, 'timestamp': ts_str, 'hash': hash_str, 'size_bytes': size})
+    return jsonify({'ok': True, 'versions': versions})
+
+@go_bp.route('/api/go/projects/<pid>/rollback', methods=['POST'])
+def rollback_version(pid):
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+    snapshot_file = d.get('file', '').strip()
+    if not snapshot_file or '/' in snapshot_file or '..' in snapshot_file:
+        return jsonify({'ok': False, 'error': 'Invalid snapshot filename'})
+
+    projects = load_projects()
+    p = next((x for x in projects if x['id'] == pid), None)
+    if not p: return jsonify({'ok': False, 'error': 'Project not found'})
+
+    snap_path = os.path.join(GO_BACKUPS_DIR, pid, snapshot_file)
+    if not os.path.isfile(snap_path):
+        return jsonify({'ok': False, 'error': 'Snapshot not found'})
+
+    import shutil
+    exec_file = p['exec_file']
+    sh(f'systemctl stop {svc_name(pid)} 2>/dev/null')
+    shutil.copy2(snap_path, exec_file)
+    sh(f'chmod +x "{exec_file}"')
+    sh(f'systemctl start {svc_name(pid)} 2>/dev/null')
+    out, _, _ = sh(f'systemctl is-active {svc_name(pid)} 2>/dev/null')
+    return jsonify({'ok': True, 'status': out.strip(), 'restored_from': snapshot_file})
 
 @go_bp.route('/api/go/projects/<pid>', methods=['DELETE'])
 def delete_project(pid):
@@ -535,34 +695,11 @@ def update_project(pid):
     if idx is None: return jsonify({'ok':False,'error':'Project not found'})
     p = projects[idx]
 
-    for field in ('port','domain','remark','exec_cmd','user','env','release_port'):
+    for field in ('port','domain','remark','exec_cmd','user','env','release_port','mem_limit','cpu_quota'):
         if field in d: p[field] = d[field]
 
-    # Rewrite systemd unit with new settings
-    env_str  = '\n'.join(f'Environment="{k}={v}"' for k,v in (p.get('env') or {}).items())
-    port_env = f'Environment="PORT={p["port"]}"' if p.get('port') else ''
-    cmd      = p.get('exec_cmd') or p['exec_file']
-    run_dir  = os.path.dirname(p['exec_file'])
-    unit = f"""[Unit]
-Description=VortexPanel Go: {p['name']}
-After=network.target
-
-[Service]
-Type=simple
-User={p.get('user','www')}
-WorkingDirectory={run_dir}
-ExecStart={cmd}
-Restart=always
-RestartSec=5
-{env_str}
-{port_env}
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-"""
-    open(f'/etc/systemd/system/{svc_name(pid)}.service','w').write(unit)
+    # Rewrite systemd unit with new settings (shared builder — stays in sync with create_project)
+    open(f'/etc/systemd/system/{svc_name(pid)}.service','w').write(_build_unit_file(p))
     sh('systemctl daemon-reload')
     sh(f'systemctl restart {svc_name(pid)} 2>/dev/null')
 
@@ -582,3 +719,104 @@ def active_webserver():
         'webserver': ws,
         'message': f'Proxy will use {ws}' if ws else 'No active webserver found'
     })
+
+# --- SSL / Let's Encrypt ------------------------------------------------------
+def _ssl_status(domain):
+    """Check if a domain already has a Let's Encrypt cert on disk."""
+    live_dir = f'/etc/letsencrypt/live/{domain}'
+    cert = f'{live_dir}/fullchain.pem'
+    if not os.path.exists(cert):
+        return {'enabled': False}
+    out, _, rc = sh(f'openssl x509 -in {cert} -noout -enddate 2>/dev/null')
+    days_left = None
+    if rc == 0 and out.startswith('notAfter='):
+        try:
+            from datetime import datetime
+            end_dt = datetime.strptime(out[9:].strip(), '%b %d %H:%M:%S %Y %Z')
+            days_left = (end_dt - datetime.utcnow()).days
+        except Exception:
+            pass
+    return {'enabled': True, 'days_left': days_left, 'cert_path': cert}
+
+def _pkg_install_certbot(ws):
+    """RHEL-family (RHEL/CentOS/AlmaLinux/Rocky/Oracle Linux) don't ship certbot in base
+    repos — it requires EPEL. Fedora has it natively. Debian/Ubuntu have it natively too."""
+    plugin = {'nginx': 'python3-certbot-nginx', 'apache2': 'python3-certbot-apache'}.get(ws, '')
+    if os_family() == 'debian':
+        return f'apt-get install -y certbot {plugin} 2>/dev/null'
+    # RHEL family — ensure EPEL is present before attempting install (no-op if already enabled
+    # or if this is Fedora, which doesn't need/have an epel-release package)
+    return (
+        f'(dnf install -y epel-release 2>/dev/null || true) && '
+        f'dnf install -y certbot {plugin} 2>/dev/null || '
+        f'yum install -y epel-release 2>/dev/null; yum install -y certbot {plugin} 2>/dev/null'
+    )
+
+def _wire_ols_ssl(pid, domain):
+    """After certonly issues a standalone cert, add an HTTPS listener to the OLS vhost."""
+    cert_dir = f'/etc/letsencrypt/live/{domain}'
+    vhost_dir = f'/usr/local/lsws/conf/vhosts/vortex-go-{pid}'
+    conf_path = f'{vhost_dir}/vhconf.conf'
+    if not os.path.exists(conf_path):
+        return False
+    with open(conf_path) as f:
+        content = f.read()
+    if 'vhssl' in content:
+        return True  # already wired
+    ssl_block = f"""
+vhssl  {{
+  keyFile                 {cert_dir}/privkey.pem
+  certFile                {cert_dir}/fullchain.pem
+  certChain               1
+  sslProtocol             30
+}}
+"""
+    with open(conf_path, 'a') as f:
+        f.write(ssl_block)
+    sh('/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || systemctl restart lsws 2>/dev/null')
+    return True
+
+@go_bp.route('/api/go/projects/<pid>/ssl', methods=['GET', 'POST'])
+def project_ssl(pid):
+    if not req(): return jsonify({'ok': False}), 401
+    projects = load_projects()
+    p = next((x for x in projects if x['id'] == pid), None)
+    if not p: return jsonify({'ok': False, 'error': 'Project not found'})
+    domain_lines = [d.strip() for d in (p.get('domain') or '').splitlines() if d.strip()]
+    if not domain_lines:
+        return jsonify({'ok': False, 'error': 'Assign a domain to this project first'})
+    primary = domain_lines[0].split(':')[0]
+
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'domain': primary, **_ssl_status(primary)})
+
+    # POST — issue certificate
+    d = request.get_json() or {}
+    email = (d.get('email') or f'admin@{primary}').strip()
+    ws = detect_active_webserver()
+
+    if ws == 'caddy':
+        return jsonify({'ok': True, 'method': 'automatic',
+                         'message': "Caddy issues and renews SSL automatically for any domain in its config — no action needed. HTTPS is already active once DNS points here."})
+
+    if ws not in ('nginx', 'apache2', 'openlitespeed'):
+        return jsonify({'ok': False, 'error': 'No active webserver detected'})
+
+    if not sh('which certbot 2>/dev/null'):
+        sh(_pkg_install_certbot(ws), t=120)
+
+    domain_args = ' '.join(f'-d {dm}' for dm in domain_lines)
+
+    if ws == 'nginx':
+        out = sh(f'certbot --nginx {domain_args} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+    elif ws == 'apache2':
+        out = sh(f'certbot --apache {domain_args} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+    else:  # openlitespeed — no certbot plugin; issue standalone cert then wire into vhost manually
+        webroot = '/usr/local/lsws/Example/html'
+        out = sh(f'certbot certonly --webroot -w {webroot} {domain_args} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+        if 'Congratulations' in out or 'Successfully' in out or 'Certificate not yet due' in out:
+            _wire_ols_ssl(pid, primary)
+
+    ok = 'Congratulations' in out or 'Successfully' in out or 'Certificate not yet due' in out
+    return jsonify({'ok': ok, 'output': out[-800:], 'webserver': ws})
+

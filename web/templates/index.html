@@ -2451,6 +2451,17 @@
                     <label style="font-size:11px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
                     <textarea class="form-input" x-model="editModal.env_vars" rows="4" style="margin-top:4px;resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder="KEY=value"></textarea>
                   </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                    <div>
+                      <label style="font-size:11px;font-weight:600;color:var(--text-muted)">Memory Limit</label>
+                      <input class="form-input" x-model="editModal.mem_limit" placeholder="e.g. 256M, 1G — blank = unlimited" style="margin-top:4px">
+                    </div>
+                    <div>
+                      <label style="font-size:11px;font-weight:600;color:var(--text-muted)">CPU Limit (%)</label>
+                      <input class="form-input" x-model="editModal.cpu_quota" placeholder="e.g. 50 = half a core" style="margin-top:4px">
+                    </div>
+                  </div>
+                  <div style="font-size:11px;color:var(--text-muted)">A runaway process will be capped rather than taking down the whole server. Leave blank for no limit.</div>
                   <div style="display:flex;justify-content:flex-end">
                     <button class="btn btn-primary btn-sm" @click="submitEdit(); settingsModal.show=false">Save & Restart</button>
                   </div>
@@ -2470,6 +2481,31 @@
                 <div style="display:flex;justify-content:flex-end;margin-top:12px">
                   <button class="btn btn-primary btn-sm" @click="submitEdit(); settingsModal.show=false">Apply Domain</button>
                 </div>
+
+                <!-- SSL section -->
+                <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                    <div style="font-size:12px;font-weight:700">🔒 SSL Certificate</div>
+                    <button class="btn btn-ghost btn-xs" @click="checkSSL()">↻ Check status</button>
+                  </div>
+                  <div x-show="!editModal.domain" style="font-size:12px;color:var(--text-muted)">Assign a domain above first.</div>
+                  <div x-show="editModal.domain">
+                    <div x-show="sslStatus.enabled" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                      <span class="badge badge-green">✓ Active</span>
+                      <span style="font-size:12px;color:var(--text-muted)" x-text="sslStatus.days_left!=null?sslStatus.days_left+' days remaining':''"></span>
+                    </div>
+                    <div x-show="!sslStatus.enabled && sslStatus.checked" style="margin-bottom:10px">
+                      <span class="badge badge-gray">No certificate yet</span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                      <input class="form-input" x-model="sslEmail" placeholder="admin@yourdomain.com (for renewal notices)" style="flex:1;font-size:12px">
+                      <button class="btn btn-primary btn-sm" @click="issueSSL()" :disabled="sslIssuing">
+                        <span x-show="sslIssuing">Issuing...</span><span x-show="!sslIssuing">Issue Certificate</span>
+                      </button>
+                    </div>
+                    <div x-show="sslResult" style="margin-top:10px;font-size:11px;padding:8px 10px;border-radius:6px" :style="sslResultOk?'background:rgba(34,197,94,.1);color:var(--green)':'background:rgba(239,68,68,.1);color:var(--red)'" x-text="sslResult"></div>
+                  </div>
+                </div>
               </div>
               <!-- LOGS -->
               <div x-show="settingsModal.tab==='logs'">
@@ -2477,6 +2513,33 @@
                      style="background:#0d1117;color:#86efac;font-family:var(--font-mono);font-size:11px;padding:14px;border-radius:6px;overflow-y:auto;max-height:360px;white-space:pre-wrap;margin:0"
                      x-text="logsModal.logs"></pre>
                 <div x-show="!logsModal.logs" style="color:var(--text-muted);text-align:center;padding:40px;font-size:13px">Loading logs...</div>
+
+                <!-- Health check -->
+                <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+                  <div>
+                    <div style="font-size:12px;font-weight:700">Health Check</div>
+                    <div x-show="healthResult" style="font-size:11px;margin-top:4px" :style="healthResult?.responsive?'color:var(--green)':'color:var(--red)'"
+                         x-text="healthResult?.responsive?('✓ Port responding ('+healthResult.latency_ms+'ms)'):('✗ Port not responding')"></div>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" @click="checkHealth()">Test Connection</button>
+                </div>
+
+                <!-- Version history / rollback -->
+                <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                    <div style="font-size:12px;font-weight:700">Binary Version History</div>
+                    <button class="btn btn-ghost btn-xs" @click="loadVersions()">↻ Refresh</button>
+                  </div>
+                  <div x-show="versions.length===0" style="font-size:11px;color:var(--text-muted)">No snapshots yet — one is taken automatically each time you start/restart with a changed binary.</div>
+                  <div x-show="versions.length>0" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto">
+                    <template x-for="v in versions" :key="v.file">
+                      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:var(--bg-base);border-radius:6px;font-size:11px">
+                        <span style="font-family:var(--font-mono)" x-text="v.timestamp+' · '+v.hash+' · '+(v.size_bytes/1024).toFixed(1)+'KB'"></span>
+                        <button class="btn btn-ghost btn-xs" @click="rollback(v.file)">Rollback</button>
+                      </div>
+                    </template>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -4618,9 +4618,13 @@ function goProjectsPage() {
     },
 
     settingsModal:{show:false, project:null, tab:'service'},
+    sslStatus:{enabled:false, checked:false, days_left:null}, sslEmail:'', sslIssuing:false, sslResult:'', sslResultOk:false,
+    healthResult:null, versions:[],
 
     openSettings(p){
       this.settingsModal={show:true, project:p, tab:'service'};
+      this.sslStatus={enabled:false, checked:false, days_left:null};
+      this.sslResult=''; this.healthResult=null; this.versions=[];
       this.openEdit(p);
     },
 
@@ -4629,8 +4633,45 @@ function goProjectsPage() {
         port: p.port||'', exec_cmd: p.exec_cmd||'',
         domain: p.domain||'', user: p.user||'www',
         env_vars: Object.entries(p.env||{}).map(([k,v])=>k+'='+v).join('\n'),
-        release_port: p.release_port||false
+        release_port: p.release_port||false,
+        mem_limit: p.mem_limit||'', cpu_quota: p.cpu_quota||'',
       };
+    },
+
+    async checkSSL(){
+      const p = this.settingsModal.project;
+      const r = await get(`/api/go/projects/${p.id}/ssl`);
+      if(r.ok) this.sslStatus = {enabled:r.enabled, checked:true, days_left:r.days_left};
+    },
+
+    async issueSSL(){
+      const p = this.settingsModal.project;
+      this.sslIssuing = true;
+      const r = await post(`/api/go/projects/${p.id}/ssl`, {email:this.sslEmail});
+      this.sslIssuing = false;
+      this.sslResultOk = r.ok;
+      this.sslResult = r.message || (r.ok ? 'Certificate issued successfully' : (r.error||'Failed to issue certificate'));
+      if(r.ok) await this.checkSSL();
+    },
+
+    async checkHealth(){
+      const p = this.settingsModal.project;
+      const r = await get(`/api/go/projects/${p.id}/health`);
+      if(r.ok) this.healthResult = r;
+    },
+
+    async loadVersions(){
+      const p = this.settingsModal.project;
+      const r = await get(`/api/go/projects/${p.id}/versions`);
+      if(r.ok) this.versions = r.versions||[];
+    },
+
+    async rollback(file){
+      const p = this.settingsModal.project;
+      if(!confirm('Roll back to this version? The current binary will be replaced and the app restarted.')) return;
+      const r = await post(`/api/go/projects/${p.id}/rollback`, {file});
+      if(r.ok){ toast('Rolled back to '+file,'success'); await this.load(); await this.loadVersions(); }
+      else toast(r.error||'Rollback failed','error');
     },
 
     async submitEdit(){
@@ -4646,6 +4687,8 @@ function goProjectsPage() {
         user:         this.editModal.user,
         env:          env,
         release_port: this.editModal.release_port,
+        mem_limit:    this.editModal.mem_limit,
+        cpu_quota:    this.editModal.cpu_quota,
       });
       if(r.ok){ toast('Project updated','success'); this.editModal.show=false; await this.load(); }
       else toast(r.error||'Update failed','error');
