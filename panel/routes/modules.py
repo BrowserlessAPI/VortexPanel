@@ -369,7 +369,7 @@ systemctl enable --now mariadb''',
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
                 # Official MongoDB-documented RHEL .repo format (repo.mongodb.org/yum/redhat)
             '  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && '
-            '  printf "[mongodb-org-{ver}]\\nname=MongoDB Repository\\nbaseurl=https://repo.mongodb.org/yum/redhat/%s/mongodb-org/{ver}/x86_64/\\ngpgcheck=1\\nenabled=1\\ngpgkey=https://www.mongodb.org/static/pgp/server-{ver}.asc\\n" "$RHEL_VER" > /etc/yum.repos.d/mongodb-org-{ver}.repo && '
+            '  printf "[mongodb-org-{ver}]\\nname=MongoDB Repository\\nbaseurl=https://repo.mongodb.org/yum/redhat/%s/mongodb-org/{ver}/\\$basearch/\\ngpgcheck=1\\nenabled=1\\ngpgkey=https://www.mongodb.org/static/pgp/server-{ver}.asc\\n" "$RHEL_VER" > /etc/yum.repos.d/mongodb-org-{ver}.repo && '
             '  (dnf install -y mongodb-org 2>/dev/null || yum install -y mongodb-org) && '
             '  systemctl enable mongod && systemctl start mongod; '
             'fi'
@@ -408,8 +408,9 @@ systemctl enable --now mariadb''',
                 # default which conflicts with PGDG's own versioned packages, so it
                 # must be disabled first (this is PostgreSQL's own documented step).
             '  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && '
-            '  (dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null || '
-            '   yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-x86_64/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null) && '
+            '  ARCH=$(uname -m) && '
+            '  (dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null || '
+            '   yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null) && '
             '  dnf -qy module disable postgresql 2>/dev/null; '
             '  (dnf install -y postgresql{ver}-server postgresql{ver}-contrib 2>/dev/null || '
             '   yum install -y postgresql{ver}-server postgresql{ver}-contrib 2>/dev/null) && '
@@ -745,6 +746,44 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable supervisor && systemctl start supervisor',
         'uninstall':'systemctl stop supervisor 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold supervisor && apt-get autoremove -y',
         'service':'supervisor', 'manage':True,
+    },
+    {
+        'id':'memcached', 'name':'Memcached', 'icon':'/static/icons/memcached.svg', 'category':'Cache',
+        'desc':'Memcached is a high performance distributed memory object caching system',
+        # memcached is packaged natively in every mainstream distro's default repos —
+        # no custom keyring/repo dance needed, unlike Redis/nginx/etc.
+        'check':'which memcached 2>/dev/null',
+        'versions':[
+            {'label':'Latest (distro-packaged)', 'value':'latest'},
+        ],
+        'install_tpl':(
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  apt-get install -y memcached libmemcached-tools && '
+            '  systemctl enable memcached && systemctl start memcached; '
+            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+            '  (dnf install -y memcached libmemcached 2>/dev/null || yum install -y memcached libmemcached 2>/dev/null) && '
+            '  systemctl enable memcached && systemctl start memcached; '
+            'fi'
+        ),
+        'install':'apt-get install -y memcached libmemcached-tools && systemctl enable memcached && systemctl start memcached',
+        'uninstall':'systemctl stop memcached 2>/dev/null; systemctl disable memcached 2>/dev/null; apt-get remove -y --purge memcached libmemcached-tools 2>/dev/null; dnf remove -y memcached libmemcached 2>/dev/null; yum remove -y memcached libmemcached 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -f /etc/memcached.conf /etc/sysconfig/memcached',
+        'service':'memcached', 'manage':True,
+    },
+    {
+        'id':'ffmpeg', 'name':'ffmpeg manager', 'icon':'/static/icons/ffmpeg.svg', 'category':'Tools',
+        'desc':'Supports installation and management of versions 3, 4, 5, and 6. It is an open source computer program used to record, convert and stream audio and video.',
+        # ffmpeg is a CLI tool, not a background service — no 'service' key, no start/stop.
+        # Multiple major versions install SIDE BY SIDE (not one-at-a-time like PHP/Node),
+        # each to its own directory with its own command alias (ffmpeg3/4/5/6), matching
+        # aaPanel's ffmpeg manager UX exactly. Managed via dedicated /api/modules/ffmpeg/versions/*
+        # endpoints rather than the generic single install/uninstall pattern.
+        'check':'test -d /www/server/ffmpeg && echo found',
+        'versions':[],  # version list is dynamic — served by /api/modules/ffmpeg/versions
+        'install_tpl':'',   # installs happen per-version, see dedicated endpoints
+        'install':'',
+        'uninstall':'',     # uninstalls happen per-version, see dedicated endpoints
+        'manage':True,
     },
     # --- Webmail ----------------------------------------------------------------
     {
@@ -1227,6 +1266,131 @@ def control_module(mod_id):
     return jsonify({'ok':False, 'error':'No service defined'})
 
 
+# --- FFMPEG MANAGER -----------------------------------------------------------------
+# Static builds sourced from johnvansickle.com — the source ffmpeg.org's own download
+# page links to for prebuilt Linux binaries. Each major version installs to its own
+# directory so multiple versions coexist side by side (matching aaPanel's ffmpeg
+# manager UX), unlike PHP/Node where only one version is "active" at a time.
+FFMPEG_BASE_DIR = '/www/server/ffmpeg'
+FFMPEG_VERSIONS = [
+    {'version': '6.1',   'major': '6'},
+    {'version': '5.1.1', 'major': '5'},
+    {'version': '4.4.1', 'major': '4'},
+    {'version': '3.4.2', 'major': '3'},
+]
+
+def _ffmpeg_arch():
+    """Map uname -m to johnvansickle.com's arch naming (amd64/arm64) — same lesson
+    learned from the Go SDK installer: never hardcode x86_64."""
+    m = subprocess.run('uname -m', shell=True, capture_output=True, text=True).stdout.strip()
+    return {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armhf'}.get(m, 'amd64')
+
+def _ffmpeg_dir(version):
+    return os.path.join(FFMPEG_BASE_DIR, f'ffmpeg-{version}')
+
+@modules_bp.route('/api/modules/ffmpeg/versions')
+def ffmpeg_list_versions():
+    if not req(): return jsonify({'ok': False}), 401
+    out = []
+    for v in FFMPEG_VERSIONS:
+        d = _ffmpeg_dir(v['version'])
+        binary = os.path.join(d, 'ffmpeg')
+        out.append({
+            'version': v['version'], 'major': v['major'],
+            'installed': os.path.isfile(binary),
+            'path': d, 'binary': binary,
+            'command': f"ffmpeg{v['major']}",
+        })
+    return jsonify({'ok': True, 'versions': out})
+
+@modules_bp.route('/api/modules/ffmpeg/versions/<version>/detail')
+def ffmpeg_version_detail(version):
+    if not req(): return jsonify({'ok': False}), 401
+    v = next((x for x in FFMPEG_VERSIONS if x['version'] == version), None)
+    if not v: return jsonify({'ok': False, 'error': 'Unknown version'})
+    d = _ffmpeg_dir(version)
+    binary = os.path.join(d, 'ffmpeg')
+    if not os.path.isfile(binary):
+        return jsonify({'ok': False, 'error': 'Not installed'})
+    return jsonify({'ok': True, 'path': d, 'full_command': binary, 'command': f"ffmpeg{v['major']}"})
+
+@modules_bp.route('/api/modules/ffmpeg/versions/<version>/install', methods=['POST'])
+def ffmpeg_install_version(version):
+    if not req(): return jsonify({'ok': False}), 401
+    v = next((x for x in FFMPEG_VERSIONS if x['version'] == version), None)
+    if not v: return jsonify({'ok': False, 'error': 'Unknown version'})
+
+    arch = _ffmpeg_arch()
+    dest_dir = _ffmpeg_dir(version)
+    if os.path.isfile(os.path.join(dest_dir, 'ffmpeg')):
+        return jsonify({'ok': False, 'error': f'ffmpeg {version} is already installed'})
+
+    os.makedirs(FFMPEG_BASE_DIR, exist_ok=True)
+    tmp_archive = f'/tmp/ffmpeg-{version}-{arch}.tar.xz'
+
+    # "Latest" major version tracks johnvansickle.com's rolling release build;
+    # older majors come from their old-releases archive by exact version string.
+    is_latest_major = version == FFMPEG_VERSIONS[0]['version']
+    if is_latest_major:
+        url = f'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-{arch}-static.tar.xz'
+    else:
+        url = f'https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-{version}-{arch}-static.tar.xz'
+
+    job_id = str(uuid.uuid4())[:8]
+    _job_create(job_id, initial_installed=False)
+
+    def run_job():
+        _job_append_line(job_id, f'[VortexPanel] Downloading ffmpeg {version} ({arch}) from {url} ...')
+        dl = subprocess.run(f'curl -fsSL --max-time 120 "{url}" -o "{tmp_archive}"',
+                             shell=True, capture_output=True, text=True)
+        if dl.returncode != 0 or not os.path.isfile(tmp_archive):
+            _job_append_line(job_id, f'[ERROR] Download failed: {dl.stderr.strip()}')
+            _job_finish(job_id, False, False)
+            return
+        _job_append_line(job_id, '[VortexPanel] Extracting...')
+        os.makedirs(dest_dir, exist_ok=True)
+        ext = subprocess.run(f'tar -xJf "{tmp_archive}" -C "{dest_dir}" --strip-components=1',
+                              shell=True, capture_output=True, text=True)
+        subprocess.run(f'rm -f "{tmp_archive}"', shell=True)
+        if ext.returncode != 0:
+            _job_append_line(job_id, f'[ERROR] Extract failed: {ext.stderr.strip()}')
+            _job_finish(job_id, False, False)
+            return
+        binary = os.path.join(dest_dir, 'ffmpeg')
+        if not os.path.isfile(binary):
+            _job_append_line(job_id, '[ERROR] Extraction completed but ffmpeg binary not found — archive layout may have changed upstream')
+            _job_finish(job_id, False, False)
+            return
+        subprocess.run(f'chmod +x "{binary}" "{os.path.join(dest_dir, "ffprobe")}" 2>/dev/null', shell=True)
+        # Verify the binary actually runs before declaring success — don't trust the
+        # download blindly, matching the "no room for error" standard for this feature.
+        verify = subprocess.run(f'"{binary}" -version', shell=True, capture_output=True, text=True, timeout=10)
+        if verify.returncode != 0:
+            _job_append_line(job_id, f'[ERROR] Downloaded binary failed to execute: {verify.stderr.strip()[:200]}')
+            _job_finish(job_id, False, False)
+            return
+        cmd_alias = f"/usr/local/bin/ffmpeg{v['major']}"
+        subprocess.run(f'ln -sf "{binary}" "{cmd_alias}"', shell=True)
+        _job_append_line(job_id, verify.stdout.splitlines()[0] if verify.stdout else 'ffmpeg installed')
+        _job_append_line(job_id, f'[VortexPanel] Installed to {dest_dir} — accessible as `{cmd_alias.split("/")[-1]}`')
+        _job_finish(job_id, True, True, version)
+
+    threading.Thread(target=run_job, daemon=True).start()
+    return jsonify({'ok': True, 'job_id': job_id})
+
+@modules_bp.route('/api/modules/ffmpeg/versions/<version>/uninstall', methods=['POST'])
+def ffmpeg_uninstall_version(version):
+    if not req(): return jsonify({'ok': False}), 401
+    v = next((x for x in FFMPEG_VERSIONS if x['version'] == version), None)
+    if not v: return jsonify({'ok': False, 'error': 'Unknown version'})
+    d = _ffmpeg_dir(version)
+    if not os.path.isdir(d):
+        return jsonify({'ok': False, 'error': 'Not installed'})
+    subprocess.run(f'rm -rf "{d}"', shell=True)
+    subprocess.run(f'rm -f "/usr/local/bin/ffmpeg{v["major"]}"', shell=True)
+    return jsonify({'ok': True})
+
+
 # --- App Settings Modal endpoints ----------------------------------------------
 
 @modules_bp.route('/api/modules/<mod_id>/settings')
@@ -1439,6 +1603,81 @@ def get_module_settings(mod_id):
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,
             'current_status':current_status,'optimization':optimization,'persistence':persistence,
             'versions':[{'label':'Redis 7.2 (Stable)','value':'7.2'},{'label':'Redis 8.0 (Latest)','value':'8.0'}]})
+
+    elif mod_id == 'memcached':
+        status  = sh('systemctl is-active memcached 2>/dev/null') or 'inactive'
+        version = sh("memcached -h 2>/dev/null | head -1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
+        conf_paths = ['/etc/memcached.conf', '/etc/sysconfig/memcached']
+        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/memcached.conf')
+        try:
+            with open(conf_path) as f: conf_content = f.read()
+        except Exception: conf_content = ''
+
+        def mcfg(key, default=''):
+            # memcached.conf uses "-X value" flag-style lines (Debian) OR KEY="value" (RHEL sysconfig)
+            m = _re.search(rf'^-{key}\s+(\S+)', conf_content, _re.MULTILINE)
+            if m: return m.group(1)
+            m = _re.search(rf'^{key.upper()}="?([^"\n]*)"?', conf_content, _re.MULTILINE)
+            return m.group(1) if m else default
+
+        bind_ip = mcfg('l', '127.0.0.1')
+        port    = mcfg('p', '11211')
+        cache_mb  = mcfg('m', '64')
+        maxconn = mcfg('c', '1024')
+
+        # Live stats via memcached's own text protocol ("stats" command) — same technique
+        # aaPanel uses. No extra client library needed, just a raw TCP round-trip.
+        def memcached_stats():
+            import socket
+            try:
+                with socket.create_connection((bind_ip or '127.0.0.1', int(port or 11211)), timeout=2) as s:
+                    s.sendall(b'stats\r\n')
+                    data = b''
+                    s.settimeout(2)
+                    while b'END\r\n' not in data:
+                        chunk = s.recv(4096)
+                        if not chunk: break
+                        data += chunk
+                    return data.decode(errors='ignore')
+            except Exception:
+                return ''
+
+        raw_stats = memcached_stats()
+        def sget(key):
+            m = _re.search(rf'STAT {key} (\S+)', raw_stats)
+            return m.group(1) if m else '0'
+
+        def fmt_bytes(n):
+            try: n = float(n)
+            except (TypeError, ValueError): return '0.00 B'
+            for unit in ['B','KB','MB','GB']:
+                if n < 1024: return f'{n:.2f} {unit}'
+                n /= 1024
+            return f'{n:.2f} TB'
+
+        cmd_get    = int(sget('cmd_get') or 0)
+        get_hits   = int(sget('get_hits') or 0)
+        hit_rate   = round(get_hits / cmd_get, 2) if cmd_get else 0
+
+        current_status = {
+            'bind': bind_ip or '127.0.0.1', 'port': port or '11211',
+            'maxconn': maxconn or '1024', 'cachesize': cache_mb or '64',
+            'curr_connections': sget('curr_connections'),
+            'cmd_get': sget('cmd_get'), 'get_hits': sget('get_hits'), 'get_misses': sget('get_misses'),
+            'bytes_read':    fmt_bytes(sget('bytes_read')),
+            'bytes_written': fmt_bytes(sget('bytes_written')),
+            'bytes':         fmt_bytes(sget('bytes')),
+            'curr_items': sget('curr_items'), 'evictions': sget('evictions'),
+            'hit_rate': hit_rate,
+        }
+        optimization = {
+            'bind': bind_ip or '127.0.0.1', 'port': port or '11211',
+            'cachesize': cache_mb or '64', 'maxconn': maxconn or '1024',
+        }
+        return jsonify({'ok':True,'status':status,'version':version,
+            'conf_path':conf_path,'conf_content':conf_content,
+            'current_status':current_status,'optimization':optimization,
+            'versions':[{'label':f'Memcached {version}' if version else 'Memcached (installed)','value':'latest'}]})
 
     elif mod_id == 'php':
         php_versions = []
@@ -1876,10 +2115,36 @@ def save_module_settings(mod_id):
             sh('systemctl reload lsws 2>/dev/null || systemctl restart lsws 2>/dev/null')
         elif mod_id in ('mysql', 'mariadb'):
             sh(f'systemctl restart {mod_id} 2>&1')
+        elif mod_id == 'memcached':
+            sh('systemctl restart memcached 2>&1')
         return jsonify({'ok': True, 'message': 'Configuration saved and service reloaded'})
 
     elif action == 'save_optimization':
         opts = d.get('optimization', {})
+        if mod_id == 'memcached':
+            conf_paths = ['/etc/memcached.conf', '/etc/sysconfig/memcached']
+            conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/memcached.conf')
+            try:
+                with open(conf_path) as f: c = f.read()
+            except Exception:
+                c = ''
+            import re as _re2
+            flag_map = {'bind': 'l', 'port': 'p', 'cachesize': 'm', 'maxconn': 'c'}
+            for opt_key, flag in flag_map.items():
+                if opt_key not in opts: continue
+                val = opts[opt_key]
+                pattern = rf'^-{flag}\s+\S+'
+                replacement = f'-{flag} {val}'
+                if _re2.search(pattern, c, _re2.MULTILINE):
+                    c = _re2.sub(pattern, replacement, c, flags=_re2.MULTILINE)
+                else:
+                    c += f'\n{replacement}\n'
+            try:
+                with open(conf_path, 'w') as f: f.write(c)
+            except Exception as e:
+                return jsonify({'ok': False, 'error': str(e)})
+            sh('systemctl restart memcached 2>&1')
+            return jsonify({'ok': True})
         if mod_id == 'apache2':
             conf = '/etc/apache2/apache2.conf'
             mpm_conf = sh('find /etc/apache2/mods-enabled/ -name "mpm_*.conf" 2>/dev/null | head -1')
