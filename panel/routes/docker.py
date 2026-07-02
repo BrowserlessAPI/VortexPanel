@@ -19,6 +19,233 @@ def docker_ok():
     _, _, rc = sh('docker info 2>/dev/null', t=5)
     return rc == 0
 
+# --- DOMAIN / REVERSE PROXY (reuses the pattern from go_projects.py / nodejs_projects.py) ----
+DOCKER_DOMAINS_FILE = '/opt/vortexpanel/docker_domains.json'
+
+def _os_family():
+    if os.path.exists('/etc/debian_version'): return 'debian'
+    if os.path.exists('/etc/redhat-release'): return 'rhel'
+    _, _, rc = sh('which apt-get 2>/dev/null')
+    return 'debian' if rc == 0 else 'rhel'
+
+def _detect_active_webserver():
+    checks = [
+        ('nginx',         'systemctl is-active nginx 2>/dev/null'),
+        ('apache2',       'systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null'),
+        ('openlitespeed', 'systemctl is-active lsws 2>/dev/null'),
+        ('caddy',         'systemctl is-active caddy 2>/dev/null'),
+    ]
+    for name, cmd in checks:
+        out, _, _ = sh(cmd)
+        if 'active' in out: return name
+    return None
+
+def _apache_conf_dir():
+    return '/etc/apache2/sites-available' if _os_family() == 'debian' else '/etc/httpd/conf.d'
+
+def _apache_log_dir():
+    return '/var/log/apache2' if _os_family() == 'debian' else '/var/log/httpd'
+
+def _apache_enable_modules():
+    if _os_family() == 'debian':
+        sh('a2enmod proxy proxy_http headers 2>/dev/null')
+    else:
+        sh('dnf install -y mod_proxy 2>/dev/null || yum install -y mod_proxy 2>/dev/null || true')
+
+def _apache_enable_site(name):
+    if _os_family() == 'debian': sh(f'a2ensite {name} 2>/dev/null')
+
+def _apache_disable_site(name):
+    if _os_family() == 'debian': sh(f'a2dissite {name} 2>/dev/null')
+
+def _apache_test_config():
+    if _os_family() == 'debian': return sh('apache2ctl configtest 2>&1')
+    return sh('apachectl configtest 2>&1 || httpd -t 2>&1')
+
+def _apache_reload():
+    if _os_family() == 'debian':
+        sh('systemctl reload apache2 2>/dev/null || apache2ctl graceful 2>/dev/null')
+    else:
+        sh('systemctl reload httpd 2>/dev/null || apachectl graceful 2>/dev/null')
+
+def _load_docker_domains():
+    if os.path.exists(DOCKER_DOMAINS_FILE):
+        try: return json.load(open(DOCKER_DOMAINS_FILE))
+        except Exception: pass
+    return {}
+
+def _save_docker_domains(d):
+    os.makedirs(os.path.dirname(DOCKER_DOMAINS_FILE), exist_ok=True)
+    json.dump(d, open(DOCKER_DOMAINS_FILE, 'w'), indent=2)
+
+def _remove_docker_proxy(cname):
+    """Remove proxy config for a container across ALL webservers (safe no-op if absent)."""
+    tag = f'vortex-docker-{cname}'
+    sh(f'rm -f /etc/nginx/conf.d/{tag}.conf 2>/dev/null')
+    sh(f'a2dissite {tag} 2>/dev/null; rm -f /etc/apache2/sites-available/{tag}.conf '
+       f'/etc/apache2/sites-enabled/{tag}.conf /etc/httpd/conf.d/{tag}.conf 2>/dev/null')
+    sh(f'rm -rf /usr/local/lsws/conf/vhosts/{tag}/ 2>/dev/null')
+    sh(f'rm -f /etc/caddy/sites/{tag}.caddy 2>/dev/null')
+    ws = _detect_active_webserver()
+    if ws == 'nginx':        sh('nginx -t 2>/dev/null && (systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null)')
+    elif ws == 'apache2':    _apache_reload()
+    elif ws == 'openlitespeed': sh('systemctl restart lsws 2>/dev/null')
+    elif ws == 'caddy':      sh('systemctl reload caddy 2>/dev/null')
+
+def _write_docker_proxy(cname, domain, port):
+    """Write reverse-proxy vhost mapping domain -> 127.0.0.1:port for a Docker container."""
+    domain = (domain or '').strip()
+    if not domain or not port:
+        return False, 'Domain and host port required'
+
+    ws = _detect_active_webserver()
+    if not ws:
+        return False, 'No active webserver. Install nginx, Apache, OLS, or Caddy from App Store first.'
+
+    tag     = f'vortex-docker-{cname}'
+    primary = domain.splitlines()[0].strip().split(':')[0]
+    all_d   = ' '.join(d.strip().split(':')[0] for d in domain.splitlines() if d.strip())
+
+    _remove_docker_proxy(cname)  # clean old config first
+
+    if ws == 'nginx':
+        conf = f"""server {{
+    listen 80;
+    server_name {all_d};
+    access_log /var/log/nginx/{tag}-access.log;
+    error_log  /var/log/nginx/{tag}-error.log;
+
+    location / {{
+        proxy_pass http://127.0.0.1:{port};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }}
+}}
+"""
+        conf_path = f'/etc/nginx/conf.d/{tag}.conf'
+        open(conf_path, 'w').write(conf)
+        _, err, rc = sh('nginx -t 2>&1')
+        if rc != 0:
+            try: os.remove(conf_path)
+            except Exception: pass
+            return False, f'nginx config test failed: {err}'
+        sh('systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null')
+
+    elif ws == 'apache2':
+        _apache_enable_modules()
+        log_dir  = _apache_log_dir()
+        conf_dir = _apache_conf_dir()
+        conf = f"""<VirtualHost *:80>
+    ServerName {primary}
+    ServerAlias {all_d}
+    ProxyPreserveHost On
+    ProxyPass / http://127.0.0.1:{port}/
+    ProxyPassReverse / http://127.0.0.1:{port}/
+    RequestHeader set X-Forwarded-Proto "http"
+    ErrorLog {log_dir}/{tag}-error.log
+    CustomLog {log_dir}/{tag}-access.log combined
+</VirtualHost>
+"""
+        os.makedirs(conf_dir, exist_ok=True)
+        conf_path = os.path.join(conf_dir, f'{tag}.conf')
+        open(conf_path, 'w').write(conf)
+        _apache_enable_site(tag)
+        _, err, rc = _apache_test_config()
+        if rc != 0:
+            _apache_disable_site(tag)
+            try: os.remove(conf_path)
+            except Exception: pass
+            return False, f'Apache config test failed: {err}'
+        _apache_reload()
+
+    elif ws == 'openlitespeed':
+        vhost_dir = f'/usr/local/lsws/conf/vhosts/{tag}'
+        os.makedirs(vhost_dir, exist_ok=True)
+        conf = f"""docRoot                   /var/www/html
+virtualHostConfig {{
+  extprocessor {tag} {{
+    type                    proxy
+    address                 127.0.0.1:{port}
+    maxConns                100
+    pcKeepAliveTimeout      60
+    initTimeout             60
+    retryTimeout            0
+    respBuffer              0
+  }}
+  context / {{
+    type                    proxy
+    handler                 {tag}
+    addDefaultCharset       off
+  }}
+}}
+"""
+        open(f'{vhost_dir}/vhconf.conf', 'w').write(conf)
+        sh('/usr/local/lsws/bin/lswsctrl restart 2>/dev/null || systemctl restart lsws 2>/dev/null')
+
+    elif ws == 'caddy':
+        os.makedirs('/etc/caddy/sites', exist_ok=True)
+        conf = f"""{all_d} {{
+    reverse_proxy 127.0.0.1:{port}
+    log {{
+        output file /var/log/caddy/{tag}.log
+    }}
+}}
+"""
+        open(f'/etc/caddy/sites/{tag}.caddy', 'w').write(conf)
+        caddyfile = '/etc/caddy/Caddyfile'
+        if os.path.exists(caddyfile) and 'import sites/*' not in open(caddyfile).read():
+            open(caddyfile, 'a').write('\nimport sites/*\n')
+        _, err, rc = sh('caddy validate --config /etc/caddy/Caddyfile 2>&1')
+        if rc != 0:
+            sh(f'rm -f /etc/caddy/sites/{tag}.caddy')
+            return False, f'Caddy config validate failed: {err}'
+        sh('systemctl reload caddy 2>/dev/null')
+
+    return True, ws
+
+@docker_bp.route('/api/docker/webserver')
+def docker_webserver():
+    if not req(): return jsonify({'ok': False}), 401
+    ws = _detect_active_webserver()
+    return jsonify({'ok': True, 'webserver': ws,
+                     'message': f'Domains will proxy via {ws}' if ws else 'No active webserver — install one from App Store first'})
+
+@docker_bp.route('/api/docker/containers/<cname>/domain', methods=['GET', 'POST', 'DELETE'])
+def container_domain(cname):
+    if not req(): return jsonify({'ok': False}), 401
+    domains = _load_docker_domains()
+
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'domain': domains.get(cname, {})})
+
+    if request.method == 'DELETE':
+        _remove_docker_proxy(cname)
+        domains.pop(cname, None)
+        _save_docker_domains(domains)
+        return jsonify({'ok': True})
+
+    # POST — set/update domain
+    d = request.get_json() or {}
+    domain = (d.get('domain') or '').strip()
+    port   = str(d.get('port') or '').strip()
+    if not domain or not port:
+        return jsonify({'ok': False, 'error': 'Domain and host port are required'})
+    if not port.isdigit():
+        return jsonify({'ok': False, 'error': 'Port must be numeric — this is the HOST port you mapped when running the container (e.g. 8080 in -p 8080:80)'})
+
+    ok, result = _write_docker_proxy(cname, domain, port)
+    if not ok:
+        return jsonify({'ok': False, 'error': result})
+
+    domains[cname] = {'domain': domain, 'port': port, 'webserver': result}
+    _save_docker_domains(domains)
+    return jsonify({'ok': True, 'webserver': result})
+
 # --- STATUS ---------------------------------------------------------------------
 @docker_bp.route('/api/docker/status')
 def status():
@@ -36,19 +263,22 @@ def list_containers():
     if not req(): return jsonify({'ok': False}), 401
     if not docker_ok(): return jsonify({'ok': False, 'error': 'Docker not running'}), 400
     out, _, rc = sh('docker ps -a --format "{{json .}}" 2>/dev/null')
+    domains = _load_docker_domains()
     containers = []
     for line in out.strip().split('\n'):
         if not line.strip(): continue
         try:
             c = json.loads(line)
+            name = c.get('Names','').lstrip('/')
             containers.append({
                 'id':      c.get('ID','')[:12],
-                'name':    c.get('Names','').lstrip('/'),
+                'name':    name,
                 'image':   c.get('Image',''),
                 'status':  c.get('Status',''),
                 'state':   c.get('State',''),
                 'ports':   c.get('Ports',''),
                 'created': c.get('CreatedAt',''),
+                'domain':  domains.get(name, {}).get('domain', ''),
             })
         except: pass
     return jsonify({'ok': True, 'containers': containers})
@@ -61,6 +291,13 @@ def container_action(cid):
         return jsonify({'ok': False, 'error': 'Invalid action'}), 400
     cmd = f'docker rm -f {cid}' if action == 'remove' else f'docker {action} {cid}'
     _, err, rc = sh(cmd)
+    if action == 'remove' and rc == 0:
+        # Clean up any domain/proxy config tied to this container name
+        domains = _load_docker_domains()
+        if cid in domains:
+            _remove_docker_proxy(cid)
+            domains.pop(cid, None)
+            _save_docker_domains(domains)
     return jsonify({'ok': rc == 0, 'error': err if rc != 0 else ''})
 
 @docker_bp.route('/api/docker/containers/<cid>/logs')

@@ -36,6 +36,7 @@ document.addEventListener('alpine:init', () => {
                 env_vars:'', release_port:false },
     goSettings:{ show:false, project:null, tab:'service' },
     goLogs:   { show:false, name:'', logs:'' },
+    dockerDomain: { show:false, name:'', domain:'', port:'', webserver:'', detectedPorts:'', hasExisting:false, loading:false },
     // File picker
     picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
   });
@@ -3626,7 +3627,9 @@ function dockerPage() {
       await this.loadStatus();
       if (this.status.running) await Promise.all([this.loadContainers(), this.loadImages()]);
       this.loading = false;
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="docker") this.load(); });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="docker") { this.loadStatus(); if(this.status.running){ this.loadContainers(); this.loadImages(); } } });
+      window.addEventListener('vp-docker-domain-save', () => this.saveDomain());
+      window.addEventListener('vp-docker-domain-remove', () => this.removeDomain());
     },
 
     async loadStatus()     { const r=await get('/api/docker/status');     if(r.ok) this.status=r; },
@@ -3724,6 +3727,54 @@ function dockerPage() {
       if (!confirm('Remove stopped containers + unused images and networks?')) return;
       const r = await post('/api/docker/system/prune');
       if (r.ok) { toast('System pruned','success'); await Promise.all([this.loadContainers(),this.loadImages()]); }
+    },
+
+    async openDomainModal(ct) {
+      const s = Alpine.store('vp').dockerDomain;
+      s.show          = true;
+      s.name          = ct.name;
+      s.domain        = ct.domain || '';
+      s.port          = '';
+      s.detectedPorts = ct.ports || '';
+      s.hasExisting   = !!ct.domain;
+      s.loading       = false;
+      const wsInfo = await get('/api/docker/webserver');
+      s.webserver = wsInfo.webserver || '';
+      // Pre-fill existing port if editing
+      if (ct.domain) {
+        const d = await get(`/api/docker/containers/${encodeURIComponent(ct.name)}/domain`);
+        if (d.ok && d.domain) s.port = d.domain.port || '';
+      }
+    },
+
+    async saveDomain() {
+      const s = Alpine.store('vp').dockerDomain;
+      if (!s.domain || !s.port) { toast('Domain and host port are required','error'); return; }
+      s.loading = true;
+      const r = await post(`/api/docker/containers/${encodeURIComponent(s.name)}/domain`, {
+        domain: s.domain, port: s.port,
+      });
+      s.loading = false;
+      if (r.ok) {
+        toast('Domain assigned — proxy configured via '+r.webserver, 'success');
+        s.show = false;
+        await this.loadContainers();
+      } else {
+        toast(r.error || 'Failed to assign domain', 'error');
+      }
+    },
+
+    async removeDomain() {
+      const s = Alpine.store('vp').dockerDomain;
+      if (!confirm(`Remove domain from ${s.name}? This deletes the reverse-proxy config.`)) return;
+      const r = await del(`/api/docker/containers/${encodeURIComponent(s.name)}/domain`);
+      if (r.ok) {
+        toast('Domain removed', 'success');
+        s.show = false;
+        await this.loadContainers();
+      } else {
+        toast(r.error || 'Failed to remove domain', 'error');
+      }
     },
   };
 }

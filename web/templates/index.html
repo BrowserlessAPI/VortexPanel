@@ -5697,7 +5697,7 @@
               </template>
               <div class="card" style="padding:0;overflow:hidden" x-show="containers.length>0">
                 <table class="data-table">
-                  <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th>Actions</th></tr></thead>
+                  <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th>Domain</th><th>Actions</th></tr></thead>
                   <tbody>
                     <template x-for="ct in containers" :key="ct.id">
                       <tr>
@@ -5705,6 +5705,13 @@
                         <td style="font-size:11px;font-family:var(--font-mono)" x-text="ct.image"></td>
                         <td><span :class="'badge badge-'+(ct.state==='running'?'green':ct.state==='exited'?'red':'yellow')" style="font-size:10px" x-text="ct.status"></span></td>
                         <td style="font-size:11px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis" x-text="ct.ports||'—'"></td>
+                        <td>
+                          <button x-show="!ct.domain" class="btn btn-ghost btn-xs" @click="openDomainModal(ct)">+ Add</button>
+                          <div x-show="ct.domain" style="display:flex;align-items:center;gap:6px">
+                            <a :href="'http://'+ct.domain" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none" x-text="ct.domain"></a>
+                            <button class="btn btn-ghost btn-xs" @click="openDomainModal(ct)" title="Edit">✏</button>
+                          </div>
+                        </td>
                         <td>
                           <div style="display:flex;gap:4px">
                             <button class="btn btn-success btn-xs" x-show="ct.state!=='running'" @click="containerAction(ct,'start')">▶</button>
@@ -7158,6 +7165,38 @@
       <button @click="$store.vp.goLogs.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
     </div>
     <pre style="flex:1;overflow-y:auto;padding:16px;margin:0;background:#0d1117;color:#86efac;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap" x-text="$store.vp.goLogs.logs"></pre>
+  </div>
+</div>
+
+<!-- DOCKER DOMAIN MODAL -->
+<div x-data="{}" x-show="$store.vp.dockerDomain.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
+  <div style="background:var(--bg-card);border-radius:12px;width:460px;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700">Assign Domain — <span x-text="$store.vp.dockerDomain.name"></span></div>
+      <button @click="$store.vp.dockerDomain.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+    </div>
+    <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+      ℹ Enter the <strong>host port</strong> you mapped when running this container — the left side of <code>-p HOST:CONTAINER</code> (e.g. <code>8080</code> in <code>-p 8080:80</code>). VortexPanel proxies your domain to it via <strong x-text="$store.vp.dockerDomain.webserver||'your active webserver'"></strong>.
+    </div>
+    <div style="display:grid;gap:14px">
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain</label>
+        <input class="form-input" x-model="$store.vp.dockerDomain.domain" placeholder="myapp.example.com" style="margin-top:4px">
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Host Port *</label>
+        <input class="form-input" x-model="$store.vp.dockerDomain.port" placeholder="8080" style="margin-top:4px">
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px" x-show="$store.vp.dockerDomain.detectedPorts" x-text="'Detected port mapping: '+$store.vp.dockerDomain.detectedPorts"></div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-top:20px">
+      <button x-show="$store.vp.dockerDomain.hasExisting" class="btn btn-danger btn-sm" @click="$dispatch('vp-docker-domain-remove')">Remove Domain</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost btn-sm" @click="$store.vp.dockerDomain.show=false">Cancel</button>
+      <button class="btn btn-primary btn-sm" @click="$dispatch('vp-docker-domain-save')" :disabled="$store.vp.dockerDomain.loading">
+        <span x-show="$store.vp.dockerDomain.loading">Saving...</span><span x-show="!$store.vp.dockerDomain.loading">Save</span>
+      </button>
+    </div>
   </div>
 </div>
 
