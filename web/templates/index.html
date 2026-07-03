@@ -3430,7 +3430,7 @@
                           <td>
                             <a href="#" @click.prevent="v.installed && ffmpegShowDetail(v.version)"
                                :style="v.installed?'color:var(--accent);text-decoration:none':'color:var(--text-secondary)'"
-                               x-text="'ffmpeg-'+v.version"></a>
+                               x-text="v.label||('ffmpeg-'+v.version)"></a>
                           </td>
                           <td>
                             <span :style="v.installed?'color:var(--green)':'color:var(--text-muted)'" x-text="v.installed?'Installed':'Not Installed'"></span>

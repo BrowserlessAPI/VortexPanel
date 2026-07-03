@@ -1267,26 +1267,65 @@ def control_module(mod_id):
 
 
 # --- FFMPEG MANAGER -----------------------------------------------------------------
-# Static builds sourced from johnvansickle.com — the source ffmpeg.org's own download
-# page links to for prebuilt Linux binaries. Each major version installs to its own
-# directory so multiple versions coexist side by side (matching aaPanel's ffmpeg
-# manager UX), unlike PHP/Node where only one version is "active" at a time.
+# Source: BtbN/FFmpeg-Builds on GitHub — officially listed on https://www.ffmpeg.org/download.html#build-linux
+# Provides GPL static builds for both x86_64 (linux64) and aarch64 (linuxarm64).
+#
+# URL scheme (VERIFIED LIVE from GitHub expanded_assets on 2026-07-03):
+#   https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/<filename>
+#
+# Static build filenames (no "shared" suffix = statically linked, no dependencies):
+#   ffmpeg-n8.1-latest-linux64-gpl-8.1.tar.xz       x86_64 v8.1 stable
+#   ffmpeg-n8.1-latest-linuxarm64-gpl-8.1.tar.xz    arm64  v8.1 stable
+#   ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz       x86_64 v7.1 stable
+#   ffmpeg-n7.1-latest-linuxarm64-gpl-7.1.tar.xz    arm64  v7.1 stable
+#   ffmpeg-master-latest-linux64-gpl.tar.xz          x86_64 latest nightly (master)
+#   ffmpeg-master-latest-linuxarm64-gpl.tar.xz       arm64  latest nightly (master)
+#
+# Archive internal structure (verified from build.sh + linux-install-static.sh):
+#   ffmpeg-n7.1.X-linux64-gpl-7.1/
+#     bin/ffmpeg       <- the binary we care about
+#     bin/ffprobe
+#     bin/ffplay
+#     doc/, man/, presets/
+#
+# Multiple versions install SIDE BY SIDE to /www/server/ffmpeg/ffmpeg-{ver}/
+# Each accessible via a command alias: ffmpeg7, ffmpeg8, ffmpegmaster
+# Matching aaPanel's ffmpeg manager UX exactly.
+
 FFMPEG_BASE_DIR = '/www/server/ffmpeg'
+FFMPEG_BASE_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest'
+
+# Version map — "display" is what the user sees, "branch" is the BtbN branch name
+# "ver_suffix" is the version number appended at the end of the filename for stable releases
 FFMPEG_VERSIONS = [
-    {'version': '6.1',   'major': '6'},
-    {'version': '5.1.1', 'major': '5'},
-    {'version': '4.4.1', 'major': '4'},
-    {'version': '3.4.2', 'major': '3'},
+    {'version': '8.1',    'label': 'ffmpeg-8.1 (Latest Stable)', 'branch': 'n8.1',   'suffix': '8.1',  'alias': 'ffmpeg8'},
+    {'version': '7.1',    'label': 'ffmpeg-7.1 (Previous Stable)','branch': 'n7.1',   'suffix': '7.1',  'alias': 'ffmpeg7'},
+    {'version': 'master', 'label': 'ffmpeg-master (Nightly)',       'branch': 'master', 'suffix': None,   'alias': 'ffmpegmaster'},
 ]
 
 def _ffmpeg_arch():
-    """Map uname -m to johnvansickle.com's arch naming (amd64/arm64) — same lesson
-    learned from the Go SDK installer: never hardcode x86_64."""
+    """Map uname -m to BtbN's Linux target name.
+    linux64 = x86_64, linuxarm64 = aarch64 (arm64).
+    Verified from BtbN README: targets are linux64 / linuxarm64."""
     m = subprocess.run('uname -m', shell=True, capture_output=True, text=True).stdout.strip()
-    return {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armhf'}.get(m, 'amd64')
+    return {'x86_64': 'linux64', 'aarch64': 'linuxarm64', 'arm64': 'linuxarm64'}.get(m, 'linux64')
 
 def _ffmpeg_dir(version):
     return os.path.join(FFMPEG_BASE_DIR, f'ffmpeg-{version}')
+
+def _ffmpeg_url(v):
+    """Build the exact BtbN download URL for a given version + current arch.
+    Pattern verified live from GitHub expanded_assets 2026-07-03."""
+    arch = _ffmpeg_arch()
+    branch = v['branch']
+    suffix = v['suffix']
+    if suffix:
+        # Stable release: ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz
+        fname = f'ffmpeg-{branch}-latest-{arch}-gpl-{suffix}.tar.xz'
+    else:
+        # Master nightly: ffmpeg-master-latest-linux64-gpl.tar.xz
+        fname = f'ffmpeg-{branch}-latest-{arch}-gpl.tar.xz'
+    return f'{FFMPEG_BASE_URL}/{fname}', fname
 
 @modules_bp.route('/api/modules/ffmpeg/versions')
 def ffmpeg_list_versions():
@@ -1294,12 +1333,16 @@ def ffmpeg_list_versions():
     out = []
     for v in FFMPEG_VERSIONS:
         d = _ffmpeg_dir(v['version'])
-        binary = os.path.join(d, 'ffmpeg')
+        binary = os.path.join(d, 'bin', 'ffmpeg')
+        url, fname = _ffmpeg_url(v)
         out.append({
-            'version': v['version'], 'major': v['major'],
+            'version': v['version'],
+            'label':   v['label'],
             'installed': os.path.isfile(binary),
-            'path': d, 'binary': binary,
-            'command': f"ffmpeg{v['major']}",
+            'path':     d,
+            'binary':   binary,
+            'command':  v['alias'],
+            'url':      url,
         })
     return jsonify({'ok': True, 'versions': out})
 
@@ -1309,10 +1352,15 @@ def ffmpeg_version_detail(version):
     v = next((x for x in FFMPEG_VERSIONS if x['version'] == version), None)
     if not v: return jsonify({'ok': False, 'error': 'Unknown version'})
     d = _ffmpeg_dir(version)
-    binary = os.path.join(d, 'ffmpeg')
+    binary = os.path.join(d, 'bin', 'ffmpeg')
     if not os.path.isfile(binary):
         return jsonify({'ok': False, 'error': 'Not installed'})
-    return jsonify({'ok': True, 'path': d, 'full_command': binary, 'command': f"ffmpeg{v['major']}"})
+    # Get exact installed version string from the binary
+    ver_out = subprocess.run(f'"{binary}" -version', shell=True,
+                              capture_output=True, text=True, timeout=5)
+    ver_str = ver_out.stdout.splitlines()[0] if ver_out.stdout else ''
+    return jsonify({'ok': True, 'path': d, 'full_command': binary,
+                    'command': v['alias'], 'version_string': ver_str})
 
 @modules_bp.route('/api/modules/ffmpeg/versions/<version>/install', methods=['POST'])
 def ffmpeg_install_version(version):
@@ -1320,60 +1368,87 @@ def ffmpeg_install_version(version):
     v = next((x for x in FFMPEG_VERSIONS if x['version'] == version), None)
     if not v: return jsonify({'ok': False, 'error': 'Unknown version'})
 
-    arch = _ffmpeg_arch()
     dest_dir = _ffmpeg_dir(version)
-    if os.path.isfile(os.path.join(dest_dir, 'ffmpeg')):
+    binary = os.path.join(dest_dir, 'bin', 'ffmpeg')
+    if os.path.isfile(binary):
         return jsonify({'ok': False, 'error': f'ffmpeg {version} is already installed'})
 
-    os.makedirs(FFMPEG_BASE_DIR, exist_ok=True)
-    tmp_archive = f'/tmp/ffmpeg-{version}-{arch}.tar.xz'
-
-    # "Latest" major version tracks johnvansickle.com's rolling release build;
-    # older majors come from their old-releases archive by exact version string.
-    is_latest_major = version == FFMPEG_VERSIONS[0]['version']
-    if is_latest_major:
-        url = f'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-{arch}-static.tar.xz'
-    else:
-        url = f'https://johnvansickle.com/ffmpeg/old-releases/ffmpeg-{version}-{arch}-static.tar.xz'
-
+    url, fname = _ffmpeg_url(v)
+    arch = _ffmpeg_arch()
+    tmp_archive = f'/tmp/{fname}'
     job_id = str(uuid.uuid4())[:8]
-    _job_create(job_id, initial_installed=False)
+    _job_create(job_id)
 
     def run_job():
-        _job_append_line(job_id, f'[VortexPanel] Downloading ffmpeg {version} ({arch}) from {url} ...')
-        dl = subprocess.run(f'curl -fsSL --max-time 120 "{url}" -o "{tmp_archive}"',
-                             shell=True, capture_output=True, text=True)
-        if dl.returncode != 0 or not os.path.isfile(tmp_archive):
-            _job_append_line(job_id, f'[ERROR] Download failed: {dl.stderr.strip()}')
+        try:
+            _job_append_line(job_id, f'[VortexPanel] FFmpeg {version} — {arch} build')
+            _job_append_line(job_id, f'[VortexPanel] Source: BtbN/FFmpeg-Builds (listed on ffmpeg.org/download.html#build-linux)')
+            _job_append_line(job_id, f'[VortexPanel] Downloading: {url}')
+
+            # Download with progress visible in the job terminal
+            dl = subprocess.run(
+                f'curl -fL --progress-bar --max-time 180 "{url}" -o "{tmp_archive}"',
+                shell=True, capture_output=True, text=True, executable='/bin/bash'
+            )
+            if dl.returncode != 0 or not os.path.isfile(tmp_archive):
+                _job_append_line(job_id, f'[ERROR] Download failed: {dl.stderr.strip() or dl.stdout.strip()}')
+                _job_finish(job_id, False, False)
+                return
+
+            file_size = os.path.getsize(tmp_archive)
+            _job_append_line(job_id, f'[VortexPanel] Downloaded {round(file_size/1024/1024, 1)} MB — extracting...')
+
+            os.makedirs(dest_dir, exist_ok=True)
+
+            # BtbN archives have ONE top-level directory (e.g. ffmpeg-n7.1.7-linux64-gpl-7.1/)
+            # containing bin/, doc/, man/, presets/ — strip it with --strip-components=1
+            ext = subprocess.run(
+                f'tar -xJf "{tmp_archive}" -C "{dest_dir}" --strip-components=1',
+                shell=True, capture_output=True, text=True, timeout=120
+            )
+            subprocess.run(f'rm -f "{tmp_archive}"', shell=True)
+
+            if ext.returncode != 0:
+                _job_append_line(job_id, f'[ERROR] Extract failed: {ext.stderr.strip()}')
+                _job_finish(job_id, False, False)
+                return
+
+            if not os.path.isfile(binary):
+                _job_append_line(job_id, '[ERROR] ffmpeg binary not found after extraction — archive structure may have changed')
+                _job_finish(job_id, False, False)
+                return
+
+            # Make all binaries executable
+            subprocess.run(f'chmod +x "{dest_dir}/bin/"*', shell=True)
+
+            # Verify the binary executes correctly before declaring success
+            verify = subprocess.run(f'"{binary}" -version',
+                                     shell=True, capture_output=True, text=True, timeout=10)
+            if verify.returncode != 0:
+                _job_append_line(job_id, f'[ERROR] Binary failed to execute: {verify.stderr.strip()[:300]}')
+                _job_finish(job_id, False, False)
+                return
+
+            # Create command alias so user can type e.g. "ffmpeg8" anywhere
+            alias_path = f'/usr/local/bin/{v["alias"]}'
+            subprocess.run(f'ln -sf "{binary}" "{alias_path}"', shell=True)
+
+            # Also symlink ffprobe and ffplay with version suffix if present
+            for tool in ('ffprobe', 'ffplay'):
+                tool_bin = os.path.join(dest_dir, 'bin', tool)
+                if os.path.isfile(tool_bin):
+                    subprocess.run(f'ln -sf "{tool_bin}" "/usr/local/bin/{tool}{v["alias"][6:]}"', shell=True)
+
+            ver_line = verify.stdout.splitlines()[0] if verify.stdout else ''
+            _job_append_line(job_id, f'[VortexPanel] ✓ Verified: {ver_line}')
+            _job_append_line(job_id, f'[VortexPanel] ✓ Installed to {dest_dir}/bin/ffmpeg')
+            _job_append_line(job_id, f'[VortexPanel] ✓ Command alias: {v["alias"]} -> {binary}')
+            _job_finish(job_id, True, True, version)
+
+        except Exception as e:
+            _job_append_line(job_id, f'[ERROR] Unexpected error: {str(e)}')
             _job_finish(job_id, False, False)
-            return
-        _job_append_line(job_id, '[VortexPanel] Extracting...')
-        os.makedirs(dest_dir, exist_ok=True)
-        ext = subprocess.run(f'tar -xJf "{tmp_archive}" -C "{dest_dir}" --strip-components=1',
-                              shell=True, capture_output=True, text=True)
-        subprocess.run(f'rm -f "{tmp_archive}"', shell=True)
-        if ext.returncode != 0:
-            _job_append_line(job_id, f'[ERROR] Extract failed: {ext.stderr.strip()}')
-            _job_finish(job_id, False, False)
-            return
-        binary = os.path.join(dest_dir, 'ffmpeg')
-        if not os.path.isfile(binary):
-            _job_append_line(job_id, '[ERROR] Extraction completed but ffmpeg binary not found — archive layout may have changed upstream')
-            _job_finish(job_id, False, False)
-            return
-        subprocess.run(f'chmod +x "{binary}" "{os.path.join(dest_dir, "ffprobe")}" 2>/dev/null', shell=True)
-        # Verify the binary actually runs before declaring success — don't trust the
-        # download blindly, matching the "no room for error" standard for this feature.
-        verify = subprocess.run(f'"{binary}" -version', shell=True, capture_output=True, text=True, timeout=10)
-        if verify.returncode != 0:
-            _job_append_line(job_id, f'[ERROR] Downloaded binary failed to execute: {verify.stderr.strip()[:200]}')
-            _job_finish(job_id, False, False)
-            return
-        cmd_alias = f"/usr/local/bin/ffmpeg{v['major']}"
-        subprocess.run(f'ln -sf "{binary}" "{cmd_alias}"', shell=True)
-        _job_append_line(job_id, verify.stdout.splitlines()[0] if verify.stdout else 'ffmpeg installed')
-        _job_append_line(job_id, f'[VortexPanel] Installed to {dest_dir} — accessible as `{cmd_alias.split("/")[-1]}`')
-        _job_finish(job_id, True, True, version)
+            subprocess.run(f'rm -f "{tmp_archive}"', shell=True)
 
     threading.Thread(target=run_job, daemon=True).start()
     return jsonify({'ok': True, 'job_id': job_id})
@@ -1384,14 +1459,16 @@ def ffmpeg_uninstall_version(version):
     v = next((x for x in FFMPEG_VERSIONS if x['version'] == version), None)
     if not v: return jsonify({'ok': False, 'error': 'Unknown version'})
     d = _ffmpeg_dir(version)
+    binary = os.path.join(d, 'bin', 'ffmpeg')
     if not os.path.isdir(d):
-        return jsonify({'ok': False, 'error': 'Not installed'})
+        return jsonify({'ok': False, 'error': f'ffmpeg {version} is not installed'})
     subprocess.run(f'rm -rf "{d}"', shell=True)
-    subprocess.run(f'rm -f "/usr/local/bin/ffmpeg{v["major"]}"', shell=True)
+    alias_path = f'/usr/local/bin/{v["alias"]}'
+    subprocess.run(f'rm -f "{alias_path}"', shell=True)
+    # Remove ffprobe/ffplay aliases too
+    for tool in ('probe', 'play'):
+        subprocess.run(f'rm -f "/usr/local/bin/ff{tool}{v['alias'][6:]}"', shell=True)
     return jsonify({'ok': True})
-
-
-# --- App Settings Modal endpoints ----------------------------------------------
 
 @modules_bp.route('/api/modules/<mod_id>/settings')
 def get_module_settings(mod_id):
