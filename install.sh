@@ -61,22 +61,30 @@ INSTALL_DIR="/opt/vortexpanel"
 log "Installing VortexPanel to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 
-# Clone or copy
-if [ -d "/root/Vortexpanel/.git" ]; then
-    cp -r /root/Vortexpanel/panel /root/Vortexpanel/web /root/Vortexpanel/app.py "$INSTALL_DIR/"
+# Clone or copy — always end up with a PERMANENT, git-connected source at
+# /root/Vortexpanel, never a /tmp path (which gets wiped on reboot and silently
+# breaks future `git pull` + deploy.sh workflows with no way to trace it back).
+SRC_DIR="/root/Vortexpanel"
+if [ -d "$SRC_DIR/.git" ]; then
+    log "Using existing git checkout at $SRC_DIR"
+elif [ -e "$SRC_DIR" ]; then
+    # Something is there but it's not a valid git repo (e.g. leftover files
+    # from a previous manual copy) — move it aside rather than fail or silently
+    # clone into a messy directory.
+    warn "$SRC_DIR exists but isn't a git repo — moving it to ${SRC_DIR}.bak"
+    mv "$SRC_DIR" "${SRC_DIR}.bak.$(date +%s)"
+    git clone https://github.com/BrowserlessAPI/VortexPanel.git "$SRC_DIR"
 else
-    git clone https://github.com/BrowserlessAPI/VortexPanel.git /tmp/vortexpanel_src
-    cp -r /tmp/vortexpanel_src/panel /tmp/vortexpanel_src/web /tmp/vortexpanel_src/app.py "$INSTALL_DIR/"
+    git clone https://github.com/BrowserlessAPI/VortexPanel.git "$SRC_DIR"
 fi
+cp -r "$SRC_DIR/panel" "$SRC_DIR/web" "$SRC_DIR/app.py" "$INSTALL_DIR/"
 
 # Create virtualenv
 log "Setting up Python environment..."
 "$PYTHON_BIN" -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
-if [ -f /tmp/vortexpanel_src/requirements.txt ]; then
-    "$INSTALL_DIR/venv/bin/pip" install -r /tmp/vortexpanel_src/requirements.txt -q
-elif [ -f /root/Vortexpanel/requirements.txt ]; then
-    "$INSTALL_DIR/venv/bin/pip" install -r /root/Vortexpanel/requirements.txt -q
+if [ -f "$SRC_DIR/requirements.txt" ]; then
+    "$INSTALL_DIR/venv/bin/pip" install -r "$SRC_DIR/requirements.txt" -q
 else
     "$INSTALL_DIR/venv/bin/pip" install flask flask-session flask-sock requests gunicorn boto3 -q
 fi
@@ -122,6 +130,20 @@ EOF
 systemctl daemon-reload
 systemctl enable vortexpanel
 systemctl restart vortexpanel
+
+# Generate deploy.sh — always points at the SAME $SRC_DIR resolved above,
+# so it can never drift out of sync with wherever the source actually lives.
+cat > /root/deploy.sh << EOF
+#!/bin/bash
+cp -r $SRC_DIR/panel/ $SRC_DIR/web/ $INSTALL_DIR/
+cp $SRC_DIR/app.py $INSTALL_DIR/
+find $INSTALL_DIR -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+systemctl restart vortexpanel && sleep 2
+curl -s -o /dev/null -w "Panel: %{http_code}\n" http://127.0.0.1:8888/
+echo "✓ Deployed"
+EOF
+chmod +x /root/deploy.sh
+log "Created /root/deploy.sh (source: $SRC_DIR -> install: $INSTALL_DIR)"
 
 # Firewall rules
 if command -v ufw &>/dev/null; then
