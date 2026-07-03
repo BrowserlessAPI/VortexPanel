@@ -1018,6 +1018,12 @@ def install_module(mod_id):
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False, 'error':'Module not found'}), 404
 
+    # FFmpeg is a multi-version manager — it has no single install command.
+    # Tell the frontend to open the Settings/Versions modal instead.
+    if mod_id == 'ffmpeg':
+        return jsonify({'ok': False, 'open_settings': True,
+                        'error': 'ffmpeg manager uses per-version installation — open Settings to choose a version.'}), 400
+
     d   = request.get_json() or {}
     ver = d.get('version','')
 
@@ -1137,6 +1143,11 @@ def uninstall_module(mod_id):
     if not req(): return jsonify({'ok':False}), 401
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False, 'error':'Not found'}), 404
+
+    # FFmpeg is a multi-version manager — redirect to Settings to manage individual versions
+    if mod_id == 'ffmpeg':
+        return jsonify({'ok': False, 'open_settings': True,
+                        'error': 'Use the ffmpeg manager Settings to uninstall individual versions.'}), 400
 
     d   = request.get_json() or {}
     ver = d.get('version','')

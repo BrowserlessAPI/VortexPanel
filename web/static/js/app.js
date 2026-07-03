@@ -2081,6 +2081,12 @@ function modulesPage() {
         toast('Cannot install '+m.name+': '+conflict.name+' is already installed. Please uninstall it first.', 'error');
         return;
       }
+      // FFmpeg uses per-version management — "Install" should open the Settings modal
+      // (Versions tab) where the user selects which version to install, same as aaPanel.
+      if (m.id === 'ffmpeg') {
+        await this.openSettings(m);
+        return;
+      }
       // PHP: always install directly with selected version (multi-version support)
       if (m.id === 'php') {
         if (!m.selVer) { toast('Select a PHP version first', 'error'); return; }
@@ -2106,7 +2112,12 @@ function modulesPage() {
     async _startJob(m, action, ver) {
       m.loading = true;
       const r = await post(`/api/modules/${m.id}/${action}`, {version: ver});
-      if (!r.ok) { m.loading=false; toast(r.error||'Failed','error'); return; }
+      if (!r.ok) {
+        m.loading = false;
+        if (r.open_settings) { await this.openSettings(m); return; }
+        toast(r.error||'Failed','error');
+        return;
+      }
       const isChannel = ver && ['stable','mainline','latest','builtin'].includes(ver.toLowerCase());
       const verLabel  = ver ? (isChannel ? ' ('+ver+')' : ' v'+ver) : '';
       const label = `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel}`;
