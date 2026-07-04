@@ -136,31 +136,29 @@ def get_sites():
     return jsonify({'ok':True, 'sites':list_sites(), 'webroot':get_webroot()})
 
 
-@websites_bp.route('/api/websites', methods=['POST'])
-def create_site():
-    if not req(): return jsonify({'ok':False}), 401
-    d      = request.get_json() or {}
-    domain = d.get('domain','').strip().lower()
-    path   = d.get('path', f'{get_webroot()}/{domain}').strip()
-    php    = d.get('php','8.3')
-    if not domain: return jsonify({'ok':False,'error':'Domain required'}), 400
+def create_site_core(domain, path=None, php='8.3'):
+    """Core site-creation logic — shared by the normal create_site() route AND
+    the website-import feature (cPanel/aaPanel/Hestia), so both paths always
+    produce identical, correct nginx vhosts with zero risk of drift between them.
+    Returns (ok: bool, result: dict) — result has 'domain'/'path' on success or
+    'error' on failure."""
+    domain = (domain or '').strip().lower()
+    path = (path or f'{get_webroot()}/{domain}').strip()
+    if not domain:
+        return False, {'error': 'Domain required'}
 
     # Create webroot
     os.makedirs(path, exist_ok=True)
     idx = os.path.join(path, 'index.html')
     if not os.path.exists(idx):
-        with open(idx,'w') as f:
+        with open(idx, 'w') as f:
             f.write(f'<!DOCTYPE html><html><body><h1>Welcome to {domain}</h1><p>VortexPanel — site created successfully.</p></body></html>')
 
-    # Ensure the web server user can read/write this site's files from the start
-    # (uploads, configs like wp-config.php, caches, sessions, etc).
     ensure_web_ownership(path)
 
     avail, enabled_dir = get_nginx_dirs()
 
-    # Build nginx config
     php_sock = f'/run/php/php{php}-fpm.sock'
-    # Check alternative socket paths
     for sock in [f'/run/php/php{php}-fpm.sock', f'/var/run/php/php{php}-fpm.sock',
                  f'/tmp/php{php}-fpm.sock', f'/run/php-fpm/php{php}-fpm.sock',
                  f'/run/php-fpm/www.sock', f'/var/run/php-fpm/www.sock']:
@@ -200,17 +198,31 @@ def create_site():
 
     try:
         with open(conf_path, 'w') as f: f.write(conf)
-        # Create symlink if sites-available != sites-enabled
         if avail != enabled_dir and not os.path.exists(enabled_path):
             os.symlink(conf_path, enabled_path)
-        # Test nginx config
         test = sh('nginx -t 2>&1')
         if 'failed' in test.lower():
-            return jsonify({'ok':False, 'error':f'Nginx config test failed: {test}'}), 400
+            return False, {'error': f'Nginx config test failed: {test}'}
         reload_nginx()
-        return jsonify({'ok':True, 'domain':domain, 'path':path})
+        return True, {'domain': domain, 'path': path}
     except Exception as e:
-        return jsonify({'ok':False, 'error':str(e)}), 500
+        return False, {'error': str(e)}
+
+
+@websites_bp.route('/api/websites', methods=['POST'])
+def create_site():
+    if not req(): return jsonify({'ok':False}), 401
+    d      = request.get_json() or {}
+    domain = d.get('domain','').strip().lower()
+    path   = d.get('path', f'{get_webroot()}/{domain}').strip()
+    php    = d.get('php','8.3')
+    if not domain: return jsonify({'ok':False,'error':'Domain required'}), 400
+
+    ok, result = create_site_core(domain, path, php)
+    if ok:
+        return jsonify({'ok': True, **result})
+    else:
+        return jsonify({'ok': False, **result}), 400 if 'Domain' in result.get('error','') else 500
 
 
 @websites_bp.route('/api/websites/<domain>', methods=['DELETE'])

@@ -301,7 +301,10 @@
       <div x-show="page==='websites'" x-data="websitesPage()">
         <div class="page-header">
           <div><div class="page-title">Websites</div><div class="page-sub">Manage Nginx virtual hosts</div></div>
-          <button class="btn btn-primary" @click="showAdd=true">+ Add Site</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" @click="openImportWizard()">⇩ Import Website</button>
+            <button class="btn btn-primary" @click="showAdd=true">+ Add Site</button>
+          </div>
         </div>
         <div class="card" style="padding:0;overflow:hidden">
           <template x-if="sites.length===0">
@@ -7464,6 +7467,137 @@
       <button class="btn btn-primary btn-sm" @click="$dispatch('vp-docker-domain-save')" :disabled="$store.vp.dockerDomain.loading">
         <span x-show="$store.vp.dockerDomain.loading">Saving...</span><span x-show="!$store.vp.dockerDomain.loading">Save</span>
       </button>
+    </div>
+  </div>
+</div>
+
+<!-- IMPORT WEBSITE WIZARD -->
+<div x-data="{}" x-show="$store.vp.importWizard.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
+  <div style="background:var(--bg-card);border-radius:12px;width:640px;max-height:85vh;overflow-y:auto;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div>
+        <div style="font-size:16px;font-weight:700">Import Website</div>
+        <div style="font-size:12px;color:var(--text-muted)">From cPanel, aaPanel, or HestiaCP — files + database only</div>
+      </div>
+      <button @click="importClose()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+    </div>
+
+    <!-- Step indicator -->
+    <div style="display:flex;gap:8px;margin-bottom:20px">
+      <template x-for="n in [1,2,3]" :key="n">
+        <div :style="'flex:1;height:3px;border-radius:2px;background:'+($store.vp.importWizard.step>=n?'var(--accent)':'var(--border)')"></div>
+      </template>
+    </div>
+
+    <!-- STEP 1: Select panel + upload -->
+    <div x-show="$store.vp.importWizard.step===1">
+      <div style="margin-bottom:16px">
+        <label class="form-label">Source Panel</label>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <template x-for="p in [{id:'cpanel',label:'cPanel'},{id:'aapanel',label:'aaPanel'},{id:'hestia',label:'HestiaCP'}]" :key="p.id">
+            <button :class="'btn btn-sm '+($store.vp.importWizard.panelType===p.id?'btn-primary':'btn-ghost')"
+                    style="flex:1" @click="$store.vp.importWizard.panelType=p.id" x-text="p.label"></button>
+          </template>
+        </div>
+      </div>
+
+      <div style="background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:12px;color:var(--text-secondary)">
+        <template x-if="$store.vp.importWizard.panelType==='cpanel'">
+          <span>Upload a <code>cpmove-*.tar.gz</code> or full account backup. Domain and database are usually auto-detected.</span>
+        </template>
+        <template x-if="$store.vp.importWizard.panelType==='aapanel'">
+          <span>Upload the site backup (zip). aaPanel backups don't reliably embed the domain name — verify it in the next step.</span>
+        </template>
+        <template x-if="$store.vp.importWizard.panelType==='hestia'">
+          <span>Upload the full user backup <code>.tar</code> from <code>v-backup-user</code>.</span>
+        </template>
+      </div>
+
+      <div style="border:2px dashed var(--border);border-radius:8px;padding:24px;text-align:center">
+        <input type="file" id="import-file-input" style="display:none" @change="importUploadFile($event)" accept=".tar.gz,.tgz,.tar,.zip">
+        <div x-show="!$store.vp.importWizard.filename">
+          <div style="font-size:28px;margin-bottom:8px">⇩</div>
+          <button class="btn btn-primary btn-sm" @click="document.getElementById('import-file-input').click()" :disabled="$store.vp.importWizard.uploading">
+            <span x-show="$store.vp.importWizard.uploading">Uploading...</span>
+            <span x-show="!$store.vp.importWizard.uploading">Choose Backup File</span>
+          </button>
+        </div>
+        <div x-show="$store.vp.importWizard.filename" style="font-size:13px">
+          <div style="font-weight:600">✓ <span x-text="$store.vp.importWizard.filename"></span></div>
+          <button class="btn btn-ghost btn-xs" style="margin-top:8px" @click="document.getElementById('import-file-input').click()">Choose a different file</button>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;margin-top:20px">
+        <button class="btn btn-primary btn-sm" @click="importDetect()" :disabled="!$store.vp.importWizard.importId || $store.vp.importWizard.detecting">
+          <span x-show="$store.vp.importWizard.detecting">Analyzing backup...</span>
+          <span x-show="!$store.vp.importWizard.detecting">Analyze Backup →</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- STEP 2: Review & confirm detected info -->
+    <div x-show="$store.vp.importWizard.step===2">
+      <div x-show="$store.vp.importWizard.detected?.notes?.length" style="background:var(--bg-raised);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:11px;color:var(--text-muted);line-height:1.6">
+        <template x-for="note in ($store.vp.importWizard.detected?.notes||[])" :key="note">
+          <div x-text="note"></div>
+        </template>
+      </div>
+
+      <div style="display:grid;gap:14px">
+        <div>
+          <label class="form-label">Domain <span style="color:var(--red)">*</span></label>
+          <input class="form-input" x-model="$store.vp.importWizard.domain" placeholder="example.com">
+        </div>
+        <div>
+          <label class="form-label">Document Root (extracted path) <span style="color:var(--red)">*</span></label>
+          <input class="form-input" x-model="$store.vp.importWizard.docRoot" style="font-family:var(--font-mono);font-size:11px">
+        </div>
+        <div>
+          <label class="form-label">PHP Version</label>
+          <select class="form-input" x-model="$store.vp.importWizard.phpVersion">
+            <option value="8.3">PHP 8.3</option>
+            <option value="8.2">PHP 8.2</option>
+            <option value="8.1">PHP 8.1</option>
+            <option value="7.4">PHP 7.4</option>
+            <option value="Static">Static (no PHP)</option>
+          </select>
+        </div>
+
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label class="form-label" style="margin:0">Databases</label>
+            <button class="btn btn-ghost btn-xs" @click="importAddDbRow()">+ Add database manually</button>
+          </div>
+          <div x-show="$store.vp.importWizard.databases.length===0" style="font-size:12px;color:var(--text-muted)">No database dump detected — site files will still be imported.</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <template x-for="(db, idx) in $store.vp.importWizard.databases" :key="idx">
+              <div style="display:flex;gap:8px;align-items:center;background:var(--bg-raised);padding:8px;border-radius:6px">
+                <input class="form-input" style="flex:1;font-size:12px" x-model="db.target_db_name" placeholder="database_name">
+                <span style="font-size:10px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="db.dump_path" x-text="db.dump_path?db.dump_path.split('/').pop():'no dump file'"></span>
+                <button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="importRemoveDbRow(idx)">✕</button>
+              </div>
+              <div x-show="db.note" style="font-size:10px;color:var(--yellow);margin-top:-4px;margin-left:4px" x-text="'⚠ '+db.note"></div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;margin-top:20px">
+        <button class="btn btn-ghost btn-sm" @click="$store.vp.importWizard.step=1">← Back</button>
+        <button class="btn btn-primary btn-sm" @click="importExecute()">Start Import →</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: Execution log -->
+    <div x-show="$store.vp.importWizard.step===3">
+      <pre class="import-job-terminal"
+           style="background:#0d1117;color:#86efac;font-family:var(--font-mono);font-size:11px;padding:14px;border-radius:6px;overflow-y:auto;max-height:360px;white-space:pre-wrap;margin:0"
+           x-text="$store.vp.importWizard.jobLines.join('\n')"></pre>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button class="btn btn-primary btn-sm" x-show="$store.vp.importWizard.jobDone" @click="importClose()">Done</button>
+        <button class="btn btn-ghost btn-sm" x-show="!$store.vp.importWizard.jobDone" disabled>Importing...</button>
+      </div>
     </div>
   </div>
 </div>

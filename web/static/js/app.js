@@ -37,6 +37,13 @@ document.addEventListener('alpine:init', () => {
     goSettings:{ show:false, project:null, tab:'service' },
     goLogs:   { show:false, name:'', logs:'' },
     dockerDomain: { show:false, name:'', domain:'', port:'', webserver:'', detectedPorts:'', hasExisting:false, loading:false },
+    importWizard: {
+      show:false, step:1, panelType:'cpanel',
+      uploading:false, uploadProgress:0, importId:'', filename:'',
+      detecting:false, detected:null,
+      domain:'', docRoot:'', phpVersion:'8.3', databases:[],
+      executing:false, jobLines:[], jobDone:false, jobSuccess:false, jobResult:null,
+    },
     // File picker
     picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
   });
@@ -546,6 +553,105 @@ function websitesPage() {
         d.diskUsage.size_human = 'Unavailable';
       }
     },
+
+    openImportWizard() {
+      Alpine.store('vp').importWizard = {
+        show:true, step:1, panelType:'cpanel',
+        uploading:false, uploadProgress:0, importId:'', filename:'',
+        detecting:false, detected:null,
+        domain:'', docRoot:'', phpVersion:'8.3', databases:[],
+        executing:false, jobLines:[], jobDone:false, jobSuccess:false, jobResult:null,
+      };
+    },
+
+    async importUploadFile(fileInput) {
+      const w = Alpine.store('vp').importWizard;
+      const file = fileInput.target.files[0];
+      if (!file) return;
+      w.uploading = true;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch('/api/import/upload', { method:'POST', body:formData });
+        const r = await res.json();
+        w.uploading = false;
+        if (r.ok) {
+          w.importId = r.import_id;
+          w.filename = r.filename;
+          toast('Uploaded '+r.filename, 'success');
+        } else {
+          toast(r.error||'Upload failed', 'error');
+        }
+      } catch (e) {
+        w.uploading = false;
+        toast('Upload failed: '+e.message, 'error');
+      }
+    },
+
+    async importDetect() {
+      const w = Alpine.store('vp').importWizard;
+      if (!w.importId) { toast('Upload a backup file first', 'error'); return; }
+      w.detecting = true;
+      const r = await post(`/api/import/${w.importId}/detect`, {panel_type: w.panelType});
+      w.detecting = false;
+      if (!r.ok) { toast(r.error||'Detection failed', 'error'); return; }
+      w.detected = r;
+      w.domain = r.domain || '';
+      w.docRoot = r.doc_root || '';
+      w.databases = (r.databases||[]).map(db => ({...db, target_db_name: db.name||''}));
+      w.step = 2;
+    },
+
+    importAddDbRow() {
+      Alpine.store('vp').importWizard.databases.push({name:'', target_db_name:'', dump_path:'', note:'Manually added'});
+    },
+    importRemoveDbRow(idx) {
+      Alpine.store('vp').importWizard.databases.splice(idx, 1);
+    },
+
+    async importExecute() {
+      const w = Alpine.store('vp').importWizard;
+      if (!w.domain) { toast('Domain is required', 'error'); return; }
+      if (!w.docRoot) { toast('Document root path is required', 'error'); return; }
+      w.step = 3;
+      w.executing = true;
+      w.jobLines = []; w.jobDone = false; w.jobSuccess = false;
+      const r = await post(`/api/import/${w.importId}/execute`, {
+        domain: w.domain, doc_root: w.docRoot, php_version: w.phpVersion,
+        databases: w.databases.filter(db => db.target_db_name),
+      });
+      if (!r.ok) {
+        w.executing = false;
+        toast(r.error||'Import failed to start', 'error');
+        w.jobLines.push('[ERROR] '+(r.error||'Failed to start import'));
+        w.jobDone = true; w.jobSuccess = false;
+        return;
+      }
+      const es = new EventSource(`/api/import/job/${r.job_id}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.line) w.jobLines.push(d.line);
+        if (d.done) {
+          es.close();
+          w.executing = false; w.jobDone = true; w.jobSuccess = d.success; w.jobResult = d;
+          if (d.success) { toast('Import complete: '+w.domain, 'success'); this.load(); }
+          else toast('Import failed — check the log', 'error');
+        }
+        if (d.error) { es.close(); w.executing=false; toast(d.error, 'error'); }
+        this.$nextTick(()=>{
+          const t=document.querySelector('.import-job-terminal');
+          if(t) t.scrollTop=t.scrollHeight;
+        });
+      };
+      es.onerror = () => { es.close(); w.executing = false; };
+    },
+
+    importClose() {
+      const w = Alpine.store('vp').importWizard;
+      if (w.executing) { toast('Import still running — please wait for it to finish', 'error'); return; }
+      w.show = false;
+    },
+
     async loadIntegrityStatus() {
       const domain=this.drawer.site?.domain; if(!domain) return;
       const r = await get('/api/websites/'+domain+'/integrity/status');
