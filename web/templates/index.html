@@ -3179,7 +3179,7 @@
         </div>
 
         <!-- aaPanel-style table -->
-        <div class="card" style="padding:0;overflow:hidden">
+        <div class="card" style="padding:0;overflow-x:auto;overflow-y:hidden">
           <table class="data-table" style="table-layout:fixed">
             <thead>
               <tr>
@@ -3232,7 +3232,7 @@
                       </button>
                       <!-- PHP: Add Version button -->
                       <div x-show="m.id==='php'" style="display:flex;align-items:center;gap:4px">
-                        <select class="form-input" style="font-size:11px;padding:3px 6px;min-width:90px" x-model="m.selVer">
+                        <select class="form-input" style="font-size:11px;padding:3px 6px;min-width:90px;max-width:160px;text-overflow:ellipsis" x-model="m.selVer">
                           <template x-for="v in m.versions" :key="v.value">
                             <option :value="v.value" x-text="v.label"></option>
                           </template>
@@ -3256,7 +3256,7 @@
                     <div x-show="!m.installed" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                       <!-- Version selector (multi-version modules) -->
                       <div x-show="m.versions && m.versions.length > 1" style="min-width:110px">
-                        <select class="form-input" style="font-size:11px;padding:3px 6px" x-model="m.selVer">
+                        <select class="form-input" style="font-size:11px;padding:3px 6px;max-width:160px;text-overflow:ellipsis" x-model="m.selVer">
                           <template x-for="v in m.versions" :key="v.value">
                             <option :value="v.value" x-text="v.label"></option>
                           </template>
