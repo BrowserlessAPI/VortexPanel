@@ -3454,21 +3454,9 @@
                   </div>
 
                   <!-- Detail sub-modal -->
-                  <div x-show="settingsModal.ffmpegDetail" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1100;display:flex;align-items:center;justify-content:center" @click.self="settingsModal.ffmpegDetail=null">
-                    <div style="background:var(--bg-card);border-radius:12px;width:520px;padding:24px">
-                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-                        <div style="font-weight:700;font-size:15px" x-text="'ffmpeg-'+(settingsModal.ffmpegDetail?.version||'')+' Detail'"></div>
-                        <button @click="settingsModal.ffmpegDetail=null" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
-                      </div>
-                      <table class="data-table">
-                        <tbody>
-                          <tr><td style="font-weight:600;width:120px">Path</td><td style="font-family:var(--font-mono);font-size:12px" x-text="settingsModal.ffmpegDetail?.path"></td></tr>
-                          <tr><td style="font-weight:600">Full command</td><td style="font-family:var(--font-mono);font-size:12px" x-text="settingsModal.ffmpegDetail?.full_command"></td></tr>
-                          <tr><td style="font-weight:600">Command</td><td style="font-family:var(--font-mono);font-size:12px" x-text="settingsModal.ffmpegDetail?.command"></td></tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <!-- ffmpeg detail sub-modal moved to global portal (see end of file) —
+                       it can't live nested here because this tab content sits inside a
+                       scrollable panel, which breaks position:fixed centering. -->
                 </div>
 
                 <!-- SERVICE tab -->
@@ -7471,9 +7459,25 @@
   </div>
 </div>
 
+<!-- FFMPEG VERSION DETAIL MODAL -->
+<div x-data="{}" x-show="$store.vp.ffmpegDetail.show" class="portal-overlay" style="background:rgba(0,0,0,.5);z-index:1100" @click.self="$store.vp.ffmpegDetail.show=false">
+  <div style="background:var(--bg-card);border-radius:12px;width:520px;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-weight:700;font-size:15px" x-text="'ffmpeg-'+($store.vp.ffmpegDetail.version||'')+' Detail'"></div>
+      <button @click="$store.vp.ffmpegDetail.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
+    </div>
+    <table class="data-table">
+      <tbody>
+        <tr><td style="font-weight:600;width:120px">Path</td><td style="font-family:var(--font-mono);font-size:12px" x-text="$store.vp.ffmpegDetail.path"></td></tr>
+        <tr><td style="font-weight:600">Full command</td><td style="font-family:var(--font-mono);font-size:12px" x-text="$store.vp.ffmpegDetail.full_command"></td></tr>
+        <tr><td style="font-weight:600">Command</td><td style="font-family:var(--font-mono);font-size:12px" x-text="$store.vp.ffmpegDetail.command"></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <!-- IMPORT WEBSITE WIZARD -->
-<div x-data="{}" x-show="$store.vp.importWizard.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
-  <div style="background:var(--bg-card);border-radius:12px;width:640px;max-height:85vh;overflow-y:auto;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+<div x-data="{}" x-show="$store.vp.importWizard.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">  <div style="background:var(--bg-card);border-radius:12px;width:640px;max-height:85vh;overflow-y:auto;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div>
         <div style="font-size:16px;font-weight:700">Import Website</div>

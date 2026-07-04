@@ -37,6 +37,7 @@ document.addEventListener('alpine:init', () => {
     goSettings:{ show:false, project:null, tab:'service' },
     goLogs:   { show:false, name:'', logs:'' },
     dockerDomain: { show:false, name:'', domain:'', port:'', webserver:'', detectedPorts:'', hasExisting:false, loading:false },
+    ffmpegDetail: { show:false, version:'', path:'', full_command:'', command:'' },
     importWizard: {
       show:false, step:1, panelType:'cpanel',
       uploading:false, uploadProgress:0, importId:'', filename:'',
@@ -56,6 +57,114 @@ function toast(msg, type='info') {
   d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'ℹ ') + msg;
   c.appendChild(d);
   setTimeout(() => d.remove(), 3500);
+}
+
+// --- Import Website wizard — GLOBAL functions (not scoped to any Page()).
+// The wizard modal lives in the top-level body portal (a sibling of every
+// page component, not a child), so its buttons cannot reach methods defined
+// inside websitesPage() or any other page's x-data. Same pattern as
+// toast()/get()/post() above: plain global functions, reachable from any
+// Alpine expression regardless of which component triggered them.
+function openImportWizard() {
+  Alpine.store('vp').importWizard = {
+    show:true, step:1, panelType:'cpanel',
+    uploading:false, uploadProgress:0, importId:'', filename:'',
+    detecting:false, detected:null,
+    domain:'', docRoot:'', phpVersion:'8.3', databases:[],
+    executing:false, jobLines:[], jobDone:false, jobSuccess:false, jobResult:null,
+  };
+}
+
+async function importUploadFile(fileInput) {
+  const w = Alpine.store('vp').importWizard;
+  const file = fileInput.target.files[0];
+  if (!file) return;
+  w.uploading = true;
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const res = await fetch('/api/import/upload', { method:'POST', body:formData });
+    const r = await res.json();
+    w.uploading = false;
+    if (r.ok) {
+      w.importId = r.import_id;
+      w.filename = r.filename;
+      toast('Uploaded '+r.filename, 'success');
+    } else {
+      toast(r.error||'Upload failed', 'error');
+    }
+  } catch (e) {
+    w.uploading = false;
+    toast('Upload failed: '+e.message, 'error');
+  }
+}
+
+async function importDetect() {
+  const w = Alpine.store('vp').importWizard;
+  if (!w.importId) { toast('Upload a backup file first', 'error'); return; }
+  w.detecting = true;
+  const r = await post(`/api/import/${w.importId}/detect`, {panel_type: w.panelType});
+  w.detecting = false;
+  if (!r.ok) { toast(r.error||'Detection failed', 'error'); return; }
+  w.detected = r;
+  w.domain = r.domain || '';
+  w.docRoot = r.doc_root || '';
+  w.databases = (r.databases||[]).map(db => ({...db, target_db_name: db.name||''}));
+  w.step = 2;
+}
+
+function importAddDbRow() {
+  Alpine.store('vp').importWizard.databases.push({name:'', target_db_name:'', dump_path:'', note:'Manually added'});
+}
+function importRemoveDbRow(idx) {
+  Alpine.store('vp').importWizard.databases.splice(idx, 1);
+}
+
+async function importExecute() {
+  const w = Alpine.store('vp').importWizard;
+  if (!w.domain) { toast('Domain is required', 'error'); return; }
+  if (!w.docRoot) { toast('Document root path is required', 'error'); return; }
+  w.step = 3;
+  w.executing = true;
+  w.jobLines = []; w.jobDone = false; w.jobSuccess = false;
+  const r = await post(`/api/import/${w.importId}/execute`, {
+    domain: w.domain, doc_root: w.docRoot, php_version: w.phpVersion,
+    databases: w.databases.filter(db => db.target_db_name),
+  });
+  if (!r.ok) {
+    w.executing = false;
+    toast(r.error||'Import failed to start', 'error');
+    w.jobLines.push('[ERROR] '+(r.error||'Failed to start import'));
+    w.jobDone = true; w.jobSuccess = false;
+    return;
+  }
+  const es = new EventSource(`/api/import/job/${r.job_id}`);
+  es.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.line) w.jobLines.push(d.line);
+    if (d.done) {
+      es.close();
+      w.executing = false; w.jobDone = true; w.jobSuccess = d.success; w.jobResult = d;
+      if (d.success) {
+        toast('Import complete: '+w.domain, 'success');
+        window.dispatchEvent(new CustomEvent('vp:page', {detail:'websites'}));
+      } else {
+        toast('Import failed — check the log', 'error');
+      }
+    }
+    if (d.error) { es.close(); w.executing=false; toast(d.error, 'error'); }
+    setTimeout(()=>{
+      const t=document.querySelector('.import-job-terminal');
+      if(t) t.scrollTop=t.scrollHeight;
+    }, 50);
+  };
+  es.onerror = () => { es.close(); w.executing = false; };
+}
+
+function importClose() {
+  const w = Alpine.store('vp').importWizard;
+  if (w.executing) { toast('Import still running — please wait for it to finish', 'error'); return; }
+  w.show = false;
 }
 
 function fmtBytes(b) {
@@ -552,104 +661,6 @@ function websitesPage() {
         d.diskUsage.loading = false;
         d.diskUsage.size_human = 'Unavailable';
       }
-    },
-
-    openImportWizard() {
-      Alpine.store('vp').importWizard = {
-        show:true, step:1, panelType:'cpanel',
-        uploading:false, uploadProgress:0, importId:'', filename:'',
-        detecting:false, detected:null,
-        domain:'', docRoot:'', phpVersion:'8.3', databases:[],
-        executing:false, jobLines:[], jobDone:false, jobSuccess:false, jobResult:null,
-      };
-    },
-
-    async importUploadFile(fileInput) {
-      const w = Alpine.store('vp').importWizard;
-      const file = fileInput.target.files[0];
-      if (!file) return;
-      w.uploading = true;
-      const formData = new FormData();
-      formData.append('file', file);
-      try {
-        const res = await fetch('/api/import/upload', { method:'POST', body:formData });
-        const r = await res.json();
-        w.uploading = false;
-        if (r.ok) {
-          w.importId = r.import_id;
-          w.filename = r.filename;
-          toast('Uploaded '+r.filename, 'success');
-        } else {
-          toast(r.error||'Upload failed', 'error');
-        }
-      } catch (e) {
-        w.uploading = false;
-        toast('Upload failed: '+e.message, 'error');
-      }
-    },
-
-    async importDetect() {
-      const w = Alpine.store('vp').importWizard;
-      if (!w.importId) { toast('Upload a backup file first', 'error'); return; }
-      w.detecting = true;
-      const r = await post(`/api/import/${w.importId}/detect`, {panel_type: w.panelType});
-      w.detecting = false;
-      if (!r.ok) { toast(r.error||'Detection failed', 'error'); return; }
-      w.detected = r;
-      w.domain = r.domain || '';
-      w.docRoot = r.doc_root || '';
-      w.databases = (r.databases||[]).map(db => ({...db, target_db_name: db.name||''}));
-      w.step = 2;
-    },
-
-    importAddDbRow() {
-      Alpine.store('vp').importWizard.databases.push({name:'', target_db_name:'', dump_path:'', note:'Manually added'});
-    },
-    importRemoveDbRow(idx) {
-      Alpine.store('vp').importWizard.databases.splice(idx, 1);
-    },
-
-    async importExecute() {
-      const w = Alpine.store('vp').importWizard;
-      if (!w.domain) { toast('Domain is required', 'error'); return; }
-      if (!w.docRoot) { toast('Document root path is required', 'error'); return; }
-      w.step = 3;
-      w.executing = true;
-      w.jobLines = []; w.jobDone = false; w.jobSuccess = false;
-      const r = await post(`/api/import/${w.importId}/execute`, {
-        domain: w.domain, doc_root: w.docRoot, php_version: w.phpVersion,
-        databases: w.databases.filter(db => db.target_db_name),
-      });
-      if (!r.ok) {
-        w.executing = false;
-        toast(r.error||'Import failed to start', 'error');
-        w.jobLines.push('[ERROR] '+(r.error||'Failed to start import'));
-        w.jobDone = true; w.jobSuccess = false;
-        return;
-      }
-      const es = new EventSource(`/api/import/job/${r.job_id}`);
-      es.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.line) w.jobLines.push(d.line);
-        if (d.done) {
-          es.close();
-          w.executing = false; w.jobDone = true; w.jobSuccess = d.success; w.jobResult = d;
-          if (d.success) { toast('Import complete: '+w.domain, 'success'); this.load(); }
-          else toast('Import failed — check the log', 'error');
-        }
-        if (d.error) { es.close(); w.executing=false; toast(d.error, 'error'); }
-        this.$nextTick(()=>{
-          const t=document.querySelector('.import-job-terminal');
-          if(t) t.scrollTop=t.scrollHeight;
-        });
-      };
-      es.onerror = () => { es.close(); w.executing = false; };
-    },
-
-    importClose() {
-      const w = Alpine.store('vp').importWizard;
-      if (w.executing) { toast('Import still running — please wait for it to finish', 'error'); return; }
-      w.show = false;
     },
 
     async loadIntegrityStatus() {
@@ -2353,7 +2364,7 @@ function modulesPage() {
       }
       if (m.id === 'ffmpeg') {
         this.settingsModal.ffmpegVersions = [];
-        this.settingsModal.ffmpegDetail = null;
+        Alpine.store('vp').ffmpegDetail = {show:false, version:'', path:'', full_command:'', command:''};
         await this.loadFfmpegVersions();
       }
     },
@@ -2395,7 +2406,7 @@ function modulesPage() {
 
     async ffmpegShowDetail(version) {
       const r = await get(`/api/modules/ffmpeg/versions/${version}/detail`);
-      if (r.ok) this.settingsModal.ffmpegDetail = {version, ...r};
+      if (r.ok) Alpine.store('vp').ffmpegDetail = {show:true, version, ...r};
       else toast(r.error || 'Failed to load detail', 'error');
     },
 
