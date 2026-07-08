@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.3-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.3">
+<img src="https://img.shields.io/badge/VortexPanel-v3.4-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.4">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
 <img src="https://img.shields.io/badge/Alpine.js-3.14-8bc0d0?style=for-the-badge">
@@ -42,6 +42,8 @@ Built with Python/Flask + Alpine.js. No Node.js build step. No bloat. 2-minute i
 | **Docker UI** | ❌ | ❌ | ✅ | ✅ | ❌ | **✅ Built-in** |
 | **RHEL/AlmaLinux/Rocky** | ✅ | ✅ | Partial | Partial | ❌ | **✅ 9 distros** |
 | **Web Terminal** | ✅ | ✅ | ✅ | ✅ | ❌ | **✅ Built-in** |
+| **Go/Node.js app hosting** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ Built-in, one-click** |
+| **Import from cPanel/aaPanel/Hestia** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ Built-in wizard** |
 | **Open source** | ❌ | ❌ | Partial | ❌ | ✅ | **✅ MIT** |
 
 ---
@@ -54,6 +56,21 @@ Built with Python/Flask + Alpine.js. No Node.js build step. No bloat. 2-minute i
 - Reverse proxy, custom directives, PHP version per site, Composer integration
 - One-click WordPress/Laravel/Symfony deploy
 - PHP webshell scanner integrated with the File Manager
+- **Per-site disk usage** (lazy-loaded, won't slow down servers with many/large sites)
+- **Global SSL expiry alerts** on the Dashboard, aggregated across every site
+
+### 🔵 Go Projects & 💚 Node.js Projects
+Deploy compiled Go binaries and Node.js apps with the same one-click simplicity as WordPress — a capability none of cPanel, Plesk, aaPanel, or HestiaCP offer out of the box:
+- **Go**: binary-only deployment, Go SDK manager (multiple versions side by side), GOPROXY config, systemd auto-restart, resource limits (`MemoryMax`/`CPUQuota`), on-demand TCP health checks, binary version history with one-click rollback
+- **Node.js**: PM2 or systemd per project, nvm-based version switching, current LTS reality (v24 Active, v22 Maintenance, v18/v20 correctly blocked as EOL)
+- Both: reverse proxy on all 4 webservers with **WebSocket support**, Let's Encrypt SSL per domain, firewall integration, all 9 supported distros
+
+### 📥 Website Import Wizard
+Migrate a site off cPanel, aaPanel, or HestiaCP by uploading its backup archive — no SSH pull required:
+- **Detect → confirm → import** flow — every auto-detected field (domain, PHP version, document root, database) is editable before anything executes
+- Imported sites use the exact same code path as "New Website", so they're indistinguishable from natively-created ones
+- Fresh random database password generated on import (originals are never in a backup dump)
+- Files + database in this release; email/cron/SSL migration not yet included
 
 ### 🔷 WP Toolkit
 Full WordPress lifecycle management — install, manage, secure, stage, back up — no separate plugin or paid add-on:
@@ -84,9 +101,9 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - phpMyAdmin integration (auto-configured on its own port, separate PHP version)
 
 ### 📦 App Store
-- 25+ one-click installs: Nginx, Apache, OpenLiteSpeed, Caddy, PHP (multi-version), MySQL, MariaDB, PostgreSQL, MongoDB, Redis, Docker, Node.js, Python, Composer, Fail2ban, ClamAV, ModSecurity, Roundcube, Supervisor, Pure-FTPd, BIND9 DNS, and more
+- **27** one-click installs: Nginx, Apache, OpenLiteSpeed, Caddy, PHP (multi-version), MySQL, MariaDB, PostgreSQL, MongoDB, Redis, **Memcached**, **FFmpeg** (multi-version, side by side), Docker, Node.js, Python, Composer, Fail2ban, ClamAV, ModSecurity, Roundcube, Supervisor, Pure-FTPd, BIND9 DNS, and more
 - **Live installation terminal** — every install, uninstall, and version switch streams real-time output line-by-line (like aaPanel's task terminal)
-- Automatic conflict detection, RHEL-family package manager support
+- Automatic conflict detection, RHEL-family package manager support — **all 5 previously-broken RHEL install paths (nginx, MySQL, Caddy, MongoDB, PostgreSQL) fixed**, tested on both x86_64 and arm64
 - **Safe database version policy** — databases (MariaDB/MySQL/PostgreSQL/MongoDB) require uninstall-first to prevent data corruption; version switching kept for non-data modules
 
 ### ⚙ Settings — redesigned card-based control center
@@ -103,11 +120,11 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - `app.js` 150KB → ~40KB, `index.html` 350KB → ~70KB over the wire
 
 ### 🔧 Everything else
-- **Docker** — container management, 45+ pre-configured image catalog
+- **Docker** — container management, 45+ pre-configured image catalog, **domain assignment + automatic SSL** (reuses the same reverse-proxy code as Go/Node.js Projects, no Traefik needed)
 - **DNS** — BIND9 zone management + Cloudflare DDNS
 - **Mail** — Postfix + Dovecot, domains, accounts, Roundcube webmail
 - **CDN** — Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN
-- **Monitoring** — real-time CPU/RAM/Disk/Network, process list, bandwidth
+- **Monitoring & Dashboard** — realtime CPU/RAM/Network charts, process list, bandwidth, **login audit log viewer**
 - **File Manager** — code editor, chmod, AES-encrypted zip support, ClamAV scan
 - **Web Terminal** — full PTY shell in browser over WebSocket
 - **Backups** — website + database, restore, S3-compatible cloud backup
@@ -180,26 +197,30 @@ python3 app.py   # runs on :8888
 
 ## 🗺 Roadmap
 
-**v3.3 (current) — shipped:**
-- [x] Visual design overhaul — coloured stat cards, sidebar icon pills
-- [x] HTTP/3 QUIC — full multi-webserver support (nginx upgrade, Caddy/OLS auto, Apache blocked)
-- [x] Live installation terminal — real-time SSE streaming for all App Store actions
-- [x] Two-webserver conflict detection — dashboard warning banner
-- [x] Mail forwarding domain selector + log filter/search
-- [x] Session persistence across gunicorn restarts (flask-session filesystem)
-- [x] nginx stream module auto-install across all 9 distros
-- [x] MariaDB 12.x versions added; optimization tab fixed
-- [x] Node.js v24 as default LTS; EOL v18/v20 removed; switch bug fixed
+**v3.4 (current) — shipped:**
+- [x] Go Projects — binary deployment, Go SDK manager, WebSocket proxy, Let's Encrypt per-domain, resource limits, health checks, version rollback
+- [x] Node.js Projects — PM2 + systemd, nvm version switching
+- [x] Website Import wizard — cPanel, aaPanel, HestiaCP backup upload (files + database)
+- [x] FFmpeg Manager — multi-version side-by-side install (7.1/8.1/nightly), x86_64 + arm64
+- [x] Memcached — full Service/Config/Switch Version/Load Status/Optimization management
+- [x] Docker container domain assignment + automatic SSL (no Traefik)
+- [x] Dashboard realtime CPU/RAM/Network charts, global SSL expiry alerts
+- [x] Settings → Login audit log viewer
+- [x] Per-site disk usage
+- [x] RHEL-family install fixes — nginx, MySQL, Caddy, MongoDB, PostgreSQL now install correctly on RHEL/CentOS/Fedora/AlmaLinux/Rocky
+- [x] arm64 fixes — MongoDB and PostgreSQL RHEL install paths
+- [x] Modal/layout system overhaul — centering, horizontal scrollbar, cross-component scoping bugs
 
-**v3.4 (next):**
+**v3.5 (next):**
 - [ ] Bandwidth Monitor — per-domain traffic graphs (daily/weekly/monthly)
 - [ ] Website-level Backup — files + database together in one click per domain
 - [ ] Dark mode — toggle with full dark variable set
 - [ ] Onboarding wizard — guided first-run flow
 - [ ] Mobile responsiveness — sidebar + layout for small screens
 - [ ] PHP Webshell Scanner — scan web roots for obfuscated shells
-- [ ] Disk usage analyzer (visual tree, delete from panel)
+- [ ] Disk usage analyzer — visual tree, delete from panel
 - [ ] Alerting — CPU/RAM/SSL-expiry notifications (email/webhook)
+- [ ] Website Import — email, cron, and SSL migration (currently files + database only)
 
 ---
 
