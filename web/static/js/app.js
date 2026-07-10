@@ -2404,6 +2404,18 @@ function modulesPage() {
       else toast(r.error || 'Uninstall failed', 'error');
     },
 
+    async ffmpegResetAll() {
+      if (!confirm('Remove ALL ffmpeg versions and command aliases? This also clears any leftover state from an interrupted install.')) return;
+      const r = await post('/api/modules/ffmpeg/reset', {});
+      if (r.ok) {
+        toast('ffmpeg manager fully reset', 'success');
+        await this.loadFfmpegVersions();
+        await this.load();
+      } else {
+        toast(r.error || 'Reset failed', 'error');
+      }
+    },
+
     async ffmpegShowDetail(version) {
       const r = await get(`/api/modules/ffmpeg/versions/${version}/detail`);
       if (r.ok) Alpine.store('vp').ffmpegDetail = {show:true, version, ...r};

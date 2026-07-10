@@ -3423,7 +3423,10 @@
                 <div x-show="settingsModal.tab==='ffmpeg_versions'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                     <div style="font-weight:600;font-size:14px">Versions</div>
-                    <button class="btn btn-ghost btn-sm" @click="loadFfmpegVersions()">↻ Refresh</button>
+                    <div style="display:flex;gap:8px">
+                      <button class="btn btn-ghost btn-sm" @click="loadFfmpegVersions()">↻ Refresh</button>
+                      <button class="btn btn-ghost btn-sm" style="color:var(--red)" @click="ffmpegResetAll()">Uninstall All / Reset</button>
+                    </div>
                   </div>
                   <table class="data-table">
                     <thead><tr><th>Version</th><th>Status</th><th style="text-align:right">OPT</th></tr></thead>
@@ -3450,7 +3453,8 @@
                     </tbody>
                   </table>
                   <div style="font-size:11px;color:var(--text-muted);margin-top:14px;line-height:1.6">
-                    ℹ Each version installs independently to <code>/www/server/ffmpeg/ffmpeg-{version}/</code> and is accessible via its own command alias (e.g. <code>ffmpeg6</code> for 6.1). Installing or removing one version does not affect the others.
+                    ℹ Each version installs independently to <code>/www/server/ffmpeg/ffmpeg-{version}/</code> and is accessible via its own command alias (e.g. <code>ffmpeg8</code> for 8.1). Installing or removing one version does not affect the others.
+                    Use <strong>Uninstall All / Reset</strong> to remove everything at once — this also clears any leftover state from an interrupted install.
                   </div>
 
                   <!-- Detail sub-modal -->

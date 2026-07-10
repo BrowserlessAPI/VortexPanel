@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, session, Response
-import subprocess, os, threading, time, json, uuid, re
+import subprocess, os, threading, time, json, uuid, re, shutil
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script, panel_cache
 except ImportError:
@@ -772,13 +772,13 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
     },
     {
         'id':'ffmpeg', 'name':'ffmpeg manager', 'icon':'/static/icons/ffmpeg.svg', 'category':'Tools',
-        'desc':'Supports installation and management of versions 3, 4, 5, and 6. It is an open source computer program used to record, convert and stream audio and video.',
+        'desc':'Supports installation and management of versions 7.1, 8.1, and nightly master. It is an open source computer program used to record, convert and stream audio and video.',
         # ffmpeg is a CLI tool, not a background service — no 'service' key, no start/stop.
         # Multiple major versions install SIDE BY SIDE (not one-at-a-time like PHP/Node),
         # each to its own directory with its own command alias (ffmpeg3/4/5/6), matching
         # aaPanel's ffmpeg manager UX exactly. Managed via dedicated /api/modules/ffmpeg/versions/*
         # endpoints rather than the generic single install/uninstall pattern.
-        'check':'test -d /www/server/ffmpeg && echo found',
+        'check':'find /www/server/ffmpeg -mindepth 3 -maxdepth 3 -type f -name ffmpeg -path "*/bin/ffmpeg" 2>/dev/null | grep -q . && echo found',
         'versions':[],  # version list is dynamic — served by /api/modules/ffmpeg/versions
         'install_tpl':'',   # installs happen per-version, see dedicated endpoints
         'install':'',
@@ -1421,11 +1421,15 @@ def ffmpeg_install_version(version):
 
             if ext.returncode != 0:
                 _job_append_line(job_id, f'[ERROR] Extract failed: {ext.stderr.strip()}')
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                _job_append_line(job_id, '[VortexPanel] Cleaned up partial install directory')
                 _job_finish(job_id, False, False)
                 return
 
             if not os.path.isfile(binary):
                 _job_append_line(job_id, '[ERROR] ffmpeg binary not found after extraction — archive structure may have changed')
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                _job_append_line(job_id, '[VortexPanel] Cleaned up partial install directory')
                 _job_finish(job_id, False, False)
                 return
 
@@ -1437,6 +1441,8 @@ def ffmpeg_install_version(version):
                                      shell=True, capture_output=True, text=True, timeout=10)
             if verify.returncode != 0:
                 _job_append_line(job_id, f'[ERROR] Binary failed to execute: {verify.stderr.strip()[:300]}')
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                _job_append_line(job_id, '[VortexPanel] Cleaned up partial install directory')
                 _job_finish(job_id, False, False)
                 return
 
@@ -1478,8 +1484,32 @@ def ffmpeg_uninstall_version(version):
     subprocess.run(f'rm -f "{alias_path}"', shell=True)
     # Remove ffprobe/ffplay aliases too
     for tool in ('probe', 'play'):
-        subprocess.run(f'rm -f "/usr/local/bin/ff{tool}{v['alias'][6:]}"', shell=True)
+        subprocess.run(f'rm -f "/usr/local/bin/ff{tool}{v["alias"][6:]}"', shell=True)
     return jsonify({'ok': True})
+
+@modules_bp.route('/api/modules/ffmpeg/reset', methods=['POST'])
+def ffmpeg_reset():
+    """Full removal — deletes every installed version, every command alias, and the
+    base directory itself. This is the only genuine 'uninstall ffmpeg manager
+    completely' action: since ffmpeg has no single install/uninstall command
+    (each version is managed independently), this exists specifically to recover
+    from stuck states — e.g. a leftover empty directory from a previously
+    interrupted install that made the App Store list falsely show 'installed'
+    with nothing actually usable underneath."""
+    if not req(): return jsonify({'ok': False}), 401
+    removed = []
+    for v in FFMPEG_VERSIONS:
+        d = _ffmpeg_dir(v['version'])
+        if os.path.isdir(d):
+            removed.append(v['version'])
+        shutil.rmtree(d, ignore_errors=True)
+        subprocess.run(f'rm -f "/usr/local/bin/{v["alias"]}"', shell=True)
+        for tool in ('probe', 'play'):
+            subprocess.run(f'rm -f "/usr/local/bin/ff{tool}{v["alias"][6:]}"', shell=True)
+    # Remove the base directory entirely (covers stale/empty dirs from any
+    # interrupted install, even ones that don't match a known version)
+    shutil.rmtree(FFMPEG_BASE_DIR, ignore_errors=True)
+    return jsonify({'ok': True, 'removed_versions': removed})
 
 @modules_bp.route('/api/modules/<mod_id>/settings')
 def get_module_settings(mod_id):
