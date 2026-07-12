@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request, session
 import subprocess, re, os
+from datetime import datetime, timedelta
 from panel.routes.os_utils import get_os
 
 security_bp = Blueprint('security', __name__)
@@ -503,42 +504,213 @@ def modsec_audit_log():
     if not os.path.exists(MODSEC_AUDIT):
         return jsonify({'ok':True,'entries':[],'raw':'','exists':False})
     out, _, _ = sh(f'tail -n {min(lines, 500)} "{MODSEC_AUDIT}" 2>/dev/null')
-    entries = []
-    current = {}
-    for line in out.split('\n'):
-        # ModSecurity audit log section markers: --UUID-A-- through --UUID-Z--
-        m = re.match(r'--[a-f0-9]+-([A-Z])--', line)
-        if m:
-            section = m.group(1)
-            if section == 'A' and current:
-                entries.append(current)
-                current = {}
-            if section == 'A':
-                current = {'raw': line}
-            elif section == 'B' and current:
-                # Request line
-                req_m = re.search(r'(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)', line)
-                if req_m:
-                    current['method'] = req_m.group(1)
-                    current['uri']    = req_m.group(2)
-            elif section == 'H' and current:
-                # Response / action
-                msg_m = re.search(r'Message: (.+)', line)
-                if msg_m: current['message'] = msg_m.group(1)[:200]
-                id_m = re.search(r'\[id "(\d+)"\]', line)
-                if id_m: current['rule_id'] = id_m.group(1)
-                sev_m = re.search(r'\[severity "(\w+)"\]', line)
-                if sev_m: current['severity'] = sev_m.group(1)
-                ip_m = re.search(r'client (\d+\.\d+\.\d+\.\d+)', line)
-                if ip_m: current['ip'] = ip_m.group(1)
-        elif current and line:
-            if 'timestamp' not in current:
-                ts_m = re.search(r'\[(\d{2}/\w+/\d{4}:\d{2}:\d{2}:\d{2})', line)
-                if ts_m: current['timestamp'] = ts_m.group(1)
-    if current: entries.append(current)
-    entries = [e for e in entries if e.get('message') or e.get('uri')]
+    entries = _parse_modsec_entries(out)
     entries.reverse()
     return jsonify({'ok':True,'entries':entries[-100:],'raw':out,'exists':True})
+
+
+# --- WAF ANALYTICS ----------------------------------------------------------------
+# OWASP CRS assigns rule IDs in stable, documented ranges per attack category.
+# This mapping is based on that well-established convention (CRS 3.x/4.x) — I
+# could not live-verify it against crs.owasp.org given this environment's
+# network restrictions, so treat category labels as best-effort; the raw
+# rule_id is always preserved alongside so nothing is hidden or guessed away.
+CRS_CATEGORY_RANGES = [
+    (911000, 911999, 'Method Enforcement'),
+    (912000, 912999, 'DoS Protection'),
+    (913000, 913999, 'Scanner Detection'),
+    (920000, 920999, 'Protocol Enforcement'),
+    (921000, 921999, 'Protocol Attack'),
+    (930000, 930999, 'Path Traversal / LFI'),
+    (931000, 931999, 'Remote File Inclusion'),
+    (932000, 932999, 'Remote Code Execution'),
+    (933000, 933999, 'PHP Injection'),
+    (934000, 934999, 'Node.js Injection'),
+    (941000, 941999, 'XSS'),
+    (942000, 942999, 'SQL Injection'),
+    (943000, 943999, 'Session Fixation'),
+    (944000, 944999, 'Java Attack'),
+    (949000, 949999, 'Anomaly Threshold'),
+    (950000, 959999, 'Data Leakage'),
+    (980000, 980999, 'Correlation'),
+]
+
+def _categorize_rule(rule_id):
+    if not rule_id: return 'Other'
+    try: rid = int(rule_id)
+    except (ValueError, TypeError): return 'Other'
+    for lo, hi, name in CRS_CATEGORY_RANGES:
+        if lo <= rid <= hi: return name
+    return 'Other'
+
+def _parse_modsec_entries(raw_text):
+    """Shared parser for ModSecurity audit log entries.
+
+    IMPORTANT: section markers (--uuid-X--) announce that the FOLLOWING
+    lines belong to section X, until the next marker — the marker line
+    itself never contains the actual request/message data. The original
+    inline parser (before this refactor) tried to regex-match request/
+    message content against the marker line itself, which never matched
+    anything real; this version tracks "current section" as state and
+    processes each subsequent line according to it, which is how
+    ModSecurity's audit log format actually works.
+    """
+    entries, current, section = [], {}, None
+    for line in raw_text.split('\n'):
+        m = re.match(r'--[a-f0-9]+-([A-Z])--', line)
+        if m:
+            new_section = m.group(1)
+            if new_section == 'A':
+                if current:
+                    entries.append(current)
+                current = {'raw': line}
+            section = new_section
+            continue
+
+        if not current:
+            continue
+
+        if section == 'A':
+            # Section A content line: [DD/Mon/YYYY:HH:MM:SS +ZZZZ] txid client-ip client-port server-ip server-port
+            ts_m = re.search(r'\[(\d{2}/\w+/\d{4}:\d{2}:\d{2}:\d{2})', line)
+            if ts_m: current['timestamp'] = ts_m.group(1)
+            ip_m = re.search(r'^\[[^\]]+\]\s+[a-f0-9]+\s+(\d+\.\d+\.\d+\.\d+)', line)
+            if ip_m: current['ip'] = ip_m.group(1)
+        elif section == 'B':
+            req_m = re.search(r'^(GET|POST|PUT|DELETE|HEAD|OPTIONS|PATCH)\s+(\S+)', line)
+            if req_m:
+                current['method'] = req_m.group(1)
+                current['uri']    = req_m.group(2)
+            host_m = re.search(r'^Host:\s*(\S+)', line, re.IGNORECASE)
+            if host_m: current['domain'] = host_m.group(1)
+        elif section == 'H':
+            msg_m = re.search(r'Message: (.+)', line)
+            if msg_m and 'message' not in current:  # keep the first/primary message
+                current['message'] = msg_m.group(1)[:200]
+            id_m = re.search(r'\[id "(\d+)"\]', line)
+            if id_m and 'rule_id' not in current:
+                current['rule_id'] = id_m.group(1)
+            sev_m = re.search(r'\[severity "(\w+)"\]', line)
+            if sev_m and 'severity' not in current:
+                current['severity'] = sev_m.group(1)
+            if 'ip' not in current:
+                ip_m2 = re.search(r'client:\s*(\d+\.\d+\.\d+\.\d+)|client (\d+\.\d+\.\d+\.\d+)', line)
+                if ip_m2: current['ip'] = ip_m2.group(1) or ip_m2.group(2)
+
+    if current:
+        entries.append(current)
+    entries = [e for e in entries if e.get('message') or e.get('uri')]
+    return entries
+
+def _entry_datetime(entry):
+    """Parse ModSecurity's [DD/Mon/YYYY:HH:MM:SS timestamp into a datetime."""
+    ts = entry.get('timestamp')
+    if not ts: return None
+    try:
+        return datetime.strptime(ts, '%d/%b/%Y:%H:%M:%S')
+    except (ValueError, TypeError):
+        return None
+
+@security_bp.route('/api/security/waf/stats')
+def waf_stats():
+    """Aggregated WAF analytics — attack categories, top IPs/URIs, and a
+    timeline, built on top of the same parser as the raw audit-log view.
+    Reads a capped tail of the log (not the whole file, which can be large
+    on a busy server) then filters/aggregates in Python."""
+    if not req(): return jsonify({'ok': False}), 401
+    period = request.args.get('period', 'today')
+
+    if not os.path.exists(MODSEC_AUDIT):
+        return jsonify({'ok': True, 'exists': False, 'total': 0,
+                         'categories': [], 'top_ips': [], 'top_uris': [], 'timeline': []})
+
+    # Cap the read — a very busy site's audit log can be huge; this covers a
+    # generous window of recent activity without loading the whole file.
+    out, _, _ = sh(f'tail -n 20000 "{MODSEC_AUDIT}" 2>/dev/null', t=20)
+    entries = _parse_modsec_entries(out)
+
+    now = datetime.now()
+    if period == 'today':
+        cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == 'yesterday':
+        cutoff = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        upper  = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == '7days':
+        cutoff = now - timedelta(days=7)
+    else:
+        cutoff = now - timedelta(days=1)
+
+    filtered = []
+    for e in entries:
+        dt = _entry_datetime(e)
+        if dt is None:
+            continue  # can't place it in time — exclude from period-bounded stats
+        if period == 'yesterday':
+            if cutoff <= dt < upper: filtered.append((dt, e))
+        elif dt >= cutoff:
+            filtered.append((dt, e))
+
+    total = len(filtered)
+    cat_counts, ip_counts, uri_counts = {}, {}, {}
+    timeline_buckets = {}
+
+    for dt, e in filtered:
+        cat = _categorize_rule(e.get('rule_id'))
+        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        if e.get('ip'):
+            ip_counts[e['ip']] = ip_counts.get(e['ip'], 0) + 1
+        if e.get('uri'):
+            uri_counts[e['uri']] = uri_counts.get(e['uri'], 0) + 1
+        # Bucket by hour for today/yesterday, by day for 7days
+        bucket = dt.strftime('%H:00') if period in ('today', 'yesterday') else dt.strftime('%m/%d')
+        timeline_buckets[bucket] = timeline_buckets.get(bucket, 0) + 1
+
+    top_ips  = sorted(ip_counts.items(),  key=lambda x: -x[1])[:10]
+    top_uris = sorted(uri_counts.items(), key=lambda x: -x[1])[:10]
+    categories = sorted(cat_counts.items(), key=lambda x: -x[1])
+    timeline = sorted(timeline_buckets.items(), key=lambda x: x[0])
+
+    return jsonify({
+        'ok': True, 'exists': True, 'period': period, 'total': total,
+        'categories': [{'name': k, 'count': v} for k, v in categories],
+        'top_ips':    [{'ip': k, 'count': v} for k, v in top_ips],
+        'top_uris':   [{'uri': k, 'count': v} for k, v in top_uris],
+        'timeline':   [{'label': k, 'count': v} for k, v in timeline],
+    })
+
+
+@security_bp.route('/api/security/waf/blockade-log')
+def waf_blockade_log():
+    """Filterable version of the raw audit log — supports search by IP,
+    URI, or rule category, plus pagination for larger result sets."""
+    if not req(): return jsonify({'ok': False}), 401
+    if not os.path.exists(MODSEC_AUDIT):
+        return jsonify({'ok': True, 'entries': [], 'total': 0, 'exists': False})
+
+    search   = (request.args.get('q') or '').strip().lower()
+    page     = max(1, int(request.args.get('page', 1)))
+    per_page = min(100, max(10, int(request.args.get('per_page', 20))))
+
+    out, _, _ = sh(f'tail -n 20000 "{MODSEC_AUDIT}" 2>/dev/null', t=20)
+    entries = _parse_modsec_entries(out)
+    for e in entries:
+        e['category'] = _categorize_rule(e.get('rule_id'))
+    entries.reverse()  # most recent first
+
+    if search:
+        entries = [e for e in entries if
+                   search in (e.get('ip') or '').lower() or
+                   search in (e.get('uri') or '').lower() or
+                   search in (e.get('domain') or '').lower() or
+                   search in (e.get('category') or '').lower() or
+                   search in (e.get('message') or '').lower()]
+
+    total = len(entries)
+    start = (page - 1) * per_page
+    page_entries = entries[start:start + per_page]
+
+    return jsonify({'ok': True, 'exists': True, 'entries': page_entries,
+                     'total': total, 'page': page, 'per_page': per_page})
 
 
 @security_bp.route('/api/security/modsecurity/update-crs', methods=['POST'])

@@ -5799,7 +5799,135 @@
         <div x-show="tab==='ports'" style="margin-top:14px"><div class="card"><div class="card-hd"><div class="card-title">Open Ports</div><button class="btn btn-ghost btn-xs" @click="loadPorts()">↻</button></div><div class="code-block" style="font-size:12px;max-height:300px;overflow-y:auto" x-text="portsOutput||'Click ↻ to scan'"></div></div></div>
       </div>
 
-      <!-- DOCKER -->
+      <!-- WAF -->
+      <div x-show="page==='waf'" x-data="wafPage()">
+        <div class="page-header">
+          <div><div class="page-title">WAF Analytics</div><div class="page-sub">ModSecurity + OWASP CRS attack visibility — free, no upsell</div></div>
+        </div>
+
+        <!-- Not installed empty state -->
+        <div x-show="!loading && !modsecInstalled" class="empty-state">
+          <div class="empty-icon">🛡</div>
+          <div class="empty-text">ModSecurity isn't installed yet</div>
+          <button class="btn btn-primary btn-sm" style="margin-top:10px" @click="go('modules')">Install from App Store</button>
+        </div>
+
+        <div x-show="!loading && modsecInstalled">
+          <!-- Tabs -->
+          <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border)">
+            <template x-for="t in [{id:'overview',label:'Overview'},{id:'blockade',label:'Blockade Log'}]" :key="t.id">
+              <button :class="'btn btn-sm '+(wtab===t.id?'btn-primary':'btn-ghost')" style="border-radius:6px 6px 0 0"
+                      @click="wtab=t.id; wtab==='blockade' && loadBlockadeLog()" x-text="t.label"></button>
+            </template>
+          </div>
+
+          <!-- OVERVIEW TAB -->
+          <div x-show="wtab==='overview'">
+            <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px">
+              <template x-for="p in [{id:'today',label:'Today'},{id:'yesterday',label:'Yesterday'},{id:'7days',label:'Last 7 days'}]" :key="p.id">
+                <button :class="'btn btn-sm '+(period===p.id?'btn-primary':'btn-ghost')" @click="period=p.id; loadStats()" x-text="p.label"></button>
+              </template>
+              <button class="btn btn-ghost btn-sm" @click="loadStats()">↻</button>
+            </div>
+
+            <div class="grid-4" style="margin-bottom:16px">
+              <div class="stat-card">
+                <div class="stat-label">Blocked Requests</div>
+                <div class="stat-value" x-text="stats.total||0"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Top Attack Type</div>
+                <div class="stat-value" style="font-size:16px" x-text="stats.categories?.[0]?.name||'—'"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Unique Attacker IPs</div>
+                <div class="stat-value" x-text="stats.top_ips?.length||0"></div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Attack Categories</div>
+                <div class="stat-value" x-text="stats.categories?.length||0"></div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-bottom:16px">
+              <div class="card-hd"><div class="card-title">Blocked Requests Over Time</div></div>
+              <div class="chart-card"><canvas id="vp-chart-waf-timeline"></canvas></div>
+            </div>
+
+            <div class="grid-2">
+              <div class="card">
+                <div class="card-hd"><div class="card-title">Attack Categories</div></div>
+                <div x-show="!stats.categories?.length" class="empty-state" style="padding:20px"><div class="empty-text">No attacks blocked in this period</div></div>
+                <table class="data-table" x-show="stats.categories?.length">
+                  <tbody>
+                    <template x-for="c in (stats.categories||[])" :key="c.name">
+                      <tr><td x-text="c.name"></td><td style="text-align:right;font-weight:600" x-text="c.count"></td></tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card">
+                <div class="card-hd"><div class="card-title">Top Attacker IPs</div></div>
+                <div x-show="!stats.top_ips?.length" class="empty-state" style="padding:20px"><div class="empty-text">No attacks blocked in this period</div></div>
+                <table class="data-table" x-show="stats.top_ips?.length">
+                  <tbody>
+                    <template x-for="ip in (stats.top_ips||[])" :key="ip.ip">
+                      <tr><td style="font-family:var(--font-mono)" x-text="ip.ip"></td><td style="text-align:right;font-weight:600" x-text="ip.count"></td></tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top:16px">
+              <div class="card-hd"><div class="card-title">Top Targeted URLs</div></div>
+              <div x-show="!stats.top_uris?.length" class="empty-state" style="padding:20px"><div class="empty-text">No attacks blocked in this period</div></div>
+              <table class="data-table" x-show="stats.top_uris?.length">
+                <tbody>
+                  <template x-for="u in (stats.top_uris||[])" :key="u.uri">
+                    <tr><td style="font-family:var(--font-mono);font-size:12px;max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="u.uri"></td><td style="text-align:right;font-weight:600" x-text="u.count"></td></tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- BLOCKADE LOG TAB -->
+          <div x-show="wtab==='blockade'">
+            <div style="display:flex;gap:8px;margin-bottom:14px">
+              <input class="form-input" style="flex:1" placeholder="Search by IP, URL, domain, or attack type..." x-model="blockadeSearch" @keyup.enter="loadBlockadeLog()">
+              <button class="btn btn-primary btn-sm" @click="blockadePage=1; loadBlockadeLog()">Search</button>
+              <button class="btn btn-ghost btn-sm" @click="blockadeSearch='';blockadePage=1;loadBlockadeLog()">Clear</button>
+            </div>
+            <div class="card" style="padding:0;overflow-x:auto">
+              <table class="data-table">
+                <thead><tr><th>Time</th><th>IP</th><th>Domain</th><th>URL</th><th>Type</th></tr></thead>
+                <tbody>
+                  <template x-for="(e,i) in blockadeEntries" :key="i">
+                    <tr>
+                      <td style="font-size:11px;color:var(--text-muted);white-space:nowrap" x-text="e.timestamp||'—'"></td>
+                      <td style="font-family:var(--font-mono);font-size:11px" x-text="e.ip||'—'"></td>
+                      <td style="font-size:11px" x-text="e.domain||'—'"></td>
+                      <td style="font-family:var(--font-mono);font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="e.uri" x-text="e.uri||'—'"></td>
+                      <td><span class="badge badge-red" style="font-size:10px" x-text="e.category"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="!blockadeEntries.length" class="empty-state" style="padding:30px"><div class="empty-text">No matching entries</div></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--text-muted)">
+              <span x-text="'Total: '+blockadeTotal"></span>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-ghost btn-xs" :disabled="blockadePage<=1" @click="blockadePage--;loadBlockadeLog()">← Prev</button>
+                <span x-text="'Page '+blockadePage"></span>
+                <button class="btn btn-ghost btn-xs" :disabled="blockadePage*20>=blockadeTotal" @click="blockadePage++;loadBlockadeLog()">Next →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div x-show="page==='docker'" x-data="dockerPage()">
         <div class="page-header">
           <div><div class="page-title">Docker</div><div class="page-sub">Container management with Docker Hardened &amp; Official images</div></div>

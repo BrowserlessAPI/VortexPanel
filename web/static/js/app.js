@@ -233,6 +233,7 @@ function rootApp() {
         { id:'logs',       icon:'📋', label:'Log Viewer', color:'#374151', colorBg:'#f3f4f6' },
         { id:'bandwidth',  icon:'📈', label:'Bandwidth',  color:'#0369a1', colorBg:'#e0f2fe' },
         { id:'security',   icon:'🔐', label:'Security',   color:'#b91c1c', colorBg:'#fee2e2' },
+        { id:'waf',        icon:'🛡', label:'WAF',        color:'#9333ea', colorBg:'#f3e8ff' },
         { id:'settings',   icon:'⚙', label:'Settings',   color:'#374151', colorBg:'#f3f4f6' },
       ]},
     ],
@@ -3932,6 +3933,79 @@ const DOCKER_CATALOG = [
    cmd:'', docs:'https://hub.docker.com/r/verdaccio/verdaccio'},
 ];
 
+function wafPage() {
+  return {
+    loading: true, modsecInstalled: false,
+    wtab: 'overview', period: 'today',
+    stats: {total:0, categories:[], top_ips:[], top_uris:[], timeline:[]},
+    blockadeEntries: [], blockadeTotal: 0, blockadePage: 1, blockadeSearch: '',
+    _charts: {},
+
+    async init() {
+      const r = await get('/api/security/modsecurity');
+      this.modsecInstalled = !!(r.ok && r.installed);
+      this.loading = false;
+      if (this.modsecInstalled) {
+        await this.loadStats();
+      }
+      window.addEventListener('vp:page', (e) => {
+        if (e.detail === 'waf' && this.modsecInstalled) {
+          this.wtab === 'overview' ? this.loadStats() : this.loadBlockadeLog();
+        }
+      });
+    },
+
+    async loadStats() {
+      const r = await get('/api/security/waf/stats?period=' + this.period);
+      if (r.ok) {
+        this.stats = r;
+        this.$nextTick(() => this._renderTimeline());
+      }
+    },
+
+    async loadBlockadeLog() {
+      const params = new URLSearchParams({page: this.blockadePage, per_page: 20});
+      if (this.blockadeSearch) params.set('q', this.blockadeSearch);
+      const r = await get('/api/security/waf/blockade-log?' + params.toString());
+      if (r.ok) {
+        this.blockadeEntries = r.entries || [];
+        this.blockadeTotal = r.total || 0;
+      }
+    },
+
+    _renderTimeline() {
+      if (typeof Chart === 'undefined') return;
+      const el = document.getElementById('vp-chart-waf-timeline');
+      if (!el) return;
+      const labels = (this.stats.timeline || []).map(t => t.label);
+      const data   = (this.stats.timeline || []).map(t => t.count);
+
+      if (this._charts.timeline) {
+        this._charts.timeline.data.labels = labels;
+        this._charts.timeline.data.datasets[0].data = data;
+        this._charts.timeline.update('none');
+        return;
+      }
+      const css = getComputedStyle(document.documentElement);
+      const purple = css.getPropertyValue('--stat-cpu').trim() || '#9333ea';
+      const grid    = css.getPropertyValue('--border').trim() || 'rgba(148,163,184,.15)';
+      const text    = css.getPropertyValue('--text-muted').trim() || '#94a3b8';
+      this._charts.timeline = new Chart(el, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Blocked', data, backgroundColor: purple + '99', borderColor: purple, borderWidth: 1 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          scales: {
+            x: { grid: {display:false}, ticks: { color: text, font:{size:10} } },
+            y: { min: 0, grid: { color: grid }, ticks: { color: text, font:{size:10}, precision: 0 } },
+          },
+          plugins: { legend: { display: false } },
+        },
+      });
+    },
+  };
+}
+
 function dockerPage() {
   return {
     status: {installed:false, running:false, version:''},
@@ -4455,11 +4529,8 @@ function updateModalData() {
           }
         } catch {}
 
-        if (!r.checked) {
-          this.errorMsg = r.error || 'Could not verify with GitHub — check your server\'s internet connection';
-          this.checkState = 'error';
-          return;
-        }
+        if (r.error && !r.current) { this.errorMsg=r.error; this.checkState='error'; return; }
+        if (r.note || (!r.has_update && !r.error)) { this.checkState='uptodate'; return; }
         this.checkState = r.has_update ? 'available' : 'uptodate';
       } catch(e) {
         this.errorMsg = 'Network error: '+(e.message||'Cannot reach server');
