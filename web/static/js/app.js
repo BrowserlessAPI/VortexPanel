@@ -4455,8 +4455,11 @@ function updateModalData() {
           }
         } catch {}
 
-        if (r.error && !r.current) { this.errorMsg=r.error; this.checkState='error'; return; }
-        if (r.note || (!r.has_update && !r.error)) { this.checkState='uptodate'; return; }
+        if (!r.checked) {
+          this.errorMsg = r.error || 'Could not verify with GitHub — check your server\'s internet connection';
+          this.checkState = 'error';
+          return;
+        }
         this.checkState = r.has_update ? 'available' : 'uptodate';
       } catch(e) {
         this.errorMsg = 'Network error: '+(e.message||'Cannot reach server');

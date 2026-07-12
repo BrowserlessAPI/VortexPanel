@@ -76,71 +76,77 @@ def check_update():
         'has_update': False, 'checked': False,
     }
 
+    def semver_key(v):
+        try: return [int(x) for x in v.lstrip('v').split('.')]
+        except Exception: return [0]
+
+    # --- PRIMARY signal: raw VERSION file straight off the main branch ---------
+    # Served via raw.githubusercontent.com (GitHub's Fastly-backed CDN), which
+    # is a COMPLETELY SEPARATE infrastructure from api.github.com — it is not
+    # subject to the unauthenticated API's 60-requests/hour-per-IP limit, and
+    # it needs neither a pushed git tag NOR a manually-created GitHub Release
+    # to reflect what's actually on main. This is what makes the check robust:
+    # even if a release was never tagged, or the API is rate-limited, this
+    # still tells the truth about whether main has moved ahead of `current`.
+    raw_latest = None
     try:
-        # Compare against git TAGS, not GitHub "Releases" — a Release is a
-        # separate object someone has to manually create in the GitHub UI
-        # after pushing a tag; requiring that extra manual step is exactly
-        # how updates silently stopped reaching users before (a tag was
-        # pushed, or should have been, but no Release existed, so the old
-        # /releases/latest check 404'd and was — wrongly — treated as
-        # "no releases yet, you're up to date").
+        raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION'
+        raw_req = urllib.request.Request(raw_url)
+        raw_req.add_header('User-Agent', 'VortexPanel/3.0')
+        with urllib.request.urlopen(raw_req, timeout=8) as resp:
+            raw_latest = 'v' + resp.read().decode().strip().lstrip('v')
+    except Exception:
+        pass  # fall through to the tags-API path below
+
+    # --- SECONDARY: git tags + optional Release metadata (cosmetic only) -------
+    # Only used to (a) confirm/replace the raw check if it failed, and (b) try
+    # to attach a human-readable changelog for the modal. Never load-bearing
+    # for has_update on its own — if this whole block fails, we still trust
+    # whatever raw_latest already told us.
+    tag_latest, name, body, published, html_url = None, None, '', '', base['url']
+    try:
         url  = f'https://api.github.com/repos/{GITHUB_REPO}/tags'
         req2 = urllib.request.Request(url)
         req2.add_header('Accept', 'application/vnd.github+json')
         req2.add_header('User-Agent', 'VortexPanel/3.0')
         req2.add_header('X-GitHub-Api-Version', '2022-11-28')
-
         with urllib.request.urlopen(req2, timeout=10) as resp:
             tags = json.loads(resp.read().decode())
-
-        if not tags:
-            # Genuinely zero tags exist — this really is "up to date"
-            # (nothing to compare against), safe to report as checked.
-            return jsonify({**base, 'checked': True, 'note': 'No release tags found on GitHub.'})
-
         tag_names = [t.get('name', '') for t in tags if t.get('name', '').lstrip('v').replace('.', '').isdigit()]
-        if not tag_names:
-            return jsonify({**base, 'checked': True, 'note': 'No valid version tags found.'})
+        if tag_names:
+            tag_latest = max(tag_names, key=semver_key)
+            try:
+                rel_url = f'https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{tag_latest}'
+                rel_req = urllib.request.Request(rel_url)
+                rel_req.add_header('Accept', 'application/vnd.github+json')
+                rel_req.add_header('User-Agent', 'VortexPanel/3.0')
+                with urllib.request.urlopen(rel_req, timeout=8) as resp:
+                    rel_data = json.loads(resp.read().decode())
+                    name      = rel_data.get('name') or tag_latest
+                    body      = rel_data.get('body') or ''
+                    published = rel_data.get('published_at') or ''
+                    html_url  = rel_data.get('html_url') or html_url
+            except Exception:
+                pass  # no Release object for this tag — fine
+    except Exception:
+        pass  # tags API unreachable/rate-limited — fine, raw_latest may still be valid
 
-        def semver_key(v):
-            try: return [int(x) for x in v.lstrip('v').split('.')]
-            except Exception: return [0]
-        latest_tag = max(tag_names, key=semver_key)
+    # --- Reconcile: prefer whichever source actually succeeded, take the
+    # numerically-higher version if both did (main can be ahead of the last tag) ---
+    candidates = [v for v in (raw_latest, tag_latest) if v]
+    if not candidates:
+        return jsonify({**base, 'error': 'Could not reach GitHub (raw file and API both failed)'})
 
-        # Try to enrich with release notes if a matching Release object also
-        # exists — purely cosmetic, never required for has_update to work.
-        name, body, published, html_url = latest_tag, '', '', base['url']
-        try:
-            rel_url = f'https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{latest_tag}'
-            rel_req = urllib.request.Request(rel_url)
-            rel_req.add_header('Accept', 'application/vnd.github+json')
-            rel_req.add_header('User-Agent', 'VortexPanel/3.0')
-            with urllib.request.urlopen(rel_req, timeout=8) as resp:
-                rel_data = json.loads(resp.read().decode())
-                name       = rel_data.get('name') or latest_tag
-                body       = rel_data.get('body') or ''
-                published  = rel_data.get('published_at') or ''
-                html_url   = rel_data.get('html_url') or html_url
-        except Exception:
-            pass  # no Release object for this tag — fine, we still have the tag itself
+    latest = max(candidates, key=semver_key)
+    has_update = compare_versions(current, latest)
+    return jsonify({
+        'ok': True, 'checked': True,
+        'current': current, 'latest': latest,
+        'name': name or latest, 'body': body, 'published': published,
+        'url': html_url,
+        'has_update': has_update,
+    })
 
-        has_update = compare_versions(current, latest_tag)
-        return jsonify({
-            'ok': True, 'checked': True,
-            'current': current, 'latest': latest_tag,
-            'name': name, 'body': body, 'published': published, 'url': html_url,
-            'has_update': has_update,
-        })
-
-    except urllib.error.HTTPError as e:
-        # Explicit failure — including rate-limiting (403) — must NOT be
-        # reported as "up to date". checked:False + error tells the truth.
-        return jsonify({**base, 'error': f'GitHub API returned {e.code}: {e.reason}'})
-    except urllib.error.URLError as e:
-        reason = str(getattr(e, 'reason', e))
-        return jsonify({**base, 'error': f'Cannot reach GitHub: {reason}'})
-    except Exception as e:
-        return jsonify({**base, 'error': str(e)})
 
 
 @update_bp.route('/api/update/start', methods=['POST'])
@@ -185,7 +191,14 @@ def start_update():
 
             if target:
                 log(f'🏷 Checking out version {target}...')
-                sh(f'cd {REPO_DIR} && git checkout {target} 2>&1')
+                _, cerr, crc = sh(f'cd {REPO_DIR} && git checkout {target} 2>&1')
+                if crc != 0:
+                    # Not fatal — the reset above already put us on latest main,
+                    # this just means no formal tag exists yet for this version
+                    # (e.g. detected via the raw VERSION file ahead of tagging).
+                    log(f'ℹ No tag "{target}" on GitHub yet — already on latest main branch, continuing')
+                else:
+                    log(f'✓ Checked out {target}')
 
             # 3. Copy new files
             log('📋 Copying updated files to installation directory...')

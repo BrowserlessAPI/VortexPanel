@@ -133,17 +133,90 @@ systemctl restart vortexpanel
 
 # Generate deploy.sh — always points at the SAME $SRC_DIR resolved above,
 # so it can never drift out of sync with wherever the source actually lives.
+# Auto-backs up the current code + configs before every deploy, so a bad
+# update can always be undone with rollback.sh — the code+config themselves
+# are never at risk from a normal deploy (they live outside panel/web/app.py
+# entirely), but this gives genuine recovery if the NEW code itself is bad.
 cat > /root/deploy.sh << EOF
 #!/bin/bash
+BACKUP_ROOT="$INSTALL_DIR/update_backups"
+BACKUP_DIR="\$BACKUP_ROOT/\$(date +%Y%m%d-%H%M%S)"
+mkdir -p "\$BACKUP_DIR"
+echo "📦 Backing up current install to \$BACKUP_DIR ..."
+for item in panel web app.py; do
+    if [ -e "$INSTALL_DIR/\$item" ]; then
+        cp -r "$INSTALL_DIR/\$item" "\$BACKUP_DIR/" 2>/dev/null
+    fi
+done
+for f in config.json credentials.json admin_password.txt ai_config.json cdn_config.json secret.key; do
+    if [ -f "$INSTALL_DIR/\$f" ]; then
+        cp "$INSTALL_DIR/\$f" "\$BACKUP_DIR/" 2>/dev/null
+    fi
+done
+echo "\$BACKUP_DIR" > "$INSTALL_DIR/.last_backup"
+ls -1dt "\$BACKUP_ROOT"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
 cp -r $SRC_DIR/panel/ $SRC_DIR/web/ $INSTALL_DIR/
 cp $SRC_DIR/app.py $INSTALL_DIR/
 find $INSTALL_DIR -name "__pycache__" -exec rm -rf {} + 2>/dev/null
 systemctl restart vortexpanel && sleep 2
 curl -s -o /dev/null -w "Panel: %{http_code}\n" http://127.0.0.1:8888/
-echo "✓ Deployed"
+echo "✓ Deployed (backup saved: \$BACKUP_DIR — run 'bash /root/rollback.sh' to undo)"
 EOF
 chmod +x /root/deploy.sh
 log "Created /root/deploy.sh (source: $SRC_DIR -> install: $INSTALL_DIR)"
+
+# Generate rollback.sh — restores code + configs from the most recent (or a
+# specific) deploy.sh backup snapshot. A backup nobody can easily restore
+# from isn't worth much, so this ships alongside deploy.sh automatically.
+cat > /root/rollback.sh << EOF
+#!/bin/bash
+# Usage: rollback.sh [backup_timestamp]
+#   No argument   -> restores the most recent backup
+#   With argument -> restores that specific one, e.g. rollback.sh 20260712-073135
+INSTALL_DIR="$INSTALL_DIR"
+BACKUP_ROOT="\$INSTALL_DIR/update_backups"
+if [ -n "\$1" ]; then
+    BACKUP_DIR="\$BACKUP_ROOT/\$1"
+else
+    if [ -f "\$INSTALL_DIR/.last_backup" ]; then
+        BACKUP_DIR=\$(cat "\$INSTALL_DIR/.last_backup")
+    else
+        BACKUP_DIR=\$(ls -1dt "\$BACKUP_ROOT"/*/ 2>/dev/null | head -1)
+    fi
+fi
+if [ -z "\$BACKUP_DIR" ] || [ ! -d "\$BACKUP_DIR" ]; then
+    echo "✗ No backup found\${1:+ for timestamp \$1}."
+    echo "Available backups:"
+    ls -1 "\$BACKUP_ROOT" 2>/dev/null || echo "  (none)"
+    exit 1
+fi
+echo "⏪ Rolling back to: \$BACKUP_DIR"
+echo "This will restore panel/, web/, app.py, and config files from that snapshot."
+read -p "Continue? [y/N] " confirm
+if [ "\$confirm" != "y" ] && [ "\$confirm" != "Y" ]; then
+    echo "Cancelled."
+    exit 0
+fi
+for item in panel web app.py; do
+    if [ -e "\$BACKUP_DIR/\$item" ]; then
+        rm -rf "\$INSTALL_DIR/\$item"
+        cp -r "\$BACKUP_DIR/\$item" "\$INSTALL_DIR/"
+        echo "✓ Restored \$item"
+    fi
+done
+for f in config.json credentials.json admin_password.txt ai_config.json cdn_config.json secret.key; do
+    if [ -f "\$BACKUP_DIR/\$f" ]; then
+        cp "\$BACKUP_DIR/\$f" "\$INSTALL_DIR/"
+        echo "✓ Restored \$f"
+    fi
+done
+find "\$INSTALL_DIR" -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+systemctl restart vortexpanel 2>/dev/null && sleep 2
+curl -s -o /dev/null -w "Panel: %{http_code}\n" http://127.0.0.1:8888/ 2>/dev/null
+echo "✓ Rollback complete"
+EOF
+chmod +x /root/rollback.sh
+log "Created /root/rollback.sh"
 
 # Firewall rules
 if command -v ufw &>/dev/null; then
