@@ -598,20 +598,41 @@ MODSEC_CRS_DIR  = '/etc/nginx/modsec/crs'
 MODSEC_CUSTOM   = '/etc/nginx/modsec/custom-rules.conf'
 MODSEC_AUDIT    = '/var/log/modsec_audit.log'
 
+# The nginx CONNECTOR module (separate from libmodsecurity itself) — this is
+# what actually provides the "modsecurity" directive nginx.conf uses. Verified
+# the exact Debian/Ubuntu path via `dpkg -L libnginx-mod-http-modsecurity`.
+# The RHEL path is the standard nginx-mod-modsecurity RPM convention but
+# wasn't independently verified the same way — flagged accordingly below.
+MODSEC_NGINX_MODULE_PATHS = [
+    '/usr/lib/nginx/modules/ngx_http_modsecurity_module.so',   # Debian/Ubuntu — verified via dpkg -L
+    '/usr/lib64/nginx/modules/ngx_http_modsecurity_module.so', # RHEL-family — standard convention, not independently verified
+]
+
+def _modsec_nginx_module_loaded():
+    """This is the actual, confirmed root cause of two separate reported bugs
+    (Detection Only toggle failing with 'unknown directive modsecurity', and
+    CRS update failing for the same underlying reason — its last step is also
+    `nginx -t`). The install script's package-install step is intentionally
+    non-fatal (a network hiccup there shouldn't block the rest of setup), but
+    that means modsecurity.conf + CRS can both get written successfully, and
+    'Installed' can show true, while this specific connector module — a
+    SEPARATE package from libmodsecurity itself — never actually loaded.
+    Every WAF control ultimately depends on nginx being able to parse the
+    'modsecurity' directive, which requires this .so specifically."""
+    return any(os.path.exists(p) for p in MODSEC_NGINX_MODULE_PATHS)
+
 def _modsec_installed():
-    """'Installed' = the core engine is actually usable, which requires BOTH
-    the library AND modsecurity.conf. Previously this was an OR across all
-    paths including just the library .so — meaning a server where the
-    library installed but the config download failed would show this page
-    as 'installed' (rendering Engine Mode / Paranoia controls), while those
-    controls then failed with 'not installed' / 'CRS setup.conf not found'.
-    That exact contradiction was a confirmed, reported bug."""
+    """'Installed' = the WAF is actually usable end-to-end: the library, the
+    core config, AND the nginx connector module that lets nginx understand
+    the 'modsecurity' directive at all. All three are independent install
+    steps that can each fail on their own — 'Installed' should mean all
+    three succeeded, not just some of them."""
     lib_present = any(os.path.exists(p) for p in [
         '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
         '/usr/lib64/libmodsecurity.so.3',
         '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
     ])
-    return lib_present and os.path.exists(MODSEC_CONF)
+    return lib_present and os.path.exists(MODSEC_CONF) and _modsec_nginx_module_loaded()
 
 def _crs_version():
     """Read CRS version from the CHANGES file or setup.conf."""
@@ -676,9 +697,16 @@ def modsec_status():
                         site_overrides[d] = 'on'
             except: pass
 
+    lib_present = any(os.path.exists(p) for p in [
+        '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
+        '/usr/lib64/libmodsecurity.so.3',
+        '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
+    ])
     return jsonify({
         'ok':            True,
         'installed':     installed,
+        'lib_present':   lib_present,
+        'module_loaded': _modsec_nginx_module_loaded(),
         'enabled':       state == 'On',
         'state':         state,
         'rules':         rules_count,
@@ -698,6 +726,11 @@ def modsec_toggle():
     conf   = MODSEC_CONF
     if not os.path.exists(conf):
         return jsonify({'ok':False,'error':'ModSecurity not installed'}), 404
+    if not _modsec_nginx_module_loaded():
+        return jsonify({'ok': False, 'error':
+            "The nginx ModSecurity connector module isn't loaded (this is a separate "
+            "package from the base ModSecurity library, and can fail to install "
+            "independently). Click Repair on this page to fix it."}), 400
     content = open(conf).read()
     # Replace any existing state
     content = re.sub(r'SecRuleEngine\s+(On|DetectionOnly|Off)',
@@ -978,20 +1011,47 @@ def waf_blockade_log():
 
 @security_bp.route('/api/security/modsecurity/repair', methods=['POST'])
 def modsec_repair():
-    """Fix an incomplete ModSecurity install — writes modsecurity.conf if
-    missing, downloads OWASP CRS if missing, and regenerates main.conf to
-    correctly reflect whichever pieces end up present. This exists because
-    the install script has multiple independent download steps that can
-    each fail on their own (network hiccups, GitHub rate limits); previously
-    a partial failure left the install stuck with no in-panel way to finish
-    it short of a full uninstall/reinstall."""
+    """Fix an incomplete ModSecurity install — reinstalls the nginx connector
+    module if missing, writes modsecurity.conf if missing, downloads OWASP
+    CRS if missing, and regenerates main.conf to correctly reflect whichever
+    pieces end up present. This exists because the install script has
+    multiple independent steps that can each fail on their own (network
+    hiccups, GitHub rate limits, apt issues); previously a partial failure
+    left the install stuck with no in-panel way to finish it short of a
+    full uninstall/reinstall."""
     if not req(): return jsonify({'ok': False}), 401
     log = []
 
-    if not _modsec_installed():
+    lib_present = any(os.path.exists(p) for p in [
+        '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
+        '/usr/lib64/libmodsecurity.so.3',
+        '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
+    ])
+    if not lib_present:
         return jsonify({'ok': False, 'error': 'ModSecurity engine (libmodsecurity) is not installed at all — install it from the App Store first, this repair only fixes an incomplete config.'})
 
     os.makedirs('/etc/nginx/modsec', exist_ok=True)
+
+    # 0. Fix the nginx connector module if missing — this is the actual root
+    # cause behind two separately reported bugs (Detection Only toggle and
+    # CRS update both failing with "unknown directive modsecurity"): it's a
+    # SEPARATE package from libmodsecurity that can fail to install on its
+    # own without blocking the rest of setup.
+    module_ok = _modsec_nginx_module_loaded()
+    if not module_ok:
+        log.append('nginx connector module missing — reinstalling...')
+        os_family_out, _, _ = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE", t=5)
+        if 'debian' in os_family_out.lower() or 'ubuntu' in os_family_out.lower() or not os_family_out.strip():
+            _, err, rc = sh('apt-get install -y --reinstall libnginx-mod-http-modsecurity 2>&1', t=60)
+        else:
+            _, err, rc = sh('dnf reinstall -y nginx-mod-modsecurity 2>&1 || dnf install -y nginx-mod-modsecurity 2>&1', t=60)
+        module_ok = _modsec_nginx_module_loaded()
+        if module_ok:
+            log.append('✓ nginx connector module installed')
+        else:
+            log.append(f'⚠ Could not install the nginx connector module ({err[:150] if err else "unknown error"}) — Engine Mode will not work until this is resolved manually')
+    else:
+        log.append('✓ nginx connector module already loaded')
 
     # 1. Fix modsecurity.conf if missing
     conf_ok = os.path.exists(MODSEC_CONF)
@@ -1063,17 +1123,22 @@ def modsec_repair():
 
     test_out, test_err, test_rc = sh('nginx -t 2>&1', t=15)
     if test_rc != 0:
-        return jsonify({'ok': False, 'error': f'nginx config test failed after repair: {test_out}{test_err}', 'log': log})
+        return jsonify({'ok': False, 'module_ok': module_ok, 'error': f'nginx config test failed after repair: {test_out}{test_err}', 'log': log})
     sh('systemctl reload nginx 2>/dev/null')
     log.append('✓ nginx reloaded')
 
-    return jsonify({'ok': True, 'conf_ok': conf_ok, 'crs_ok': crs_ok, 'log': log})
+    return jsonify({'ok': True, 'module_ok': module_ok, 'conf_ok': conf_ok, 'crs_ok': crs_ok, 'log': log})
 
 
 @security_bp.route('/api/security/modsecurity/update-crs', methods=['POST'])
 def modsec_update_crs():
     """Pull latest OWASP CRS tarball and replace existing rules."""
     if not req(): return jsonify({'ok':False}), 401
+    if not _modsec_nginx_module_loaded():
+        return jsonify({'ok': False,
+            'error': "The nginx ModSecurity connector module isn't loaded — CRS would download "
+                     "fine, but the final nginx reload will always fail until this is fixed. "
+                     "Click Repair on this page first."})
     # Get latest CRS release tag from GitHub API
     api_out, _, rc = sh(
         'curl -s https://api.github.com/repos/coreruleset/coreruleset/releases/latest'

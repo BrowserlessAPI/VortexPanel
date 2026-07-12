@@ -5593,9 +5593,18 @@
             </div>
 
             <!-- Not installed -->
-            <template x-if="!modsec.installed">
-              <div style="padding:12px 0;font-size:12px;color:var(--text-muted)">
-                ModSecurity WAF is not installed. Install it from the <strong>App Store</strong> — supports Nginx on all distros (Debian, Ubuntu, AlmaLinux, Rocky, Fedora, RHEL, CentOS, Oracle, CloudLinux).
+            <template x-if="!modsec.installed && !modsec.module_loaded">
+              <div style="padding:14px 0;font-size:12px;color:var(--text-muted)">
+                <div x-show="!modsec.lib_present" style="margin-bottom:8px">
+                  ModSecurity WAF is not installed. Install it from the <strong>App Store</strong> — supports Nginx on all distros (Debian, Ubuntu, AlmaLinux, Rocky, Fedora, RHEL, CentOS, Oracle, CloudLinux).
+                </div>
+                <div x-show="modsec.lib_present" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:10px;color:var(--red)">
+                  ModSecurity is <strong>partially</strong> installed — the base library is present, but the nginx connector module (the piece that lets nginx actually understand ModSecurity) never loaded. This can happen if that specific package install step hit a network hiccup during setup.
+                  <button class="btn btn-danger btn-sm" style="width:100%;margin-top:8px;justify-content:center" :disabled="modsec.repairing" @click="repairModsec()">
+                    <span x-show="modsec.repairing">Repairing…</span>
+                    <span x-show="!modsec.repairing">🔧 Repair — Reinstall Connector Module</span>
+                  </button>
+                </div>
               </div>
             </template>
 

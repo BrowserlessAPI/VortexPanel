@@ -810,18 +810,24 @@ chown -R www-data:www-data /var/www/roundcube/''',
     {
         'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'/static/icons/modsecurity.svg', 'category':'Security',
         'desc':'OWASP CRS v4 Web Application Firewall — Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)',
-        # "Installed" requires the CORE engine to be usable (library + modsecurity.conf) —
-        # NOT the CRS ruleset, which is a separate, retriable download step (see install_tpl
-        # below). Previously this only checked the library .so file, so a server where the
-        # library installed but the LATER modsecurity.conf/CRS download steps failed (e.g.
-        # GitHub API rate-limit, network hiccup) would show "Installed" in the App Store
-        # while every actual WAF control (Engine Mode toggle, Paranoia level) failed with
-        # "not installed" / "CRS setup.conf not found" — a real, confirmed bug.
+        # "Installed" requires ALL THREE independent pieces to be usable: the
+        # base library, the nginx CONNECTOR module (a separate package that
+        # provides the actual "modsecurity" nginx directive — confirmed via
+        # dpkg -L libnginx-mod-http-modsecurity to install at
+        # /usr/lib/nginx/modules/ngx_http_modsecurity_module.so), and
+        # modsecurity.conf. All three can fail independently without
+        # blocking each other (by design — a hiccup in one shouldn't wreck
+        # the rest of setup), which is exactly what caused two separately
+        # reported bugs: the App Store showing "Installed" while Engine Mode
+        # toggle AND CRS update both failed with "unknown directive
+        # modsecurity" — the connector module specifically never loaded.
         'check':(
             '(test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 || '
             'test -f /usr/lib64/libmodsecurity.so.3 || '
             'test -f /usr/lib/aarch64-linux-gnu/libmodsecurity.so.3 || '
             'which modsec_rules_check 2>/dev/null 1>&2) && '
+            '(test -f /usr/lib/nginx/modules/ngx_http_modsecurity_module.so || '
+            'test -f /usr/lib64/nginx/modules/ngx_http_modsecurity_module.so) && '
             'test -f /etc/nginx/modsec/modsecurity.conf && echo found'
         ),
         'versions':[
