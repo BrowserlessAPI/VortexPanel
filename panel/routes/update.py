@@ -64,51 +64,84 @@ def check_update():
     if not req(): return jsonify({'ok': False}), 401
     current = get_current_version()
 
-    # Always return a valid response — never fail completely
+    # Base response used ONLY when we can positively confirm the version (or
+    # explicitly could not check) — 'has_update' must never default to a lie.
+    # 'checked' distinguishes "confirmed up to date" from "check failed", so
+    # the frontend (and a human reading logs) can tell the difference instead
+    # of both cases silently collapsing into "nothing shown".
     base = {
         'ok': True, 'current': current, 'latest': current,
         'name': 'VortexPanel', 'body': '', 'published': '',
         'url': 'https://github.com/'+GITHUB_REPO+'/releases',
-        'has_update': False,
+        'has_update': False, 'checked': False,
     }
 
     try:
-        url  = f'https://api.github.com/repos/{GITHUB_REPO}/releases/latest'
+        # Compare against git TAGS, not GitHub "Releases" — a Release is a
+        # separate object someone has to manually create in the GitHub UI
+        # after pushing a tag; requiring that extra manual step is exactly
+        # how updates silently stopped reaching users before (a tag was
+        # pushed, or should have been, but no Release existed, so the old
+        # /releases/latest check 404'd and was — wrongly — treated as
+        # "no releases yet, you're up to date").
+        url  = f'https://api.github.com/repos/{GITHUB_REPO}/tags'
         req2 = urllib.request.Request(url)
         req2.add_header('Accept', 'application/vnd.github+json')
         req2.add_header('User-Agent', 'VortexPanel/3.0')
         req2.add_header('X-GitHub-Api-Version', '2022-11-28')
 
-        try:
-            with urllib.request.urlopen(req2, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                # No releases published yet — totally normal for new repos
-                return jsonify({**base, 'note': 'No releases on GitHub yet. Panel is up to date.'})
-            raise
+        with urllib.request.urlopen(req2, timeout=10) as resp:
+            tags = json.loads(resp.read().decode())
 
-        latest_tag = data.get('tag_name', '').strip()
-        if not latest_tag:
-            return jsonify({**base, 'note': 'No release tags found.'})
+        if not tags:
+            # Genuinely zero tags exist — this really is "up to date"
+            # (nothing to compare against), safe to report as checked.
+            return jsonify({**base, 'checked': True, 'note': 'No release tags found on GitHub.'})
+
+        tag_names = [t.get('name', '') for t in tags if t.get('name', '').lstrip('v').replace('.', '').isdigit()]
+        if not tag_names:
+            return jsonify({**base, 'checked': True, 'note': 'No valid version tags found.'})
+
+        def semver_key(v):
+            try: return [int(x) for x in v.lstrip('v').split('.')]
+            except Exception: return [0]
+        latest_tag = max(tag_names, key=semver_key)
+
+        # Try to enrich with release notes if a matching Release object also
+        # exists — purely cosmetic, never required for has_update to work.
+        name, body, published, html_url = latest_tag, '', '', base['url']
+        try:
+            rel_url = f'https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{latest_tag}'
+            rel_req = urllib.request.Request(rel_url)
+            rel_req.add_header('Accept', 'application/vnd.github+json')
+            rel_req.add_header('User-Agent', 'VortexPanel/3.0')
+            with urllib.request.urlopen(rel_req, timeout=8) as resp:
+                rel_data = json.loads(resp.read().decode())
+                name       = rel_data.get('name') or latest_tag
+                body       = rel_data.get('body') or ''
+                published  = rel_data.get('published_at') or ''
+                html_url   = rel_data.get('html_url') or html_url
+        except Exception:
+            pass  # no Release object for this tag — fine, we still have the tag itself
 
         has_update = compare_versions(current, latest_tag)
         return jsonify({
-            'ok':         True,
-            'current':    current,
-            'latest':     latest_tag,
-            'name':       data.get('name', latest_tag),
-            'body':       data.get('body', ''),
-            'published':  data.get('published_at', ''),
-            'url':        data.get('html_url', base['url']),
+            'ok': True, 'checked': True,
+            'current': current, 'latest': latest_tag,
+            'name': name, 'body': body, 'published': published, 'url': html_url,
             'has_update': has_update,
         })
 
+    except urllib.error.HTTPError as e:
+        # Explicit failure — including rate-limiting (403) — must NOT be
+        # reported as "up to date". checked:False + error tells the truth.
+        return jsonify({**base, 'error': f'GitHub API returned {e.code}: {e.reason}'})
     except urllib.error.URLError as e:
         reason = str(getattr(e, 'reason', e))
         return jsonify({**base, 'error': f'Cannot reach GitHub: {reason}'})
     except Exception as e:
         return jsonify({**base, 'error': str(e)})
+
 
 @update_bp.route('/api/update/start', methods=['POST'])
 def start_update():
