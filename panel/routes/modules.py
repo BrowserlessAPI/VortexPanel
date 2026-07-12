@@ -810,11 +810,19 @@ chown -R www-data:www-data /var/www/roundcube/''',
     {
         'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'/static/icons/modsecurity.svg', 'category':'Security',
         'desc':'OWASP CRS v4 Web Application Firewall — Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)',
+        # "Installed" requires the CORE engine to be usable (library + modsecurity.conf) —
+        # NOT the CRS ruleset, which is a separate, retriable download step (see install_tpl
+        # below). Previously this only checked the library .so file, so a server where the
+        # library installed but the LATER modsecurity.conf/CRS download steps failed (e.g.
+        # GitHub API rate-limit, network hiccup) would show "Installed" in the App Store
+        # while every actual WAF control (Engine Mode toggle, Paranoia level) failed with
+        # "not installed" / "CRS setup.conf not found" — a real, confirmed bug.
         'check':(
-            'test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 && echo found || '
-            'test -f /usr/lib64/libmodsecurity.so.3 && echo found || '
-            'test -f /usr/lib/aarch64-linux-gnu/libmodsecurity.so.3 && echo found || '
-            'which modsec_rules_check 2>/dev/null'
+            '(test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 || '
+            'test -f /usr/lib64/libmodsecurity.so.3 || '
+            'test -f /usr/lib/aarch64-linux-gnu/libmodsecurity.so.3 || '
+            'which modsec_rules_check 2>/dev/null 1>&2) && '
+            'test -f /etc/nginx/modsec/modsecurity.conf && echo found'
         ),
         'versions':[
             {'label':'v3 + OWASP CRS v4 (Recommended)', 'value':'3'},
@@ -823,51 +831,76 @@ chown -R www-data:www-data /var/www/roundcube/''',
         'install_tpl':(
             # --- Step 1: install libmodsecurity3 + nginx connector ---------------
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'echo "[VortexPanel] Installing ModSecurity engine..."; '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  apt-get update -qq && apt-get install -y libmodsecurity3 libmodsecurity-dev '
-            '    libnginx-mod-http-modsecurity 2>/dev/null || true; '
+            '    libnginx-mod-http-modsecurity 2>&1 || echo "[WARN] Engine package install reported errors — continuing, some features may be limited"; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
             '  dnf install -y epel-release 2>/dev/null || true; '
-            '  dnf install -y mod_security mod_security_crs 2>/dev/null || true; '
-            '  dnf install -y nginx-mod-modsecurity 2>/dev/null || true; '
-            'fi && '
-            # --- Step 2: download latest OWASP CRS ------------------------------
-            'CRS_TAG=$(curl -s https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
-            '  | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null) && '
-            'CRS_TAG=${CRS_TAG:-v4.0.0} && '
+            '  dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"; '
+            '  dnf install -y nginx-mod-modsecurity 2>&1 || echo "[WARN] nginx-mod-modsecurity install reported errors"; '
+            'fi; '
+            # --- Step 2: write core engine config — ALWAYS attempted, independent
+            # of whether CRS (step 3 below) succeeds. This is what makes the engine
+            # itself (Engine Mode toggle) usable even if the ruleset download fails. ---
+            'echo "[VortexPanel] Writing core engine config..."; '
+            'mkdir -p /etc/nginx/modsec && '
+            'CONF_OK=0; '
+            'for attempt in 1 2 3; do '
+            '  wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended '
+            '    -O /etc/nginx/modsec/modsecurity.conf && CONF_OK=1 && break; '
+            '  echo "[VortexPanel] modsecurity.conf download attempt $attempt failed, retrying..."; sleep 2; '
+            'done; '
+            'if [ "$CONF_OK" = "1" ]; then '
+            '  sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf; '
+            '  sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf; '
+            '  echo "[VortexPanel] ✓ Core engine config written — Engine Mode toggle will work"; '
+            'else '
+            '  echo "[ERROR] Could not download modsecurity.conf after 3 attempts — writing a minimal fallback config so the engine is still usable"; '
+            '  printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/nginx/modsec/modsecurity.conf; '
+            'fi; '
+            # --- Step 3: download OWASP CRS ruleset — retriable, NEVER blocks the
+            # core engine from being marked usable even if this fails entirely ---
+            'echo "[VortexPanel] Downloading OWASP CRS ruleset..."; '
             'mkdir -p /etc/nginx/modsec/crs && '
-            'wget -q "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" '
-            '  -O /tmp/crs.tar.gz && '
-            'tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 && '
-            'rm -f /tmp/crs.tar.gz && '
-            # --- Step 3: download modsecurity.conf ------------------------------
-            'wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended '
-            '  -O /etc/nginx/modsec/modsecurity.conf && '
-            'sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf && '
-            'sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf && '
-            # --- Step 4: build main.conf -----------------------------------------
-            'cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf && '
-            'cat > /etc/nginx/modsec/main.conf << \'MCEOF\'\n'
-            'Include /etc/nginx/modsec/modsecurity.conf\n'
-            'Include /etc/nginx/modsec/crs/crs-setup.conf\n'
-            'Include /etc/nginx/modsec/crs/rules/*.conf\n'
-            'MCEOF\n'
+            'CRS_OK=0; '
+            'for attempt in 1 2 3; do '
+            '  CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
+            '    | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null); '
+            '  CRS_TAG=${CRS_TAG:-v4.0.0}; '
+            '  wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz '
+            '    && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 2>/dev/null '
+            '    && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break; '
+            '  echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; '
+            'done; '
+            'if [ "$CRS_OK" = "1" ] && [ -f /etc/nginx/modsec/crs/crs-setup.conf.example ]; then '
+            '  cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf; '
+            '  echo "[VortexPanel] ✓ OWASP CRS $CRS_TAG installed — Paranoia level control will work"; '
+            'else '
+            '  echo "[WARN] Could not download OWASP CRS ruleset after 3 attempts. The core engine (Engine Mode toggle) is still usable, but no attack-pattern rules are loaded yet and Paranoia level will show unavailable until you retry from the WAF page (Repair CRS button)."; '
+            'fi; '
+            # --- Step 4: build main.conf — only includes CRS lines if CRS actually
+            # downloaded successfully, so nginx doesn't fail to start on a missing include ---
+            'if [ "$CRS_OK" = "1" ]; then '
+            '  printf "Include /etc/nginx/modsec/modsecurity.conf\\nInclude /etc/nginx/modsec/crs/crs-setup.conf\\nInclude /etc/nginx/modsec/crs/rules/*.conf\\n" > /etc/nginx/modsec/main.conf; '
+            'else '
+            '  printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; '
+            'fi; '
             # --- Step 5: enable in nginx.conf -----------------------------------
             'grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null || '
             '  sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;" '
-            '  /etc/nginx/nginx.conf 2>/dev/null || true && '
-            # --- Step 6: auto-update cron (weekly) ------------------------------
+            '  /etc/nginx/nginx.conf 2>/dev/null || true; '
+            # --- Step 6: auto-update cron (weekly, only useful once CRS is present) ---
             'echo "0 3 * * 0 root /bin/bash -c \\"'
-            'CRS_TAG=\\$(curl -s https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
+            'CRS_TAG=\\$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
             '| python3 -c \\"import json,sys; print(json.load(sys.stdin)[chr(39)+chr(116)+chr(97)+chr(103)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101)+chr(39)])\\" 2>/dev/null) && '
-            'wget -q https://github.com/coreruleset/coreruleset/archive/refs/tags/\\${CRS_TAG}.tar.gz -O /tmp/crs.tar.gz && '
+            'wget -q --timeout=15 https://github.com/coreruleset/coreruleset/archive/refs/tags/\\${CRS_TAG}.tar.gz -O /tmp/crs.tar.gz && '
             'tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 && '
             'rm -f /tmp/crs.tar.gz && '
             'nginx -t && systemctl reload nginx\\"" > /etc/cron.d/vortex-crs-update && '
-            'chmod 644 /etc/cron.d/vortex-crs-update && '
-            'nginx -t && systemctl reload nginx 2>/dev/null || true && '
-            'CRS_VER=$(grep -oP "\\d+\\.\\d+\\.\\d+" /etc/nginx/modsec/crs/CHANGES.md 2>/dev/null | head -1) && '
-            'echo "[VortexPanel] ModSecurity WAF installed. OWASP CRS ${CRS_TAG} loaded, auto-update cron set (weekly)."'
+            'chmod 644 /etc/cron.d/vortex-crs-update; '
+            'nginx -t 2>&1 && systemctl reload nginx 2>/dev/null || echo "[WARN] nginx config test failed — check nginx -t manually before relying on the WAF"; '
+            'echo "[VortexPanel] ModSecurity install finished. Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."'
         ),
         'uninstall':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '

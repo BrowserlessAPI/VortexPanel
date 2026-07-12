@@ -235,6 +235,263 @@ def ban_ip():
     sh(f'fail2ban-client set {jail} banip {ip} 2>/dev/null')
     return jsonify({'ok':True})
 
+
+# --- FAIL2BAN JAIL CREATION (Website Protection / Server Protection) -------------
+# Previously VortexPanel could only view/ban/unban IPs on jails that already
+# existed at the OS level (e.g. the default sshd jail) — there was no way to
+# actually CREATE a jail from the panel, so "Website Protection" and "Server
+# Protection" (matching aaPanel's Fail2ban Manager) only ever showed
+# "No jails configured" with no path forward. This was a genuinely missing
+# feature, not a bug in existing code.
+F2B_JAIL_DIR   = '/etc/fail2ban/jail.d'
+F2B_FILTER_DIR = '/etc/fail2ban/filter.d'
+VORTEX_SITE_PREFIX   = 'vortex-site-'
+VORTEX_SERVER_PREFIX = 'vortex-server-'
+
+def _f2b_safe_name(name):
+    return re.sub(r'[^a-zA-Z0-9_-]', '', (name or '').strip())[:60]
+
+def _f2b_reload():
+    out, err, rc = sh('fail2ban-client reload 2>&1', t=20)
+    return rc == 0, (out or err)
+
+def _parse_jail_conf(path):
+    """Parse a simple INI-style jail.d config file into a dict."""
+    if not os.path.exists(path): return {}
+    cfg = {}
+    section = None
+    for line in open(path).read().splitlines():
+        line = line.strip()
+        if line.startswith('[') and line.endswith(']'):
+            section = line[1:-1]
+            cfg[section] = {}
+        elif '=' in line and section:
+            k, _, v = line.partition('=')
+            cfg[section][k.strip()] = v.strip()
+    return cfg
+
+
+@security_bp.route('/api/security/fail2ban/website-jails')
+def list_website_jails():
+    if not req(): return jsonify({'ok': False}), 401
+    jails = []
+    if os.path.isdir(F2B_JAIL_DIR):
+        for fname in sorted(os.listdir(F2B_JAIL_DIR)):
+            if not fname.startswith(VORTEX_SITE_PREFIX) or not fname.endswith('.conf'):
+                continue
+            cfg = _parse_jail_conf(os.path.join(F2B_JAIL_DIR, fname))
+            for section, opts in cfg.items():
+                status_out, _, _ = sh(f'fail2ban-client status {section} 2>/dev/null')
+                currently = re.search(r'Currently banned:\s*(\d+)', status_out)
+                jails.append({
+                    'name': section,
+                    'site': opts.get('_vortex_site', ''),
+                    'port': opts.get('port', ''),
+                    'mode': opts.get('_vortex_mode', 'anti-cc'),
+                    'maxretry': opts.get('maxretry', ''),
+                    'findtime': opts.get('findtime', ''),
+                    'bantime': opts.get('bantime', ''),
+                    'enabled': opts.get('enabled', 'true') == 'true',
+                    'currently_banned': int(currently.group(1)) if currently else 0,
+                })
+    return jsonify({'ok': True, 'jails': jails})
+
+
+@security_bp.route('/api/security/fail2ban/website-jails', methods=['POST'])
+def create_website_jail():
+    """Anti-CC / scan protection for a specific site's nginx access log.
+    Uses fail2ban's own counting engine (maxretry within findtime) — the
+    filter just needs to correctly extract the client IP from each request
+    line; fail2ban handles the threshold/ban logic itself."""
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+
+    site     = (d.get('site') or '').strip()
+    mode     = d.get('mode', 'anti-cc')  # 'anti-cc' | 'anti-scan'
+    port     = _f2b_safe_name(str(d.get('port', '80,443')).replace(',', '_')) or '80_443'
+    port_val = str(d.get('port', '80,443')).strip()
+    maxretry = int(d.get('maxretry', 30))
+    findtime = int(d.get('findtime', 300))
+    bantime  = int(d.get('bantime', 600))
+
+    if not site:
+        return jsonify({'ok': False, 'error': 'Site is required'})
+
+    safe_site = _f2b_safe_name(site.replace('.', '_'))
+    jail_name = f'{VORTEX_SITE_PREFIX}{safe_site}'
+    access_log = f'/var/log/nginx/{site}.access.log'
+
+    os.makedirs(F2B_FILTER_DIR, exist_ok=True)
+    os.makedirs(F2B_JAIL_DIR, exist_ok=True)
+
+    # Filter: matches every request line, extracting the client IP as <HOST>.
+    # fail2ban's engine does the actual counting — this filter only needs to
+    # reliably identify "a request happened, here's who made it".
+    if mode == 'anti-scan':
+        # Anti-scan: only count 4xx/404-type responses (probing for files/paths)
+        failregex = r'^<HOST> -.*"(GET|POST|HEAD|PUT|DELETE|OPTIONS) [^"]*" (404|403) '
+    else:
+        # Anti-CC: count every request regardless of status (raw request-rate limiting)
+        failregex = r'^<HOST> -.*"(GET|POST|HEAD|PUT|DELETE|OPTIONS) [^"]*" \d+ '
+
+    filter_content = (
+        f'[Definition]\n'
+        f'failregex = {failregex}\n'
+        f'ignoreregex =\n'
+    )
+    filter_path = os.path.join(F2B_FILTER_DIR, f'{jail_name}.conf')
+    open(filter_path, 'w').write(filter_content)
+
+    jail_content = (
+        f'[{jail_name}]\n'
+        f'enabled = true\n'
+        f'port = {port_val}\n'
+        f'filter = {jail_name}\n'
+        f'logpath = {access_log}\n'
+        f'maxretry = {maxretry}\n'
+        f'findtime = {findtime}\n'
+        f'bantime = {bantime}\n'
+        f'action = iptables-multiport[name={safe_site}, port="{port_val}", protocol=tcp]\n'
+        f'_vortex_site = {site}\n'
+        f'_vortex_mode = {mode}\n'
+    )
+    jail_path = os.path.join(F2B_JAIL_DIR, f'{jail_name}.conf')
+
+    if not os.path.exists(access_log):
+        return jsonify({'ok': False, 'error': f'Access log not found: {access_log} — the site must exist and have received at least one request'})
+
+    open(jail_path, 'w').write(jail_content)
+
+    ok, output = _f2b_reload()
+    if not ok:
+        # Clean up on failure so we don't leave a broken jail definition behind
+        try: os.remove(jail_path)
+        except Exception: pass
+        try: os.remove(filter_path)
+        except Exception: pass
+        return jsonify({'ok': False, 'error': f'fail2ban reload failed: {output[-400:]}'})
+
+    return jsonify({'ok': True, 'jail': jail_name})
+
+
+@security_bp.route('/api/security/fail2ban/website-jails/<name>', methods=['DELETE'])
+def delete_website_jail(name):
+    if not req(): return jsonify({'ok': False}), 401
+    name = _f2b_safe_name(name)
+    if not name.startswith(VORTEX_SITE_PREFIX):
+        return jsonify({'ok': False, 'error': 'Invalid jail name'})
+    jail_path   = os.path.join(F2B_JAIL_DIR, f'{name}.conf')
+    filter_path = os.path.join(F2B_FILTER_DIR, f'{name}.conf')
+    for p in (jail_path, filter_path):
+        if os.path.exists(p):
+            try: os.remove(p)
+            except Exception: pass
+    ok, output = _f2b_reload()
+    return jsonify({'ok': ok, 'error': output[-400:] if not ok else ''})
+
+
+@security_bp.route('/api/security/fail2ban/server-jails')
+def list_server_jails():
+    if not req(): return jsonify({'ok': False}), 401
+    jails = []
+    if os.path.isdir(F2B_JAIL_DIR):
+        for fname in sorted(os.listdir(F2B_JAIL_DIR)):
+            if not fname.startswith(VORTEX_SERVER_PREFIX) or not fname.endswith('.conf'):
+                continue
+            cfg = _parse_jail_conf(os.path.join(F2B_JAIL_DIR, fname))
+            for section, opts in cfg.items():
+                status_out, _, _ = sh(f'fail2ban-client status {section} 2>/dev/null')
+                currently = re.search(r'Currently banned:\s*(\d+)', status_out)
+                jails.append({
+                    'name': section,
+                    'server': opts.get('filter', ''),
+                    'port': opts.get('port', ''),
+                    'maxretry': opts.get('maxretry', ''),
+                    'findtime': opts.get('findtime', ''),
+                    'bantime': opts.get('bantime', ''),
+                    'enabled': opts.get('enabled', 'true') == 'true',
+                    'currently_banned': int(currently.group(1)) if currently else 0,
+                })
+    return jsonify({'ok': True, 'jails': jails})
+
+
+# Common services and their built-in fail2ban filter name + typical log path.
+# These reuse fail2ban's OWN shipped filters (no custom regex needed) — only
+# the well-known, standard services are offered here to avoid generating a
+# jail against a filter/log combination that doesn't actually exist.
+SERVER_PROTECTION_PRESETS = {
+    'sshd':     {'filter': 'sshd',     'logpath': '/var/log/auth.log',  'default_port': '22'},
+    'vsftpd':   {'filter': 'vsftpd',   'logpath': '/var/log/vsftpd.log','default_port': '21'},
+    'proftpd':  {'filter': 'proftpd',  'logpath': '/var/log/proftpd/proftpd.log', 'default_port': '21'},
+    'postfix':  {'filter': 'postfix',  'logpath': '/var/log/mail.log',  'default_port': '25,465,587'},
+    'dovecot':  {'filter': 'dovecot',  'logpath': '/var/log/mail.log',  'default_port': '110,143,993,995'},
+}
+
+@security_bp.route('/api/security/fail2ban/server-presets')
+def server_presets():
+    if not req(): return jsonify({'ok': False}), 401
+    return jsonify({'ok': True, 'presets': [
+        {'id': k, 'label': k, 'default_port': v['default_port']} for k, v in SERVER_PROTECTION_PRESETS.items()
+    ]})
+
+
+@security_bp.route('/api/security/fail2ban/server-jails', methods=['POST'])
+def create_server_jail():
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+
+    server = (d.get('server') or 'sshd').strip()
+    if server not in SERVER_PROTECTION_PRESETS:
+        return jsonify({'ok': False, 'error': f'Unknown service "{server}" — supported: {", ".join(SERVER_PROTECTION_PRESETS)}'})
+
+    preset   = SERVER_PROTECTION_PRESETS[server]
+    port_val = str(d.get('port') or preset['default_port']).strip()
+    maxretry = int(d.get('maxretry', 30))
+    findtime = int(d.get('findtime', 300))
+    bantime  = int(d.get('bantime', 600))
+
+    jail_name = f'{VORTEX_SERVER_PREFIX}{server}'
+    os.makedirs(F2B_JAIL_DIR, exist_ok=True)
+
+    if not os.path.exists(preset['logpath']):
+        return jsonify({'ok': False, 'error': f'Log file not found: {preset["logpath"]} — is {server} installed and has it logged anything yet?'})
+
+    jail_content = (
+        f'[{jail_name}]\n'
+        f'enabled = true\n'
+        f'port = {port_val}\n'
+        f'filter = {preset["filter"]}\n'
+        f'logpath = {preset["logpath"]}\n'
+        f'maxretry = {maxretry}\n'
+        f'findtime = {findtime}\n'
+        f'bantime = {bantime}\n'
+    )
+    jail_path = os.path.join(F2B_JAIL_DIR, f'{jail_name}.conf')
+    open(jail_path, 'w').write(jail_content)
+
+    ok, output = _f2b_reload()
+    if not ok:
+        try: os.remove(jail_path)
+        except Exception: pass
+        return jsonify({'ok': False, 'error': f'fail2ban reload failed: {output[-400:]}'})
+
+    return jsonify({'ok': True, 'jail': jail_name})
+
+
+@security_bp.route('/api/security/fail2ban/server-jails/<name>', methods=['DELETE'])
+def delete_server_jail(name):
+    if not req(): return jsonify({'ok': False}), 401
+    name = _f2b_safe_name(name)
+    if not name.startswith(VORTEX_SERVER_PREFIX):
+        return jsonify({'ok': False, 'error': 'Invalid jail name'})
+    jail_path = os.path.join(F2B_JAIL_DIR, f'{name}.conf')
+    if os.path.exists(jail_path):
+        try: os.remove(jail_path)
+        except Exception: pass
+    ok, output = _f2b_reload()
+    return jsonify({'ok': ok, 'error': output[-400:] if not ok else ''})
+
+
 # --- Login attempts -------------------------------------------------------------
 @security_bp.route('/api/security/login-attempts')
 def login_attempts():
@@ -342,12 +599,19 @@ MODSEC_CUSTOM   = '/etc/nginx/modsec/custom-rules.conf'
 MODSEC_AUDIT    = '/var/log/modsec_audit.log'
 
 def _modsec_installed():
-    for p in [MODSEC_CONF,
-              '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
-              '/usr/lib64/libmodsecurity.so.3',
-              '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3']:
-        if os.path.exists(p): return True
-    return False
+    """'Installed' = the core engine is actually usable, which requires BOTH
+    the library AND modsecurity.conf. Previously this was an OR across all
+    paths including just the library .so — meaning a server where the
+    library installed but the config download failed would show this page
+    as 'installed' (rendering Engine Mode / Paranoia controls), while those
+    controls then failed with 'not installed' / 'CRS setup.conf not found'.
+    That exact contradiction was a confirmed, reported bug."""
+    lib_present = any(os.path.exists(p) for p in [
+        '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
+        '/usr/lib64/libmodsecurity.so.3',
+        '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
+    ])
+    return lib_present and os.path.exists(MODSEC_CONF)
 
 def _crs_version():
     """Read CRS version from the CHANGES file or setup.conf."""
@@ -711,6 +975,99 @@ def waf_blockade_log():
 
     return jsonify({'ok': True, 'exists': True, 'entries': page_entries,
                      'total': total, 'page': page, 'per_page': per_page})
+
+@security_bp.route('/api/security/modsecurity/repair', methods=['POST'])
+def modsec_repair():
+    """Fix an incomplete ModSecurity install — writes modsecurity.conf if
+    missing, downloads OWASP CRS if missing, and regenerates main.conf to
+    correctly reflect whichever pieces end up present. This exists because
+    the install script has multiple independent download steps that can
+    each fail on their own (network hiccups, GitHub rate limits); previously
+    a partial failure left the install stuck with no in-panel way to finish
+    it short of a full uninstall/reinstall."""
+    if not req(): return jsonify({'ok': False}), 401
+    log = []
+
+    if not _modsec_installed():
+        return jsonify({'ok': False, 'error': 'ModSecurity engine (libmodsecurity) is not installed at all — install it from the App Store first, this repair only fixes an incomplete config.'})
+
+    os.makedirs('/etc/nginx/modsec', exist_ok=True)
+
+    # 1. Fix modsecurity.conf if missing
+    conf_ok = os.path.exists(MODSEC_CONF)
+    if not conf_ok:
+        log.append('modsecurity.conf missing — downloading...')
+        _, err, rc = sh(
+            f'wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended -O {MODSEC_CONF}',
+            t=20
+        )
+        if rc == 0 and os.path.exists(MODSEC_CONF):
+            content = open(MODSEC_CONF).read()
+            content = content.replace('SecRuleEngine DetectionOnly', 'SecRuleEngine On')
+            content = content.replace('SecAuditLogParts ABIJDEFHZ', 'SecAuditLogParts ABCEFHJKZ')
+            open(MODSEC_CONF, 'w').write(content)
+            conf_ok = True
+            log.append('✓ modsecurity.conf downloaded and configured')
+        else:
+            # Fallback minimal config so the engine is at least usable
+            open(MODSEC_CONF, 'w').write(
+                'SecRuleEngine On\nSecRequestBodyAccess On\n'
+                'SecAuditEngine RelevantOnly\nSecAuditLog /var/log/modsec_audit.log\n'
+            )
+            conf_ok = True
+            log.append(f'⚠ Download failed ({err[:150]}) — wrote minimal fallback config so the engine is still usable')
+    else:
+        log.append('✓ modsecurity.conf already present')
+
+    # 2. Fix CRS if missing
+    crs_ok = os.path.exists(f'{MODSEC_CRS_DIR}/crs-setup.conf')
+    if not crs_ok:
+        log.append('OWASP CRS missing — downloading...')
+        os.makedirs(MODSEC_CRS_DIR, exist_ok=True)
+        api_out, _, _ = sh(
+            'curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest'
+            ' | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])"', t=15
+        )
+        tag = api_out.strip() if api_out.strip().startswith('v') else 'v4.0.0'
+        _, err, rc = sh(
+            f'wget -q --timeout=20 "https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz" -O /tmp/crs_repair.tar.gz && '
+            f'tar -xzf /tmp/crs_repair.tar.gz -C {MODSEC_CRS_DIR} --strip-components=1 && rm -f /tmp/crs_repair.tar.gz',
+            t=60
+        )
+        if rc == 0 and os.path.exists(f'{MODSEC_CRS_DIR}/crs-setup.conf.example'):
+            sh(f'cp {MODSEC_CRS_DIR}/crs-setup.conf.example {MODSEC_CRS_DIR}/crs-setup.conf')
+            crs_ok = True
+            log.append(f'✓ OWASP CRS {tag} downloaded')
+        else:
+            log.append(f'⚠ CRS download failed ({err[:150]}) — engine will work but with no ruleset loaded. Try Repair again later.')
+    else:
+        log.append('✓ OWASP CRS already present')
+
+    # 3. Regenerate main.conf to match reality — never reference a CRS file
+    # that doesn't actually exist, or nginx will fail to reload entirely.
+    if crs_ok:
+        main_conf = ('Include /etc/nginx/modsec/modsecurity.conf\n'
+                     'Include /etc/nginx/modsec/crs/crs-setup.conf\n'
+                     'Include /etc/nginx/modsec/crs/rules/*.conf\n')
+    else:
+        main_conf = 'Include /etc/nginx/modsec/modsecurity.conf\n'
+    open('/etc/nginx/modsec/main.conf', 'w').write(main_conf)
+    log.append(f'main.conf regenerated ({"with" if crs_ok else "without"} CRS includes)')
+
+    # 4. Ensure nginx.conf actually loads main.conf
+    if os.path.exists('/etc/nginx/nginx.conf'):
+        nc = open('/etc/nginx/nginx.conf').read()
+        if 'modsecurity_rules_file' not in nc:
+            sh('sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;" /etc/nginx/nginx.conf')
+            log.append('✓ Enabled modsecurity directives in nginx.conf')
+
+    test_out, test_err, test_rc = sh('nginx -t 2>&1', t=15)
+    if test_rc != 0:
+        return jsonify({'ok': False, 'error': f'nginx config test failed after repair: {test_out}{test_err}', 'log': log})
+    sh('systemctl reload nginx 2>/dev/null')
+    log.append('✓ nginx reloaded')
+
+    return jsonify({'ok': True, 'conf_ok': conf_ok, 'crs_ok': crs_ok, 'log': log})
 
 
 @security_bp.route('/api/security/modsecurity/update-crs', methods=['POST'])

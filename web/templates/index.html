@@ -4627,36 +4627,156 @@
                   </div>
                 </div>
 
-                <!-- == FAIL2BAN Website/Server Protection tab == -->
-                <div x-show="['website_protection','server_protection'].includes(settingsModal.tab)">
-                  <div style="font-weight:600;font-size:13px;margin-bottom:14px" x-text="settingsModal.tab==='website_protection'?'Website Protection':'Server Protection'"></div>
+                <!-- == FAIL2BAN Website Protection tab == -->
+                <div x-show="settingsModal.tab==='website_protection'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                    <div style="font-weight:600;font-size:13px">Website Protection</div>
+                    <button class="btn btn-primary btn-sm" @click="f2bWebsiteForm.show=true">+ Create</button>
+                  </div>
                   <div x-show="settingsModal.status!=='active'" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:14px;color:var(--red);font-size:13px;text-align:center">
                     Please start the Fail2ban service first
                   </div>
                   <div x-show="settingsModal.status==='active'">
-                    <template x-for="jail in (settingsModal.jails||[])" :key="jail.name">
-                      <div class="card" style="margin-bottom:10px">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                          <div>
-                            <div style="font-weight:600;font-size:13px" x-text="jail.name"></div>
-                            <div style="font-size:11px;color:var(--text-muted)">Currently banned: <span x-text="jail.currently"></span></div>
-                          </div>
-                        </div>
-                        <div style="display:flex;flex-wrap:wrap;gap:6px">
-                          <template x-for="ip in jail.banned_ips" :key="ip">
-                            <div style="display:flex;align-items:center;gap:5px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:3px 10px;font-family:var(--font-mono);font-size:12px">
-                              <span x-text="ip"></span>
-                              <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0"
-                                      @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_unban_ip',ip:ip,jail:jail.name}).then(r=>{if(r.ok){toast('IP unbanned','success');jail.banned_ips=jail.banned_ips.filter(x=>x!==ip);}})">×</button>
-                            </div>
-                          </template>
-                          <span x-show="!jail.banned_ips?.length" style="font-size:12px;color:var(--text-muted)">No banned IPs</span>
-                        </div>
+                    <table class="data-table" x-show="f2bWebsiteJails.length">
+                      <thead><tr><th>Site</th><th>Mode</th><th>Port</th><th>Maxretry</th><th>Bantime</th><th>Banned</th><th></th></tr></thead>
+                      <tbody>
+                        <template x-for="j in f2bWebsiteJails" :key="j.name">
+                          <tr>
+                            <td x-text="j.site"></td>
+                            <td x-text="j.mode"></td>
+                            <td style="font-family:var(--font-mono);font-size:12px" x-text="j.port"></td>
+                            <td x-text="j.maxretry"></td>
+                            <td x-text="j.bantime+'s'"></td>
+                            <td>
+                              <a href="#" @click.prevent="loadF2bBannedIps(j)" style="text-decoration:none" x-text="j.currently_banned"></a>
+                            </td>
+                            <td><button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="deleteF2bWebsiteJail(j.name)">Delete</button></td>
+                          </tr>
+                        </template>
+                        <template x-for="j in f2bWebsiteJails" :key="j.name+'-ips'">
+                          <tr x-show="j._showIps" style="background:var(--bg-raised)">
+                            <td colspan="7" style="padding:10px 14px">
+                              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                                <template x-for="ip in (j._bannedIps||[])" :key="ip">
+                                  <div style="display:flex;align-items:center;gap:5px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:3px 10px;font-family:var(--font-mono);font-size:12px">
+                                    <span x-text="ip"></span>
+                                    <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0" @click="unbanF2bIp(j, ip)">×</button>
+                                  </div>
+                                </template>
+                                <span x-show="!j._bannedIps?.length" style="font-size:12px;color:var(--text-muted)">No banned IPs</span>
+                              </div>
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                    <div x-show="!f2bWebsiteJails.length" class="empty-state" style="padding:24px"><div class="empty-icon">🛡</div><div class="empty-text">No jails configured</div></div>
+                  </div>
+
+                  <!-- Create form -->
+                  <div x-show="f2bWebsiteForm.show" style="margin-top:16px;border:1px solid var(--border);border-radius:8px;padding:16px">
+                    <div style="display:grid;gap:12px;max-width:420px">
+                      <div>
+                        <label class="form-label">Site</label>
+                        <select class="form-input" x-model="f2bWebsiteForm.site">
+                          <option value="">Select a site...</option>
+                          <template x-for="s in websitesForF2b" :key="s"><option :value="s" x-text="s"></option></template>
+                        </select>
                       </div>
-                    </template>
-                    <template x-if="!settingsModal.jails?.length">
-                      <div class="empty-state" style="padding:24px"><div class="empty-icon">🛡</div><div class="empty-text">No jails configured</div></div>
-                    </template>
+                      <div>
+                        <label class="form-label">Mode</label>
+                        <select class="form-input" x-model="f2bWebsiteForm.mode">
+                          <option value="anti-cc">Anti-CC (rate limit all requests)</option>
+                          <option value="anti-scan">Anti-Scan (only count 403/404 probing)</option>
+                        </select>
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                        <div><label class="form-label">Maxretry</label><input class="form-input" type="number" x-model="f2bWebsiteForm.maxretry"></div>
+                        <div><label class="form-label">Port</label><input class="form-input" x-model="f2bWebsiteForm.port"></div>
+                        <div><label class="form-label">Findtime (sec)</label><input class="form-input" type="number" x-model="f2bWebsiteForm.findtime"></div>
+                        <div><label class="form-label">Bantime (sec)</label><input class="form-input" type="number" x-model="f2bWebsiteForm.bantime"></div>
+                      </div>
+                      <div style="font-size:11px;color:var(--text-muted)">
+                        If the site logs more than <strong x-text="f2bWebsiteForm.maxretry"></strong> matching requests within <strong x-text="f2bWebsiteForm.findtime"></strong>s, the IP is banned for <strong x-text="f2bWebsiteForm.bantime"></strong>s.
+                      </div>
+                      <div style="display:flex;gap:8px;justify-content:flex-end">
+                        <button class="btn btn-ghost btn-sm" @click="f2bWebsiteForm.show=false">Cancel</button>
+                        <button class="btn btn-primary btn-sm" :disabled="f2bWebsiteForm.saving" @click="createF2bWebsiteJail()">
+                          <span x-show="f2bWebsiteForm.saving">Creating...</span><span x-show="!f2bWebsiteForm.saving">Confirm</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- == FAIL2BAN Server Protection tab == -->
+                <div x-show="settingsModal.tab==='server_protection'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                    <div style="font-weight:600;font-size:13px">Server Protection</div>
+                    <button class="btn btn-primary btn-sm" @click="f2bServerForm.show=true">+ Create</button>
+                  </div>
+                  <div x-show="settingsModal.status!=='active'" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:14px;color:var(--red);font-size:13px;text-align:center">
+                    Please start the Fail2ban service first
+                  </div>
+                  <div x-show="settingsModal.status==='active'">
+                    <table class="data-table" x-show="f2bServerJails.length">
+                      <thead><tr><th>Server</th><th>Port</th><th>Maxretry</th><th>Bantime</th><th>Banned</th><th></th></tr></thead>
+                      <tbody>
+                        <template x-for="j in f2bServerJails" :key="j.name">
+                          <tr>
+                            <td x-text="j.server"></td>
+                            <td style="font-family:var(--font-mono);font-size:12px" x-text="j.port"></td>
+                            <td x-text="j.maxretry"></td>
+                            <td x-text="j.bantime+'s'"></td>
+                            <td><a href="#" @click.prevent="loadF2bBannedIps(j)" style="text-decoration:none" x-text="j.currently_banned"></a></td>
+                            <td><button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="deleteF2bServerJail(j.name)">Delete</button></td>
+                          </tr>
+                        </template>
+                        <template x-for="j in f2bServerJails" :key="j.name+'-ips'">
+                          <tr x-show="j._showIps" style="background:var(--bg-raised)">
+                            <td colspan="6" style="padding:10px 14px">
+                              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                                <template x-for="ip in (j._bannedIps||[])" :key="ip">
+                                  <div style="display:flex;align-items:center;gap:5px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:3px 10px;font-family:var(--font-mono);font-size:12px">
+                                    <span x-text="ip"></span>
+                                    <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0" @click="unbanF2bIp(j, ip)">×</button>
+                                  </div>
+                                </template>
+                                <span x-show="!j._bannedIps?.length" style="font-size:12px;color:var(--text-muted)">No banned IPs</span>
+                              </div>
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                    <div x-show="!f2bServerJails.length" class="empty-state" style="padding:24px"><div class="empty-icon">🛡</div><div class="empty-text">No jails configured</div></div>
+                  </div>
+
+                  <!-- Create form -->
+                  <div x-show="f2bServerForm.show" style="margin-top:16px;border:1px solid var(--border);border-radius:8px;padding:16px">
+                    <div style="display:grid;gap:12px;max-width:420px">
+                      <div>
+                        <label class="form-label">Service</label>
+                        <select class="form-input" x-model="f2bServerForm.server" @change="f2bOnServerChange()">
+                          <template x-for="p in f2bServerPresets" :key="p.id"><option :value="p.id" x-text="p.label"></option></template>
+                        </select>
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                        <div><label class="form-label">Maxretry</label><input class="form-input" type="number" x-model="f2bServerForm.maxretry"></div>
+                        <div><label class="form-label">Port</label><input class="form-input" x-model="f2bServerForm.port"></div>
+                        <div><label class="form-label">Findtime (sec)</label><input class="form-input" type="number" x-model="f2bServerForm.findtime"></div>
+                        <div><label class="form-label">Bantime (sec)</label><input class="form-input" type="number" x-model="f2bServerForm.bantime"></div>
+                      </div>
+                      <div style="font-size:11px;color:var(--text-muted)">
+                        Monitors the service log. More than <strong x-text="f2bServerForm.maxretry"></strong> failed attempts within <strong x-text="f2bServerForm.findtime"></strong>s bans the IP for <strong x-text="f2bServerForm.bantime"></strong>s.
+                      </div>
+                      <div style="display:flex;gap:8px;justify-content:flex-end">
+                        <button class="btn btn-ghost btn-sm" @click="f2bServerForm.show=false">Cancel</button>
+                        <button class="btn btn-primary btn-sm" :disabled="f2bServerForm.saving" @click="createF2bServerJail()">
+                          <span x-show="f2bServerForm.saving">Creating...</span><span x-show="!f2bServerForm.saving">Confirm</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -5531,6 +5651,13 @@
                   <div>
                     <div class="form-label" style="margin-bottom:6px">CRS Status</div>
                     <div style="background:var(--bg-raised);border-radius:var(--radius);padding:10px;font-size:12px">
+                      <div x-show="!modsec.rules" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:8px;margin-bottom:8px;font-size:11px;color:var(--red)">
+                        No CRS rules loaded — the ruleset download likely failed during install (network hiccup or GitHub rate limit). The engine itself still works.
+                        <button class="btn btn-danger btn-xs" style="width:100%;margin-top:6px;justify-content:center" :disabled="modsec.repairing" @click="repairModsec()">
+                          <span x-show="modsec.repairing">Repairing…</span>
+                          <span x-show="!modsec.repairing">🔧 Repair — Download CRS Now</span>
+                        </button>
+                      </div>
                       <div style="display:flex;justify-content:space-between;margin-bottom:4px">
                         <span style="color:var(--text-muted)">Version</span>
                         <span style="font-weight:600" x-text="modsec.crs_version||'—'"></span>

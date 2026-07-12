@@ -2149,6 +2149,9 @@ function modulesPage() {
     phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
     installingStream: false,
+    f2bWebsiteJails: [], f2bServerJails: [], f2bServerPresets: [], websitesForF2b: [],
+    f2bWebsiteForm: {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:30, findtime:300, bantime:600},
+    f2bServerForm:  {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600},
     async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
 
     async load() {
@@ -2367,6 +2370,97 @@ function modulesPage() {
         this.settingsModal.ffmpegVersions = [];
         Alpine.store('vp').ffmpegDetail = {show:false, version:'', path:'', full_command:'', command:''};
         await this.loadFfmpegVersions();
+      }
+      if (m.id === 'fail2ban') {
+        this.f2bWebsiteJails = []; this.f2bServerJails = []; this.f2bServerPresets = [];
+        this.f2bWebsiteForm = {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:30, findtime:300, bantime:600};
+        this.f2bServerForm  = {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600};
+        await Promise.all([this.loadF2bWebsiteJails(), this.loadF2bServerJails(), this.loadF2bServerPresets(), this.loadWebsitesForF2b()]);
+      }
+    },
+
+    async loadWebsitesForF2b() {
+      const r = await get('/api/websites');
+      this.websitesForF2b = r.ok ? (r.sites || []).map(s => s.domain) : [];
+    },
+
+    async loadF2bWebsiteJails() {
+      const r = await get('/api/security/fail2ban/website-jails');
+      if (r.ok) this.f2bWebsiteJails = (r.jails || []).map(j => ({...j, _showIps:false, _bannedIps:[]}));
+    },
+
+    async loadF2bServerJails() {
+      const r = await get('/api/security/fail2ban/server-jails');
+      if (r.ok) this.f2bServerJails = (r.jails || []).map(j => ({...j, _showIps:false, _bannedIps:[]}));
+    },
+
+    async loadF2bServerPresets() {
+      const r = await get('/api/security/fail2ban/server-presets');
+      if (r.ok) this.f2bServerPresets = r.presets || [];
+    },
+
+    f2bOnServerChange() {
+      const preset = this.f2bServerPresets.find(p => p.id === this.f2bServerForm.server);
+      if (preset) this.f2bServerForm.port = preset.default_port;
+    },
+
+    async createF2bWebsiteJail() {
+      const f = this.f2bWebsiteForm;
+      if (!f.site) { toast('Select a site', 'error'); return; }
+      f.saving = true;
+      const r = await post('/api/security/fail2ban/website-jails', {
+        site: f.site, mode: f.mode, port: f.port,
+        maxretry: f.maxretry, findtime: f.findtime, bantime: f.bantime,
+      });
+      f.saving = false;
+      if (r.ok) { toast('Jail created', 'success'); f.show = false; await this.loadF2bWebsiteJails(); }
+      else toast(r.error || 'Failed to create jail', 'error');
+    },
+
+    async createF2bServerJail() {
+      const f = this.f2bServerForm;
+      f.saving = true;
+      const r = await post('/api/security/fail2ban/server-jails', {
+        server: f.server, port: f.port,
+        maxretry: f.maxretry, findtime: f.findtime, bantime: f.bantime,
+      });
+      f.saving = false;
+      if (r.ok) { toast('Jail created', 'success'); f.show = false; await this.loadF2bServerJails(); }
+      else toast(r.error || 'Failed to create jail', 'error');
+    },
+
+    async deleteF2bWebsiteJail(name) {
+      if (!confirm('Delete this jail? This stops protecting the site until recreated.')) return;
+      const r = await del('/api/security/fail2ban/website-jails/' + encodeURIComponent(name));
+      if (r.ok) { toast('Jail deleted', 'success'); await this.loadF2bWebsiteJails(); }
+      else toast(r.error || 'Failed to delete', 'error');
+    },
+
+    async deleteF2bServerJail(name) {
+      if (!confirm('Delete this jail?')) return;
+      const r = await del('/api/security/fail2ban/server-jails/' + encodeURIComponent(name));
+      if (r.ok) { toast('Jail deleted', 'success'); await this.loadF2bServerJails(); }
+      else toast(r.error || 'Failed to delete', 'error');
+    },
+
+    async loadF2bBannedIps(jail) {
+      jail._showIps = !jail._showIps;
+      if (!jail._showIps) return;
+      const r = await get('/api/security/fail2ban');
+      if (r.ok) {
+        const match = (r.jails || []).find(j => j.name === jail.name);
+        jail._bannedIps = match ? match.banned_ips : [];
+      }
+    },
+
+    async unbanF2bIp(jail, ip) {
+      const r = await post('/api/security/fail2ban/unban', {ip, jail: jail.name});
+      if (r.ok) {
+        toast('IP unbanned', 'success');
+        jail._bannedIps = (jail._bannedIps || []).filter(x => x !== ip);
+        jail.currently_banned = Math.max(0, (jail.currently_banned || 1) - 1);
+      } else {
+        toast(r.error || 'Failed to unban', 'error');
       }
     },
 
@@ -3544,6 +3638,18 @@ function securityPage() {
       this.modsec.updating = false;
       toast(r.ok ? `CRS updated to v${r.version}` : 'Update failed: ' + (r.error || ''), r.ok ? 'success' : 'error');
       if (r.ok) await this.loadModsec();
+    },
+
+    async repairModsec() {
+      this.modsec.repairing = true;
+      const r = await post('/api/security/modsecurity/repair', {});
+      this.modsec.repairing = false;
+      if (r.ok) {
+        toast('Repair complete — ' + (r.crs_ok ? 'CRS loaded' : 'engine ready, CRS still unavailable'), r.crs_ok ? 'success' : 'info');
+      } else {
+        toast('Repair failed: ' + (r.error || ''), 'error');
+      }
+      await this.loadModsec();
     },
 
     async toggleSiteWAF(domain, enable) {
