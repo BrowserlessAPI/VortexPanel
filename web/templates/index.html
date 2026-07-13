@@ -83,7 +83,7 @@
         <span x-text="totpLoading?'Verifying…':'Verify'"></span>
       </button>
       <button class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:8px;font-size:12px" @click="show2fa=false;loginPass=''">
-        ← Back to login
+        Back to login
       </button>
     </div>
 
@@ -132,7 +132,7 @@
               style="width:100%;display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.08));border:1px solid rgba(88,101,242,.3);cursor:pointer;transition:.15s"
               @mouseenter="$el.style.background='linear-gradient(135deg,rgba(88,101,242,.25),rgba(6,182,212,.15))'"
               @mouseleave="$el.style.background='linear-gradient(135deg,rgba(88,101,242,.15),rgba(6,182,212,.08))'">
-        <div style="width:24px;height:24px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">✦</div>
+        <div style="width:24px;height:24px;background:linear-gradient(135deg,#5865f2,#06b6d4);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0"></div>
         <span style="font-size:12px;font-weight:600;color:var(--accent);flex:1;text-align:left">NeonCodex AI</span>
         <span style="font-size:10px;color:var(--text-muted)">Ask AI</span>
       </button>
@@ -143,7 +143,7 @@
           <div style="font-size:12px;font-weight:600;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="username||'admin'"></div>
           <div style="font-size:10px;color:var(--text-muted)">Administrator</div>
         </div>
-        <button style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text-muted);cursor:pointer;font-size:11px;transition:.1s" @click="logout()" title="Sign Out">⎋ Out</button>
+        <button style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text-muted);cursor:pointer;font-size:11px;transition:.1s" @click="logout()" title="Sign Out">Sign Out</button>
       </div>
     </div>
   </nav>
@@ -152,7 +152,7 @@
   <div class="main-area">
     <!-- TOPBAR -->
     <div class="topbar">
-      <button class="topbar-btn" @click="sidebarOpen=!sidebarOpen" style="display:none;padding:6px 8px">☰</button>
+      <button class="topbar-btn" @click="sidebarOpen=!sidebarOpen" style="display:none;padding:6px 8px">Menu</button>
       <div class="topbar-title" x-text="pageTitle()"></div>
       <div class="topbar-spacer"></div>
       <div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--green)">
@@ -161,7 +161,7 @@
       <div style="position:relative;margin-left:8px">
         <button class="btn btn-ghost btn-sm" @click="openUpdateModal()"
                 :style="updateAvailable?'border-color:rgba(88,101,242,.6);color:var(--accent)':''">
-          <span x-text="updateAvailable?'⬆ Update Available!':'⬆ Panel Update'"></span>
+          <span x-text="updateAvailable?'Update Available!':'Panel Update'"></span>
           <span x-show="updateAvailable" style="position:absolute;top:-3px;right:-3px;width:8px;height:8px;background:var(--red);border-radius:50%;border:2px solid var(--bg-topbar)"></span>
         </button>
       </div>
@@ -250,7 +250,7 @@
               </template>
             </div>
           </div>
-          <button class="btn btn-sm" style="background:#fef3c7;color:#92400e;border-color:#fde68a;flex-shrink:0" @click="go('websites')">Renew →</button>
+          <button class="btn btn-sm" style="background:#fef3c7;color:#92400e;border-color:#fde68a;flex-shrink:0" @click="go('websites')">Renew</button>
         </div>
 
         <!-- Webserver conflict warning banner -->
@@ -264,7 +264,7 @@
               Stop all but one via <strong>Services</strong> or <strong>App Store</strong>.
             </div>
           </div>
-          <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5;flex-shrink:0" @click="go('services')">Fix Now →</button>
+          <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5;flex-shrink:0" @click="go('services')">Fix Now</button>
         </div>
 
         <!-- Services quick view -->
@@ -285,12 +285,12 @@
           <div class="card">
             <div class="card-hd"><div class="card-title">Quick Actions</div></div>
             <div style="display:flex;flex-direction:column;gap:8px">
-              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'websites'})">🌐 Manage Websites</button>
-              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'databases'})">🗄 Manage Databases</button>
-              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'files'})">📁 File Manager</button>
-              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'terminal'})">💻 Terminal</button>
-              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'backups'})">💾 Create Backup</button>
-              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'modules'})">📦 Install Modules</button>
+              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'websites'})">Manage Websites</button>
+              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'databases'})">Manage Databases</button>
+              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'files'})">File Manager</button>
+              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'terminal'})">Terminal</button>
+              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'backups'})">Create Backup</button>
+              <button class="btn btn-ghost" style="justify-content:flex-start" @click="$dispatch('nav',{page:'modules'})">Install Modules</button>
             </div>
           </div>
         </div>
@@ -302,7 +302,7 @@
         <div class="page-header">
           <div><div class="page-title">Websites</div><div class="page-sub">Manage Nginx virtual hosts</div></div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost" @click="openImportWizard()">⇩ Import Website</button>
+            <button class="btn btn-ghost" @click="openImportWizard()">Import Website</button>
             <button class="btn btn-primary" @click="showAdd=true">+ Add Site</button>
           </div>
         </div>
@@ -330,8 +330,8 @@
                   <td><span :class="'badge badge-'+(s.enabled?'green':'gray')" x-text="s.enabled?'Active':'Disabled'"></span></td>
                   <td>
                     <div style="display:flex;gap:5px">
-                      <button class="btn btn-ghost btn-xs" @click="openDrawer(s)">⚙ Manage</button>
-                      <button class="btn btn-danger btn-xs" @click="del(s.domain)">✕</button>
+                      <button class="btn btn-ghost btn-xs" @click="openDrawer(s)">Manage</button>
+                      <button class="btn btn-danger btn-xs" @click="del(s.domain)">Delete</button>
                     </div>
                   </td>
                 </tr>
@@ -503,7 +503,7 @@
                     </div>
                     <div style="text-align:right;font-size:11px;color:var(--text-muted)">
                       <div x-show="!drawer.diskUsage.loading" x-text="(drawer.diskUsage.file_count||0)+' files, '+(drawer.diskUsage.dir_count||0)+' folders'"></div>
-                      <button class="btn btn-ghost btn-xs" style="margin-top:4px" @click="loadDiskUsage()" :disabled="drawer.diskUsage.loading">↻ Recalculate</button>
+                      <button class="btn btn-ghost btn-xs" style="margin-top:4px" @click="loadDiskUsage()" :disabled="drawer.diskUsage.loading">Recalculate</button>
                     </div>
                   </div>
                   <div>
@@ -681,7 +681,7 @@
                   <button class="btn btn-primary" @click="runComposer()" :disabled="drawer.composerRunning"
                           style="display:flex;align-items:center;gap:8px;justify-content:center">
                     <span x-show="drawer.composerRunning" class="loading-spinner" style="width:14px;height:14px;border-width:2px"></span>
-                    <span x-text="drawer.composerRunning?'Running...':'▶ Run Composer'"></span>
+                    <span x-text="drawer.composerRunning?'Running...':'Run Composer'"></span>
                   </button>
 
                   <!-- Output -->
@@ -705,7 +705,7 @@
                 <div style="display:flex;gap:8px;margin-bottom:16px">
                   <button class="btn btn-sm" :class="drawer.logType==='access'?'btn-primary':'btn-ghost'" @click="drawer.logType='access'">Access log</button>
                   <button class="btn btn-sm" :class="drawer.logType==='error'?'btn-primary':'btn-ghost'" @click="drawer.logType='error'">Error log</button>
-                  <button class="btn btn-ghost btn-sm" style="margin-left:auto" @click="loadDrawerTab()">↻ Refresh</button>
+                  <button class="btn btn-ghost btn-sm" style="margin-left:auto" @click="loadDrawerTab()">Refresh</button>
                 </div>
                 <div style="background:#0d0e18;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#94a3b8;min-height:300px;max-height:500px;overflow-y:auto;white-space:pre-wrap;line-height:1.6"
                      x-text="drawer.logType==='access'?drawer.accessLog||'No access logs':drawer.errorLog||'No error logs'"></div>
@@ -776,8 +776,8 @@
                     <div style="font-size:11px;color:var(--text-muted)" x-text="drawer.confPath"></div>
                   </div>
                   <div style="display:flex;gap:8px">
-                    <button class="btn btn-ghost btn-sm" @click="loadDrawerTab()">↻ Reload</button>
-                    <button class="btn btn-primary btn-sm" @click="saveConf()">💾 Save</button>
+                    <button class="btn btn-ghost btn-sm" @click="loadDrawerTab()">Reload</button>
+                    <button class="btn btn-primary btn-sm" @click="saveConf()">Save</button>
                   </div>
                 </div>
                 <div style="background:#1a1b26;border:1px solid #2a2b3a;border-radius:8px;overflow:hidden">
@@ -866,7 +866,7 @@
                         VortexPanel can upgrade this automatically — your existing vhost configs are preserved.
                       </div>
                       <button class="btn btn-primary btn-sm" @click="upgradeNginxMainline()" :disabled="drawer.http3Upgrading">
-                        <span x-show="!drawer.http3Upgrading">🔄 Upgrade to nginx.org Mainline</span>
+                        <span x-show="!drawer.http3Upgrading">Upgrade to nginx.org Mainline</span>
                         <span x-show="drawer.http3Upgrading">Upgrading nginx… (may take 30s)</span>
                       </button>
                     </div>
@@ -939,7 +939,7 @@
                     <span class="badge badge-blue" x-text="p.path"></span>
                     <span style="color:var(--text-muted)">→</span>
                     <span style="font-family:var(--font-mono);flex:1" x-text="p.target"></span>
-                    <button class="btn btn-danger btn-xs" @click="delProxy(p.name)">✕</button>
+                    <button class="btn btn-danger btn-xs" @click="delProxy(p.name)">Delete</button>
                   </div>
                 </template>
                 <template x-if="!drawer.proxies?.length"><div class="empty-state" style="padding:24px"><div class="empty-icon">🔀</div><div class="empty-text">No proxy rules</div></div></template>
@@ -1018,9 +1018,9 @@
                         <input class="form-input" :type="row.show?'text':'password'" x-model="row.value" placeholder="value"
                                style="flex:2;font-family:var(--font-mono);font-size:12px" />
                         <button class="btn btn-ghost btn-xs" @click="row.show=!row.show" type="button" :title="row.show?'Hide':'Show'">
-                          <span x-text="row.show?'🙈':'👁'"></span>
+                          <span x-text="row.show?'Hide':'Show'"></span>
                         </button>
-                        <button class="btn btn-danger btn-xs" @click="drawer.envRows.splice(i,1)" type="button">✕</button>
+                        <button class="btn btn-danger btn-xs" @click="drawer.envRows.splice(i,1)" type="button">Delete</button>
                       </div>
                     </template>
                   </div>
@@ -1084,7 +1084,7 @@
             </div>
             <button class="btn btn-ghost btn-sm" @click="scan()" :disabled="scanning">
               <span x-show="scanning">Scanning…</span>
-              <span x-show="!scanning">↻ Scan</span>
+              <span x-show="!scanning">Scan</span>
             </button>
             <button class="btn btn-primary" @click="openInstallModal()">+ Install WordPress</button>
           </div>
@@ -1097,7 +1097,7 @@
             <input x-model="searchQ" placeholder="Search sites…" style="border:none;outline:none;background:transparent;font-size:12px;color:var(--text-primary);width:100%" />
           </div>
           <button x-show="totalUpdates>0" class="btn btn-ghost btn-sm" style="color:var(--accent-warn);border-color:var(--accent-warn)" @click="filterTab='updates'">
-            ⬆ <span x-text="totalUpdates"></span> updates pending
+            <span x-text="totalUpdates"></span> updates pending
           </button>
           <div style="display:flex;gap:2px;border-bottom:none">
             <button :class="filterTab==='all'?'btn btn-primary btn-sm':'btn btn-ghost btn-sm'" @click="filterTab='all'">All (<span x-text="sites.length"></span>)</button>
@@ -1172,10 +1172,10 @@
                 <!-- Action buttons -->
                 <div style="display:flex;gap:5px;flex-wrap:wrap">
                   <button class="btn btn-primary btn-sm" @click="openDrawer(site,'overview')">Manage</button>
-                  <button class="btn btn-ghost btn-sm" @click="oneClickLogin(site)">⚡ Login</button>
+                  <button class="btn btn-ghost btn-sm" @click="oneClickLogin(site)">Login</button>
                   <button x-show="!site.is_staging" class="btn btn-ghost btn-sm" @click="openDrawer(site,'staging')">Clone</button>
-                  <button x-show="site.is_staging" class="btn btn-ghost btn-sm" style="color:var(--accent)" @click="pushToLive(site)">⬆ Push live</button>
-                  <button class="btn btn-ghost btn-sm" @click="openDrawer(site,'backups')">↓</button>
+                  <button x-show="site.is_staging" class="btn btn-ghost btn-sm" style="color:var(--accent)" @click="pushToLive(site)">Push live</button>
+                  <button class="btn btn-ghost btn-sm" @click="openDrawer(site,'backups')">Backups</button>
                 </div>
               </div>
             </div>
@@ -1201,8 +1201,8 @@
                 </div>
               </div>
               <div style="display:flex;gap:5px">
-                <button class="btn btn-ghost btn-sm" @click="oneClickLogin(drawer.site)">⚡ Login</button>
-                <button class="btn btn-ghost btn-sm" @click="if(drawer.site?.site_url)window.open(drawer.site.site_url,'_blank')">↗</button>
+                <button class="btn btn-ghost btn-sm" @click="oneClickLogin(drawer.site)">Login</button>
+                <button class="btn btn-ghost btn-sm" @click="if(drawer.site?.site_url)window.open(drawer.site.site_url,'_blank')">Visit Site</button>
                 <button style="background:none;border:1px solid var(--border);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:16px;color:var(--text-muted)" @click="drawer.show=false">×</button>
               </div>
             </div>
@@ -1310,8 +1310,8 @@
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                   <span style="font-size:12px;color:var(--text-muted)" x-text="plugins.length+' plugins installed'"></span>
                   <div style="display:flex;gap:6px">
-                    <button x-show="plugins.filter(p=>p.update_version).length>0" class="btn btn-ghost btn-sm" style="color:var(--accent-warn)" @click="updateAllPlugins()">⬆ Update all</button>
-                    <button class="btn btn-ghost btn-sm" @click="loadPlugins()">↻ Refresh</button>
+                    <button x-show="plugins.filter(p=>p.update_version).length>0" class="btn btn-ghost btn-sm" style="color:var(--accent-warn)" @click="updateAllPlugins()">Update all</button>
+                    <button class="btn btn-ghost btn-sm" @click="loadPlugins()">Refresh</button>
                   </div>
                 </div>
                 <div x-show="pluginLoading" style="text-align:center;padding:30px;color:var(--text-muted)">Loading plugins…</div>
@@ -1334,7 +1334,7 @@
                             <button x-show="p.update_version" class="btn btn-xs" style="color:var(--accent-warn);border:1px solid var(--accent-warn);background:transparent" @click="pluginAction(p.name,'update')">Update</button>
                             <button x-show="p.status==='active'" class="btn btn-ghost btn-xs" @click="pluginAction(p.name,'deactivate')">Deactivate</button>
                             <button x-show="p.status!=='active'" class="btn btn-ghost btn-xs" @click="pluginAction(p.name,'activate')">Activate</button>
-                            <button x-show="p.status!=='active'" class="btn btn-danger btn-xs" @click="pluginAction(p.name,'delete')">✕</button>
+                            <button x-show="p.status!=='active'" class="btn btn-danger btn-xs" @click="pluginAction(p.name,'delete')">Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -1347,7 +1347,7 @@
               <div x-show="drawer.tab==='themes'">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                   <span style="font-size:12px;color:var(--text-muted)">Only one theme can be active at a time</span>
-                  <button class="btn btn-ghost btn-sm" @click="loadThemes()">↻ Refresh</button>
+                  <button class="btn btn-ghost btn-sm" @click="loadThemes()">Refresh</button>
                 </div>
                 <div x-show="themeLoading" style="text-align:center;padding:30px;color:var(--text-muted)">Loading themes…</div>
                 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">
@@ -1363,7 +1363,7 @@
                           <span x-show="t.status==='active'" class="badge badge-green" style="font-size:9px">Active</span>
                           <button x-show="t.status!=='active'" class="btn btn-ghost btn-xs" @click="themeAction(t.name,'activate')">Activate</button>
                           <button x-show="t.update_version" class="btn btn-xs" style="color:var(--accent-warn);border:1px solid var(--accent-warn);background:transparent;padding:2px 6px;font-size:10px" @click="themeAction(t.name,'update')">Update</button>
-                          <button x-show="t.status!=='active'" class="btn btn-danger btn-xs" @click="themeAction(t.name,'delete')">✕</button>
+                          <button x-show="t.status!=='active'" class="btn btn-danger btn-xs" @click="themeAction(t.name,'delete')">Delete</button>
                         </div>
                       </div>
                     </div>
@@ -1386,7 +1386,7 @@
                         <div style="height:100%;border-radius:2px;transition:width .4s" :style="'width:'+security?.score+'%;background:'+(security?.score>=90?'var(--green)':security?.score>=75?'var(--accent-warn)':'var(--red)')"></div>
                       </div>
                     </div>
-                    <button class="btn btn-ghost btn-sm" style="margin-left:auto" @click="runSecurityScan()">↻ Re-scan</button>
+                    <button class="btn btn-ghost btn-sm" style="margin-left:auto" @click="runSecurityScan()">Re-scan</button>
                   </div>
                   <template x-for="c in (security?.checks||[])" :key="c.label">
                     <div :style="'display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:var(--radius);margin-bottom:5px;font-size:12px;border:1px solid '+(c.passed?'rgba(16,185,129,.15)':'rgba(239,68,68,.15)')+';background:'+(c.passed?'rgba(16,185,129,.05)':'rgba(239,68,68,.05)')">
@@ -1437,7 +1437,7 @@
                         <div style="font-size:11px;color:var(--text-muted);margin-top:2px" x-text="s.path"></div>
                       </div>
                       <div style="display:flex;gap:6px">
-                        <button class="btn btn-ghost btn-sm" @click="oneClickLogin(s)">⚡ Login</button>
+                        <button class="btn btn-ghost btn-sm" @click="oneClickLogin(s)">Login</button>
                         <button class="btn btn-danger btn-sm" @click="deleteSite(s)">Delete</button>
                       </div>
                     </div>
@@ -1447,7 +1447,7 @@
                     <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:7px 10px;font-size:11px;color:#7f1d1d;margin-bottom:8px">
                       ⚠ Pushing will overwrite the live site. A backup of live is created automatically.
                     </div>
-                    <button class="btn btn-primary btn-sm" @click="pushToLive(s)">⬆ Push staging → live</button>
+                    <button class="btn btn-primary btn-sm" @click="pushToLive(s)">Push staging to live</button>
                   </div>
                 </template>
                 <div x-show="!sites.filter(s=>s.is_staging&&s.domain.includes(drawer.site?.domain)).length" style="text-align:center;padding:20px;color:var(--text-muted);font-size:12px">No active staging environments</div>
@@ -1475,7 +1475,7 @@
                         <td>
                           <div style="display:flex;gap:4px">
                             <button class="btn btn-ghost btn-xs">Restore</button>
-                            <button class="btn btn-danger btn-xs" @click="deleteBackup(b.filename)">✕</button>
+                            <button class="btn btn-danger btn-xs" @click="deleteBackup(b.filename)">Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -1707,8 +1707,8 @@
             <div class="page-sub">Deploy and manage Node.js apps with PM2 or systemd — proxy via nginx, Apache, OLS or Caddy</div>
           </div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" @click="tab='versions';loadVersions()">⚙ Node Version Manager</button>
-            <button class="btn btn-ghost btn-sm" @click="tab='pm2';loadPM2Monitor()">📊 PM2 Monitor</button>
+            <button class="btn btn-ghost btn-sm" @click="tab='versions';loadVersions()">Node Version Manager</button>
+            <button class="btn btn-ghost btn-sm" @click="tab='pm2';loadPM2Monitor()">PM2 Monitor</button>
             <button class="btn btn-primary btn-sm" @click="openAddModal('pm2')">+ PM2 Project</button>
             <button class="btn btn-primary btn-sm" @click="openAddModal('default')">+ Add Project</button>
           </div>
@@ -1719,7 +1719,7 @@
           <!-- Toolbar -->
           <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
             <input class="form-input" style="max-width:260px" x-model="search" placeholder="🔍 Search projects...">
-            <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" @click="load()">Refresh</button>
             <span style="font-size:12px;color:var(--text-muted)" x-text="projects.length+' project(s)'"></span>
           </div>
 
@@ -1771,12 +1771,12 @@
                     <td style="font-size:11px;color:var(--text-muted)" x-text="p.domain||'—'"></td>
                     <td>
                       <div style="display:flex;gap:4px;flex-wrap:wrap">
-                        <button x-show="p.status!=='online'&&p.status!=='active'" class="btn btn-xs btn-success" @click="control(p,'start')">▶ Start</button>
-                        <button x-show="p.status==='online'||p.status==='active'" class="btn btn-xs btn-danger" @click="control(p,'stop')">■ Stop</button>
-                        <button class="btn btn-xs btn-ghost" @click="control(p,'restart')">↺</button>
-                        <button class="btn btn-xs btn-ghost" @click="showLogs(p)">📋 Logs</button>
-                        <button class="btn btn-xs btn-ghost" @click="gitPull(p)" title="Git Pull">⬇ Pull</button>
-                        <button class="btn btn-xs btn-danger" @click="remove(p)">🗑</button>
+                        <button x-show="p.status!=='online'&&p.status!=='active'" class="btn btn-xs btn-success" @click="control(p,'start')">Start</button>
+                        <button x-show="p.status==='online'||p.status==='active'" class="btn btn-xs btn-danger" @click="control(p,'stop')">Stop</button>
+                        <button class="btn btn-xs btn-ghost" @click="control(p,'restart')">Restart</button>
+                        <button class="btn btn-xs btn-ghost" @click="showLogs(p)">Logs</button>
+                        <button class="btn btn-xs btn-ghost" @click="gitPull(p)" title="Git Pull">Pull</button>
+                        <button class="btn btn-xs btn-danger" @click="remove(p)">Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -1789,8 +1789,8 @@
         <!-- TAB: NODE VERSION MANAGER -->
         <div x-show="tab==='versions'">
           <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-            <button class="btn btn-ghost btn-sm" @click="tab='projects'">← Back to Projects</button>
-            <button class="btn btn-ghost btn-sm" @click="loadVersions()">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" @click="tab='projects'">Back to Projects</button>
+            <button class="btn btn-ghost btn-sm" @click="loadVersions()">Refresh</button>
           </div>
 
           <!-- App Store integration note -->
@@ -1862,8 +1862,8 @@
         <!-- TAB: PM2 MONITOR -->
         <div x-show="tab==='pm2'">
           <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-            <button class="btn btn-ghost btn-sm" @click="tab='projects'">← Back to Projects</button>
-            <button class="btn btn-ghost btn-sm" @click="loadPM2Monitor()">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" @click="tab='projects'">Back to Projects</button>
+            <button class="btn btn-ghost btn-sm" @click="loadPM2Monitor()">Refresh</button>
           </div>
 
           <!-- Stats cards -->
@@ -1935,7 +1935,7 @@
                   <input class="form-input" x-model="addModal.path" placeholder="/www/wwwroot/myapp" @blur="loadScripts()">
                   <button class="btn btn-ghost btn-sm" style="flex-shrink:0"
                           @click="$dispatch('file-picker',{path:addModal.path,mode:'dir',cb:p=>{addModal.path=p; loadScripts();}})">
-                    📁 Browse
+                    Browse
                   </button>
                 </div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Directory where package.json is located</div>
@@ -2030,7 +2030,7 @@
               <!-- More settings toggle -->
               <button @click="addModal.show_more=!addModal.show_more"
                       style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0">
-                <span x-text="addModal.show_more?'▾ Hide settings':'▸ More settings'"></span>
+                <span x-text="addModal.show_more?'Hide settings':'More settings'"></span>
               </button>
 
               <div x-show="addModal.show_more" style="display:grid;gap:14px">
@@ -2108,7 +2108,7 @@
             <div class="page-sub">Deploy compiled Go binaries with systemd + webserver reverse proxy</div>
           </div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" @click="tab='sdk';loadSDK()">⚙ Go SDK Manager</button>
+            <button class="btn btn-ghost btn-sm" @click="tab='sdk';loadSDK()">Go SDK Manager</button>
             <button class="btn btn-primary btn-sm" @click="openAdd()">+ Add Project</button>
           </div>
         </div>
@@ -2117,7 +2117,7 @@
         <div x-show="tab==='projects'">
           <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
             <input class="form-input" style="max-width:260px" x-model="search" placeholder="🔍 Search projects...">
-            <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" @click="load()">Refresh</button>
             <span style="font-size:12px;color:var(--text-muted)" x-text="projects.length+' project(s)'"></span>
           </div>
 
@@ -2160,12 +2160,12 @@
                     <td style="font-size:11px" x-text="p.user||'www'"></td>
                     <td>
                       <div style="display:flex;gap:4px;flex-wrap:wrap">
-                        <button x-show="p.status!=='active'" class="btn btn-xs btn-success" @click="control(p,'start')">▶</button>
-                        <button x-show="p.status==='active'" class="btn btn-xs btn-danger" @click="control(p,'stop')">■</button>
-                        <button class="btn btn-xs btn-ghost" @click="control(p,'restart')">↺</button>
-                        <button class="btn btn-xs btn-ghost" @click="showLogs(p)">📋 Logs</button>
-                        <button class="btn btn-xs btn-primary" @click="openSettings(p)">⚙ Settings</button>
-                        <button class="btn btn-xs btn-danger" @click="remove(p)">🗑</button>
+                        <button x-show="p.status!=='active'" class="btn btn-xs btn-success" @click="control(p,'start')">Start</button>
+                        <button x-show="p.status==='active'" class="btn btn-xs btn-danger" @click="control(p,'stop')">Stop</button>
+                        <button class="btn btn-xs btn-ghost" @click="control(p,'restart')">Restart</button>
+                        <button class="btn btn-xs btn-ghost" @click="showLogs(p)">Logs</button>
+                        <button class="btn btn-xs btn-primary" @click="openSettings(p)">Settings</button>
+                        <button class="btn btn-xs btn-danger" @click="remove(p)">Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -2178,8 +2178,8 @@
         <!-- SDK MANAGER TAB -->
         <div x-show="tab==='sdk'">
           <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-            <button class="btn btn-ghost btn-sm" @click="tab='projects'">← Back to Projects</button>
-            <button class="btn btn-ghost btn-sm" @click="loadSDK()">↻ Refresh</button>
+            <button class="btn btn-ghost btn-sm" @click="tab='projects'">Back to Projects</button>
+            <button class="btn btn-ghost btn-sm" @click="loadSDK()">Refresh</button>
           </div>
 
           <!-- GOPROXY -->
@@ -2271,7 +2271,7 @@
                   <input class="form-input" x-model="addModal.exec_file" placeholder="/www/wwwroot/myapp/myapp" style="font-family:var(--font-mono)">
                   <button class="btn btn-ghost btn-sm" style="flex-shrink:0"
                           @click="$dispatch('file-picker',{path:addModal.exec_file,mode:'file',cb:p=>{addModal.exec_file=p}})">
-                    📁 Browse
+                    Browse
                   </button>
                 </div>
                 <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Full path to the compiled Go binary. File permissions will be fixed automatically.</div>
@@ -2328,7 +2328,7 @@
               <!-- More settings -->
               <button @click="addModal.show_more=!addModal.show_more"
                       style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0">
-                <span x-text="addModal.show_more?'▾ Hide settings':'▸ More settings (env vars, remark)'"></span>
+                <span x-text="addModal.show_more?'Hide settings':'More settings (env vars, remark)'"></span>
               </button>
               <div x-show="addModal.show_more" style="display:grid;gap:14px">
                 <div>
@@ -2424,9 +2424,9 @@
                     <span x-show="settingsModal.project?.pid" style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="'PID: '+settingsModal.project?.pid"></span>
                   </div>
                   <div style="display:flex;gap:8px">
-                    <button class="btn btn-success btn-xs" x-show="settingsModal.project?.status!=='active'" @click="control(settingsModal.project,'start')">▶ Start</button>
-                    <button class="btn btn-danger btn-xs" x-show="settingsModal.project?.status==='active'" @click="control(settingsModal.project,'stop')">■ Stop</button>
-                    <button class="btn btn-ghost btn-xs" @click="control(settingsModal.project,'restart')">↺ Restart</button>
+                    <button class="btn btn-success btn-xs" x-show="settingsModal.project?.status!=='active'" @click="control(settingsModal.project,'start')">Start</button>
+                    <button class="btn btn-danger btn-xs" x-show="settingsModal.project?.status==='active'" @click="control(settingsModal.project,'stop')">Stop</button>
+                    <button class="btn btn-ghost btn-xs" @click="control(settingsModal.project,'restart')">Restart</button>
                   </div>
                 </div>
                 <div style="background:var(--bg-base);border-radius:8px;padding:12px 14px;font-size:12px">
@@ -2489,7 +2489,7 @@
                 <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                     <div style="font-size:12px;font-weight:700">🔒 SSL Certificate</div>
-                    <button class="btn btn-ghost btn-xs" @click="checkSSL()">↻ Check status</button>
+                    <button class="btn btn-ghost btn-xs" @click="checkSSL()">Check status</button>
                   </div>
                   <div x-show="!editModal.domain" style="font-size:12px;color:var(--text-muted)">Assign a domain above first.</div>
                   <div x-show="editModal.domain">
@@ -2531,7 +2531,7 @@
                 <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                     <div style="font-size:12px;font-weight:700">Binary Version History</div>
-                    <button class="btn btn-ghost btn-xs" @click="loadVersions()">↻ Refresh</button>
+                    <button class="btn btn-ghost btn-xs" @click="loadVersions()">Refresh</button>
                   </div>
                   <div x-show="versions.length===0" style="font-size:11px;color:var(--text-muted)">No snapshots yet — one is taken automatically each time you start/restart with a changed binary.</div>
                   <div x-show="versions.length>0" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto">
@@ -2601,7 +2601,7 @@
         <div class="page-header">
           <div><div class="page-title">Databases</div><div class="page-sub" x-text="engines.length ? (engines.find(e=>e.id===activeEngine)?.name || activeEngine) + ' management' : 'Database management'"></div></div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" @click="showImport=true">⬆ Import</button>
+            <button class="btn btn-ghost btn-sm" @click="showImport=true">Import</button>
             <button class="btn btn-primary" @click="showAdd=true">+ Create DB</button>
           </div>
         </div>
@@ -2637,7 +2637,7 @@
         <!-- COMBINED TABLE (Databases + Users in one view) -->
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
           <input class="form-input" style="max-width:280px" x-model="searchQuery" placeholder="🔍 Search databases...">
-          <button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button>
+          <button class="btn btn-ghost btn-sm" @click="load()">Refresh</button>
           <button class="btn btn-primary btn-sm" x-show="isMysql || isPg" @click="showAddUser=true">+ Add User</button>
         </div>
         <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
@@ -2804,12 +2804,12 @@
             </div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn btn-ghost btn-sm" @click="goUp()">↑ Up</button>
-            <button class="btn btn-ghost btn-sm" @click="doSearch()" x-show="showSearch" title="Search">🔍</button>
+            <button class="btn btn-ghost btn-sm" @click="goUp()">Up</button>
+            <button class="btn btn-ghost btn-sm" @click="doSearch()" x-show="showSearch" title="Search">Search</button>
             <button class="btn btn-ghost btn-sm" @click="showSearch=!showSearch">Search</button>
             <button class="btn btn-ghost btn-sm" @click="openNewFolder()">+ Folder</button>
             <button class="btn btn-ghost btn-sm" @click="openNewFile()">+ File</button>
-            <button class="btn btn-primary btn-sm" @click="showUpload=!showUpload">↑ Upload</button>
+            <button class="btn btn-primary btn-sm" @click="showUpload=!showUpload">Upload</button>
           </div>
         </div>
 
@@ -2903,12 +2903,12 @@
                     </td>
                     <td>
                       <div style="display:flex;gap:3px">
-                        <button class="btn btn-ghost btn-xs" @click="openEditor(f)" x-show="f.type==='file' && isEditable(f.name)" title="Edit">✏</button>
-                        <button class="btn btn-ghost btn-xs" @click="startRename(f)" title="Rename">🖊</button>
-                        <button class="btn btn-ghost btn-xs" @click="chmodItem(f)" title="Permissions">🔒</button>
-                        <button class="btn btn-ghost btn-xs" @click="compressItem(f)" x-show="f.type==='dir'" title="Compress">📦</button>
-                        <button class="btn btn-ghost btn-xs" @click="extractItem(f)" x-show="f.name.endsWith('.zip')||f.name.endsWith('.tar.gz')" title="Extract">📂</button>
-                        <button class="btn btn-danger btn-xs" @click="deleteItem(f)" title="Delete">✕</button>
+                        <button class="btn btn-ghost btn-xs" @click="openEditor(f)" x-show="f.type==='file' && isEditable(f.name)" title="Edit">Edit</button>
+                        <button class="btn btn-ghost btn-xs" @click="startRename(f)" title="Rename">Rename</button>
+                        <button class="btn btn-ghost btn-xs" @click="chmodItem(f)" title="Permissions">Permissions</button>
+                        <button class="btn btn-ghost btn-xs" @click="compressItem(f)" x-show="f.type==='dir'" title="Compress">Compress</button>
+                        <button class="btn btn-ghost btn-xs" @click="extractItem(f)" x-show="f.name.endsWith('.zip')||f.name.endsWith('.tar.gz')" title="Extract">Extract</button>
+                        <button class="btn btn-danger btn-xs" @click="deleteItem(f)" title="Delete">Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -2929,7 +2929,7 @@
           <button class="btn btn-ghost btn-sm" @click="pasteHere()" x-show="clipboard">Paste</button>
           <button class="btn btn-ghost btn-sm" @click="compressSelected()">Compress</button>
           <button class="btn btn-danger btn-sm" @click="deleteSelected()">Delete</button>
-          <button class="btn btn-ghost btn-sm" @click="selected=[]">✕ Clear</button>
+          <button class="btn btn-ghost btn-sm" @click="selected=[]">Clear</button>
         </div>
 
         <!-- Context menu -->
@@ -3037,7 +3037,7 @@
           <div style="width:94vw;height:90vh;background:#161722;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden">
             <!-- Editor topbar -->
             <div style="height:42px;background:#161722;border-bottom:1px solid #1e2030;display:flex;align-items:center;gap:8px;padding:0 12px;flex-shrink:0">
-              <button class="editor-btn" @click="editorSidebarOpen=!editorSidebarOpen" title="Toggle file tree">📁</button>
+              <button class="editor-btn" @click="editorSidebarOpen=!editorSidebarOpen" title="Toggle file tree">Files</button>
               <!-- Tabs -->
               <div style="display:flex;gap:2px;flex:1;overflow-x:auto">
                 <template x-for="tab in editorTabs" :key="tab.path">
@@ -3053,12 +3053,12 @@
               </div>
               <!-- Editor toolbar -->
               <div style="display:flex;gap:4px;flex-shrink:0">
-                <button class="editor-btn" @click="saveFile()" :disabled="!activeTab" title="Ctrl+S">💾 Save</button>
+                <button class="editor-btn" @click="saveFile()" :disabled="!activeTab" title="Ctrl+S">Save</button>
                 <button class="editor-btn" @click="saveAllFiles()" title="Save All">Save All</button>
-                <button class="editor-btn" @click="lintCurrentFile()" :disabled="!activeTab">🔍 Lint</button>
+                <button class="editor-btn" @click="lintCurrentFile()" :disabled="!activeTab">Lint</button>
                 <button class="editor-btn" @click="toggleEditorSearch()">Find</button>
                 <button class="editor-btn" @click="cycleFontSize()">Aa</button>
-                <button class="editor-btn" @click="closeEditorModal()" title="Close">✕</button>
+                <button class="editor-btn" @click="closeEditorModal()" title="Close">Close</button>
               </div>
             </div>
             <!-- Find/Replace bar -->
@@ -3228,7 +3228,7 @@
                     <!-- INSTALLED -->
                     <div x-show="m.installed" style="display:flex;gap:5px;flex-wrap:wrap">
                       <button class="btn btn-ghost btn-xs" @click="openSettings(m)" style="gap:3px">
-                        <span style="font-size:11px">⚙</span> Setting
+                        Settings
                       </button>
                       <!-- PHP: Add Version button -->
                       <div x-show="m.id==='php'" style="display:flex;align-items:center;gap:4px">
@@ -3378,7 +3378,6 @@
                             :style="settingsModal.selPhpVer===pv.version
                               ? 'display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:8px;font-size:12px;font-weight:600;border:1.5px solid var(--accent);cursor:pointer;white-space:nowrap;font-family:inherit;background:var(--accent);color:#fff;box-shadow:0 3px 10px rgba(88,101,242,.4)'
                               : 'display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:8px;font-size:12px;font-weight:600;border:1.5px solid var(--border);cursor:pointer;white-space:nowrap;font-family:inherit;background:var(--bg-raised);color:var(--text-secondary)'">
-                      <span style="font-size:12px">🐘</span>
                       <span x-text="'PHP ' + pv.version"></span>
                       <span :style="pv.status==='active' ? 'width:7px;height:7px;border-radius:50%;background:#4ade80;box-shadow:0 0 5px #4ade8088;flex-shrink:0;display:inline-block' : 'width:7px;height:7px;border-radius:50%;background:#666;flex-shrink:0;display:inline-block'"></span>
                     </button>
@@ -3424,7 +3423,7 @@
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                     <div style="font-weight:600;font-size:14px">Versions</div>
                     <div style="display:flex;gap:8px">
-                      <button class="btn btn-ghost btn-sm" @click="loadFfmpegVersions()">↻ Refresh</button>
+                      <button class="btn btn-ghost btn-sm" @click="loadFfmpegVersions()">Refresh</button>
                       <button class="btn btn-ghost btn-sm" style="color:var(--red)" @click="ffmpegResetAll()">Uninstall All / Reset</button>
                     </div>
                   </div>
@@ -3490,7 +3489,7 @@
                         const cmd = svc==='nginx' ? 'nginx -t 2>&1' : 'apache2ctl configtest 2>&1';
                         const r = await post('/api/terminal/run', {cmd});
                         settingsModal.configTestOutput = r.output || r.error || 'Could not run config test';
-                      }">↻ Run Test</button>
+                      }">Run Test</button>
                     </div>
                     <pre x-show="settingsModal.configTestOutput"
                          style="background:#0d1117;color:#f97316;font-size:11px;padding:12px;border-radius:6px;overflow-x:auto;white-space:pre-wrap;max-height:200px;overflow-y:auto;font-family:var(--font-mono)"
@@ -3516,10 +3515,10 @@
                       <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted);margin-top:2px" x-text="settingsModal.confPath"></div>
                     </div>
                     <div style="display:flex;gap:8px">
-                      <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok){settingsModal.confContent=r.conf_content;settingsModal.confChanged=false;} }">↻ Reload</button>
+                      <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok){settingsModal.confContent=r.conf_content;settingsModal.confChanged=false;} }">Reload</button>
                       <button class="btn btn-primary btn-sm" @click="settingsSaveConfig()" :disabled="settingsModal.saving">
                         <span x-show="settingsModal.saving" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
-                        <span x-text="settingsModal.saving?'Saving…':'💾 Save'"></span>
+                        <span x-text="settingsModal.saving?'Saving…':'Save'"></span>
                       </button>
                     </div>
                   </div>
@@ -3567,7 +3566,7 @@
                       <div style="font-weight:600;font-size:13px">Error Log</div>
                       <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.logPath"></div>
                     </div>
-                    <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok) settingsModal.logs=r.logs; }">↻ Refresh</button>
+                    <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok) settingsModal.logs=r.logs; }">Refresh</button>
                   </div>
                   <div style="background:#080a0e;border:1px solid #1a1d28;border-radius:8px;padding:14px;font-family:var(--font-mono);font-size:11px;color:#86efac;white-space:pre-wrap;max-height:450px;overflow-y:auto;line-height:1.6" x-text="settingsModal.logs||'No logs found'"></div>
                 </div>
@@ -3620,6 +3619,30 @@
                   <pre style="background:var(--bg-base);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;color:var(--text-secondary);overflow-x:auto;white-space:pre-wrap" x-text="settingsModal.dockerInfo||'Loading…'"></pre>
                 </div>
 
+                <!-- == MODSECURITY STATUS tab (no standalone service — runs inside nginx) == -->
+                <div x-show="settingsModal.tab==='modsec_status'">
+                  <div style="background:rgba(6,182,212,.06);border:1px solid rgba(6,182,212,.2);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--text-secondary);line-height:1.6">
+                    ModSecurity has no service of its own to start or stop — it's a module loaded directly into nginx. Its previous "Service" tab checked a systemd unit that never existed, which is why it always showed inactive even while actively blocking requests. Blocking, Detection Only, and Disabled are controlled from the <strong>WAF page</strong>, not here.
+                  </div>
+                  <div style="background:var(--bg-base);border-radius:8px;padding:12px 14px;margin-bottom:12px">
+                    <div style="font-weight:600;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;font-size:11px;letter-spacing:.4px">Real Status</div>
+                    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border-light);font-size:12px">
+                      <span style="color:var(--text-muted)">Connector loaded in nginx</span>
+                      <span :style="settingsModal.connectorLoaded?'color:var(--green);font-weight:600':'color:var(--red);font-weight:600'" x-text="settingsModal.connectorLoaded?'Yes':'No'"></span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border-light);font-size:12px">
+                      <span style="color:var(--text-muted)">Engine mode (from modsecurity.conf)</span>
+                      <span style="font-weight:600" x-text="settingsModal.engineState||'unknown'"></span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:12px">
+                      <span style="color:var(--text-muted)">nginx service</span>
+                      <span :style="settingsModal.nginxStatus==='active'?'color:var(--green);font-weight:600':'color:var(--red);font-weight:600'" x-text="settingsModal.nginxStatus"></span>
+                    </div>
+                  </div>
+                  <button class="btn btn-primary btn-sm" @click="settingsModal.show=false; window.__vpPendingSecurityTab='waf'; $dispatch('nav',{page:'security'})">Open WAF Controls</button>
+                </div>
+
+
                 <!-- == STORAGE LOCATION tab == -->
                 <div x-show="settingsModal.tab==='storage'">
                   <div style="font-weight:600;font-size:14px;margin-bottom:16px">Storage Location</div>
@@ -3655,7 +3678,7 @@
                 <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='mysql'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                     <div style="font-weight:600;font-size:14px">Current Status</div>
-                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">↻ Refresh</button>
+                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">Refresh</button>
                   </div>
                   <table class="data-table" style="margin-bottom:16px">
                     <tbody>
@@ -3685,7 +3708,7 @@
                 <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='redis'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                     <div style="font-weight:600;font-size:14px">Current Status</div>
-                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">↻ Refresh</button>
+                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">Refresh</button>
                   </div>
                   <table class="data-table">
                     <thead><tr><th>Field</th><th>Value</th><th>Description</th></tr></thead>
@@ -3705,7 +3728,7 @@
                 <div x-show="settingsModal.tab==='current_status' && settingsModal.mod?.id==='memcached'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                     <div style="font-weight:600;font-size:14px">Load Status</div>
-                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">↻ Refresh</button>
+                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">Refresh</button>
                   </div>
                   <table class="data-table">
                     <thead><tr><th>Fields</th><th>Current value</th><th>Note</th></tr></thead>
@@ -3760,7 +3783,7 @@
                 <div x-show="settingsModal.tab==='slow_log'">
                   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                     <div style="font-weight:600;font-size:13px">Slow Query Log</div>
-                    <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok) settingsModal.slowLog=r.slow_log; }">↻ Refresh</button>
+                    <button class="btn btn-ghost btn-sm" @click="async()=>{ const r=await get('/api/modules/'+settingsModal.mod.id+'/settings'); if(r.ok) settingsModal.slowLog=r.slow_log; }">Refresh</button>
                   </div>
                   <div style="background:#080a0e;border:1px solid #1a1d28;border-radius:8px;padding:14px;font-family:var(--font-mono);font-size:11px;color:#fde68a;white-space:pre-wrap;max-height:450px;overflow-y:auto;line-height:1.6" x-text="settingsModal.slowLog||'Slow log not enabled or empty'"></div>
                 </div>
@@ -3904,7 +3927,7 @@
                     </div>
                     <button class="btn btn-primary btn-sm"
                             @click="post('/api/modules/php/settings',{action:'save_config',conf_path:settingsModal.iniPath,content:settingsModal.iniContent,version:settingsModal.selPhpVer||settingsModal.version}).then(r=>toast(r.ok?'php.ini saved':'Failed',r.ok?'success':'error'))">
-                      💾 Save
+                      Save
                     </button>
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Tips: Ctrl+S to save · Do not edit if you don't understand the config rules</div>
@@ -4170,7 +4193,7 @@
                     </div>
                     <button @click="post('/api/modules/roundcube/settings',{action:'save_config',imap_host:settingsModal.rcData.imap_host,smtp_host:settingsModal.rcData.smtp_host,smtp_port:settingsModal.rcData.smtp_port,skin:settingsModal.rcData.skin,db_dsn:settingsModal.rcData.db_dsn}).then(r=>r.ok?toast('Config saved','success'):toast(r.error||'Failed','error'))"
                             style="padding:9px 20px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;width:fit-content">
-                      💾 Save Config
+                      Save Config
                     </button>
                   </div>
                 </div>
@@ -4186,7 +4209,7 @@
                                 :style="settingsModal.rcData?.current_php===pv
                                   ? 'display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;border:1.5px solid var(--accent);cursor:pointer;font-family:inherit;background:var(--accent);color:#fff;box-shadow:0 3px 10px rgba(88,101,242,.4)'
                                   : 'display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;border:1.5px solid var(--border);cursor:pointer;font-family:inherit;background:var(--bg-raised);color:var(--text-secondary)'">
-                          <span>🐘</span><span x-text="'PHP '+pv"></span>
+                          <span x-text="'PHP '+pv"></span>
                         </button>
                       </template>
                     </div>
@@ -4313,7 +4336,7 @@
                     </div>
                     <button class="btn btn-primary btn-sm"
                             @click="post('/api/modules/bind9/settings',{action:'save_config',conf_path:settingsModal.confPath,content:settingsModal.confContent}).then(r=>toast(r.ok?'Saved & reloaded':'Failed: '+(r.error||''),r.ok?'success':'error'))">
-                      💾 Save & Reload
+                      Save & Reload
                     </button>
                   </div>
                   <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
@@ -4462,7 +4485,7 @@
                 <div x-show="settingsModal.tab==='ddns_log'">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
                     <div style="font-weight:600;font-size:13px">DDNS Log</div>
-                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">↻ Refresh</button>
+                    <button class="btn btn-ghost btn-sm" @click="openSettings(settingsModal.mod)">Refresh</button>
                   </div>
                   <div style="background:#0d0e18;border:1px solid var(--border);border-radius:8px;padding:14px;font-family:var(--font-mono);font-size:11px;color:#94a3b8;min-height:300px;max-height:500px;overflow-y:auto;white-space:pre-wrap;line-height:1.6"
                        x-text="settingsModal.ddnsLog||'No log entries yet'"></div>
@@ -4477,7 +4500,7 @@
                     </div>
                     <button class="btn btn-primary btn-sm"
                             @click="post('/api/modules/caddy/settings',{action:'save_config',conf_path:settingsModal.confPath,content:settingsModal.confContent}).then(r=>toast(r.ok?'Caddyfile saved & reloaded':'Failed: '+(r.error||''),r.ok?'success':'error'))">
-                      💾 Save & Reload
+                      Save & Reload
                     </button>
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Tips: Ctrl+S to save · Caddy reloads with zero downtime</div>
@@ -4854,7 +4877,7 @@
 
       <!-- SERVICES -->
       <div x-show="page==='services'" x-data="servicesPage()">
-        <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()">↻ Refresh</button></div>
+        <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()">Refresh</button></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
           <template x-for="s in services" :key="s.name">
             <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px">
@@ -4869,9 +4892,9 @@
                 <span :class="'badge badge-'+(s.status==='active'?'green':s.status==='inactive'?'red':'yellow')" x-text="s.status"></span>
               </div>
               <div style="display:flex;gap:6px;border-top:1px solid var(--border);padding-top:12px">
-                <button class="btn btn-success btn-xs" style="flex:1" @click="control(s.name,'start')">▶ Start</button>
-                <button class="btn btn-ghost btn-xs" style="flex:1" @click="control(s.name,'restart')">↻ Restart</button>
-                <button class="btn btn-danger btn-xs" style="flex:1" @click="control(s.name,'stop')">■ Stop</button>
+                <button class="btn btn-success btn-xs" style="flex:1" @click="control(s.name,'start')">Start</button>
+                <button class="btn btn-ghost btn-xs" style="flex:1" @click="control(s.name,'restart')">Restart</button>
+                <button class="btn btn-danger btn-xs" style="flex:1" @click="control(s.name,'stop')">Stop</button>
               </div>
             </div>
           </template>
@@ -4901,7 +4924,7 @@
                   <td><span class="badge badge-gray" x-text="r.to.includes('udp')?'UDP':'TCP'"></span></td>
                   <td><span :class="'badge badge-'+(r.action==='ALLOW'?'green':'red')" x-text="r.action"></span></td>
                   <td style="font-size:12px" x-text="(r.from||'Anywhere').replace(/ #.*$/,'')"></td>
-                  <td><button class="btn btn-danger btn-xs" @click="del(r.num)">✕</button></td>
+                  <td><button class="btn btn-danger btn-xs" @click="del(r.num)">Delete</button></td>
                 </tr>
               </template>
             </tbody>
@@ -4927,7 +4950,7 @@
         <div class="page-header"><div><div class="page-title">Terminal</div><div class="page-sub">Live shell — connected via WebSocket PTY</div></div>
           <div style="display:flex;align-items:center;gap:10px">
             <span class="badge" :class="connected?'badge-green':'badge-red'" x-text="connected?'Connected':'Disconnected'"></span>
-            <button class="btn btn-ghost btn-sm" @click="reconnect()">↻ Reconnect</button>
+            <button class="btn btn-ghost btn-sm" @click="reconnect()">Reconnect</button>
           </div>
         </div>
         <div style="background:#0d0e14;border:1px solid #1e2030;border-radius:12px;overflow:hidden;height:calc(100vh - 180px);display:flex;flex-direction:column;width:100%;max-width:100%;min-width:0;box-sizing:border-box">
@@ -4945,7 +4968,7 @@
       <div x-show="page==='backups'" x-data="backupsPage()">
         <div class="page-header"><div><div class="page-title">Backups</div><div class="page-sub">Create and restore server backups</div></div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" @click="showUpload=true">↑ Upload</button>
+            <button class="btn btn-ghost btn-sm" @click="showUpload=true">Upload</button>
           </div>
         </div>
         <div class="tabs" style="margin-bottom:14px">
@@ -4991,7 +5014,7 @@
         </div>
         <!-- Backups list -->
         <div class="card" style="padding:0;overflow:hidden">
-          <div class="card-hd" style="padding:12px 16px"><div class="card-title">Backup Files</div><button class="btn btn-ghost btn-xs" @click="load()">↻</button></div>
+          <div class="card-hd" style="padding:12px 16px"><div class="card-title">Backup Files</div><button class="btn btn-ghost btn-xs" @click="load()">Refresh</button></div>
           <table class="data-table">
             <thead><tr><th>File</th><th>Size</th><th>Date</th><th>Actions</th></tr></thead>
             <tbody>
@@ -5001,10 +5024,10 @@
                   <td x-text="fmtSize(b.size)"></td>
                   <td style="font-size:11px;color:var(--text-muted)" x-text="fmtDate(b.mtime)"></td>
                   <td><div style="display:flex;gap:4px">
-                    <button class="btn btn-ghost btn-xs" @click="downloadBackup(b.name)">↓</button>
-                    <button class="btn btn-ghost btn-xs" @click="uploadToCloud(b.name)" :disabled="!cloudConfig.connected" :title="cloudConfig.connected?'Upload to cloud':'Configure cloud storage first'">☁ Upload</button>
+                    <button class="btn btn-ghost btn-xs" @click="downloadBackup(b.name)">Download</button>
+                    <button class="btn btn-ghost btn-xs" @click="uploadToCloud(b.name)" :disabled="!cloudConfig.connected" :title="cloudConfig.connected?'Upload to cloud':'Configure cloud storage first'">Upload</button>
                     <button class="btn btn-ghost btn-xs" @click="openRestore(b)">Restore</button>
-                    <button class="btn btn-danger btn-xs" @click="del(b.name)">✕</button>
+                    <button class="btn btn-danger btn-xs" @click="del(b.name)">Delete</button>
                   </div></td>
                 </tr>
               </template>
@@ -5047,7 +5070,7 @@
             <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Credentials are stored locally on your server, never transmitted elsewhere except to your chosen provider.</div>
           </div>
           <div class="card" style="padding:0;overflow:hidden" x-show="cloudConfig.connected">
-            <div class="card-hd" style="padding:12px 16px"><div class="card-title">Cloud Backups</div><button class="btn btn-ghost btn-xs" @click="loadCloudList()">↻</button></div>
+            <div class="card-hd" style="padding:12px 16px"><div class="card-title">Cloud Backups</div><button class="btn btn-ghost btn-xs" @click="loadCloudList()">Refresh</button></div>
             <table class="data-table">
               <thead><tr><th>File</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead>
               <tbody>
@@ -5057,8 +5080,8 @@
                     <td x-text="fmtSize(c.size)"></td>
                     <td style="font-size:11px;color:var(--text-muted)" x-text="fmtDate(c.modified)"></td>
                     <td><div style="display:flex;gap:4px">
-                      <button class="btn btn-ghost btn-xs" @click="downloadFromCloud(c.name)">↓ To Server</button>
-                      <button class="btn btn-danger btn-xs" @click="deleteCloudBackup(c.name)">✕</button>
+                      <button class="btn btn-ghost btn-xs" @click="downloadFromCloud(c.name)">To Server</button>
+                      <button class="btn btn-danger btn-xs" @click="deleteCloudBackup(c.name)">Delete</button>
                     </div></td>
                   </tr>
                 </template>
@@ -5104,7 +5127,7 @@
             <template x-for="d in domains" :key="d"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:13px" x-text="d"></span><button class="btn btn-ghost btn-xs" @click="loadAccounts(d)">Accounts</button></div></template>
           </div>
           <div class="card"><div class="card-hd"><div class="card-title" x-text="selDomain?'Accounts: '+selDomain:'Select a domain'"></div><button class="btn btn-primary btn-xs" x-show="selDomain" @click="showAddAccount=true">+</button></div>
-            <template x-for="a in accounts" :key="a.email"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:12px;font-family:var(--font-mono)" x-text="a.email"></span><button class="btn btn-ghost btn-xs" @click="resetPassTarget=a.email;showResetPass=true">Reset Pass</button><button class="btn btn-danger btn-xs" @click="delAccount(a.email)">✕</button></div></template>
+            <template x-for="a in accounts" :key="a.email"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:12px;font-family:var(--font-mono)" x-text="a.email"></span><button class="btn btn-ghost btn-xs" @click="resetPassTarget=a.email;showResetPass=true">Reset Pass</button><button class="btn btn-danger btn-xs" @click="delAccount(a.email)">Delete</button></div></template>
           </div>
         </div>
         <div class="modal-overlay" x-show="showResetPass" @click.self="showResetPass=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title" x-text="'Reset Password: '+resetPassTarget"></div><button class="modal-close" @click="showResetPass=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="resetPassValue" placeholder="••••••••"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showResetPass=false">Cancel</button><button class="btn btn-primary" @click="resetPassword()">Update Password</button></div></div></div>
@@ -5165,7 +5188,7 @@
                   <tr>
                     <td style="font-family:var(--font-mono);font-size:12px" x-text="r.source"></td>
                     <td style="font-family:var(--font-mono);font-size:12px" x-text="r.destination"></td>
-                    <td><button class="btn btn-danger btn-xs" @click="delForwarding(r.source)">✕</button></td>
+                    <td><button class="btn btn-danger btn-xs" @click="delForwarding(r.source)">Delete</button></td>
                   </tr>
                 </template>
               </tbody>
@@ -5188,7 +5211,7 @@
                 <option value="300">300 lines</option>
                 <option value="500">500 lines</option>
               </select>
-              <button class="btn btn-ghost btn-xs" @click="loadMailLogs()">↻ Refresh</button>
+              <button class="btn btn-ghost btn-xs" @click="loadMailLogs()">Refresh</button>
             </div>
           </div>
           <pre class="code-block" x-text="filteredMailLog || mailLogOutput || 'No log entries found.'"
@@ -5209,7 +5232,7 @@
               <tbody>
                 <template x-for="a in accounts" :key="a.user">
                   <tr><td style="font-weight:600" x-text="a.user"></td><td style="font-family:var(--font-mono);font-size:11px" x-text="a.home"></td>
-                  <td><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-xs" @click="changePw(a.user)">🔑 PW</button><button class="btn btn-danger btn-xs" @click="del(a.user)">✕</button></div></td></tr>
+                  <td><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-xs" @click="changePw(a.user)">PW</button><button class="btn btn-danger btn-xs" @click="del(a.user)">Delete</button></div></td></tr>
                 </template>
               </tbody>
             </table>
@@ -5241,7 +5264,7 @@
                   <td style="font-family:var(--font-mono);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="j.command"></td>
                   <td><div style="font-size:11px" x-text="j.last_run||'Never'"></div><div x-show="j.last_exit" style="font-size:10px" :style="'color:'+(j.last_exit==='0'?'var(--green)':'var(--red)')" x-text="j.last_exit==='0'?'✓ OK':'✗ '+j.last_exit"></div></td>
                   <td><div style="width:32px;height:18px;border-radius:9px;cursor:pointer;position:relative;transition:.2s" :style="'background:'+(j.enabled?'var(--accent)':'var(--border)')" @click="toggleJob(j,!j.enabled)"><div style="width:14px;height:14px;background:white;border-radius:50%;position:absolute;top:2px;transition:.2s" :style="'left:'+(j.enabled?'16px':'2px')"></div></div></td>
-                  <td><div style="display:flex;gap:4px"><button class="btn btn-success btn-xs" @click="runNow(j)">▶</button><button class="btn btn-ghost btn-xs" @click="openEdit(j)">✏</button><button class="btn btn-ghost btn-xs" @click="openLogs(j)">Log</button><button class="btn btn-danger btn-xs" @click="del(j)">✕</button></div></td>
+                  <td><div style="display:flex;gap:4px"><button class="btn btn-success btn-xs" @click="runNow(j)">Run</button><button class="btn btn-ghost btn-xs" @click="openEdit(j)">Edit</button><button class="btn btn-ghost btn-xs" @click="openLogs(j)">Log</button><button class="btn btn-danger btn-xs" @click="del(j)">Delete</button></div></td>
                 </tr>
               </template>
             </tbody>
@@ -5318,7 +5341,7 @@
         <div class="card" style="padding:0;overflow:hidden">
           <div class="card-hd" style="padding:12px 16px">
             <div class="card-title">Running Processes</div>
-            <button class="btn btn-ghost btn-xs" @click="load()">↻ Refresh</button>
+            <button class="btn btn-ghost btn-xs" @click="load()">Refresh</button>
           </div>
           <table class="data-table">
             <thead><tr><th>PID</th><th>User</th><th>Command</th><th>CPU%</th><th>Mem%</th><th>Actions</th></tr></thead>
@@ -5566,7 +5589,8 @@
           </div>
         </div>
         <div x-show="tab==='fail2ban'" style="margin-top:14px">
-          <template x-if="!f2bJails||!f2bJails.length"><div class="card"><div class="empty-state"><div class="empty-icon">🛡</div><div class="empty-text">Fail2ban not running — install via Modules</div></div></div></template>
+          <template x-if="f2bAvailable===false"><div class="card"><div class="empty-state"><div class="empty-icon">🛡</div><div class="empty-text">Fail2ban not running — install via Modules</div></div></div></template>
+          <template x-if="f2bAvailable && (!f2bJails||!f2bJails.length)"><div class="card"><div class="empty-state"><div class="empty-icon">🛡</div><div class="empty-text">Fail2ban is running — no jails configured yet</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px">Add Website or Server Protection jails from App Store → Fail2ban → Settings</div></div></div></template>
           <template x-for="jail in f2bJails" :key="jail.name">
             <div class="card" style="margin-bottom:10px"><div class="card-hd"><div><div class="card-title" x-text="jail.name"></div><div style="font-size:11px;color:var(--text-muted)">Banned: <span x-text="jail.currently"></span></div></div></div>
               <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
@@ -5588,23 +5612,14 @@
                 <span x-show="modsec.installed && modsec.state==='Off'"   class="badge badge-gray">○ Disabled</span>
                 <span x-show="!modsec.installed"                          class="badge badge-gray">Not Installed</span>
                 <span x-show="modsec.installed && modsec.crs_version" class="badge badge-blue" style="font-size:9px" x-text="'CRS v'+modsec.crs_version"></span>
-                <button x-show="modsec.installed" class="btn btn-ghost btn-xs" @click="loadModsec()">↻</button>
+                <button x-show="modsec.installed" class="btn btn-ghost btn-xs" @click="loadModsec()">Refresh</button>
               </div>
             </div>
 
             <!-- Not installed -->
-            <template x-if="!modsec.installed && !modsec.module_loaded">
-              <div style="padding:14px 0;font-size:12px;color:var(--text-muted)">
-                <div x-show="!modsec.lib_present" style="margin-bottom:8px">
-                  ModSecurity WAF is not installed. Install it from the <strong>App Store</strong> — supports Nginx on all distros (Debian, Ubuntu, AlmaLinux, Rocky, Fedora, RHEL, CentOS, Oracle, CloudLinux).
-                </div>
-                <div x-show="modsec.lib_present" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:10px;color:var(--red)">
-                  ModSecurity is <strong>partially</strong> installed — the base library is present, but the nginx connector module (the piece that lets nginx actually understand ModSecurity) never loaded. This can happen if that specific package install step hit a network hiccup during setup.
-                  <button class="btn btn-danger btn-sm" style="width:100%;margin-top:8px;justify-content:center" :disabled="modsec.repairing" @click="repairModsec()">
-                    <span x-show="modsec.repairing">Repairing…</span>
-                    <span x-show="!modsec.repairing">🔧 Repair — Reinstall Connector Module</span>
-                  </button>
-                </div>
+            <template x-if="!modsec.installed">
+              <div style="padding:12px 0;font-size:12px;color:var(--text-muted)">
+                ModSecurity WAF is not installed. Install it from the <strong>App Store</strong> — supports Nginx on all distros (Debian, Ubuntu, AlmaLinux, Rocky, Fedora, RHEL, CentOS, Oracle, CloudLinux).
               </div>
             </template>
 
@@ -5617,15 +5632,15 @@
                   <div style="display:flex;gap:6px;flex-wrap:wrap">
                     <button :class="modsec.state==='On'?'btn btn-success btn-sm':'btn btn-ghost btn-sm'"
                             @click="setModsecState('On')">
-                      🛡 Blocking
+                      Blocking
                     </button>
                     <button :class="modsec.state==='DetectionOnly'?'btn btn-warn btn-sm':'btn btn-ghost btn-sm'"
                             @click="setModsecState('DetectionOnly')">
-                      🔍 Detection Only
+                      Detection Only
                     </button>
                     <button :class="modsec.state==='Off'?'btn btn-danger btn-sm':'btn btn-ghost btn-sm'"
                             @click="setModsecState('Off')">
-                      ○ Disabled
+                      Disabled
                     </button>
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);margin-top:6px">
@@ -5664,7 +5679,7 @@
                         No CRS rules loaded — the ruleset download likely failed during install (network hiccup or GitHub rate limit). The engine itself still works.
                         <button class="btn btn-danger btn-xs" style="width:100%;margin-top:6px;justify-content:center" :disabled="modsec.repairing" @click="repairModsec()">
                           <span x-show="modsec.repairing">Repairing…</span>
-                          <span x-show="!modsec.repairing">🔧 Repair — Download CRS Now</span>
+                          <span x-show="!modsec.repairing">Repair — Download CRS Now</span>
                         </button>
                       </div>
                       <div style="display:flex;justify-content:space-between;margin-bottom:4px">
@@ -5678,7 +5693,7 @@
                       <button class="btn btn-ghost btn-xs" style="width:100%;justify-content:center"
                               :disabled="modsec.updating" @click="updateCRS()">
                         <span x-show="modsec.updating">Updating…</span>
-                        <span x-show="!modsec.updating">⬆ Update to latest CRS</span>
+                        <span x-show="!modsec.updating">Update to latest CRS</span>
                       </button>
                     </div>
                   </div>
@@ -5734,7 +5749,7 @@
               <div class="card-title">Audit Log</div>
               <div style="display:flex;gap:6px">
                 <span x-show="!modsec.audit_log" class="badge badge-gray" style="font-size:10px">No audit log yet</span>
-                <button x-show="modsec.audit_log" class="btn btn-ghost btn-xs" @click="loadAuditLog()">↻ Refresh</button>
+                <button x-show="modsec.audit_log" class="btn btn-ghost btn-xs" @click="loadAuditLog()">Refresh</button>
               </div>
             </div>
             <div x-show="modsec.audit_log">
@@ -5811,7 +5826,7 @@
                   <div style="display:flex;gap:6px;margin-bottom:6px">
                     <input class="form-input" x-model="s.address" placeholder="127.0.0.1:8001" style="flex:2;font-family:var(--font-mono)">
                     <input class="form-input" type="number" x-model.number="s.weight" style="width:70px" min="1" title="Weight">
-                    <button class="btn btn-ghost btn-xs" @click="lb.servers.splice(i,1)" x-show="lb.servers.length>1">✕</button>
+                    <button class="btn btn-ghost btn-xs" @click="lb.servers.splice(i,1)" x-show="lb.servers.length>1">Delete</button>
                   </div>
                 </template>
               </div>
@@ -5852,7 +5867,7 @@
                   <div style="display:flex;gap:6px;margin-bottom:6px">
                     <input class="form-input" x-model="s.address" placeholder="127.0.0.1:3306" style="flex:2;font-family:var(--font-mono)">
                     <input class="form-input" type="number" x-model.number="s.weight" style="width:70px" min="1" title="Weight">
-                    <button class="btn btn-ghost btn-xs" @click="tcpLb.servers.splice(i,1)" x-show="tcpLb.servers.length>1">✕</button>
+                    <button class="btn btn-ghost btn-xs" @click="tcpLb.servers.splice(i,1)" x-show="tcpLb.servers.length>1">Delete</button>
                   </div>
                 </template>
               </div>
@@ -5932,7 +5947,7 @@
           </div>
 
         </div>
-        <div x-show="tab==='ports'" style="margin-top:14px"><div class="card"><div class="card-hd"><div class="card-title">Open Ports</div><button class="btn btn-ghost btn-xs" @click="loadPorts()">↻</button></div><div class="code-block" style="font-size:12px;max-height:300px;overflow-y:auto" x-text="portsOutput||'Click ↻ to scan'"></div></div></div>
+        <div x-show="tab==='ports'" style="margin-top:14px"><div class="card"><div class="card-hd"><div class="card-title">Open Ports</div><button class="btn btn-ghost btn-xs" @click="loadPorts()">Refresh</button></div><div class="code-block" style="font-size:12px;max-height:300px;overflow-y:auto" x-text="portsOutput||'Click Refresh to scan'"></div></div></div>
       </div>
 
       <!-- WAF -->
@@ -5951,9 +5966,9 @@
         <div x-show="!loading && modsecInstalled">
           <!-- Tabs -->
           <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border)">
-            <template x-for="t in [{id:'overview',label:'Overview'},{id:'blockade',label:'Blockade Log'}]" :key="t.id">
+            <template x-for="t in [{id:'overview',label:'Overview'},{id:'blockade',label:'Blockade Log'},{id:'lists',label:'Blacklist / Whitelist'}]" :key="t.id">
               <button :class="'btn btn-sm '+(wtab===t.id?'btn-primary':'btn-ghost')" style="border-radius:6px 6px 0 0"
-                      @click="wtab=t.id; wtab==='blockade' && loadBlockadeLog()" x-text="t.label"></button>
+                      @click="wtab=t.id; wtab==='blockade' && loadBlockadeLog(); wtab==='lists' && loadLists()" x-text="t.label"></button>
             </template>
           </div>
 
@@ -5963,7 +5978,7 @@
               <template x-for="p in [{id:'today',label:'Today'},{id:'yesterday',label:'Yesterday'},{id:'7days',label:'Last 7 days'}]" :key="p.id">
                 <button :class="'btn btn-sm '+(period===p.id?'btn-primary':'btn-ghost')" @click="period=p.id; loadStats()" x-text="p.label"></button>
               </template>
-              <button class="btn btn-ghost btn-sm" @click="loadStats()">↻</button>
+              <button class="btn btn-ghost btn-sm" @click="loadStats()">Refresh</button>
             </div>
 
             <div class="grid-4" style="margin-bottom:16px">
@@ -6055,10 +6070,55 @@
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--text-muted)">
               <span x-text="'Total: '+blockadeTotal"></span>
               <div style="display:flex;gap:6px">
-                <button class="btn btn-ghost btn-xs" :disabled="blockadePage<=1" @click="blockadePage--;loadBlockadeLog()">← Prev</button>
+                <button class="btn btn-ghost btn-xs" :disabled="blockadePage<=1" @click="blockadePage--;loadBlockadeLog()">Prev</button>
                 <span x-text="'Page '+blockadePage"></span>
-                <button class="btn btn-ghost btn-xs" :disabled="blockadePage*20>=blockadeTotal" @click="blockadePage++;loadBlockadeLog()">Next →</button>
+                <button class="btn btn-ghost btn-xs" :disabled="blockadePage*20>=blockadeTotal" @click="blockadePage++;loadBlockadeLog()">Next</button>
               </div>
+            </div>
+          </div>
+
+          <!-- BLACKLIST / WHITELIST TAB -->
+          <div x-show="wtab==='lists'">
+            <div class="card" style="margin-bottom:14px;padding:12px 16px;background:var(--bg-hover);border:1px solid var(--border)">
+              <div style="font-size:12px;color:var(--text-muted)">These rules apply <strong>server-wide</strong>, not per-site — matches every domain on this server. Per-site scoping isn't built yet. Whitelisted IPs skip ModSecurity/CRS entirely for that request (faster, not just "not blocked"). Changes are validated against <code>nginx -t</code> before going live — a bad entry is rejected and nothing on the server changes.</div>
+            </div>
+
+            <div class="grid-2" style="gap:14px">
+              <div class="card">
+                <div class="card-hd"><div class="card-title">IP Whitelist</div></div>
+                <div style="padding:14px">
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">One IP or CIDR per line — e.g. <code>1.2.3.4</code> or <code>10.0.0.0/24</code></div>
+                  <textarea class="form-input" rows="6" style="font-family:var(--font-mono);font-size:12px;resize:vertical" x-model="listsText.ip_whitelist" placeholder="203.0.113.5&#10;10.0.0.0/24"></textarea>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-hd"><div class="card-title">IP Blacklist</div></div>
+                <div style="padding:14px">
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">One IP or CIDR per line — blocked with 403 at every site</div>
+                  <textarea class="form-input" rows="6" style="font-family:var(--font-mono);font-size:12px;resize:vertical" x-model="listsText.ip_blacklist" placeholder="198.51.100.23"></textarea>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-hd"><div class="card-title">User-Agent Blacklist</div></div>
+                <div style="padding:14px">
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">One regex pattern per line, matched against the User-Agent header</div>
+                  <textarea class="form-input" rows="6" style="font-family:var(--font-mono);font-size:12px;resize:vertical" x-model="listsText.ua_blacklist" placeholder="badbot&#10;evilcrawler.*"></textarea>
+                </div>
+              </div>
+              <div class="card">
+                <div class="card-hd"><div class="card-title">URL Blacklist</div></div>
+                <div style="padding:14px">
+                  <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">One regex pattern per line, matched against the request URI</div>
+                  <textarea class="form-input" rows="6" style="font-family:var(--font-mono);font-size:12px;resize:vertical" x-model="listsText.url_blacklist" placeholder="/wp-admin/.*\.php&#10;\.\./\.\."></textarea>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:flex-end;margin-top:16px">
+              <button class="btn btn-primary" @click="saveLists()" :disabled="listsSaving">
+                <span x-show="listsSaving">Validating &amp; saving...</span>
+                <span x-show="!listsSaving">Save &amp; Apply</span>
+              </button>
             </div>
           </div>
         </div>
@@ -6068,8 +6128,8 @@
         <div class="page-header">
           <div><div class="page-title">Docker</div><div class="page-sub">Container management with Docker Hardened &amp; Official images</div></div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" @click="prune()" x-show="status.running">🧹 Prune</button>
-            <button class="btn btn-ghost btn-sm" @click="loadContainers();loadImages();loadVolumes()">↻</button>
+            <button class="btn btn-ghost btn-sm" @click="prune()" x-show="status.running">Prune</button>
+            <button class="btn btn-ghost btn-sm" @click="loadContainers();loadImages();loadVolumes()">Refresh</button>
           </div>
         </div>
 
@@ -6088,7 +6148,7 @@
             <div style="font-size:13px;color:var(--text-muted);margin-bottom:24px;max-width:480px;margin:0 auto 24px">
               Install Docker CE via the <strong>Modules</strong> page to enable container management and one-click application deployment.
             </div>
-            <button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">📦 Install Docker via Modules</button>
+            <button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">Install Docker via Modules</button>
           </div>
         </template>
 
@@ -6098,7 +6158,7 @@
             <div style="font-size:40px;margin-bottom:12px">⚠️</div>
             <div style="font-size:16px;font-weight:700;margin-bottom:8px">Docker Daemon Not Running</div>
             <div style="font-size:12px;color:var(--text-muted);margin-bottom:20px">Run: <code>systemctl start docker</code></div>
-            <button class="btn btn-primary" @click="loadStatus()">↻ Check Again</button>
+            <button class="btn btn-primary" @click="loadStatus()">Check Again</button>
           </div>
         </template>
 
@@ -6174,7 +6234,7 @@
                     </div>
 
                     <div style="display:flex;gap:6px">
-                      <button class="btn btn-primary btn-xs" style="flex:1;justify-content:center" @click="openRun(img)" x-text="isInstalled(img)?'▶ Run':'🐳 Deploy'"></button>
+                      <button class="btn btn-primary btn-xs" style="flex:1;justify-content:center" @click="openRun(img)" x-text="isInstalled(img)?'Run':'Deploy'"></button>
                       <a :href="img.docs" target="_blank" class="btn btn-ghost btn-xs" style="text-decoration:none">Hub ↗</a>
                     </div>
                   </div>
@@ -6201,17 +6261,17 @@
                           <button x-show="!ct.domain" class="btn btn-ghost btn-xs" @click="openDomainModal(ct)">+ Add</button>
                           <div x-show="ct.domain" style="display:flex;align-items:center;gap:6px">
                             <a :href="'http://'+ct.domain" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none" x-text="ct.domain"></a>
-                            <button class="btn btn-ghost btn-xs" @click="openDomainModal(ct)" title="Edit">✏</button>
+                            <button class="btn btn-ghost btn-xs" @click="openDomainModal(ct)" title="Edit">Edit</button>
                           </div>
                         </td>
                         <td>
                           <div style="display:flex;gap:4px">
-                            <button class="btn btn-success btn-xs" x-show="ct.state!=='running'" @click="containerAction(ct,'start')">▶</button>
-                            <button class="btn btn-ghost btn-xs" x-show="ct.state==='running'" @click="containerAction(ct,'restart')">↺</button>
-                            <button class="btn btn-danger btn-xs" x-show="ct.state==='running'" @click="containerAction(ct,'stop')">■</button>
+                            <button class="btn btn-success btn-xs" x-show="ct.state!=='running'" @click="containerAction(ct,'start')">Start</button>
+                            <button class="btn btn-ghost btn-xs" x-show="ct.state==='running'" @click="containerAction(ct,'restart')">Restart</button>
+                            <button class="btn btn-danger btn-xs" x-show="ct.state==='running'" @click="containerAction(ct,'stop')">Stop</button>
                             <button class="btn btn-ghost btn-xs" @click="showLogs(ct)">Logs</button>
                             <button class="btn btn-ghost btn-xs" x-show="ct.state==='running'" @click="showStats(ct)">Stats</button>
-                            <button class="btn btn-danger btn-xs" @click="containerAction(ct,'remove')">✕</button>
+                            <button class="btn btn-danger btn-xs" @click="containerAction(ct,'remove')">Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -6302,7 +6362,7 @@
                   <input class="form-input" x-model="p.host" placeholder="Host port" style="font-family:var(--font-mono)">
                   <span style="color:var(--text-muted)">→</span>
                   <input class="form-input" x-model="p.container" placeholder="Container port" style="font-family:var(--font-mono)">
-                  <button class="btn btn-ghost btn-xs" @click="runForm.ports.splice(i,1)">✕</button>
+                  <button class="btn btn-ghost btn-xs" @click="runForm.ports.splice(i,1)">Delete</button>
                 </div>
               </template>
             </div>
@@ -6316,7 +6376,7 @@
                 <div style="display:flex;gap:6px;margin-bottom:6px">
                   <input class="form-input" x-model="e.key" :placeholder="e.key||'KEY'" style="flex:1;font-family:var(--font-mono);font-size:12px">
                   <input class="form-input" x-model="e.value" :placeholder="e.placeholder||'value'" style="flex:2;font-size:12px" :type="e.key&&e.key.toLowerCase().includes('password')?'password':'text'">
-                  <button class="btn btn-ghost btn-xs" @click="runForm.envs.splice(i,1)">✕</button>
+                  <button class="btn btn-ghost btn-xs" @click="runForm.envs.splice(i,1)">Delete</button>
                 </div>
               </template>
             </div>
@@ -6331,7 +6391,7 @@
                   <input class="form-input" x-model="v.host" placeholder="/host/path" style="flex:1;font-size:11px;font-family:var(--font-mono)">
                   <span style="color:var(--text-muted)">:</span>
                   <input class="form-input" x-model="v.container" placeholder="/container/path" style="flex:1;font-size:11px;font-family:var(--font-mono)">
-                  <button class="btn btn-ghost btn-xs" @click="runForm.volumes.splice(i,1)">✕</button>
+                  <button class="btn btn-ghost btn-xs" @click="runForm.volumes.splice(i,1)">Delete</button>
                 </div>
               </template>
             </div>
@@ -6340,7 +6400,7 @@
             </div>
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="showRun=false">Cancel</button>
-              <button class="btn btn-primary" @click="pullAndRun()">🐳 Pull &amp; Deploy</button>
+              <button class="btn btn-primary" @click="pullAndRun()">Pull &amp; Deploy</button>
             </div>
           </div>
         </div>
@@ -6405,7 +6465,7 @@
             <div class="page-sub">Automatic HTTPS · HTTP/3 · Zero-config TLS via Let's Encrypt</div>
           </div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost" @click="openCaddyfile()">📄 Caddyfile</button>
+            <button class="btn btn-ghost" @click="openCaddyfile()">Caddyfile</button>
             <button class="btn btn-primary" @click="showAdd=true" :disabled="!status.installed">+ Add Site</button>
           </div>
         </div>
@@ -6426,7 +6486,7 @@
               <span>✓ No certbot needed</span>
             </div>
             <button class="btn btn-primary" style="margin-top:8px" @click="$dispatch('nav',{page:'modules'})">
-              📦 Install Caddy via Modules
+              Install Caddy via Modules
             </button>
           </div>
         </template>
@@ -6444,7 +6504,7 @@
               <span style="font-size:12px;font-family:var(--font-mono);color:var(--accent)" x-text="status.version"></span>
               <div style="flex:1"></div>
               <button class="btn btn-success btn-sm" x-show="status.status!=='active'" @click="control('start')">Start</button>
-              <button class="btn btn-ghost btn-sm" @click="control('reload')">↻ Reload</button>
+              <button class="btn btn-ghost btn-sm" @click="control('reload')">Reload</button>
               <button class="btn btn-ghost btn-sm" @click="control('restart')">Restart</button>
               <button class="btn btn-danger btn-sm" x-show="status.status==='active'" @click="control('stop')">Stop</button>
               <button class="btn btn-ghost btn-sm" @click="loadLogs();$nextTick(()=>document.querySelector('.caddy-log')?.scrollIntoView({behavior:'smooth'}))">Logs</button>
@@ -6500,7 +6560,7 @@
                       <td>
                         <div style="display:flex;gap:5px">
                           <button class="btn btn-ghost btn-xs" @click="openDrawer(s)">Config</button>
-                          <button class="btn btn-danger btn-xs" @click="del(s.domain)">✕</button>
+                          <button class="btn btn-danger btn-xs" @click="del(s.domain)">Delete</button>
                         </div>
                       </td>
                     </tr>
@@ -6511,7 +6571,7 @@
 
             <!-- Logs (shown on demand) -->
             <div class="card caddy-log" x-show="logContent">
-              <div class="card-hd"><div class="card-title">Caddy Logs</div><button class="btn btn-ghost btn-xs" @click="logContent=''">✕ Close</button></div>
+              <div class="card-hd"><div class="card-title">Caddy Logs</div><button class="btn btn-ghost btn-xs" @click="logContent=''">Close</button></div>
               <div class="terminal-out" x-text="logContent"></div>
             </div>
           </div>
@@ -6651,7 +6711,7 @@
           </div>
           <div style="display:flex;align-items:center;gap:10px">
             <span x-show="activeCdn" class="badge badge-green">⚡ <span x-text="activeCdn.toUpperCase()"></span> Active</span>
-            <button class="btn btn-ghost" x-show="view!=='grid'" @click="view='grid'">← All Providers</button>
+            <button class="btn btn-ghost" x-show="view!=='grid'" @click="view='grid'">All Providers</button>
           </div>
         </div>
 
@@ -6716,14 +6776,14 @@
                   <button x-show="p.connected"
                           class="btn btn-success btn-sm" style="flex:1;justify-content:center"
                           @click.stop="openDashboard(p)">
-                    ⚡ Dashboard
+                    Dashboard
                   </button>
                   <button x-show="p.connected"
                           class="btn btn-ghost btn-sm"
-                          @click.stop="selectProvider(p)" title="Edit settings">⚙</button>
+                          @click.stop="selectProvider(p)" title="Edit settings">Settings</button>
                   <button x-show="p.connected"
                           class="btn btn-danger btn-sm"
-                          @click.stop="disconnect(p)" title="Disconnect">✕</button>
+                          @click.stop="disconnect(p)" title="Disconnect">Delete</button>
                 </div>
               </div>
             </template>
@@ -6773,7 +6833,7 @@
                   <button x-show="field.type==='password'"
                           style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px"
                           @click="showPw[field.key]=!showPw[field.key]"
-                          x-text="showPw[field.key]?'🙈':'👁'">
+                          x-text="showPw[field.key]?'Hide':'Show'">
                   </button>
                 </div>
               </div>
@@ -7048,8 +7108,8 @@
         <div class="page-header">
           <div><div class="page-title">Settings</div><div class="page-sub">Panel configuration &amp; security</div></div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" @click="syncTime()">⏱ Sync Time</button>
-            <button class="btn btn-ghost btn-sm" @click="if(confirm('Reboot server?'))reboot()">↻ Reboot</button>
+            <button class="btn btn-ghost btn-sm" @click="syncTime()">Sync Time</button>
+            <button class="btn btn-ghost btn-sm" @click="if(confirm('Reboot server?'))reboot()">Reboot</button>
           </div>
         </div>
 
@@ -7390,7 +7450,7 @@
                   <div style="font-size:12px;font-weight:700;color:var(--text-primary)">Login Audit Log</div>
                   <div style="font-size:11px;color:var(--text-muted)">Last 200 login attempts — success, failure, IP, and 2FA events</div>
                 </div>
-                <button class="btn btn-ghost btn-sm" @click="loadAuditLog()">↻ Refresh</button>
+                <button class="btn btn-ghost btn-sm" @click="loadAuditLog()">Refresh</button>
               </div>
               <div x-show="auditLoading" style="padding:20px 0">
                 <div class="skeleton skeleton-row"></div>
@@ -7521,7 +7581,7 @@
         <div style="display:flex;gap:8px;margin-top:4px">
           <input class="form-input" x-model="$store.vp.nodeAdd.path" placeholder="/www/wwwroot/myapp">
           <button class="btn btn-ghost btn-sm" style="flex-shrink:0;white-space:nowrap"
-                  @click="$dispatch('vp-open-picker',{path:$store.vp.nodeAdd.path,mode:'dir',cb:p=>{$store.vp.nodeAdd.path=p}})">📁 Browse</button>
+                  @click="$dispatch('vp-open-picker',{path:$store.vp.nodeAdd.path,mode:'dir',cb:p=>{$store.vp.nodeAdd.path=p}})">Browse</button>
         </div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Directory where package.json is located</div>
       </div>
@@ -7572,7 +7632,7 @@
           <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" x-model="$store.vp.nodeAdd.no_pkg_install"> Skip install</label>
         </div>
       </div>
-      <button @click="$store.vp.nodeAdd.show_more=!$store.vp.nodeAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.nodeAdd.show_more?'▾ Hide settings':'▸ More settings (domain, env vars)'"></button>
+      <button @click="$store.vp.nodeAdd.show_more=!$store.vp.nodeAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.nodeAdd.show_more?'Hide settings':'More settings (domain, env vars)'"></button>
       <div x-show="$store.vp.nodeAdd.show_more" style="display:grid;gap:14px">
         <div>
           <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain Name
@@ -7628,7 +7688,7 @@
         <div style="display:flex;gap:8px;margin-top:4px">
           <input class="form-input" x-model="$store.vp.goAdd.exec_file" placeholder="/www/wwwroot/myapp/myapp" style="font-family:var(--font-mono)">
           <button class="btn btn-ghost btn-sm" style="flex-shrink:0;white-space:nowrap"
-                  @click="$dispatch('vp-open-picker',{path:$store.vp.goAdd.exec_file,mode:'file',cb:p=>{$store.vp.goAdd.exec_file=p}})">📁 Browse</button>
+                  @click="$dispatch('vp-open-picker',{path:$store.vp.goAdd.exec_file,mode:'file',cb:p=>{$store.vp.goAdd.exec_file=p}})">Browse</button>
         </div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:3px">Full path to compiled binary. Permissions auto-fixed.</div>
       </div>
@@ -7663,7 +7723,7 @@
         </label>
         <textarea class="form-input" x-model="$store.vp.goAdd.domain" rows="2" style="margin-top:4px;resize:vertical" placeholder="myapp.com — leave blank for port-only"></textarea>
       </div>
-      <button @click="$store.vp.goAdd.show_more=!$store.vp.goAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.goAdd.show_more?'▾ Hide':'▸ More settings (env vars, remark)'"></button>
+      <button @click="$store.vp.goAdd.show_more=!$store.vp.goAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.goAdd.show_more?'Hide':'More settings (env vars, remark)'"></button>
       <div x-show="$store.vp.goAdd.show_more" style="display:grid;gap:14px">
         <div>
           <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
@@ -7803,7 +7863,7 @@
       <div style="display:flex;justify-content:flex-end;margin-top:20px">
         <button class="btn btn-primary btn-sm" @click="importDetect()" :disabled="!$store.vp.importWizard.importId || $store.vp.importWizard.detecting">
           <span x-show="$store.vp.importWizard.detecting">Analyzing backup...</span>
-          <span x-show="!$store.vp.importWizard.detecting">Analyze Backup →</span>
+          <span x-show="!$store.vp.importWizard.detecting">Analyze Backup</span>
         </button>
       </div>
     </div>
@@ -7847,7 +7907,7 @@
               <div style="display:flex;gap:8px;align-items:center;background:var(--bg-raised);padding:8px;border-radius:6px">
                 <input class="form-input" style="flex:1;font-size:12px" x-model="db.target_db_name" placeholder="database_name">
                 <span style="font-size:10px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="db.dump_path" x-text="db.dump_path?db.dump_path.split('/').pop():'no dump file'"></span>
-                <button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="importRemoveDbRow(idx)">✕</button>
+                <button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="importRemoveDbRow(idx)">Delete</button>
               </div>
               <div x-show="db.note" style="font-size:10px;color:var(--yellow);margin-top:-4px;margin-left:4px" x-text="'⚠ '+db.note"></div>
             </template>
@@ -7856,8 +7916,8 @@
       </div>
 
       <div style="display:flex;justify-content:space-between;margin-top:20px">
-        <button class="btn btn-ghost btn-sm" @click="$store.vp.importWizard.step=1">← Back</button>
-        <button class="btn btn-primary btn-sm" @click="importExecute()">Start Import →</button>
+        <button class="btn btn-ghost btn-sm" @click="$store.vp.importWizard.step=1">Back</button>
+        <button class="btn btn-primary btn-sm" @click="importExecute()">Start Import</button>
       </div>
     </div>
 
@@ -7939,7 +7999,7 @@
       </div>
 
       <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:14px;padding:12px" @click="startUpdate()">
-        ⬆ Update to <span x-text="updateModal.latest" style="margin-left:4px"></span>
+        Update to <span x-text="updateModal.latest" style="margin-left:4px"></span>
       </button>
     </div>
 
@@ -7954,7 +8014,7 @@
         <code style="font-family:var(--font-mono);color:var(--text-secondary)">cd /root/Vortexpanel && git pull && cp -r panel/ web/ app.py /opt/vortexpanel/ && systemctl restart vortexpanel</code>
       </div>
       <div style="margin-top:12px;display:flex;gap:8px;justify-content:center">
-        <button class="btn btn-ghost" @click="checkForUpdates()">↻ Try Again</button>
+        <button class="btn btn-ghost" @click="checkForUpdates()">Try Again</button>
         <a href="https://github.com/BrowserlessAPI/Vortexpanel/releases" target="_blank" class="btn btn-ghost">View Releases ↗</a>
       </div>
     </div>
@@ -7994,7 +8054,7 @@
         <div x-show="updateDone && !updateSuccess" style="font-size:12px;color:var(--red)" x-text="'✗ '+updateError"></div>
         <div style="flex:1"></div>
         <button class="btn btn-ghost" @click="updateModal.show=false" x-show="!updateDone">Running...</button>
-        <button class="btn btn-primary" @click="location.reload()" x-show="updateDone && updateSuccess">🔄 Reload Page</button>
+        <button class="btn btn-primary" @click="location.reload()" x-show="updateDone && updateSuccess">Reload Page</button>
         <button class="btn btn-ghost" @click="updateModal.show=false" x-show="updateDone && !updateSuccess">Close</button>
       </div>
     </div>
@@ -8099,7 +8159,7 @@
         <button style="background:linear-gradient(135deg,#5865f2,#06b6d4);border:none;border-radius:6px;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white;font-size:13px;flex-shrink:0"
                 :disabled="thinking||!input.trim()"
                 :style="(thinking||!input.trim())?'opacity:.4':' '"
-                @click="send()">➤</button>
+                @click="send()">Send</button>
       </div>
       <div style="font-size:10px;color:var(--text-dim);margin-top:4px;text-align:center">Enter to send · Shift+Enter new line · <a href="https://neoncodex.io" target="_blank" style="color:var(--accent);text-decoration:none">NeonCodex</a></div>
     </div>

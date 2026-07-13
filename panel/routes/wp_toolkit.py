@@ -131,10 +131,24 @@ def _available_db():
     return engines
 
 def _mysql_cmd(query, engine='mysql'):
-    """Run a MySQL/MariaDB query as root."""
+    """Run a MySQL/MariaDB query as root.
+
+    IMPORTANT: this must NOT go through sh()/sh3() (shell=True), because SQL
+    identifier quoting uses backticks (`` `db_name` ``) which /bin/sh
+    interprets as command substitution when the query is embedded in a
+    double-quoted shell string (e.g. `db_name` gets *executed* as a command).
+    Running the query as a real argument list avoids the shell entirely, so
+    backticks, quotes, and any other SQL syntax are passed to the mysql/
+    mariadb client literally and safely — this is a real, confirmed command
+    injection point since callers build queries from user-influenced values
+    (domain-derived database names, etc.), not just a theoretical concern.
+    """
     cli = 'mariadb' if (engine == 'mariadb' and shutil.which('mariadb')) else 'mysql'
-    out, err, rc = sh3(f'{cli} -u root -e "{query}" 2>/dev/null')
-    return out, err, rc
+    try:
+        r = subprocess.run([cli, '-u', 'root', '-e', query], capture_output=True, text=True, timeout=30)
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+    except Exception as e:
+        return '', str(e), 1
 
 def _rand_str(n=12):
     chars = string.ascii_letters + string.digits
@@ -252,7 +266,7 @@ extprocessor lsphp{{
   retryTimeout            0
   persistConn             1
   respBuffer              0
-  autoStart               1
+  autoStart               0
   path                    {shutil.which('php' + php_ver) or '/usr/bin/php' + php_ver}
   backlog                 100
   instances               1
@@ -317,6 +331,139 @@ def _caddy_vhost(domain, path, php_ver):
 }}
 """
 
+OLS_MAIN_CONF = '/usr/local/lsws/conf/httpd_config.conf'
+
+def _find_ols_port80_listener(content):
+    """Return the name of an existing listener block bound to port 80
+    (e.g. `address *:80` or `address 0.0.0.0:80`), or None if none exists.
+
+    IMPORTANT: `listener Default` is frequently bound to OLS's admin/example
+    port (commonly 8088), NOT to 80. Mapping a real domain into a listener
+    that isn't actually bound to 80/443 leaves the site completely
+    unreachable from outside (connection refused at the network layer)
+    even though the vhost and virtualhost block are both configured
+    correctly -- because nothing is listening on 80 for that domain at all.
+    """
+    for m in re.finditer(r'listener\s+(\S+)\s*\{(.*?)\n\}', content, re.DOTALL):
+        name, body = m.group(1), m.group(2)
+        if re.search(r'address\s+\S*:80\b', body):
+            return name
+    return None
+
+
+def _ensure_ols_http_listener(content):
+    """Ensure a listener bound to *:80 exists in httpd_config.conf, named
+    'HTTP'. Returns (content, listener_name). Idempotent: never creates a
+    duplicate 'listener HTTP{' block, even if called multiple times."""
+    existing = _find_ols_port80_listener(content)
+    if existing:
+        return content, existing
+
+    if re.search(r'listener\s+HTTP\s*\{', content):
+        # A listener named HTTP already exists but isn't on port 80 (unlikely,
+        # but don't create a second one -- fall through and reuse it, the map
+        # step below will still add this domain to it).
+        return content, 'HTTP'
+
+    listener_block = """
+listener HTTP{
+    address                  *:80
+    secure                   0
+}
+"""
+    content = content.rstrip('\n') + '\n' + listener_block
+    return content, 'HTTP'
+
+
+def _register_ols_vhost(domain, vhost_dir):
+    """Register a vhost in the main OpenLiteSpeed httpd_config.conf.
+
+    Writing conf/vhosts/<domain>/vhconf.conf alone is NOT enough for OLS to
+    serve the site: the main config must also contain a `virtualhost
+    {domain} {...}` block AND a `map` entry inside a listener that is
+    actually bound to port 80 (or 443). Without this, OLS silently keeps
+    routing every request to whatever the listener's existing catch-all/
+    default vhost is, and the new site is unreachable even though its files
+    and vhconf.conf exist on disk.
+    """
+    if not os.path.exists(OLS_MAIN_CONF):
+        return False, f'{OLS_MAIN_CONF} not found'
+
+    with open(OLS_MAIN_CONF, 'r') as f:
+        content = f.read()
+
+    changed = False
+
+    # 1. virtualhost block
+    if f'virtualhost {domain} {{' not in content:
+        vh_block = f"""
+virtualhost {domain} {{
+  vhRoot                  {vhost_dir}/
+  configFile              {vhost_dir}/vhconf.conf
+  allowSymbolLink         1
+  enableScript            1
+  restrained              1
+}}
+"""
+        content = content.rstrip('\n') + '\n' + vh_block
+        changed = True
+
+    # 2. make sure a listener actually bound to :80 exists
+    content, listener_name = _ensure_ols_http_listener(content)
+
+    # 3. map entry inside that listener (added alongside any existing
+    #    catch-all map, never duplicated on repeat calls)
+    map_marker = f'map                      {domain} '
+    if map_marker not in content:
+        m = re.search(r'(listener\s+' + re.escape(listener_name) + r'\s*\{)(.*?)(\n\})', content, re.DOTALL)
+        if not m:
+            return False, f'Could not find listener {listener_name} block in httpd_config.conf'
+        block_body = m.group(2)
+        map_line = f'\n    map                      {domain} {domain},www.{domain}'
+        content = content[:m.start(2)] + block_body + map_line + content[m.end(2):]
+        changed = True
+
+    # 4. align OLS's worker user/group with php-fpm's socket ownership.
+    #    OLS defaults to `user nobody / group nogroup`. php-fpm's UDS socket
+    #    is typically owned by www-data:www-data with mode 0660, so OLS's
+    #    worker can never connect to PHP -- every request hangs until
+    #    timeout (looks like a dead site, not an obvious permissions error).
+    #    Adding nobody to the www-data group is additive and idempotent;
+    #    it does not change OLS's configured user/group, so it is safe to
+    #    run even if some other vhost's PHP pool uses a different owner.
+    sh("usermod -aG www-data nobody 2>/dev/null")
+
+    if changed:
+        shutil.copy(OLS_MAIN_CONF, OLS_MAIN_CONF + '.bak')
+        with open(OLS_MAIN_CONF, 'w') as f:
+            f.write(content)
+
+    return True, 'ok'
+
+
+def _unregister_ols_vhost(domain):
+    """Remove a domain's `virtualhost {}` block and its listener map entry
+    from httpd_config.conf. Best-effort; safe to call even if never
+    registered."""
+    if not os.path.exists(OLS_MAIN_CONF):
+        return
+    with open(OLS_MAIN_CONF, 'r') as f:
+        content = f.read()
+
+    content = re.sub(
+        r'\n?virtualhost ' + re.escape(domain) + r' \{.*?\n\}\n?',
+        '\n', content, flags=re.DOTALL
+    )
+    content = re.sub(
+        r'\n?\s*map\s+' + re.escape(domain) + r' [^\n]*',
+        '', content
+    )
+
+    shutil.copy(OLS_MAIN_CONF, OLS_MAIN_CONF + '.bak')
+    with open(OLS_MAIN_CONF, 'w') as f:
+        f.write(content)
+
+
 def _write_vhost(domain, path, php_ver, webserver):
     """Write vhost config for the given webserver and reload it."""
     ws = webserver or _detect_webserver()
@@ -357,6 +504,9 @@ def _write_vhost(domain, path, php_ver, webserver):
         conf_path = f'{vhost_dir}/vhconf.conf'
         with open(conf_path, 'w') as f:
             f.write(_ols_vhost(domain, path, php_ver))
+        reg_ok, reg_msg = _register_ols_vhost(domain, vhost_dir)
+        if not reg_ok:
+            return False, f'OpenLiteSpeed registration error: {reg_msg}'
         htaccess_path = os.path.join(path, '.htaccess')
         if not os.path.exists(htaccess_path):
             with open(htaccess_path, 'w') as f:
@@ -399,7 +549,8 @@ def _delete_vhost(domain, webserver):
     elif ws == 'openlitespeed':
         try: shutil.rmtree(f'/usr/local/lsws/conf/vhosts/{domain}')
         except: pass
-        sh('systemctl reload lsws 2>/dev/null')
+        _unregister_ols_vhost(domain)
+        sh('kill -USR1 $(cat /tmp/lshttpd.pid 2>/dev/null) 2>/dev/null || systemctl reload lsws 2>/dev/null')
     elif ws == 'caddy':
         try: os.unlink(f'/etc/caddy/sites/{domain}.caddy')
         except: pass
@@ -1267,8 +1418,11 @@ def clone_site(domain):
         # Export source DB
         dump_file = f'/tmp/vortex_clone_{domain}.sql'
         sh(f'{WP_CLI} --path="{src_path}" --allow-root db export "{dump_file}" 2>/dev/null', t=120)
-        # Import into new DB
-        _, err, rc = sh3(f'mysql -u root `{new_db}` < "{dump_file}" 2>&1', t=120)
+        # Import into new DB. NOTE: no backticks around {new_db} here — this
+        # is a plain positional CLI argument (the target database name),
+        # not SQL identifier-quoting, and stray backticks in an
+        # unquoted/shell=True context get executed as a command by /bin/sh.
+        _, err, rc = sh3(f'mysql -u root "{new_db}" < "{dump_file}" 2>&1', t=120)
         try: os.unlink(dump_file)
         except: pass
 

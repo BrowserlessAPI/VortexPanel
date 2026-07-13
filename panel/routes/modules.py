@@ -149,7 +149,7 @@ def get_version(mod_id):
         'supervisor':   "supervisord --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+'",
         'phpmyadmin':   "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /usr/share/phpmyadmin/composer.json 2>/dev/null | head -1",
         'roundcube':    "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /var/www/roundcube/composer.json 2>/dev/null | head -1",
-        'modsecurity':  "modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || dpkg -l libmodsecurity3 2>/dev/null | grep '^ii' | awk '{print $3}'",
+        'modsecurity':  "modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || dpkg -l libmodsecurity3t64 2>/dev/null | grep '^ii' | awk '{print $3}'",
     }
 
     cmd = cmds.get(mod_id, '')
@@ -810,41 +810,94 @@ chown -R www-data:www-data /var/www/roundcube/''',
     {
         'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'/static/icons/modsecurity.svg', 'category':'Security',
         'desc':'OWASP CRS v4 Web Application Firewall — Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)',
-        # "Installed" requires ALL THREE independent pieces to be usable: the
-        # base library, the nginx CONNECTOR module (a separate package that
-        # provides the actual "modsecurity" nginx directive — confirmed via
-        # dpkg -L libnginx-mod-http-modsecurity to install at
-        # /usr/lib/nginx/modules/ngx_http_modsecurity_module.so), and
-        # modsecurity.conf. All three can fail independently without
-        # blocking each other (by design — a hiccup in one shouldn't wreck
-        # the rest of setup), which is exactly what caused two separately
-        # reported bugs: the App Store showing "Installed" while Engine Mode
-        # toggle AND CRS update both failed with "unknown directive
-        # modsecurity" — the connector module specifically never loaded.
+        # "Installed" requires the CORE engine to be usable (library + modsecurity.conf) —
+        # NOT the CRS ruleset, which is a separate, retriable download step (see install_tpl
+        # below). Previously this only checked the library .so file, so a server where the
+        # library installed but the LATER modsecurity.conf/CRS download steps failed (e.g.
+        # GitHub API rate-limit, network hiccup) would show "Installed" in the App Store
+        # while every actual WAF control (Engine Mode toggle, Paranoia level) failed with
+        # "not installed" / "CRS setup.conf not found" — a real, confirmed bug.
+        # "Installed" requires the library, the config, AND the nginx connector
+        # module to actually be loadable by nginx — not just present on disk.
+        # Checking only the library+config (as before) is exactly the false-green
+        # pattern already fixed once for the CRS chain; the connector needs the
+        # same treatment now that it's a from-source build rather than an apt
+        # package that either installs cleanly or is simply absent.
         'check':(
             '(test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 || '
             'test -f /usr/lib64/libmodsecurity.so.3 || '
             'test -f /usr/lib/aarch64-linux-gnu/libmodsecurity.so.3 || '
             'which modsec_rules_check 2>/dev/null 1>&2) && '
-            '(test -f /usr/lib/nginx/modules/ngx_http_modsecurity_module.so || '
-            'test -f /usr/lib64/nginx/modules/ngx_http_modsecurity_module.so) && '
-            'test -f /etc/nginx/modsec/modsecurity.conf && echo found'
+            'test -f /etc/nginx/modsec/modsecurity.conf && '
+            '(find /usr/lib/nginx/modules /usr/lib64/nginx/modules -name "ngx_http_modsecurity_module.so" 2>/dev/null | grep -q .) && '
+            'grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null && echo found'
         ),
         'versions':[
             {'label':'v3 + OWASP CRS v4 (Recommended)', 'value':'3'},
             {'label':'v2 + OWASP CRS v4 (Apache legacy)', 'value':'2'},
         ],
         'install_tpl':(
-            # --- Step 1: install libmodsecurity3 + nginx connector ---------------
+            # --- Step 1: install libmodsecurity + compile the nginx connector from
+            # source, matched to the exact running nginx version -------------------
+            # CONFIRMED root cause of a real, reproduced failure: Debian/Ubuntu's
+            # libnginx-mod-http-modsecurity package has a hard versioned dependency
+            # on UBUNTU'S OWN nginx build. VortexPanel installs nginx from nginx.org's
+            # own repo (different package, different version string), so apt
+            # correctly refuses to pull in a conflicting second nginx build to
+            # satisfy that dependency — the connector package silently never
+            # installs. The old script swallowed that as a WARN and unconditionally
+            # wrote "modsecurity on;" into nginx.conf anyway, which took nginx down
+            # with "unknown directive modsecurity" on every fresh install. Building
+            # the connector from source against the exact installed nginx version
+            # (the officially documented way to build a third-party nginx dynamic
+            # module — see ModSecurity-nginx's own README) is the only approach that
+            # can work here. nginx.conf is now only ever touched if that build
+            # genuinely succeeds — verified via real exit status, not assumed.
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
             'echo "[VortexPanel] Installing ModSecurity engine..."; '
+            'CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules; '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            '  apt-get update -qq && apt-get install -y libmodsecurity3 libmodsecurity-dev '
-            '    libnginx-mod-http-modsecurity 2>&1 || echo "[WARN] Engine package install reported errors — continuing, some features may be limited"; '
+            # These two apt calls are DELIBERATELY separate. Bundling PCRE with the
+            # essential packages was a real, reproduced bug: libpcre3-dev doesn'"'"'t
+            # exist on this server'"'"'s Ubuntu release, and apt-get aborts the ENTIRE
+            # transaction when any one named package has no candidate — so
+            # libmodsecurity-dev silently never installed either, and the connector
+            # build failed with a misleading "ModSecurity library not found" even
+            # though the real problem was an unrelated missing PCRE variant package.
+            '  apt-get update -qq && apt-get install -y libmodsecurity-dev build-essential git '
+            '    zlib1g-dev libssl-dev 2>&1 '
+            '    || echo "[WARN] libmodsecurity/build-tooling install reported errors"; '
+            '  apt-get install -y libpcre2-dev 2>&1 || apt-get install -y libpcre3-dev 2>&1 '
+            '    || echo "[WARN] Neither libpcre2-dev nor libpcre3-dev available on this system — proceeding anyway, nginx'"'"'s own ./configure will report clearly if it actually needs one"; '
+            '  NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\K[0-9.]+\'); '
+            '  DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\K[^ ]+\'); '
+            '  [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP"; '
+            '  if [ -n "$NGINX_VER" ]; then '
+            '    BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" && '
+            '    echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER..."; '
+            '    if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz '
+            '        && tar -xzf nginx.tar.gz '
+            '        && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git '
+            '        && cd "nginx-${NGINX_VER}" '
+            '        && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx '
+            '             > /tmp/modsec-connector-configure.log 2>&1 '
+            '        && make modules > /tmp/modsec-connector-make.log 2>&1 '
+            '        && mkdir -p "$MODULES_PATH" '
+            '        && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then '
+            '      CONNECTOR_OK=1; '
+            '      echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER — WAF can actually load in nginx"; '
+            '    else '
+            '      echo "[ERROR] Connector build failed against nginx $NGINX_VER — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server. nginx.conf will NOT be modified, so nginx stays working; the engine/CRS below still get prepared but the WAF will not actually be active until this is resolved."; '
+            '    fi; '
+            '    cd / && rm -rf "$BUILD_DIR"; '
+            '  else '
+            '    echo "[ERROR] Could not detect installed nginx version via \"nginx -v\" — skipping connector build. nginx.conf will NOT be modified."; '
+            '  fi; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
             '  dnf install -y epel-release 2>/dev/null || true; '
             '  dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"; '
-            '  dnf install -y nginx-mod-modsecurity 2>&1 || echo "[WARN] nginx-mod-modsecurity install reported errors"; '
+            '  dnf install -y nginx-mod-modsecurity 2>&1 && CONNECTOR_OK=1 '
+            '    || echo "[WARN] nginx-mod-modsecurity install reported errors — this RHEL-family path has NOT been independently verified against a real nginx.org-installed nginx the way the Debian/Ubuntu path just was, and may have the same version-mismatch problem. Flagging rather than assuming it works."; '
             'fi; '
             # --- Step 2: write core engine config — ALWAYS attempted, independent
             # of whether CRS (step 3 below) succeeds. This is what makes the engine
@@ -860,6 +913,17 @@ chown -R www-data:www-data /var/www/roundcube/''',
             'if [ "$CONF_OK" = "1" ]; then '
             '  sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf; '
             '  sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf; '
+            # modsecurity.conf-recommended references "unicode.mapping" as a bare
+            # relative filename (SecUnicodeMapFile unicode.mapping 20127) — it was
+            # never actually downloaded, so nginx -t failed at rule-load time with
+            # "Failed to locate the unicode map file" the moment the connector
+            # actually started loading real rules. Confirmed the file exists in the
+            # same upstream repo directory; fetching it and rewriting the directive
+            # to an absolute path so it doesn'"'"'t depend on nginx'"'"'s working directory.
+            '  wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/unicode.mapping '
+            '    -O /etc/nginx/modsec/unicode.mapping && '
+            '    sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/nginx/modsec/unicode.mapping#" /etc/nginx/modsec/modsecurity.conf '
+            '    || echo "[WARN] Could not download unicode.mapping — nginx -t will fail until this is retried from the WAF page"; '
             '  echo "[VortexPanel] ✓ Core engine config written — Engine Mode toggle will work"; '
             'else '
             '  echo "[ERROR] Could not download modsecurity.conf after 3 attempts — writing a minimal fallback config so the engine is still usable"; '
@@ -892,10 +956,21 @@ chown -R www-data:www-data /var/www/roundcube/''',
             'else '
             '  printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; '
             'fi; '
-            # --- Step 5: enable in nginx.conf -----------------------------------
-            'grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null || '
-            '  sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;" '
-            '  /etc/nginx/nginx.conf 2>/dev/null || true; '
+            # --- Step 5: enable in nginx.conf — ONLY if the connector actually
+            # compiled. This is the fix for the reproduced failure: nginx.conf used
+            # to be written unconditionally here regardless of whether the connector
+            # module from Step 1 was ever actually present, which is exactly what
+            # broke nginx with "unknown directive modsecurity" on a fresh install. ---
+            'cp /etc/nginx/nginx.conf /tmp/nginx.conf.pre-modsecurity 2>/dev/null; '
+            'if [ "$CONNECTOR_OK" = "1" ]; then '
+            '  grep -q "ngx_http_modsecurity_module.so" /etc/nginx/nginx.conf 2>/dev/null || '
+            '    sed -i "1i load_module ${MODULES_PATH}/ngx_http_modsecurity_module.so;" /etc/nginx/nginx.conf; '
+            '  grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null || '
+            '    sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;" '
+            '    /etc/nginx/nginx.conf 2>/dev/null || true; '
+            'else '
+            '  echo "[VortexPanel] Skipping nginx.conf changes — connector module isn'"'"'t present. nginx stays working; WAF stays inactive until the connector build succeeds."; '
+            'fi; '
             # --- Step 6: auto-update cron (weekly, only useful once CRS is present) ---
             'echo "0 3 * * 0 root /bin/bash -c \\"'
             'CRS_TAG=\\$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
@@ -905,17 +980,40 @@ chown -R www-data:www-data /var/www/roundcube/''',
             'rm -f /tmp/crs.tar.gz && '
             'nginx -t && systemctl reload nginx\\"" > /etc/cron.d/vortex-crs-update && '
             'chmod 644 /etc/cron.d/vortex-crs-update; '
-            'nginx -t 2>&1 && systemctl reload nginx 2>/dev/null || echo "[WARN] nginx config test failed — check nginx -t manually before relying on the WAF"; '
-            'echo "[VortexPanel] ModSecurity install finished. Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."'
+            # Final gate: nginx -t is the only thing that gets to decide whether
+            # this install actually worked. If it fails for ANY reason — a bad
+            # connector build, a broken modsecurity.conf, a missing support file
+            # like unicode.mapping, anything — restore nginx.conf to exactly what
+            # it was before this install touched it, so nginx is GUARANTEED to
+            # still serve traffic. A "the WAF might be broken" state is acceptable;
+            # "the whole server is down" is not, and this install must never cause
+            # that again regardless of what fails inside ModSecurity itself.
+            'if nginx -t 2>&1; then '
+            '  systemctl reload nginx 2>/dev/null; '
+            '  echo "[VortexPanel] ✓ nginx config test passed — WAF is actually serving traffic"; '
+            'else '
+            '  echo "[ERROR] nginx -t failed after this install — restoring nginx.conf to its pre-install state so the server keeps working. WAF is NOT active; fix the underlying issue and reinstall."; '
+            '  if [ -f /tmp/nginx.conf.pre-modsecurity ]; then '
+            '    cp /tmp/nginx.conf.pre-modsecurity /etc/nginx/nginx.conf; '
+            '    nginx -t 2>&1 && systemctl reload nginx 2>/dev/null && echo "[VortexPanel] ✓ nginx.conf restored, server is back up" '
+            '      || echo "[ERROR] Restore also failed nginx -t — nginx.conf may have been broken before this install ran too. Manual check required."; '
+            '  fi; '
+            'fi; '
+            'echo "[VortexPanel] ModSecurity install finished. Connector: $([ \\"$CONNECTOR_OK\\" = \\"1\\" ] && echo compiled-and-enabled || echo FAILED — WAF NOT active, see /tmp/modsec-connector-*.log). Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."'
         ),
         'uninstall':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            '  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold libmodsecurity3 libmodsecurity-dev libnginx-mod-http-modsecurity 2>/dev/null || true; '
+            # libmodsecurity3 was never a real package name on modern Ubuntu (it's
+            # libmodsecurity3t64 there — confirmed live) — removing libmodsecurity-dev
+            # alone takes the runtime lib with it via its own dependency, same as how
+            # install now only ever names libmodsecurity-dev.
+            '  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold libmodsecurity-dev libmodsecurity3t64 libnginx-mod-http-modsecurity 2>/dev/null || true; '
             '  apt-get autoremove -y 2>/dev/null || true; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
             '  dnf remove -y mod_security nginx-mod-modsecurity 2>/dev/null || true; '
             'fi && '
+            'find /usr/lib/nginx/modules /usr/lib64/nginx/modules -name "ngx_http_modsecurity_module.so" -delete 2>/dev/null; '
             'rm -rf /etc/nginx/modsec /etc/cron.d/vortex-crs-update && '
             'sed -i "/modsecurity/d" /etc/nginx/nginx.conf 2>/dev/null || true && '
             'nginx -t && systemctl reload nginx 2>/dev/null || true'
@@ -2128,6 +2226,33 @@ def get_module_settings(mod_id):
             'enabled': cfg.get('enabled', False),
             'current_ip': ip, 'interval': cfg.get('interval', 300),
             'log': log})
+
+    elif mod_id == 'modsecurity':
+        # ModSecurity has no standalone systemd service — it's a shared module
+        # loaded INTO nginx (see the App Store install_tpl). The generic
+        # fallback below used to check `systemctl is-active modsecurity`,
+        # which can never exist and always reported "inactive" even while
+        # the WAF was genuinely blocking traffic — a real, confirmed
+        # contradiction between this tab and the actual WAF page. Reporting
+        # real, verifiable facts instead: whether the connector module is
+        # actually loaded, and what SecRuleEngine is currently set to.
+        from panel.routes.security import _modsec_installed, _connector_present, MODSEC_CONF
+        installed = _modsec_installed()
+        connector = _connector_present()
+        engine_state = 'not installed'
+        if os.path.exists(MODSEC_CONF):
+            try:
+                conf = open(MODSEC_CONF).read()
+                m = _re.search(r'^SecRuleEngine\s+(\S+)', conf, _re.MULTILINE)
+                engine_state = m.group(1) if m else 'unknown'
+            except Exception:
+                engine_state = 'unknown'
+        nginx_status = sh('systemctl is-active nginx 2>/dev/null') or 'inactive'
+        return jsonify({'ok':True,
+            'modsec_installed': installed,
+            'connector_loaded': connector,
+            'engine_state': engine_state,
+            'nginx_status': nginx_status})
 
     # Generic fallback
     mod = _get_mod(mod_id)

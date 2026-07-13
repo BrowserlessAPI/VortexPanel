@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, session, send_file
-import subprocess, os, glob, time, threading, json, uuid
+import subprocess, os, glob, time, threading, json, uuid, re, gzip
 
 backups_bp = Blueprint('backups', __name__)
 def req(): return 'user' in session
@@ -245,12 +245,19 @@ def restore_backup():
                 restore_path = target or get_webroot()
                 _jobs[job_id]['lines'].append(f'Restoring to {restore_path}...')
                 os.makedirs(restore_path, exist_ok=True)
-                _, err, rc = sh(f'tar -xzf {path} -C {restore_path} --strip-components=2 2>&1')
-                if rc != 0:
+                # subprocess with an argument list (no shell=True) — restore_path
+                # and path both come from user-controlled request fields
+                # (target / backup filename); embedding them in a shell=True
+                # string is exactly the same injection class fixed below for
+                # the database restore path.
+                r = subprocess.run(['tar', '-xzf', path, '-C', restore_path, '--strip-components=2'],
+                                    capture_output=True, text=True)
+                if r.returncode != 0:
                     # Try without strip
-                    _, err2, rc2 = sh(f'tar -xzf {path} -C {restore_path} 2>&1')
-                    if rc2 != 0:
-                        _jobs[job_id].update({'done':True,'error':f'Restore failed: {err2}'})
+                    r2 = subprocess.run(['tar', '-xzf', path, '-C', restore_path],
+                                        capture_output=True, text=True)
+                    if r2.returncode != 0:
+                        _jobs[job_id].update({'done':True,'error':f'Restore failed: {r2.stderr.strip()}'})
                         return
                 _jobs[job_id].update({'done':True,'success':True})
                 _jobs[job_id]['lines'].append(f'✓ Restored to {restore_path}')
@@ -259,10 +266,33 @@ def restore_backup():
                 if not target:
                     _jobs[job_id].update({'done':True,'error':'Database name required for restore'})
                     return
+                # Defense in depth beyond just avoiding shell=True: a MySQL
+                # database name has no legitimate reason to contain anything
+                # outside this charset, so reject anything else outright
+                # rather than trying to safely quote arbitrary input.
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', target):
+                    _jobs[job_id].update({'done':True,'error':'Invalid database name — only letters, numbers, underscore and hyphen are allowed'})
+                    return
                 _jobs[job_id]['lines'].append(f'Restoring database {target}...')
-                # Create DB if not exists
-                sh(f'mysql -u root -e "CREATE DATABASE IF NOT EXISTS `{target}`;" 2>/dev/null')
-                _, err, rc = sh(f'gunzip -c {path} | mysql -u root {target} 2>&1', t=300)
+                # Create DB if not exists. Run via subprocess directly (no
+                # shell) so the backticks used for SQL identifier quoting
+                # aren't misread by /bin/sh as command substitution (which
+                # would otherwise try to *execute* {target} as a command).
+                subprocess.run(
+                    ['mysql', '-u', 'root', '-e', f'CREATE DATABASE IF NOT EXISTS `{target}`;'],
+                    capture_output=True, text=True, timeout=30
+                )
+                # Same injection class as above for the actual data import —
+                # stream the decompressed dump into mysql's stdin directly
+                # instead of a shell=True 'gunzip -c {path} | mysql ... {target}'
+                # pipeline, so neither path nor target ever reach a shell.
+                try:
+                    with gzip.open(path, 'rb') as gz:
+                        r = subprocess.run(['mysql', '-u', 'root', target],
+                                            stdin=gz, capture_output=True, text=True, timeout=300)
+                    rc, err = r.returncode, r.stderr.strip()
+                except Exception as e:
+                    rc, err = 1, str(e)
                 if rc != 0:
                     _jobs[job_id].update({'done':True,'error':f'Restore failed: {err}'})
                     return

@@ -2252,6 +2252,7 @@ function modulesPage() {
           if (d.installedVer) m.installedVer=d.installedVer;
           this.jobModal.done=true; this.jobModal.success=d.success;
           this.jobModal.installedVer=d.installedVer||'';
+          if (d.success) window.dispatchEvent(new CustomEvent('vp:module-changed', {detail:{id:m.id, action}}));
           setTimeout(()=>this.load(), 1200);
         }
         if (d.error) { es.close(); m.loading=false; toast(d.error,'error'); }
@@ -2304,7 +2305,7 @@ function modulesPage() {
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal
-      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions'}[m.id] : 'service';
+      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status'}[m.id] : 'service';
       this.settingsModal = {
         ...this.settingsModal,
         show: true, mod: m, tab: defaultTab, rcData: {},
@@ -2358,6 +2359,10 @@ function modulesPage() {
         this.settingsModal.showAddRecord   = false;
         this.settingsModal.zoneForm        = {domain:'',ip:''};
         this.settingsModal.recordForm      = {host:'@',type:'A',value:'',ttl:'3600'};
+        this.settingsModal.modsecInstalled = r.modsec_installed;
+        this.settingsModal.connectorLoaded = r.connector_loaded;
+        this.settingsModal.engineState     = r.engine_state    || '';
+        this.settingsModal.nginxStatus     = r.nginx_status    || '';
         this.settingsModal.ddnsStatus      = {enabled:r.enabled||false,current_ip:r.current_ip||'',interval:r.interval||300};
         this.settingsModal.ddnsLog         = r.log            || '';
         this.settingsModal.showAddDomain   = false;
@@ -2627,6 +2632,7 @@ function modulesPage() {
         phpmyadmin: ['php_version','security'],
         roundcube:  ['rc_overview','rc_config','rc_php','rc_logs'],
         docker:     ['service','info'],
+        modsecurity:['modsec_status'],
       };
       const labels = {
         service:'Service', config:'Config File', optimization:'Optimization',
@@ -2645,6 +2651,7 @@ function modulesPage() {
         session_config:'Session Config', users:'User Management', rc_overview:'Overview', rc_config:'Mail Config', rc_php:'PHP Version', rc_logs:'Logs',
         website_protection:'Website Protection',
         server_protection:'Server Protection', black_ip:'Black IP', white_ip:'White IP',
+        modsec_status:'Status',
       };
       const icons = {
         service:'🔧', config:'📄', optimization:'⚡', logs:'📋',
@@ -2658,7 +2665,7 @@ function modulesPage() {
         upload_limit:'📤', timeout_limit:'⏱️', disabled_functions:'🚫',
         load_average:'📈', session_config:'🔑', users:'👥', rc_overview:'🌐', rc_config:'📧', rc_php:'🐘', rc_logs:'📋',
         website_protection:'🛡️', server_protection:'🔰',
-        black_ip:'⛔', white_ip:'✅',
+        black_ip:'⛔', white_ip:'✅', modsec_status:'',
       };
       return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'⚙️'}));
     },
@@ -3484,7 +3491,7 @@ function securityPage() {
     ssh: {port:'22', password_auth:'yes', root_login:'yes', pubkey_auth:'yes', max_auth_tries:'6', keys_exist:false, sudo_users:[], active_port:'22', saving:false},
     sshPubkey: '',
     newUser: {username:'', password:'', pubkey:'', loading:false, result:'', ok:false},
-    f2bJails: [], attempts: [], portsOutput: '',
+    f2bJails: [], f2bAvailable: null, attempts: [], portsOutput: '',
     modsec: {installed:false, enabled:false, state:'Off', rules:0, crs_version:'', paranoia_level:1, custom_rules:'', site_overrides:{}, audit_log:false, auditEntries:[], updating:false},
     lb: {configured:false, method:'roundrobin', domain:'_', port:'80', cookie_name:'PHPSESSID',
          servers:[{address:'127.0.0.1:8001',weight:1},{address:'127.0.0.1:8002',weight:1}]},
@@ -3495,7 +3502,14 @@ function securityPage() {
                      timeout_seconds:3, unhealthy_threshold:3, healthy_threshold:2, servers:[]},
              state:{}, service_active:false, log:''},
 
-    async init() { await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="security") { this.loadScore(); this.loadSSH(); } }); },
+    async init() {
+      if (window.__vpPendingSecurityTab) { this.tab = window.__vpPendingSecurityTab; window.__vpPendingSecurityTab = null; }
+      await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="security") { this.loadScore(); this.loadSSH(); } });
+      window.addEventListener('vp:module-changed', (e) => {
+        if (e.detail?.id === 'modsecurity') this.loadModsec();
+        if (e.detail?.id === 'fail2ban') { this.loadF2bWebsiteJails(); this.loadF2bServerJails(); }
+      });
+    },
 
     async loadScore() {
       const r = await get('/api/security/score');
@@ -3566,6 +3580,7 @@ function securityPage() {
 
     async loadFail2ban() {
       const r = await get('/api/security/fail2ban');
+      this.f2bAvailable = !!r.ok;
       if (r.ok) this.f2bJails = (r.jails||[]).map(j=>({...j,banInput:''}));
       else toast(r.error||'Fail2ban not running','error');
     },
@@ -4045,6 +4060,8 @@ function wafPage() {
     wtab: 'overview', period: 'today',
     stats: {total:0, categories:[], top_ips:[], top_uris:[], timeline:[]},
     blockadeEntries: [], blockadeTotal: 0, blockadePage: 1, blockadeSearch: '',
+    listsText: {ip_whitelist:'', ip_blacklist:'', ua_blacklist:'', url_blacklist:''},
+    listsSaving: false,
     _charts: {},
 
     async init() {
@@ -4076,6 +4093,37 @@ function wafPage() {
       if (r.ok) {
         this.blockadeEntries = r.entries || [];
         this.blockadeTotal = r.total || 0;
+      }
+    },
+
+    async loadLists() {
+      const r = await get('/api/security/modsecurity/lists');
+      if (r.ok) {
+        const l = r.lists || {};
+        this.listsText = {
+          ip_whitelist:  (l.ip_whitelist  || []).join('\n'),
+          ip_blacklist:  (l.ip_blacklist  || []).join('\n'),
+          ua_blacklist:  (l.ua_blacklist  || []).join('\n'),
+          url_blacklist: (l.url_blacklist || []).join('\n'),
+        };
+      }
+    },
+
+    async saveLists() {
+      this.listsSaving = true;
+      const toArr = (s) => s.split('\n').map(x => x.trim()).filter(Boolean);
+      const body = {
+        ip_whitelist:  toArr(this.listsText.ip_whitelist),
+        ip_blacklist:  toArr(this.listsText.ip_blacklist),
+        ua_blacklist:  toArr(this.listsText.ua_blacklist),
+        url_blacklist: toArr(this.listsText.url_blacklist),
+      };
+      const r = await post('/api/security/modsecurity/lists', body);
+      this.listsSaving = false;
+      if (r.ok) {
+        toast('Saved — nginx reloaded with the updated rules', 'success');
+      } else {
+        toast(r.error || 'Save failed — nothing on the server was changed', 'error');
       }
     },
 
