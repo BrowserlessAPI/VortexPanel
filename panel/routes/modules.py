@@ -395,6 +395,7 @@ systemctl enable lsws && systemctl start lsws''',
             # scanning what mysql-apt-config actually generated.
             '  MYSQL_TRACK_GUESS="mysql-8.4-lts"; '
             '  case "{ver}" in 8.0*) MYSQL_TRACK_GUESS="mysql-8.0";; 8.4*) MYSQL_TRACK_GUESS="mysql-8.4-lts";; 9.*) MYSQL_TRACK_GUESS="mysql-innovation";; esac; '
+            '  echo "[VortexPanel] debconf preseed attempt: mysql-apt-config/select-server = $MYSQL_TRACK_GUESS"; '
             '  echo "mysql-apt-config mysql-apt-config/select-server select $MYSQL_TRACK_GUESS" | debconf-set-selections; '
             '  DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
             # Self-discovering correction, independent of both the debconf
@@ -408,8 +409,10 @@ systemctl enable lsws && systemctl start lsws''',
             # Priority 2: fall back to the LTS/Innovation heuristic only if
             # no exact version match exists.
             '  for f in /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; do '
-            '    [ -f "$f" ] || continue; '
-            '    ALL_TRACKS=$(grep -oE "mysql-[a-zA-Z0-9.-]+" "$f" | grep -vE "^mysql-(apt-config|tools|common|client|server)$" | sort -u); '
+            '    if [ ! -f "$f" ]; then echo "[VortexPanel] $f does not exist -- skipping"; continue; fi; '
+            '    echo "[VortexPanel] found $f, discovering tracks..."; '
+            '    ALL_TRACKS=$(grep -oP "\\s\\Kmysql-[a-zA-Z0-9.-]+$" "$f" | grep -vE "^mysql-(apt-config|tools|common|client|server)$" | sort -u); '
+            '    echo "[VortexPanel] discovered tracks: $ALL_TRACKS"; '
             '    MYSQL_TRACK=""; '
             '    for T in $ALL_TRACKS; do case "$T" in *"{ver}"*) MYSQL_TRACK="$T"; break;; esac; done; '
             '    if [ -z "$MYSQL_TRACK" ]; then '
@@ -419,12 +422,17 @@ systemctl enable lsws && systemctl start lsws''',
             '        9.*)  for T in $ALL_TRACKS; do case "$T" in mysql-innovation|mysql-9*) MYSQL_TRACK="$T"; break;; esac; done ;; '
             '      esac; '
             '    fi; '
-            '    [ -z "$MYSQL_TRACK" ] && continue; '
+            '    echo "[VortexPanel] selected track for {ver}: ${MYSQL_TRACK:-<none found>}"; '
+            '    if [ -z "$MYSQL_TRACK" ]; then echo "[VortexPanel] no matching track -- leaving $f untouched"; continue; fi; '
             '    sed -i "/\\b${MYSQL_TRACK}\\b/s/^#\\s*//" "$f"; '
             '    for OTHER in $ALL_TRACKS; do '
             '      [ "$OTHER" = "$MYSQL_TRACK" ] && continue; '
             '      sed -i "/\\b${OTHER}\\b/{/^#/!s/^/# /}" "$f"; '
             '    done; '
+            '  done; '
+            '  echo "[VortexPanel] active (uncommented) lines after track selection:"; '
+            '  for f in /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; do '
+            '    [ -f "$f" ] && grep "^deb" "$f"; '
             '  done; '
             # Confirmed via a real failure: every codename attempt (questing,
             # plucky, oracular, noble, jammy) failed with the SAME
