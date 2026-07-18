@@ -70,7 +70,7 @@ def _install_wpcli():
     return rc == 0
 
 def _detect_webserver():
-    """Return active webserver: nginx | apache | openlitespeed | caddy"""
+    """Return active webserver: nginx | apache | openlitespeed | caddy | '' (none detected)"""
     if sh('systemctl is-active nginx 2>/dev/null') == 'active':
         return 'nginx'
     if sh('systemctl is-active apache2 2>/dev/null') == 'active' or \
@@ -80,10 +80,12 @@ def _detect_webserver():
         return 'openlitespeed'
     if sh('systemctl is-active caddy 2>/dev/null') == 'active':
         return 'caddy'
-    return 'nginx'  # default
+    return ''  # honestly report nothing detected, rather than falsely defaulting to nginx
 
 def _installed_webservers():
-    """Return list of actually installed webservers."""
+    """Return list of actually installed webservers. Empty list means genuinely none installed --
+    confirmed via a real report that silently defaulting to ['nginx'] here made the WP Toolkit UI
+    show "Nginx ✓ installed" even when the App Store correctly showed it as Not Installed."""
     installed = []
     if shutil.which('nginx'):
         installed.append('nginx')
@@ -93,8 +95,6 @@ def _installed_webservers():
         installed.append('openlitespeed')
     if shutil.which('caddy'):
         installed.append('caddy')
-    if not installed:
-        installed.append('nginx')  # assume nginx as fallback
     return installed
 
 def _php_sock(ver):
@@ -120,14 +120,12 @@ def _available_php():
     return versions
 
 def _available_db():
-    """Return available DB engines."""
+    """Return available DB engines. Empty list means genuinely none installed."""
     engines = []
     if sh('which mysql 2>/dev/null') or sh('systemctl is-active mysql 2>/dev/null') == 'active':
         engines.append('mysql')
     if sh('which mariadb 2>/dev/null') or sh('systemctl is-active mariadb 2>/dev/null') == 'active':
         engines.append('mariadb')
-    if not engines:
-        engines = ['mysql', 'mariadb']  # assume available, let install fail gracefully
     return engines
 
 def _mysql_cmd(query, engine='mysql'):
@@ -801,6 +799,15 @@ def install_wp():
 
     if not domain:
         return jsonify({'ok': False, 'error': 'Domain is required'}), 400
+
+    if not webserver:
+        return jsonify({'ok': False, 'error': 'No web server is installed. Install Nginx, Apache2, OpenLiteSpeed, or Caddy from the App Store first.'}), 400
+    if webserver not in _installed_webservers():
+        return jsonify({'ok': False, 'error': f'{webserver} is not installed on this server. Install it from the App Store first, or pick a different web server.'}), 400
+    if not db_engine or db_engine not in _available_db():
+        return jsonify({'ok': False, 'error': 'No supported database engine (MySQL or MariaDB) is installed. Install one from the App Store first.'}), 400
+    if not shutil.which(f'php{php_ver}') and not os.path.exists(f'/run/php/php{php_ver}-fpm.sock') and not os.path.exists(f'/var/run/php/php{php_ver}-fpm.sock'):
+        return jsonify({'ok': False, 'error': f'PHP {php_ver} is not installed on this server. Install it from the App Store first.'}), 400
 
     # Webroot path
     webroot = '/www/wwwroot'

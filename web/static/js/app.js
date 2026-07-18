@@ -47,6 +47,20 @@ document.addEventListener('alpine:init', () => {
     },
     // File picker
     picker:   { show:false, mode:'dir', path:'/', items:[], loading:false, selected:'', cb:null },
+    // Security settings modals (2FA / password / IP allowlist / audit log) —
+    // live in the top-level body portal (see below), not inside settingsPage(),
+    // so this state must be in the global store, same reasoning as
+    // importWizard/picker above: portal modals are siblings of every page
+    // component, not children, and cannot reach a page's own x-data.
+    security: {
+      show2FA:false, showPw:false, showIP:false, showAudit:false,
+      twofa: {enabled:false, secret:'', qr_url:'', code:'', err:'',
+              setupLoading:false, enabling:false,
+              disableConfirm:false, disablePw:'', disabling:false},
+      pwForm: {current:'', newpw:'', confirm:''},
+      allowlistText: '', sessionHours: 24,
+      auditLog: [], auditLoading: false,
+    },
   });
 }); // end alpine:init
 
@@ -57,6 +71,84 @@ function toast(msg, type='info') {
   d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'ℹ ') + msg;
   c.appendChild(d);
   setTimeout(() => d.remove(), 3500);
+}
+
+// --- Security settings modals (2FA / password / IP allowlist / audit log) —
+// GLOBAL functions, same reasoning as the import wizard functions below:
+// these modals live in the top-level body portal (a sibling of every page
+// component, not a child), so their buttons cannot reach methods defined
+// inside settingsPage()'s own x-data.
+async function openSecurityModal(which) {
+  const s = Alpine.store('vp').security;
+  const r = await get('/api/auth/2fa/status').catch(()=>({ok:false}));
+  if (r.ok) s.twofa.enabled = r.enabled;
+  const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
+  if (sc.ok) { s.allowlistText = (sc.allowed_ips||[]).join('\n'); s.sessionHours = sc.session_hours||24; }
+  if (which === 'Audit') await loadLoginAuditLog();
+  s['show'+which] = true;
+}
+
+async function loadLoginAuditLog() {
+  const s = Alpine.store('vp').security;
+  s.auditLoading = true;
+  const r = await get('/api/auth/audit-log').catch(()=>({ok:false}));
+  if (r.ok) s.auditLog = r.entries || [];
+  s.auditLoading = false;
+}
+
+// --- 2FA / password / allowlist logic below is a faithful copy of the
+// original settingsPage() methods (same endpoints, same field names, same
+// client-side validation) -- only `this.x` became `s.x` (the store) so
+// portal-based modals can call these too. Not reimplemented from scratch.
+async function setup2FA() {
+  const s = Alpine.store('vp').security;
+  s.twofa.setupLoading=true;
+  const r = await post('/api/auth/2fa/setup', {});
+  s.twofa.setupLoading=false;
+  if (r.ok) { s.twofa.secret=r.secret; s.twofa.qr_url=r.qr_url; s.twofa.code=''; s.twofa.err=''; }
+  else toast(r.error||'Failed','error');
+}
+
+async function enable2FA() {
+  const s = Alpine.store('vp').security;
+  if (!s.twofa.code||s.twofa.code.length<6) { s.twofa.err='Enter the 6-digit code'; return; }
+  s.twofa.enabling=true; s.twofa.err='';
+  const r = await post('/api/auth/2fa/enable', {code:s.twofa.code});
+  s.twofa.enabling=false;
+  if (r.ok) { s.twofa.enabled=true; s.twofa.secret=''; s.twofa.qr_url=''; s.twofa.code=''; toast('2FA enabled','success'); }
+  else { s.twofa.err=r.error||'Invalid code'; }
+}
+
+async function disable2FA() {
+  const s = Alpine.store('vp').security;
+  if (!s.twofa.disablePw) { toast('Enter your password','error'); return; }
+  s.twofa.disabling=true;
+  const r = await post('/api/auth/2fa/disable', {password:s.twofa.disablePw});
+  s.twofa.disabling=false;
+  if (r.ok) { s.twofa.enabled=false; s.twofa.disableConfirm=false; s.twofa.disablePw=''; toast('2FA disabled','success'); }
+  else toast(r.error||'Failed','error');
+}
+
+async function saveIPAllowlist() {
+  const s = Alpine.store('vp').security;
+  const ips = s.allowlistText.split('\n').map(x=>x.trim()).filter(Boolean);
+  const r = await post('/api/auth/security-settings', {allowed_ips:ips});
+  toast(r.ok?'Allowlist saved':'Failed', r.ok?'success':'error');
+}
+
+async function saveSessionTimeout() {
+  const s = Alpine.store('vp').security;
+  const r = await post('/api/auth/security-settings', {session_hours:parseInt(s.sessionHours)||24});
+  toast(r.ok?'Session timeout saved':'Failed', r.ok?'success':'error');
+}
+
+async function changePanelPassword() {
+  const s = Alpine.store('vp').security;
+  if (s.pwForm.newpw!==s.pwForm.confirm) { toast('Passwords do not match','error'); return; }
+  if (s.pwForm.newpw.length<8) { toast('Minimum 8 characters','error'); return; }
+  const r = await post('/api/settings/password', {current_password:s.pwForm.current, new_password:s.pwForm.newpw});
+  if (r.ok) { toast('Password changed','success'); s.pwForm={current:'',newpw:'',confirm:''}; }
+  else toast(r.error||'Failed','error');
 }
 
 // --- Import Website wizard — GLOBAL functions (not scoped to any Page()).
@@ -567,11 +659,18 @@ function websitesPage() {
     async init() {
       const wr=await get('/api/websites/webroot').catch(()=>({ok:false}));
       if(wr.ok) this.webroot=wr.path;
+      await this.refreshPhpVersions();
+      await this.load();
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="websites") { this.load(); this.refreshPhpVersions(); } });
+    },
+    async refreshPhpVersions() {
       const pv=await get('/api/websites/php-versions').catch(()=>({ok:false}));
       if(pv.ok) this.phpVersions=pv.versions||[];
-      if(this.phpVersions.length) this.form.php=this.phpVersions[0].version;
-      await this.load();
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="websites") this.load(); });
+      if(this.phpVersions.length && !this.phpVersions.some(v=>v.version===this.form.php)) this.form.php=this.phpVersions[0].version;
+    },
+    async openAddSite() {
+      await this.refreshPhpVersions();
+      this.showAdd = true;
     },
     async load() { const r=await get('/api/websites'); if(r.ok) this.sites=r.sites; },
     async create() {
@@ -609,6 +708,7 @@ function websitesPage() {
         maintEnabled:false,maintMessage:'We are performing scheduled maintenance.',
         sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',
       };
+      this.refreshPhpVersions();
       this.loadDrawerTab();
     },
     async loadDrawerTab() {
@@ -654,7 +754,7 @@ function websitesPage() {
       const d = this.drawer;
       if (!d.site?.domain) return;
       d.diskUsage.loading = true;
-      const r = await get('/api/websites/'+d.site.domain+'/disk-usage');
+      const r = await get('/api/websites/'+d.site.domain+'/disk-usage').catch(()=>({ok:false}));
       if (r.ok) {
         d.diskUsage = {loading:false, size_human:r.size_human, size_bytes:r.size_bytes,
                        file_count:r.file_count, dir_count:r.dir_count};
@@ -812,9 +912,8 @@ function wpPage() {
     },
     async init() {
       await this.load();
-      document.addEventListener('vortex-logged-in', () => { this.init(); 
+      document.addEventListener('vortex-logged-in', () => { this.init(); });
       window.addEventListener("vp:page", (e) => { if(e.detail==="wp") this.load(); });
-    });
     },
     async load() {
       this.loading = true;
@@ -979,6 +1078,8 @@ function wpPage() {
       const rand = () => Math.random().toString(36).substring(2,7);
       this.installForm.admin_user  = 'admin_' + rand();
       this.installForm.table_prefix = 'wp_' + rand() + '_';
+      // Refresh PHP/DB/webserver options in case something was installed since this page last loaded
+      await this.load();
       // Fetch WP versions
       const r = await get('/api/wp/wp-versions');
       if (r.ok) this.wpVersions = r.versions;
@@ -1036,9 +1137,8 @@ function databasesPage() {
     get isPg(){ return this.activeEngine==='postgresql'; },
     async init(){
       await this.load();
-      document.addEventListener('vortex-logged-in', () => { this.init(); 
+      document.addEventListener('vortex-logged-in', () => { this.init(); });
       window.addEventListener("vp:page", (e) => { if(e.detail==="databases") this.load(); });
-    });
       // Listen for modal submit event from global portal
       window.addEventListener('vp-submit-nodejs-add', async () => {
         const s = Alpine.store('vp').nodeAdd;
@@ -3116,7 +3216,6 @@ function ftpPage() {
 // --- SETTINGS -------------------------------------------------------------------
 function settingsPage() {
   return {
-    stab: 'none',  // 'none' = card grid visible, 'security' = security sub-section
     panelVersion: 'v3.2.0',
     cfg: {panel_name:'VortexPanel', port:8888, ssl_enabled:false, auto_update:true, timezone:'UTC', panel_domain:'', security_path:''},
     system: {hostname:'', os:'', kernel:'', cpu:'', ip:'', uptime:'', timezone:'UTC', server_time:''},
@@ -3124,39 +3223,24 @@ function settingsPage() {
     sslDomain: '',
     newPort: '',
     newHostname: '',
-    sessionHours: 24,
     scanPath: '/www/wwwroot',
     scanPaths: ['/www/wwwroot'],
     scanner: {loading:false, done:false, scanned:0, total:0, critical:0, high:0, medium:0, findings:[]},
-    pwForm: {current:'', newpw:'', confirm:''},
-    allowlistText: '',
-    twofa: {
-      enabled:false, secret:'', qr_url:'', code:'', err:'',
-      setupLoading:false, enabling:false,
-      disableConfirm:false, disablePw:'', disabling:false,
-    },
     aiConfig: {enabled:true, api_key:'', base_url:'https://neoncodex.io/api/v1', model:'neoncodex-default', max_tokens:2048},
     aiModels: [], showApiKey: false,
     aiTesting: false, aiTestResult: '', aiTestOk: false,
-    auditLog: [], auditLoading: false,
 
     async init() {
       await this.loadSettings();
-      await this.load2faStatus();
-      await this.loadAuditLog();
+      const s = Alpine.store('vp').security;
+      const r2 = await get('/api/auth/2fa/status').catch(()=>({ok:false}));
+      if (r2.ok) s.twofa.enabled = r2.enabled;
       const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
-      if (sc.ok) { this.allowlistText=(sc.allowed_ips||[]).join('\n'); this.sessionHours=sc.session_hours||24; }
+      if (sc.ok) { s.allowlistText=(sc.allowed_ips||[]).join('\n'); s.sessionHours=sc.session_hours||24; }
       const sp = await get('/api/settings/webshell-scan/paths').catch(()=>({ok:false}));
       if (sp.ok) this.scanPaths = sp.paths||['/www/wwwroot'];
       if (this.scanPaths.length) this.scanPath = this.scanPaths[0];
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); this.loadAuditLog(); } });
-    },
-
-    async loadAuditLog() {
-      this.auditLoading = true;
-      const r = await get('/api/auth/audit-log').catch(()=>({ok:false}));
-      if (r.ok) this.auditLog = r.entries || [];
-      this.auditLoading = false;
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); } });
     },
 
     async loadSettings() {
@@ -3168,20 +3252,6 @@ function settingsPage() {
       this.newPort = String(this.cfg.port||8888);
       const uv = await get('/api/update/version').catch(()=>({ok:false}));
       if (uv.ok) this.panelVersion = uv.version;
-    },
-
-    async load2faStatus() {
-      const r = await get('/api/auth/2fa/status').catch(()=>({ok:false}));
-      if (r.ok) this.twofa.enabled = r.enabled;
-    },
-
-    async loadSecurityTab() {
-      this.stab = this.stab==='security' ? 'none' : 'security';
-      if (this.stab==='security') {
-        await this.load2faStatus();
-        const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
-        if (sc.ok) { this.allowlistText=(sc.allowed_ips||[]).join('\n'); this.sessionHours=sc.session_hours||24; }
-      }
     },
 
     async saveSettings() {
@@ -3314,54 +3384,6 @@ function settingsPage() {
         else if (r.total>0) toast(`${r.total} suspicious files found`,'warning');
         else toast(`✓ Clean — ${r.scanned} files scanned`,'success');
       } else toast(r.error||'Scan failed','error');
-    },
-
-    // --- 2FA --------------------------------------------------------------------
-    async setup2FA() {
-      this.twofa.setupLoading=true;
-      const r = await post('/api/auth/2fa/setup', {});
-      this.twofa.setupLoading=false;
-      if (r.ok) { this.twofa.secret=r.secret; this.twofa.qr_url=r.qr_url; this.twofa.code=''; this.twofa.err=''; }
-      else toast(r.error||'Failed','error');
-    },
-
-    async enable2FA() {
-      if (!this.twofa.code||this.twofa.code.length<6) { this.twofa.err='Enter the 6-digit code'; return; }
-      this.twofa.enabling=true; this.twofa.err='';
-      const r = await post('/api/auth/2fa/enable', {code:this.twofa.code});
-      this.twofa.enabling=false;
-      if (r.ok) { this.twofa.enabled=true; this.twofa.secret=''; this.twofa.qr_url=''; this.twofa.code=''; toast('2FA enabled','success'); }
-      else { this.twofa.err=r.error||'Invalid code'; }
-    },
-
-    async disable2FA() {
-      if (!this.twofa.disablePw) { toast('Enter your password','error'); return; }
-      this.twofa.disabling=true;
-      const r = await post('/api/auth/2fa/disable', {password:this.twofa.disablePw});
-      this.twofa.disabling=false;
-      if (r.ok) { this.twofa.enabled=false; this.twofa.disableConfirm=false; this.twofa.disablePw=''; toast('2FA disabled','success'); }
-      else toast(r.error||'Failed','error');
-    },
-
-    // --- Allowlist + session ----------------------------------------------------
-    async saveAllowlist() {
-      const ips = this.allowlistText.split('\n').map(s=>s.trim()).filter(Boolean);
-      const r = await post('/api/auth/security-settings', {allowed_ips:ips});
-      toast(r.ok?'Allowlist saved':'Failed', r.ok?'success':'error');
-    },
-
-    async saveSessionTimeout() {
-      const r = await post('/api/auth/security-settings', {session_hours:parseInt(this.sessionHours)||24});
-      toast(r.ok?'Session timeout saved':'Failed', r.ok?'success':'error');
-    },
-
-    // --- Password ---------------------------------------------------------------
-    async changePw() {
-      if (this.pwForm.newpw!==this.pwForm.confirm) { toast('Passwords do not match','error'); return; }
-      if (this.pwForm.newpw.length<8) { toast('Minimum 8 characters','error'); return; }
-      const r = await post('/api/settings/password', {current_password:this.pwForm.current, new_password:this.pwForm.newpw});
-      if (r.ok) { toast('Password changed','success'); this.pwForm={current:'',newpw:'',confirm:''}; }
-      else toast(r.error||'Failed','error');
     },
 
     // --- AI ---------------------------------------------------------------------
@@ -4777,9 +4799,8 @@ function nodeProjectsPage() {
 
     async init(){
       await this.load();
-      document.addEventListener('vortex-logged-in', ()=>{ this.init(); 
+      document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
       window.addEventListener("vp:page", (e) => { if(e.detail==="node-projects") this.load(); });
-    });
     },
 
     async load(){

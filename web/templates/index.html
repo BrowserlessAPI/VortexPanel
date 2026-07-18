@@ -303,7 +303,7 @@
           <div><div class="page-title">Websites</div><div class="page-sub">Manage Nginx virtual hosts</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" @click="openImportWizard()">Import Website</button>
-            <button class="btn btn-primary" @click="showAdd=true">+ Add Site</button>
+            <button class="btn btn-primary" @click="openAddSite()">+ Add Site</button>
           </div>
         </div>
         <div class="card" style="padding:0;overflow:hidden">
@@ -1585,18 +1585,27 @@
                 <div class="form-group">
                   <label class="form-label">PHP version</label>
                   <select class="form-input" x-model="installForm.php_version">
-                    <template x-for="v in (phpVersions.length?phpVersions:['8.5','8.4','8.3','8.2','8.1','8.0','7.4'])" :key="v">
+                    <template x-for="v in phpVersions" :key="v">
                       <option :value="v" x-text="'PHP '+v+(parseFloat(v)>=8.0?' ✓ recommended':' legacy')"></option>
                     </template>
                   </select>
+                  <div x-show="!phpVersions.length"
+                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:#92400e">
+                    ⚠ No PHP version is installed on this server.
+                    Install one first from the <strong>App Store</strong>, then return here to install WordPress.
+                  </div>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Database engine</label>
                   <select class="form-input" x-model="installForm.db_engine">
-                    <template x-for="e in (dbEngines.length?dbEngines:['mysql','mariadb'])" :key="e">
-                      <option :value="e" x-text="e==='mariadb'?'MariaDB':'MySQL'"></option>
-                    </template>
+                    <option value="mysql" x-text="dbEngines.includes('mysql')?'MySQL ✓ installed':'MySQL (not installed)'"></option>
+                    <option value="mariadb" x-text="dbEngines.includes('mariadb')?'MariaDB ✓ installed':'MariaDB (not installed)'"></option>
                   </select>
+                  <div x-show="!dbEngines.includes(installForm.db_engine)"
+                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:#92400e">
+                    ⚠ <strong x-text="installForm.db_engine==='mariadb'?'MariaDB':'MySQL'"></strong> is not installed on this server.
+                    Install it first from the <strong>App Store</strong>, then return here to install WordPress.
+                  </div>
                 </div>
               </div>
               <div class="form-row form-row-2">
@@ -1685,10 +1694,12 @@
               </div>
               <div style="display:flex;gap:8px">
                 <button class="btn btn-ghost" @click="showInstall=false">Cancel</button>
-                <button class="btn btn-primary" :disabled="installing || !installedWebservers.includes(installForm.webserver)" @click="runInstall()">
+                <button class="btn btn-primary" :disabled="installing || !phpVersions.length || !installedWebservers.includes(installForm.webserver) || !dbEngines.includes(installForm.db_engine)" @click="runInstall()">
                   <span x-show="installing">Installing…</span>
-                  <span x-show="!installing && !installedWebservers.includes(installForm.webserver)">Install webserver first</span>
-                  <span x-show="!installing && installedWebservers.includes(installForm.webserver)">Install WordPress</span>
+                  <span x-show="!installing && !phpVersions.length">Install PHP first</span>
+                  <span x-show="!installing && phpVersions.length && !installedWebservers.includes(installForm.webserver)">Install webserver first</span>
+                  <span x-show="!installing && phpVersions.length && installedWebservers.includes(installForm.webserver) && !dbEngines.includes(installForm.db_engine)">Install a database first</span>
+                  <span x-show="!installing && phpVersions.length && installedWebservers.includes(installForm.webserver) && dbEngines.includes(installForm.db_engine)">Install WordPress</span>
                 </button>
               </div>
             </div>
@@ -7231,8 +7242,8 @@
                 <div style="font-size:11px;color:var(--text-muted)">Requires verification code on login</div>
               </div>
               <div style="display:flex;align-items:center;gap:8px">
-                <span :class="twofa.enabled?'badge badge-green':'badge badge-gray'" style="font-size:10px" x-text="twofa.enabled?'Enabled':'Disabled'"></span>
-                <button class="btn btn-ghost btn-xs" @click="loadSecurityTab()">Modify</button>
+                <span :class="$store.vp.security.twofa.enabled?'badge badge-green':'badge badge-gray'" style="font-size:10px" x-text="$store.vp.security.twofa.enabled?'Enabled':'Disabled'"></span>
+                <button class="btn btn-ghost btn-xs" @click="openSecurityModal('2FA')">Modify</button>
               </div>
             </div>
             <!-- Password row -->
@@ -7241,15 +7252,23 @@
                 <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Panel password</div>
                 <div style="font-size:11px;color:var(--text-muted)">Argon2id hashed (OWASP recommended)</div>
               </div>
-              <button class="btn btn-ghost btn-xs" @click="loadSecurityTab()">Modify</button>
+              <button class="btn btn-ghost btn-xs" @click="$store.vp.security.showPw=true">Modify</button>
             </div>
             <!-- IP allowlist row -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
               <div>
                 <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Authorized IP</div>
-                <div style="font-size:11px;color:var(--text-muted)" x-text="allowlistText?'Restricted to: '+allowlistText.split('\n').filter(Boolean).slice(0,2).join(', ')+(allowlistText.split('\n').filter(Boolean).length>2?' +more':''):'All IPs allowed'"></div>
+                <div style="font-size:11px;color:var(--text-muted)" x-text="$store.vp.security.allowlistText?'Restricted to: '+$store.vp.security.allowlistText.split('\n').filter(Boolean).slice(0,2).join(', ')+($store.vp.security.allowlistText.split('\n').filter(Boolean).length>2?' +more':''):'All IPs allowed'"></div>
               </div>
-              <button class="btn btn-ghost btn-xs" @click="loadSecurityTab()">Modify</button>
+              <button class="btn btn-ghost btn-xs" @click="openSecurityModal('IP')">Modify</button>
+            </div>
+            <!-- Audit log row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div>
+                <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Login Audit Log</div>
+                <div style="font-size:11px;color:var(--text-muted)">Last 200 login attempts</div>
+              </div>
+              <button class="btn btn-ghost btn-xs" @click="openSecurityModal('Audit')">View</button>
             </div>
             <!-- Session timeout -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
@@ -7258,7 +7277,7 @@
                 <div style="font-size:11px;color:var(--text-muted)">Auto-logout after inactivity</div>
               </div>
               <div style="display:flex;gap:5px;align-items:center">
-                <input class="form-input" x-model="sessionHours" type="number" min="1" max="720" style="width:70px;text-align:center;font-size:12px" />
+                <input class="form-input" x-model="$store.vp.security.sessionHours" type="number" min="1" max="720" style="width:70px;text-align:center;font-size:12px" />
                 <span style="font-size:11px;color:var(--text-muted)">hours</span>
                 <button class="btn btn-primary btn-xs" @click="saveSessionTimeout()">Save</button>
               </div>
@@ -7401,103 +7420,6 @@
 
         </div><!-- card grid -->
 
-        <!-- -- Security sub-section (unchanged, shown when stab=security) -- -->
-        <div x-show="stab==='security'" style="margin-top:16px">
-          <div style="font-size:14px;font-weight:700;color:var(--text-primary);margin-bottom:12px">🔐 Security Settings</div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
-
-            <!-- 2FA card -->
-            <div class="card">
-              <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:10px">Two-Factor Authentication (2FA)</div>
-              <div x-show="!twofa.enabled">
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Add TOTP verification on every login (Google Authenticator, Authy, etc).</div>
-                <div x-show="!twofa.secret"><button class="btn btn-primary btn-sm" :disabled="twofa.setupLoading" @click="setup2FA()"><span x-show="twofa.setupLoading">Generating…</span><span x-show="!twofa.setupLoading">Enable 2FA</span></button></div>
-                <div x-show="twofa.secret">
-                  <div style="font-size:12px;font-weight:600;margin-bottom:8px">Scan QR code in your authenticator app:</div>
-                  <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
-                    <img :src="twofa.qr_url" style="width:140px;height:140px;border:2px solid var(--border);border-radius:var(--radius);background:#fff" />
-                    <div>
-                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Manual key:</div>
-                      <div style="font-family:var(--font-mono);font-size:11px;font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;word-break:break-all" x-text="twofa.secret"></div>
-                    </div>
-                  </div>
-                  <div style="display:flex;gap:6px;align-items:center">
-                    <input class="form-input" x-model="twofa.code" type="text" inputmode="numeric" maxlength="6" placeholder="000000" style="width:110px;font-size:18px;letter-spacing:4px;text-align:center;font-family:var(--font-mono)" @keydown.enter="enable2FA()" />
-                    <button class="btn btn-primary btn-sm" :disabled="twofa.enabling" @click="enable2FA()"><span x-show="twofa.enabling">Verifying…</span><span x-show="!twofa.enabling">Verify &amp; Enable</span></button>
-                    <button class="btn btn-ghost btn-sm" @click="twofa.secret='';twofa.code=''">Cancel</button>
-                  </div>
-                  <div x-show="twofa.err" style="margin-top:6px;font-size:11px;color:var(--red)" x-text="twofa.err"></div>
-                </div>
-              </div>
-              <div x-show="twofa.enabled">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><span class="badge badge-green">● 2FA Active</span><span style="font-size:12px;color:var(--text-muted)">Login requires verification code</span></div>
-                <div x-show="!twofa.disableConfirm"><button class="btn btn-danger btn-sm" @click="twofa.disableConfirm=true">Disable 2FA</button></div>
-                <div x-show="twofa.disableConfirm">
-                  <div style="font-size:12px;color:var(--red);margin-bottom:6px">⚠ Enter your password to confirm:</div>
-                  <div style="display:flex;gap:6px">
-                    <input class="form-input" x-model="twofa.disablePw" type="password" placeholder="Current password" style="flex:1" />
-                    <button class="btn btn-danger btn-sm" :disabled="twofa.disabling" @click="disable2FA()"><span x-show="twofa.disabling">Disabling…</span><span x-show="!twofa.disabling">Confirm</span></button>
-                    <button class="btn btn-ghost btn-sm" @click="twofa.disableConfirm=false;twofa.disablePw=''">Cancel</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Audit Log card -->
-            <div class="card" style="grid-column: span 2">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                <div>
-                  <div style="font-size:12px;font-weight:700;color:var(--text-primary)">Login Audit Log</div>
-                  <div style="font-size:11px;color:var(--text-muted)">Last 200 login attempts — success, failure, IP, and 2FA events</div>
-                </div>
-                <button class="btn btn-ghost btn-sm" @click="loadAuditLog()">Refresh</button>
-              </div>
-              <div x-show="auditLoading" style="padding:20px 0">
-                <div class="skeleton skeleton-row"></div>
-                <div class="skeleton skeleton-row"></div>
-                <div class="skeleton skeleton-row"></div>
-              </div>
-              <div x-show="!auditLoading && auditLog.length===0" class="empty-state">
-                <div class="empty-icon">📋</div><div class="empty-text">No audit entries yet</div>
-              </div>
-              <div x-show="!auditLoading && auditLog.length>0" style="max-height:320px;overflow-y:auto">
-                <table class="data-table" style="font-size:11px">
-                  <thead><tr><th>Time</th><th>Status</th><th>IP</th><th>User</th><th>Note</th></tr></thead>
-                  <tbody>
-                    <template x-for="(e,i) in auditLog" :key="i">
-                      <tr>
-                        <td style="font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap" x-text="e.time"></td>
-                        <td><span :class="'badge '+(e.status==='SUCCESS'?'badge-green':'badge-red')" style="font-size:9px" x-text="e.status"></span></td>
-                        <td style="font-family:var(--font-mono)" x-text="e.ip"></td>
-                        <td x-text="e.username"></td>
-                        <td style="color:var(--text-muted)" x-text="e.note||'—'"></td>
-                      </tr>
-                    </template>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <!-- Change password card -->
-            <div class="card">
-              <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:10px">Change Panel Password</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Hashed with Argon2id (OWASP #1 recommended). Min 8 characters.</div>
-              <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="pwForm.current"></div>
-              <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwForm.newpw"></div>
-              <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="pwForm.confirm"></div>
-              <button class="btn btn-primary" @click="changePw()">Change Password</button>
-            </div>
-
-            <!-- IP allowlist card -->
-            <div class="card">
-              <div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:6px">IP Access Allowlist</div>
-              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">One IP or prefix per line. <code>127.0.0.1</code> always allowed. Empty = allow all.</div>
-              <textarea class="form-input" x-model="allowlistText" rows="4" style="font-family:var(--font-mono);font-size:12px;resize:vertical" placeholder="192.168.1.100&#10;10.0.0.&#10;Leave empty to allow all IPs"></textarea>
-              <button class="btn btn-primary btn-sm" style="margin-top:8px" @click="saveAllowlist()">Save allowlist</button>
-            </div>
-          </div>
-        </div>
-
       </div>
 
         </div>
@@ -7515,6 +7437,125 @@
      All modals live here — OUTSIDE page-content's overflow-y:auto,
      so position:fixed works correctly relative to the viewport.
 ═══════════════════════════════════════════════════════════════════════════ -->
+
+        <!-- ── Security floating modals (2FA / Password / IP Allowlist / Audit Log) ── -->
+        <!-- 2FA Modal -->
+        <div x-data="{}" x-show="$store.vp.security.show2FA" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.show2FA=false" @keydown.escape.window="$store.vp.security.show2FA=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:480px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+              <div style="font-weight:600;font-size:14px">Two-Factor Authentication (2FA)</div>
+              <button class="modal-close" @click="$store.vp.security.show2FA=false">×</button>
+            </div>
+            <div style="padding:18px">
+              <div x-show="!$store.vp.security.twofa.enabled">
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Add TOTP verification on every login (Google Authenticator, Authy, etc).</div>
+                <div x-show="!$store.vp.security.twofa.secret"><button class="btn btn-primary btn-sm" :disabled="$store.vp.security.twofa.setupLoading" @click="setup2FA()"><span x-show="$store.vp.security.twofa.setupLoading">Generating…</span><span x-show="!$store.vp.security.twofa.setupLoading">Enable 2FA</span></button></div>
+                <div x-show="$store.vp.security.twofa.secret">
+                  <div style="font-size:12px;font-weight:600;margin-bottom:8px">Scan QR code in your authenticator app:</div>
+                  <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
+                    <img :src="$store.vp.security.twofa.qr_url" style="width:140px;height:140px;border:2px solid var(--border);border-radius:var(--radius);background:#fff" />
+                    <div>
+                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Manual key:</div>
+                      <div style="font-family:var(--font-mono);font-size:11px;font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;word-break:break-all" x-text="$store.vp.security.twofa.secret"></div>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <input class="form-input" x-model="$store.vp.security.twofa.code" type="text" inputmode="numeric" maxlength="6" placeholder="000000" style="width:110px;font-size:18px;letter-spacing:4px;text-align:center;font-family:var(--font-mono)" @keydown.enter="enable2FA()" />
+                    <button class="btn btn-primary btn-sm" :disabled="$store.vp.security.twofa.enabling" @click="enable2FA()"><span x-show="$store.vp.security.twofa.enabling">Verifying…</span><span x-show="!$store.vp.security.twofa.enabling">Verify &amp; Enable</span></button>
+                    <button class="btn btn-ghost btn-sm" @click="$store.vp.security.twofa.secret='';$store.vp.security.twofa.code=''">Cancel</button>
+                  </div>
+                  <div x-show="$store.vp.security.twofa.err" style="margin-top:6px;font-size:11px;color:var(--red)" x-text="$store.vp.security.twofa.err"></div>
+                </div>
+              </div>
+              <div x-show="$store.vp.security.twofa.enabled">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><span class="badge badge-green">● 2FA Active</span><span style="font-size:12px;color:var(--text-muted)">Login requires verification code</span></div>
+                <div x-show="!$store.vp.security.twofa.disableConfirm"><button class="btn btn-danger btn-sm" @click="$store.vp.security.twofa.disableConfirm=true">Disable 2FA</button></div>
+                <div x-show="$store.vp.security.twofa.disableConfirm">
+                  <div style="font-size:12px;color:var(--red);margin-bottom:6px">⚠ Enter your password to confirm:</div>
+                  <div style="display:flex;gap:6px">
+                    <input class="form-input" x-model="$store.vp.security.twofa.disablePw" type="password" placeholder="Current password" style="flex:1" />
+                    <button class="btn btn-danger btn-sm" :disabled="$store.vp.security.twofa.disabling" @click="disable2FA()"><span x-show="$store.vp.security.twofa.disabling">Disabling…</span><span x-show="!$store.vp.security.twofa.disabling">Confirm</span></button>
+                    <button class="btn btn-ghost btn-sm" @click="$store.vp.security.twofa.disableConfirm=false;$store.vp.security.twofa.disablePw=''">Cancel</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Change Password Modal -->
+        <div x-data="{}" x-show="$store.vp.security.showPw" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showPw=false" @keydown.escape.window="$store.vp.security.showPw=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:420px;max-width:92vw;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+              <div style="font-weight:600;font-size:14px">Change Panel Password</div>
+              <button class="modal-close" @click="$store.vp.security.showPw=false">×</button>
+            </div>
+            <div style="padding:18px">
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Hashed with Argon2id (OWASP #1 recommended). Min 8 characters.</div>
+              <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="pwForm.current"></div>
+              <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwForm.newpw"></div>
+              <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="pwForm.confirm"></div>
+              <button class="btn btn-primary" @click="changePanelPassword()">Change Password</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- IP Allowlist Modal -->
+        <div x-data="{}" x-show="$store.vp.security.showIP" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showIP=false" @keydown.escape.window="$store.vp.security.showIP=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:460px;max-width:92vw;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+              <div style="font-weight:600;font-size:14px">IP Access Allowlist</div>
+              <button class="modal-close" @click="$store.vp.security.showIP=false">×</button>
+            </div>
+            <div style="padding:18px">
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">One IP or prefix per line. <code>127.0.0.1</code> always allowed. Empty = allow all.</div>
+              <textarea class="form-input" x-model="$store.vp.security.allowlistText" rows="4" style="font-family:var(--font-mono);font-size:12px;resize:vertical" placeholder="192.168.1.100&#10;10.0.0.&#10;Leave empty to allow all IPs"></textarea>
+              <button class="btn btn-primary btn-sm" style="margin-top:8px" @click="saveIPAllowlist()">Save allowlist</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Login Audit Log Modal -->
+        <div x-data="{}" x-show="$store.vp.security.showAudit" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showAudit=false" @keydown.escape.window="$store.vp.security.showAudit=false">
+          <div style="background:var(--bg-card);border-radius:12px;width:680px;max-width:94vw;max-height:88vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+              <div>
+                <div style="font-weight:600;font-size:14px">Login Audit Log</div>
+                <div style="font-size:11px;color:var(--text-muted)">Last 200 login attempts — success, failure, IP, and 2FA events</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button class="btn btn-ghost btn-sm" @click="loadLoginAuditLog()">Refresh</button>
+                <button class="modal-close" @click="$store.vp.security.showAudit=false">×</button>
+              </div>
+            </div>
+            <div style="padding:18px">
+              <div x-show="$store.vp.security.auditLoading" style="padding:20px 0">
+                <div class="skeleton skeleton-row"></div>
+                <div class="skeleton skeleton-row"></div>
+                <div class="skeleton skeleton-row"></div>
+              </div>
+              <div x-show="!$store.vp.security.auditLoading && $store.vp.security.auditLog.length===0" class="empty-state">
+                <div class="empty-icon">📋</div><div class="empty-text">No audit entries yet</div>
+              </div>
+              <div x-show="!$store.vp.security.auditLoading && $store.vp.security.auditLog.length>0" style="max-height:400px;overflow-y:auto">
+                <table class="data-table" style="font-size:11px">
+                  <thead><tr><th>Time</th><th>Status</th><th>IP</th><th>User</th><th>Note</th></tr></thead>
+                  <tbody>
+                    <template x-for="(e,i) in $store.vp.security.auditLog" :key="i">
+                      <tr>
+                        <td style="font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap" x-text="e.time"></td>
+                        <td><span :class="'badge '+(e.status==='SUCCESS'?'badge-green':'badge-red')" style="font-size:9px" x-text="e.status"></span></td>
+                        <td style="font-family:var(--font-mono)" x-text="e.ip"></td>
+                        <td x-text="e.username"></td>
+                        <td style="color:var(--text-muted)" x-text="e.note||'—'"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
 
 <!-- ── FILE PICKER ─────────────────────────────────────────────────────── -->
 <div x-data="{}" x-show="$store.vp.picker.show"
