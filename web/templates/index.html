@@ -7232,7 +7232,7 @@
               </div>
               <div style="display:flex;align-items:center;gap:8px">
                 <span :class="twofa.enabled?'badge badge-green':'badge badge-gray'" style="font-size:10px" x-text="twofa.enabled?'Enabled':'Disabled'"></span>
-                <button class="btn btn-ghost btn-xs" @click="stab='security';loadSecurityTab()">Modify</button>
+                <button class="btn btn-ghost btn-xs" @click="loadSecurityTab()">Modify</button>
               </div>
             </div>
             <!-- Password row -->
@@ -7241,7 +7241,7 @@
                 <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Panel password</div>
                 <div style="font-size:11px;color:var(--text-muted)">Argon2id hashed (OWASP recommended)</div>
               </div>
-              <button class="btn btn-ghost btn-xs" @click="stab='security'">Modify</button>
+              <button class="btn btn-ghost btn-xs" @click="loadSecurityTab()">Modify</button>
             </div>
             <!-- IP allowlist row -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
@@ -7249,7 +7249,7 @@
                 <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Authorized IP</div>
                 <div style="font-size:11px;color:var(--text-muted)" x-text="allowlistText?'Restricted to: '+allowlistText.split('\n').filter(Boolean).slice(0,2).join(', ')+(allowlistText.split('\n').filter(Boolean).length>2?' +more':''):'All IPs allowed'"></div>
               </div>
-              <button class="btn btn-ghost btn-xs" @click="stab='security';loadSecurityTab()">Modify</button>
+              <button class="btn btn-ghost btn-xs" @click="loadSecurityTab()">Modify</button>
             </div>
             <!-- Session timeout -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">

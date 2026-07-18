@@ -126,7 +126,7 @@ def sh(c, t=10):
         return (r.stdout + r.stderr).strip()
     except: return ''
 
-def get_version(mod_id):
+def get_version(mod_id, ver=None):
     cmds = {
         'nginx':        "nginx -v 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'apache2':      "apache2 -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || httpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
@@ -135,10 +135,21 @@ def get_version(mod_id):
         'mysql':        "mysqld --version 2>/dev/null | grep -iv mariadb | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'mariadb':      "mysqld --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || mariadbd --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'mongodb':      "mongod --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'postgresql':   "psql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+' | head -1",
-        'php':          "for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if which php$v >/dev/null 2>&1; then php$v --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1; break; fi; done",
         'redis':        "redis-server --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'nodejs':       "node --version 2>/dev/null | tr -d 'v'",
+        # PHP and PostgreSQL both support multiple versions installed side by
+        # side. A fixed priority list here (checking 8.5 before 7.4, or just
+        # trusting whatever `psql`/`php` resolves to via update-alternatives)
+        # is exactly what caused a real, confirmed bug: installing PHP 7.4
+        # on a system that already had 8.5 reported back "Version: 8.5.8" --
+        # the 7.4 that was ACTUALLY just installed was never even checked.
+        # When the caller knows which version was just requested, check that
+        # one specifically; only fall back to the priority list when it
+        # isn't known (e.g. refreshing the general module list).
+        'php':          (f"php{ver} --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1" if ver else
+                          "for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if which php$v >/dev/null 2>&1; then php$v --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1; break; fi; done"),
+        'postgresql':   (f"psql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+' | head -1" if not ver else
+                          f"(psql -V 2>/dev/null | grep -q '{ver}' && psql --version | grep -oP '[0-9]+\\.[0-9]+' | head -1) || (which psql{ver} >/dev/null 2>&1 && echo {ver}) || (test -d /usr/lib/postgresql/{ver} && echo {ver})"),
         'python':       "python3 --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
         'docker':       "docker --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'composer':     "composer --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
@@ -207,8 +218,19 @@ fi''',
         ],
         'install_tpl':(
             'export DEBIAN_FRONTEND=noninteractive && '
+            # Same failure class already confirmed for ondrej/php: this PPA
+            # may not have a release for a very new Ubuntu codename yet, and
+            # add-apt-repository writes it to disk regardless of whether the
+            # following apt-get update ever succeeds -- silently poisoning
+            # every future apt-get update on the system, unrelated installs
+            # included, unless cleaned up here on failure.
             'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
-            'apt-get update -qq && '
+            'if ! apt-get update -qq 2>/tmp/vp_apache_repo_err.log; then '
+            '  echo "[VortexPanel] ondrej/apache2 has no release for {codename} yet -- removing it, using stock Ubuntu apache2 instead"; '
+            '  add-apt-repository --remove -y ppa:ondrej/apache2 2>/dev/null; '
+            '  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.list /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.sources 2>/dev/null; '
+            '  apt-get update -qq; '
+            'fi && '
             'apt-get install -y apache2={ver}.* 2>/dev/null || apt-get install -y apache2 && '
             'systemctl enable apache2 && systemctl start apache2'
         ),
@@ -232,7 +254,22 @@ systemctl enable lsws && systemctl start lsws''',
         'install':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed && \
 systemctl enable lsws && systemctl start lsws''',
-        'uninstall':'systemctl stop lsws 2>/dev/null; systemctl disable lsws 2>/dev/null; /usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; apt-get remove -y -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' openlitespeed 2>/dev/null; rm -rf /usr/local/lsws',
+        'uninstall':(
+            'systemctl stop lsws 2>/dev/null; systemctl disable lsws 2>/dev/null; '
+            '/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; '
+            "apt-get remove -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' openlitespeed 2>/dev/null; "
+            'rm -rf /usr/local/lsws; '
+            # LiteSpeed's own ls_repo.sh (downloaded from repo.litespeed.sh)
+            # writes the actual apt source file under a name that isn't
+            # documented/verifiable from here -- same leftover-repo class of
+            # bug just found and fixed for MariaDB (a stale repo definition
+            # surviving uninstall and interfering with later unrelated
+            # installs). Matching by content instead of guessing a filename:
+            'grep -l -i litespeed /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null | xargs -r rm -f; '
+            'find /etc/apt/sources.list.d/ -iname "*litespeed*" -delete 2>/dev/null; '
+            'rm -f /usr/share/keyrings/*litespeed*.gpg /etc/apt/trusted.gpg.d/*litespeed*.gpg 2>/dev/null; '
+            'apt-get update -qq 2>/dev/null; true'
+        ),
         'service':'lsws', 'manage':True,
     },
     # --- Databases -------------------------------------------------------------
@@ -297,13 +334,93 @@ systemctl enable lsws && systemctl start lsws''',
             {'label':'8.0.41 (LTS)',         'value':'8.0'},
         ],
         'install_tpl':(
+            # Hard guard, independent of the higher-level conflict check:
+            # MySQL and MariaDB share the same package namespace
+            # (mysql-common, mysql-client) and cannot coexist. Confirmed via
+            # a real failure: installing mysql-server while MariaDB was
+            # already active caused mysql-server's postinst script to fail
+            # with "configure-symlinks: No such file or directory" (it
+            # expects Ubuntu's own mysql-common, but MariaDB'"'"'s mysql-common
+            # package was already providing that path instead) -- dpkg
+            # returned an error, yet a stray mysqld binary from the
+            # otherwise-successful mysql-server-core package made the old
+            # "is it installed" check falsely report success. Refusing to
+            # even attempt this is far safer than relying on dpkg to fail
+            # loudly enough afterward.
+            # IMPORTANT: this checks whether MariaDB *packages* are
+            # present (dpkg -l), not whether the mariadb *service* is
+            # currently active -- confirmed via a second real failure
+            # that checking only systemctl is-active let this exact
+            # conflict through a second time, because MariaDB's packages
+            # (and its conflicting mysql-common) were still installed
+            # even though the service happened not to be running at
+            # that moment. The package-level conflict exists regardless
+            # of whether the service is running.
+            'if dpkg -l mariadb-server 2>/dev/null | grep -q "^ii" || dpkg -l mysql-common 2>/dev/null | grep -qi maria; then '
+            '  echo "[VortexPanel] MariaDB is already installed on this server (its packages own mysql-common/mysql-client). MySQL and MariaDB cannot coexist -- uninstall MariaDB first (App Store -> MariaDB -> Uninstall) if you want MySQL instead."; '
+            '  exit 1; '
+            'fi; '
+            # Third layer of the same defense: even with MariaDB genuinely
+            # uninstalled, its apt REPOSITORY DEFINITION can persist on a
+            # server that had MariaDB installed before this uninstall fix
+            # existed -- confirmed live: a leftover mariadb.sources file
+            # supplied a conflicting mysql-common during MySQL's dependency
+            # resolution even though mariadb-server itself was already gone,
+            # producing the exact same postinst crash through a different
+            # path. Removing any stale MariaDB repo file before touching
+            # apt at all closes that regardless of whether it happened via
+            # the uninstall bug or by any other means.
+            'rm -f /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources; '
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  apt-get install -y wget lsb-release gnupg && '
             '  wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && '
             '  DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
-            '  apt-get update -q && '
+            # Confirmed via a real failure: every codename attempt (questing,
+            # plucky, oracular, noble, jammy) failed with the SAME
+            # "EXPKEYSIG B7B3B788A8D3785C" error -- not a missing Release
+            # file, an EXPIRED signing key bundled in the old, pinned
+            # mysql-apt-config_0.8.33-1 package. Re-fetching that exact key
+            # ID from a keyserver gets whatever current version MySQL has
+            # published (keyservers reflect renewed expiry dates the stale
+            # bundled copy doesn'"'"'t have) -- this is the standard remediation
+            # for EXPKEYSIG, not a signature-verification bypass.
+            '  (gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C 2>/dev/null && '
+            '   gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > /etc/apt/trusted.gpg.d/mysql-refreshed.gpg 2>/dev/null) || true; '
+            # mysql-apt-config is a pinned, years-old package (0.8.33-1) that
+            # writes /etc/apt/sources.list.d/mysql.list based on whatever
+            # codename it detects -- confirmed via a real failure log:
+            # repo.mysql.com genuinely has no release for a brand-new Ubuntu
+            # codename yet (404 Not Found), and this stale file was left
+            # behind, poisoning every unrelated apt-get update afterward
+            # (it broke a completely separate PHP install in the same way
+            # already seen for ondrej/php, mariadb, postgresql, etc).
+            '  if ! apt-get update -q 2>/tmp/vp_mysql_repo_err.log; then '
+            # repo.mysql.com has no build for the running codename yet.
+            # Confirmed directly from repo.mysql.com's real directory listing
+            # (not a guess): questing, plucky, oracular, noble, jammy all
+            # genuinely exist there, with questing (25.10) the most recently
+            # updated -- matching what MySQL's own download page shows for
+            # both 8.4 and 9.7. Probing newest-first and using the first one
+            # whose Release file actually resolves.
+            '    RUNNING_CODENAME=$(lsb_release -sc); '
+            '    MYSQL_OK=0; '
+            '    for CN in questing plucky oracular noble jammy; do '
+            '      for f in /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; do '
+            '        [ -f "$f" ] && sed -i "s/${RUNNING_CODENAME}/${CN}/g; s/\\b\\(questing\\|plucky\\|oracular\\|noble\\|jammy\\)\\b/${CN}/g" "$f"; '
+            '      done; '
+            '      if apt-get update -q 2>/tmp/vp_mysql_${CN}_err.log; then '
+            '        echo "[VortexPanel] repo.mysql.com has no build for ${RUNNING_CODENAME} yet -- using its ${CN} build instead (closest available match)"; '
+            '        MYSQL_OK=1; break; '
+            '      fi; '
+            '    done; '
+            '    if [ "$MYSQL_OK" != "1" ]; then '
+            '      echo "[VortexPanel] repo.mysql.com has no usable build for any recent Ubuntu codename -- removing the broken repo entry, falling back to distro-packaged mysql-server (may not match the exact version requested)"; '
+            '      rm -f /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; '
+            '      apt-get update -q; '
+            '    fi; '
+            '  fi && '
             '  apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server && '
             '  systemctl enable --now mysql; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
@@ -336,11 +453,13 @@ systemctl enable lsws && systemctl start lsws''',
             {'label':'10.11.11 (LTS)',         'value':'10.11'},
         ],
         'install_tpl':'''curl -fLsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
-bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" && \
+bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" --skip-maxscale; \
+for f in /etc/apt/sources.list.d/*.sources; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then awk -v RS="" -v ORS="\n\n" \'tolower($0) !~ /maxscale/\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi; done; \
+for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then sed -i \'/[Mm]ax[Ss]cale/d\' "$f"; fi; done; \
 apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && \
 systemctl enable --now mariadb''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && systemctl enable mariadb && systemctl start mariadb',
-        'uninstall':'systemctl stop mariadb 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop mariadb 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'mariadb', 'manage':True,
     },
     {
@@ -363,7 +482,17 @@ systemctl enable --now mariadb''',
             '  echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] '
             'https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" '
             '  > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-            '  apt-get update -qq && '
+            # MongoDB has no fallback in Ubuntu'"'"'s own archive at all (it'"'"'s
+            # never distro-packaged), so unlike Redis there'"'"'s nothing to fall
+            # back to if repo.mongodb.org has no release for this codename yet
+            # -- but the broken repo file must still be cleaned up, or it
+            # poisons every unrelated apt-get update run afterward.
+            '  if ! apt-get update -qq 2>/tmp/vp_mongo_repo_err.log; then '
+            '    echo "[VortexPanel] repo.mongodb.org has no release for $(lsb_release -cs) yet -- removing the broken repo entry so it does not block other installs"; '
+            '    rm -f /etc/apt/sources.list.d/mongodb-org-{ver}.list; '
+            '    apt-get update -qq; '
+            '    exit 1; '
+            '  fi && '
             '  apt-get install -y mongodb-org && '
             '  systemctl enable mongod && systemctl start mongod; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
@@ -396,10 +525,21 @@ systemctl enable --now mariadb''',
             '  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
             '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
             '  rm -f /tmp/pg.asc && '
+            '  PG_CODENAME=$(lsb_release -cs) && '
             '  echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] '
-            'http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" '
+            'http://apt.postgresql.org/pub/repos/apt ${PG_CODENAME}-pgdg main" '
             '  > /etc/apt/sources.list.d/pgdg.list && '
-            '  apt-get update -qq && '
+            # Same failure class already confirmed elsewhere: PGDG is a much
+            # more actively-maintained project than the PPAs above, but a
+            # brand-new Ubuntu codename can still lag behind by days/weeks
+            # before PGDG publishes for it. Leaving a broken pgdg.list in
+            # place would poison every future apt-get update on the system.
+            '  if ! apt-get update -qq 2>/tmp/vp_pg_repo_err.log; then '
+            '    echo "[VortexPanel] apt.postgresql.org has no release for ${PG_CODENAME} yet -- removing pgdg.list so it does not block other installs"; '
+            '    rm -f /etc/apt/sources.list.d/pgdg.list; '
+            '    apt-get update -qq; '
+            '    exit 1; '
+            '  fi && '
             '  apt-get install -y postgresql-{ver} postgresql-contrib && '
             '  systemctl enable postgresql && systemctl start postgresql; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
@@ -610,7 +750,17 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
         'install_tpl':(
             'apt-get install -y software-properties-common && '
             'if [ "{ver}" = "9.20" ]; then '
-            '  add-apt-repository -y ppa:isc/bind && apt-get update -q && '
+            # Same failure class already confirmed for ondrej/php and
+            # ondrej/apache2: isc/bind may have no release for a very new
+            # Ubuntu codename, and add-apt-repository writes it regardless,
+            # poisoning every future apt-get update if left behind.
+            '  add-apt-repository -y ppa:isc/bind && '
+            '  if ! apt-get update -q 2>/tmp/vp_bind_repo_err.log; then '
+            '    echo "[VortexPanel] isc/bind has no release for {codename} yet -- removing it, using stock Ubuntu bind9 (9.18) instead"; '
+            '    add-apt-repository --remove -y ppa:isc/bind 2>/dev/null; '
+            '    rm -f /etc/apt/sources.list.d/isc-ubuntu-bind-*.list /etc/apt/sources.list.d/isc-ubuntu-bind-*.sources 2>/dev/null; '
+            '    apt-get update -q; '
+            '  fi; '
             '  apt-get install -y bind9 bind9utils bind9-doc; '
             'else '
             '  apt-get update -q && apt-get install -y bind9 bind9utils bind9-doc; '
@@ -657,7 +807,14 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
             {'label':'3.13 (Latest)',   'value':'3.13'},
         ],
         'install_tpl':'''apt-get install -y software-properties-common && \
-add-apt-repository -y ppa:deadsnakes/ppa && apt-get update -q && \
+add-apt-repository -y ppa:deadsnakes/ppa && \
+if ! apt-get update -q 2>/tmp/vp_python_repo_err.log; then \
+  echo "[VortexPanel] deadsnakes/ppa has no release for {codename} yet -- this specific Python version cannot be installed via PPA on this OS release. Removing the broken repo entry so it does not block other installs."; \
+  add-apt-repository --remove -y ppa:deadsnakes/ppa 2>/dev/null; \
+  rm -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.list /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.sources 2>/dev/null; \
+  apt-get update -q; \
+  exit 1; \
+fi && \
 apt-get install -y python{ver} python{ver}-venv python{ver}-dev && \
 curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true''',
         'install':'apt-get install -y python3 python3-pip python3-venv python3-dev',
@@ -720,7 +877,11 @@ apt-get autoremove -y 2>/dev/null || true''',
         ],
         'install_tpl':'''curl -fsSL https://packages.redis.io/gpg | rm -f /usr/share/keyrings/redis-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
-apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
+if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_redis_repo_err.log; then \
+  echo "[VortexPanel] packages.redis.io has no release for $(lsb_release -cs) yet -- removing it, using distro-packaged redis-server instead"; \
+  rm -f /etc/apt/sources.list.d/redis.list; \
+  apt-get update -qq; \
+fi; \
 apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
         'install':'''curl -fsSL https://packages.redis.io/gpg | rm -f /usr/share/keyrings/redis-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
@@ -1264,8 +1425,12 @@ def install_module(mod_id):
                 break
         proc.wait()
 
-        installed     = is_installed(mod['check'])
-        inst_ver      = get_version(mod['id']) if installed else ''
+        proc_ok       = (proc.returncode == 0)
+        check_ok      = is_installed(mod['check'])
+        installed     = proc_ok and check_ok
+        if check_ok and not proc_ok:
+            _job_append_line(job_id, '[VortexPanel] The install command itself reported an error (see output above) even though something matching the check command was found on the system — treating this as failed rather than silently reporting success.')
+        inst_ver      = get_version(mod['id'], ver) if installed else ''
         _job_append_line(job_id,
             f'[VortexPanel] {"✓ Installed successfully! Version: "+inst_ver if installed else "⚠ Installation may have failed — check output above."}'
         )
@@ -2522,7 +2687,9 @@ def save_module_settings(mod_id):
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
                 'systemctl stop mariadb 2>/dev/null && '
-                f'curl -fsSL --max-time 30 https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} && '
+                f'curl -fsSL --max-time 30 https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} --skip-maxscale; '
+                'for f in /etc/apt/sources.list.d/*.sources; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then awk -v RS="" -v ORS="\\n\\n" \'tolower($0) !~ /maxscale/\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi; done; '
+                'for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then sed -i \'/[Mm]ax[Ss]cale/d\' "$f"; fi; done; '
                 'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
                 'apt-get install -y --allow-downgrades --allow-change-held-packages '
                 '-o Dpkg::Options::="--force-confnew" mariadb-server && '

@@ -178,9 +178,35 @@ def php_install_script(ver):
         'done'
     )
     if os_info['family'] == 'debian':
+        codename = os_info['codename']
+        # THIS is the function that actually runs for the Install button
+        # (modules.py's /install route overrides install_tpl with this for
+        # mod_id=='php' unconditionally) -- the install_tpl fallback logic
+        # for ondrej/php never executed in practice. Same self-healing
+        # pattern as the mariadb/postgresql/redis fixes: ondrej/php has no
+        # release for a very new Ubuntu codename yet (confirmed: its own
+        # apt output names packages.sury.org as the canonical replacement
+        # for Ubuntu Resolute specifically), and add-apt-repository writes
+        # the broken PPA to disk regardless of what happens next, poisoning
+        # every future apt-get update system-wide unless cleaned up.
+        php_repo_setup = (
+            'add-apt-repository -y ppa:ondrej/php && '
+            f'if ! {pkg_update()} 2>/tmp/vp_php_repo_err.log; then '
+            f'  echo "[VortexPanel] ondrej/php has no release for {codename} yet -- removing it and trying packages.sury.org"; '
+            '  add-apt-repository --remove -y ppa:ondrej/php 2>/dev/null; '
+            '  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources 2>/dev/null; '
+            '  apt-get install -y ca-certificates apt-transport-https gnupg2 && '
+            '  curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
+            f'  echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ {codename} main" > /etc/apt/sources.list.d/php-sury.list && '
+            f'  if ! {pkg_update()} 2>/tmp/vp_php_sury_err.log; then '
+            f'    echo "[VortexPanel] packages.sury.org has no release for {codename} yet either -- falling back to noble (24.04) packages"; '
+            '    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ noble main" > /etc/apt/sources.list.d/php-sury.list && '
+            f'    {pkg_update()}; '
+            '  fi; '
+            'fi'
+        )
         return (
-            f'add-apt-repository -y ppa:ondrej/php 2>/dev/null; '
-            f'{pkg_update()} && '
+            f'{php_repo_setup} && '
             f'{pkg_install(f"php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml php{ver}-curl php{ver}-mbstring php{ver}-zip php{ver}-gd php{ver}-bcmath php{ver}-intl php{ver}-soap php{ver}-redis")} && '
             f'systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm && '
             f'{fix_pool_owner} && systemctl restart php{ver}-fpm'
@@ -197,10 +223,66 @@ def php_install_script(ver):
     return f'{pkg_install(f"php{ver}-fpm")} && systemctl enable php{ver}-fpm'
 
 def mariadb_install_script(ver='11.7'):
-    """MariaDB official install script for all distros"""
+    """MariaDB install script for all distros.
+
+    THIS IS THE FUNCTION THAT ACTUALLY RUNS for the App Store Install button
+    (modules.py's /install route overrides install_tpl with this for
+    mod_id=='mariadb' unconditionally) -- confirmed by tracing the real
+    execution path after --skip-maxscale + repo-file cleanup fixes to
+    install_tpl had zero effect across multiple attempts.
+
+    Root cause, confirmed against real repeated failures on Ubuntu 26.04
+    (resolute): the official mariadb_repo_setup script's own internal
+    "Adding trusted package signing keys" step runs its OWN apt-get update
+    BEFORE returning control to us, and it does so with the MaxScale repo
+    already written regardless of --skip-maxscale (that flag apparently
+    only affects whether MaxScale *packages* get installed later, not
+    whether its repo file gets written or referenced during this internal
+    step) -- so the script fails and exits before we ever get a chance to
+    clean anything up.
+
+    Fix: stop trusting the vendor script's internal behavior entirely for
+    Debian/Ubuntu. Hand-write only the mariadb-server repository directly,
+    using the exact URL structure and codename substitution CONFIRMED
+    working from real logs (dlm.mariadb.com/repo/mariadb-server/{ver}/...
+    successfully returned a Release file for "resolute" every single time
+    this was attempted -- only the separate MaxScale repo ever failed).
+    MaxScale is never referenced anywhere in this path, so there is nothing
+    for it to break.
+    """
+    os_info = get_os()
+    if os_info['family'] == 'debian':
+        codename = os_info['codename']
+        return (
+            'mkdir -p /etc/apt/keyrings && '
+            'rm -f /etc/apt/sources.list.d/mariadb.sources /etc/apt/sources.list.d/mariadb.list && '
+            # Fetch MariaDB's package signing key. Two independent methods
+            # attempted in sequence -- if the direct HTTPS key download is
+            # ever unavailable/changed, fall back to the keyserver method
+            # using MariaDB's long-standing published key ID, so a single
+            # broken URL cannot silently leave packages unverifiable.
+            '(curl -fsSL https://mariadb.org/mariadb_release_signing_key.asc -o /tmp/mariadb.key 2>/dev/null && '
+            ' gpg --batch --no-tty --dearmor -o /etc/apt/keyrings/mariadb-keyring.pgp /tmp/mariadb.key 2>/dev/null) || '
+            'gpg --no-default-keyring --keyring /etc/apt/keyrings/mariadb-keyring.pgp '
+            '--keyserver keyserver.ubuntu.com --recv-keys 0xF1656F24C74CD1D8 2>/dev/null; '
+            'rm -f /tmp/mariadb.key; '
+            f'printf "Types: deb\nURIs: https://dlm.mariadb.com/repo/mariadb-server/{ver}/repo/ubuntu\nSuites: %s\nComponents: main main/debug\nSigned-By: /etc/apt/keyrings/mariadb-keyring.pgp\n" "{codename}" '
+            '> /etc/apt/sources.list.d/mariadb.sources && '
+            f'{pkg_update()} && '
+            f'{pkg_install("mariadb-server mariadb-client")} && '
+            f'systemctl enable mariadb && systemctl start mariadb'
+        )
+    elif os_info['family'] in ('rhel', 'fedora'):
+        return (
+            f'curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | '
+            f'bash -s -- --mariadb-server-version=mariadb-{ver} --skip-maxscale; '
+            f'{pkg_update()} && '
+            f'{pkg_install("MariaDB-server MariaDB-client")} && '
+            f'systemctl enable mariadb && systemctl start mariadb'
+        )
     return (
         f'curl -fsSL https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | '
-        f'bash -s -- --mariadb-server-version=mariadb-{ver} && '
+        f'bash -s -- --mariadb-server-version=mariadb-{ver} --skip-maxscale; '
         f'{pkg_update()} && '
         f'{pkg_install("mariadb-server mariadb-client")} && '
         f'systemctl enable mariadb && systemctl start mariadb'
@@ -215,8 +297,21 @@ def postgresql_install_script(ver='17'):
             f'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
             f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
             f'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt {os_info["codename"]}-pgdg main" > /etc/apt/sources.list.d/pgdg.list && '
-            f'{pkg_update()} && '
-            f'{pkg_install(f"postgresql-{ver} postgresql-contrib")} && '
+            # A brand-new Ubuntu codename can lag behind PGDG's own release
+            # cadence by days/weeks. Leaving a broken pgdg.list in place
+            # would poison every future apt-get update on the system, the
+            # same failure class already confirmed for mariadb/php/apache2.
+            f'(if ! {pkg_update()} 2>/tmp/vp_pg_repo_err.log; then '
+            f'  echo "[VortexPanel] apt.postgresql.org has no release for {os_info["codename"]} yet -- removing pgdg.list so it does not block other installs"; '
+            f'  rm -f /etc/apt/sources.list.d/pgdg.list; {pkg_update()}; exit 1; fi) && '
+            # postgresql-contrib (unversioned) depends on the "postgresql"
+            # metapackage, which PGDG always points at its newest published
+            # major version -- confirmed via a real log: requesting version
+            # 15 silently ALSO installed and activated version 18 as the
+            # default cluster, because contrib's dependency chain pulled it
+            # in regardless of {ver}. postgresql-contrib-{ver} is the
+            # versioned equivalent and carries no such side effect.
+            f'{pkg_install(f"postgresql-{ver} postgresql-contrib-{ver}")} && '
             f'systemctl enable postgresql && systemctl start postgresql'
         )
     elif os_info['family'] in ('rhel','fedora'):
@@ -239,7 +334,10 @@ def redis_install_script():
             f'rm -f /usr/share/keyrings/redis-archive-keyring.gpg && '
             f'curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && '
             f'echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {os_info["codename"]} main" > /etc/apt/sources.list.d/redis.list && '
-            f'{pkg_update()} && {pkg_install("redis-server")} && '
+            f'(if ! {pkg_update()} 2>/tmp/vp_redis_repo_err.log; then '
+            f'  echo "[VortexPanel] packages.redis.io has no release for {os_info["codename"]} yet -- removing it, using distro-packaged redis-server instead"; '
+            f'  rm -f /etc/apt/sources.list.d/redis.list; {pkg_update()}; fi) && '
+            f'{pkg_install("redis-server")} && '
             f'systemctl enable redis-server && systemctl start redis-server'
         )
     elif os_info['family'] in ('rhel','fedora'):
@@ -260,7 +358,21 @@ def mongodb_install_script(ver='8.0'):
             f'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.asc && '
             f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.asc && '
             f'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/ubuntu {codename}/mongodb-org/{ver} multiverse" > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-            f'{pkg_update()} && {pkg_install("mongodb-org")} && '
+            # If repo.mongodb.org has no release for this exact codename yet,
+            # try noble (24.04) -- confirmed directly from MongoDB's own
+            # build source (buildscripts/package_test.py in mongodb/mongo on
+            # GitHub): "ubuntu2404" is the newest Ubuntu target anywhere in
+            # their packaging test matrix, nothing for 24.10/25.04/25.10
+            # exists yet. Not a guess this time.
+            f'(if ! {pkg_update()} 2>/tmp/vp_mongo_repo_err.log; then '
+            f'  echo "[VortexPanel] repo.mongodb.org has no release for {codename} yet -- trying noble (24.04) packages instead"; '
+            f'  echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/{ver} multiverse" > /etc/apt/sources.list.d/mongodb-org-{ver}.list; '
+            f'  if ! {pkg_update()} 2>/tmp/vp_mongo_noble_err.log; then '
+            f'    echo "[VortexPanel] repo.mongodb.org has no release for noble either -- removing the broken repo entry so it does not block other installs"; '
+            f'    rm -f /etc/apt/sources.list.d/mongodb-org-{ver}.list; {pkg_update()}; exit 1; '
+            f'  fi; '
+            f'fi) && '
+            f'{pkg_install("mongodb-org")} && '
             f'systemctl enable mongod && systemctl start mongod'
         )
     elif os_info['family'] in ('rhel','fedora'):
@@ -281,12 +393,23 @@ def docker_install_script():
     os_info = get_os()
     if os_info['family'] == 'debian':
         os_name = 'ubuntu' if 'ubuntu' in os_info['name'] else 'debian'
+        codename = os_info['codename']
         return (
             f'rm -f /usr/share/keyrings/docker-archive-keyring.gpg && '
             f'curl -fsSL https://download.docker.com/linux/{os_name}/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && '
-            f'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/{os_name} {os_info["codename"]} stable" > /etc/apt/sources.list.d/docker.list && '
-            f'{pkg_update()} && {pkg_install("docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin")} && '
-            f'systemctl enable docker && systemctl start docker'
+            f'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/{os_name} {codename} stable" > /etc/apt/sources.list.d/docker.list && '
+            # Docker is generally fast to support new Ubuntu releases, but
+            # applying the same defensive pattern as everywhere else on this
+            # server for consistency: never leave a broken repo entry behind
+            # to poison unrelated future installs.
+            f'(if ! {pkg_update()} 2>/tmp/vp_docker_repo_err.log; then '
+            f'  echo "[VortexPanel] download.docker.com has no release for {codename} yet -- removing it and falling back to get.docker.com'"'"'s own installer"; '
+            '  rm -f /etc/apt/sources.list.d/docker.list; '
+            f'  curl -fsSL https://get.docker.com | sh; '
+            f'  {pkg_update()}; '
+            'fi) && '
+            f'{pkg_install("docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin")} 2>/dev/null; '
+            'systemctl enable docker && systemctl start docker'
         )
     elif os_info['family'] in ('rhel','fedora'):
         return (
