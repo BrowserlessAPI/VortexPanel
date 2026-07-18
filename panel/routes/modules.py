@@ -329,7 +329,7 @@ systemctl enable lsws && systemctl start lsws''',
         'desc':'The world\'s most popular open source database',
         'check':'systemctl is-active mysql 2>/dev/null | grep -q active && ! systemctl is-active mariadb 2>/dev/null | grep -q active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
         'versions':[
-            {'label':'9.7.0 (LTS - Latest)', 'value':'9.7'},
+            {'label':'9.x (Innovation — rolling, latest MySQL innovation release)', 'value':'9.x'},
             {'label':'8.4.4 (LTS)',          'value':'8.4'},
             {'label':'8.0.41 (LTS)',         'value':'8.0'},
         ],
