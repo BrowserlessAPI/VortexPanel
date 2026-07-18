@@ -151,7 +151,7 @@ The installer auto-detects your OS and package manager. On RHEL 8-family systems
 
 | Distro | Versions |
 |---|---|
-| **Ubuntu** | 20.04, 22.04, 24.04, 26.04 |
+| **Ubuntu** | 20.04, 22.04, 24.04 |
 | **Debian** | 11, 12 |
 | **AlmaLinux** | 8, 9, 10 |
 | **Rocky Linux** | 8, 9, 10 |
