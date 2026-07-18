@@ -374,9 +374,58 @@ systemctl enable lsws && systemctl start lsws''',
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  export DEBIAN_FRONTEND=noninteractive && '
-            '  apt-get install -y wget lsb-release gnupg && '
+            '  apt-get install -y wget lsb-release gnupg debconf-utils && '
             '  wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && '
+            # mysql-apt-config presents server-track selection as a debconf
+            # question (mysql-apt-config/select-server) -- without an answer
+            # preseeded, it silently defaults to whichever track it
+            # considers primary (confirmed real: requesting 9.7 installed
+            # 8.4 instead, with zero indication anything was wrong). MySQL
+            # publishes two tracks: mysql-8.0 / mysql-8.4-lts (LTS) for 8.x,
+            # and mysql-innovation for the rolling 9.x releases -- there is
+            # no per-point-release component like "mysql-9.7" specifically.
+            # UNCERTAIN: I have not been able to directly confirm the exact
+            # track name for 9.x releases against a real system (never seen
+            # "mysql-innovation" appear in an actual log, only inferred from
+            # general MySQL release-model knowledge) -- and a separate,
+            # also-unverified source suggests 9.7 may now be marketed as its
+            # own LTS track rather than Innovation. Rather than commit to
+            # either guess, the debconf preseed below uses this as a
+            # starting attempt only; the real selection happens afterward by
+            # scanning what mysql-apt-config actually generated.
+            '  MYSQL_TRACK_GUESS="mysql-8.4-lts"; '
+            '  case "{ver}" in 8.0*) MYSQL_TRACK_GUESS="mysql-8.0";; 8.4*) MYSQL_TRACK_GUESS="mysql-8.4-lts";; 9.*) MYSQL_TRACK_GUESS="mysql-innovation";; esac; '
+            '  echo "mysql-apt-config mysql-apt-config/select-server select $MYSQL_TRACK_GUESS" | debconf-set-selections; '
             '  DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
+            # Self-discovering correction, independent of both the debconf
+            # answer and my track-name guesses above: mysql-apt-config
+            # writes every ACTUAL track name it knows about into the repo
+            # file (commenting out all but the selected one), so scan for
+            # what is really there instead of assuming. Priority 1: a track
+            # whose name literally contains the requested version string
+            # (e.g. would correctly find "mysql-9.7-lts" if that turns out
+            # to be real, without me having had to know that in advance).
+            # Priority 2: fall back to the LTS/Innovation heuristic only if
+            # no exact version match exists.
+            '  for f in /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; do '
+            '    [ -f "$f" ] || continue; '
+            '    ALL_TRACKS=$(grep -oE "mysql-[a-zA-Z0-9.-]+" "$f" | grep -vE "^mysql-(apt-config|tools|common|client|server)$" | sort -u); '
+            '    MYSQL_TRACK=""; '
+            '    for T in $ALL_TRACKS; do case "$T" in *"{ver}"*) MYSQL_TRACK="$T"; break;; esac; done; '
+            '    if [ -z "$MYSQL_TRACK" ]; then '
+            '      case "{ver}" in '
+            '        8.0*) for T in $ALL_TRACKS; do case "$T" in mysql-8.0*) MYSQL_TRACK="$T"; break;; esac; done ;; '
+            '        8.4*) for T in $ALL_TRACKS; do case "$T" in mysql-8.4*) MYSQL_TRACK="$T"; break;; esac; done ;; '
+            '        9.*)  for T in $ALL_TRACKS; do case "$T" in mysql-innovation|mysql-9*) MYSQL_TRACK="$T"; break;; esac; done ;; '
+            '      esac; '
+            '    fi; '
+            '    [ -z "$MYSQL_TRACK" ] && continue; '
+            '    sed -i "/\\b${MYSQL_TRACK}\\b/s/^#\\s*//" "$f"; '
+            '    for OTHER in $ALL_TRACKS; do '
+            '      [ "$OTHER" = "$MYSQL_TRACK" ] && continue; '
+            '      sed -i "/\\b${OTHER}\\b/{/^#/!s/^/# /}" "$f"; '
+            '    done; '
+            '  done; '
             # Confirmed via a real failure: every codename attempt (questing,
             # plucky, oracular, noble, jammy) failed with the SAME
             # "EXPKEYSIG B7B3B788A8D3785C" error -- not a missing Release
@@ -386,8 +435,26 @@ systemctl enable lsws && systemctl start lsws''',
             # published (keyservers reflect renewed expiry dates the stale
             # bundled copy doesn'"'"'t have) -- this is the standard remediation
             # for EXPKEYSIG, not a signature-verification bypass.
+            #
+            # IMPORTANT: writing the refreshed key to a NEW file in
+            # /etc/apt/trusted.gpg.d/ was NOT enough -- confirmed via a real
+            # failure on a FRESH Ubuntu 24.04 install (the correct native
+            # codename, no fallback even needed) that the exact same
+            # EXPKEYSIG error still occurred. mysql-apt-config'"'"'s generated
+            # sources file has its own explicit Signed-By= pointing at a
+            # specific bundled keyring file, which overrides the global
+            # trusted keyring for that repo entirely -- adding a second key
+            # elsewhere does nothing if apt never looks there. Discovering
+            # whatever path is actually referenced and overwriting THAT
+            # exact file, in addition to the trusted.gpg.d fallback for the
+            # case where no explicit Signed-By is used at all.
+            '  MYSQL_KEYRING_PATH=""; '
+            '  for f in /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; do '
+            '    [ -f "$f" ] && MYSQL_KEYRING_PATH=$(grep -oP "(?:signed-by=|Signed-By:\\s*)\\K[^]\\s]+" "$f" 2>/dev/null | head -1) && [ -n "$MYSQL_KEYRING_PATH" ] && break; '
+            '  done; '
             '  (gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C 2>/dev/null && '
-            '   gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > /etc/apt/trusted.gpg.d/mysql-refreshed.gpg 2>/dev/null) || true; '
+            '   gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > /etc/apt/trusted.gpg.d/mysql-refreshed.gpg 2>/dev/null && '
+            '   if [ -n "$MYSQL_KEYRING_PATH" ]; then mkdir -p "$(dirname "$MYSQL_KEYRING_PATH")"; gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > "$MYSQL_KEYRING_PATH" 2>/dev/null; fi) || true; '
             # mysql-apt-config is a pinned, years-old package (0.8.33-1) that
             # writes /etc/apt/sources.list.d/mysql.list based on whatever
             # codename it detects -- confirmed via a real failure log:
@@ -428,14 +495,42 @@ systemctl enable lsws && systemctl start lsws''',
                 # no external repo or GPG key needed at all, the safest possible path.
                 # Module streams only offer a couple of minor versions (not every {ver}
                 # choice maps 1:1) so we pick the closest available stream.
-            '  MYSQL_STREAM="8.0"; '
-            '  case "{ver}" in 9.*) MYSQL_STREAM="8.4";; 8.4*) MYSQL_STREAM="8.4";; esac; '
-            '  (dnf module reset -y mysql 2>/dev/null; dnf module enable -y mysql:$MYSQL_STREAM 2>/dev/null; '
-            '   dnf install -y mysql-server 2>/dev/null) || '
-                # RHEL 7 fallback (no module streams) — Oracle's official community RPM
-            '  (dnf install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null || '
-            '   yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null; '
-            '   yum install -y mysql-community-server 2>/dev/null) && '
+                #
+                # IMPORTANT, confirmed just from reading the module-stream mechanism
+                # itself (not from a live RHEL-family log -- unlike the Debian/Ubuntu
+                # path in this same install_tpl, this branch has NOT been validated
+                # against a real system yet): RHEL'"'"'s built-in AppStream module never
+                # publishes a 9.x stream at all, so a 9.x request used to silently fall
+                # through to the 8.4 case= condition below and install 8.4 instead --
+                # same "wrong version installed with no indication" bug already found
+                # and fixed on the Debian/Ubuntu side. 9.x now skips the module-stream
+                # attempt entirely and goes straight to Oracle'"'"'s own community repo,
+                # since that'"'"'s the only place a 9.x release actually exists for
+                # RHEL-family systems.
+            '  MYSQL_STREAM=""; '
+            '  case "{ver}" in 8.0*) MYSQL_STREAM="8.0";; 8.4*) MYSQL_STREAM="8.4";; esac; '
+            '  MYSQL_MODULE_OK=1; '
+            '  if [ -n "$MYSQL_STREAM" ]; then '
+            '    (dnf module reset -y mysql 2>/dev/null; dnf module enable -y mysql:$MYSQL_STREAM 2>/dev/null; '
+            '     dnf install -y mysql-server 2>/dev/null) || MYSQL_MODULE_OK=0; '
+            '  else '
+            '    MYSQL_MODULE_OK=0; '
+            '  fi; '
+            '  if [ "$MYSQL_MODULE_OK" != "1" ]; then '
+                # Oracle's official community RPM config, used both as the RHEL 7
+                # fallback (no module streams there at all) and as the only real path
+                # for 9.x on any RHEL-family version. The exact community-release
+                # package naming per major version is NOT independently confirmed here
+                # -- best-effort based on Oracle'"'"'s known naming convention, needs a
+                # real log to verify, same as every other unverified path this session
+                # has gone through before being trusted.
+            '    MYSQL_PKG_VER="80"; case "{ver}" in 8.4*) MYSQL_PKG_VER="84";; 9.*) MYSQL_PKG_VER="90";; esac; '
+            '    (dnf install -y https://dev.mysql.com/get/mysql${MYSQL_PKG_VER}-community-release-el7-11.noarch.rpm 2>/dev/null || '
+            '     yum install -y https://dev.mysql.com/get/mysql${MYSQL_PKG_VER}-community-release-el7-11.noarch.rpm 2>/dev/null || '
+            '     dnf install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null || '
+            '     yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null; '
+            '     yum install -y mysql-community-server 2>/dev/null || dnf install -y mysql-community-server 2>/dev/null); '
+            '  fi && '
             '  systemctl enable --now mysqld 2>/dev/null || systemctl enable --now mysql 2>/dev/null; '
             'fi'
         ),
