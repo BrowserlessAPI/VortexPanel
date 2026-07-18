@@ -375,7 +375,7 @@ systemctl enable lsws && systemctl start lsws''',
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  apt-get install -y wget lsb-release gnupg debconf-utils && '
-            '  wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb -O /tmp/mysql-apt.deb && '
+            '  wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.39-1_all.deb -O /tmp/mysql-apt.deb && '
             # mysql-apt-config presents server-track selection as a debconf
             # question (mysql-apt-config/select-server) -- without an answer
             # preseeded, it silently defaults to whichever track it
@@ -430,7 +430,7 @@ systemctl enable lsws && systemctl start lsws''',
             # plucky, oracular, noble, jammy) failed with the SAME
             # "EXPKEYSIG B7B3B788A8D3785C" error -- not a missing Release
             # file, an EXPIRED signing key bundled in the old, pinned
-            # mysql-apt-config_0.8.33-1 package. Re-fetching that exact key
+            # mysql-apt-config_0.8.39-1 package. Re-fetching that exact key
             # ID from a keyserver gets whatever current version MySQL has
             # published (keyservers reflect renewed expiry dates the stale
             # bundled copy doesn'"'"'t have) -- this is the standard remediation
@@ -455,7 +455,12 @@ systemctl enable lsws && systemctl start lsws''',
             '  (gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C 2>/dev/null && '
             '   gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > /etc/apt/trusted.gpg.d/mysql-refreshed.gpg 2>/dev/null && '
             '   if [ -n "$MYSQL_KEYRING_PATH" ]; then mkdir -p "$(dirname "$MYSQL_KEYRING_PATH")"; gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > "$MYSQL_KEYRING_PATH" 2>/dev/null; fi) || true; '
-            # mysql-apt-config is a pinned, years-old package (0.8.33-1) that
+            # mysql-apt-config is a pinned package (0.8.39-1, confirmed
+            # current as of the user's own check against dev.mysql.com --
+            # was previously hardcoded to the much older 0.8.33-1, which may
+            # explain why selecting a 9.x track never worked no matter how
+            # it was preseeded: a config tool built before 9.x existed would
+            # never have had that option to select in the first place) that
             # writes /etc/apt/sources.list.d/mysql.list based on whatever
             # codename it detects -- confirmed via a real failure log:
             # repo.mysql.com genuinely has no release for a brand-new Ubuntu
@@ -517,19 +522,60 @@ systemctl enable lsws && systemctl start lsws''',
             '    MYSQL_MODULE_OK=0; '
             '  fi; '
             '  if [ "$MYSQL_MODULE_OK" != "1" ]; then '
-                # Oracle's official community RPM config, used both as the RHEL 7
-                # fallback (no module streams there at all) and as the only real path
-                # for 9.x on any RHEL-family version. The exact community-release
-                # package naming per major version is NOT independently confirmed here
-                # -- best-effort based on Oracle'"'"'s known naming convention, needs a
-                # real log to verify, same as every other unverified path this session
-                # has gone through before being trusted.
-            '    MYSQL_PKG_VER="80"; case "{ver}" in 8.4*) MYSQL_PKG_VER="84";; 9.*) MYSQL_PKG_VER="90";; esac; '
-            '    (dnf install -y https://dev.mysql.com/get/mysql${MYSQL_PKG_VER}-community-release-el7-11.noarch.rpm 2>/dev/null || '
-            '     yum install -y https://dev.mysql.com/get/mysql${MYSQL_PKG_VER}-community-release-el7-11.noarch.rpm 2>/dev/null || '
-            '     dnf install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null || '
-            '     yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-11.noarch.rpm 2>/dev/null; '
-            '     yum install -y mysql-community-server 2>/dev/null || dnf install -y mysql-community-server 2>/dev/null); '
+                # Oracle's official community-release config RPM, confirmed directly
+                # against dev.mysql.com/downloads/repo/yum/ (not a guess this time) --
+                # every EL major version and Fedora release has its own distinct
+                # filename and build suffix, which the previous single hardcoded
+                # "el7-11" filename never accounted for.
+            '    EL_MAJOR=$(rpm -E %{rhel} 2>/dev/null); '
+            '    FEDORA_MAJOR=$(rpm -E %{fedora} 2>/dev/null); '
+            '    MYSQL_YUM_CONF=""; '
+            '    if [ -n "$FEDORA_MAJOR" ] && [ "$FEDORA_MAJOR" != "%{fedora}" ]; then '
+            '      case "$FEDORA_MAJOR" in '
+            '        43) MYSQL_YUM_CONF="mysql84-community-release-fc43-2.noarch.rpm";; '
+            '        42) MYSQL_YUM_CONF="mysql84-community-release-fc42-4.noarch.rpm";; '
+            '      esac; '
+            '    elif [ -n "$EL_MAJOR" ] && [ "$EL_MAJOR" != "%{rhel}" ]; then '
+            '      case "$EL_MAJOR" in '
+            '        10) MYSQL_YUM_CONF="mysql84-community-release-el10-3.noarch.rpm";; '
+            '        9)  MYSQL_YUM_CONF="mysql84-community-release-el9-4.noarch.rpm";; '
+            '        8)  MYSQL_YUM_CONF="mysql84-community-release-el8-3.noarch.rpm";; '
+            '        7)  MYSQL_YUM_CONF="mysql84-community-release-el7-4.noarch.rpm";; '
+            '        6)  MYSQL_YUM_CONF="mysql80-community-release-el6-11.noarch.rpm";; '
+            '      esac; '
+            '    fi; '
+            '    if [ -z "$MYSQL_YUM_CONF" ]; then '
+            '      echo "[VortexPanel] Could not determine the correct MySQL community-release package for this specific EL/Fedora version -- falling back to the EL9 build as a best-effort guess"; '
+            '      MYSQL_YUM_CONF="mysql84-community-release-el9-4.noarch.rpm"; '
+            '    fi; '
+            '    (dnf install -y "https://dev.mysql.com/get/${MYSQL_YUM_CONF}" 2>/dev/null || '
+            '     yum install -y "https://dev.mysql.com/get/${MYSQL_YUM_CONF}" 2>/dev/null); '
+                # This config RPM sets up multiple sub-repos (one per MySQL major
+                # version/track, similar to how mysql-apt-config works on
+                # Debian/Ubuntu) and enables one by default -- self-discover and
+                # select the repo matching the requested version instead of
+                # assuming which one is on by default, same philosophy as the
+                # apt-side fix, since the exact default and sub-repo IDs are NOT
+                # independently confirmed here.
+            '    for rf in /etc/yum.repos.d/mysql-community.repo /etc/yum.repos.d/mysql-community-source.repo; do '
+            '      [ -f "$rf" ] || continue; '
+            '      ALL_REPOIDS=$(grep -oE "^\\[[a-zA-Z0-9_-]+\\]" "$rf" | tr -d "[]"); '
+            '      TARGET_REPO=""; '
+            '      for R in $ALL_REPOIDS; do case "$R" in *"{ver}"*) TARGET_REPO="$R"; break;; esac; done; '
+            '      if [ -z "$TARGET_REPO" ]; then '
+            '        case "{ver}" in '
+            '          8.0*) for R in $ALL_REPOIDS; do case "$R" in *80*) TARGET_REPO="$R"; break;; esac; done ;; '
+            '          8.4*) for R in $ALL_REPOIDS; do case "$R" in *84*) TARGET_REPO="$R"; break;; esac; done ;; '
+            '          9.*)  for R in $ALL_REPOIDS; do case "$R" in *innovation*|*9?) TARGET_REPO="$R"; break;; esac; done ;; '
+            '        esac; '
+            '      fi; '
+            '      [ -n "$TARGET_REPO" ] && (dnf config-manager --set-enabled "$TARGET_REPO" 2>/dev/null || yum-config-manager --enable "$TARGET_REPO" 2>/dev/null); '
+            '      for R in $ALL_REPOIDS; do '
+            '        [ "$R" = "$TARGET_REPO" ] && continue; '
+            '        case "$R" in *community*) (dnf config-manager --set-disabled "$R" 2>/dev/null || yum-config-manager --disable "$R" 2>/dev/null);; esac; '
+            '      done; '
+            '    done; '
+            '    yum install -y mysql-community-server 2>/dev/null || dnf install -y mysql-community-server 2>/dev/null; '
             '  fi && '
             '  systemctl enable --now mysqld 2>/dev/null || systemctl enable --now mysql 2>/dev/null; '
             'fi'
