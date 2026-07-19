@@ -499,8 +499,13 @@ function dashboardPage() {
     _charts: {},
 
     async init() {
-      await Promise.all([this.loadStats(),this.loadServices(),this.loadSslAlerts()]);
-      this.loading = false;
+      try {
+        await Promise.all([this.loadStats(),this.loadServices(),this.loadSslAlerts()]);
+      } catch(e) {
+        console.warn('[VortexPanel] Dashboard init had an error, showing what loaded so far:', e);
+      } finally {
+        this.loading = false;
+      }
       this._waitForChartJs();
       setInterval(()=>this.loadStats(),5000);
       setInterval(()=>this.loadSslAlerts(),60000); // recheck every minute, not every 5s
@@ -512,12 +517,12 @@ function dashboardPage() {
       if (r.ok) this.sslAlerts = r.alerts || [];
     },
     async loadStats() {
-      const r=await get('/api/dashboard/stats');
+      const r = await get('/api/dashboard/stats').catch(()=>({ok:false}));
       if(r.ok) { this.stats=r; this._pushHistory(r); }
     },
     async loadServices() {
-      const r=await get('/api/services');
-      if(r.ok) this.services=r.services.slice(0,8);
+      const r = await get('/api/services').catch(()=>({ok:false}));
+      if(r.ok) this.services=(r.services||[]).slice(0,8);
     },
     go(page){ window.dispatchEvent(new CustomEvent('nav',{detail:{page}})); },
     ramPct()  { const r=this.stats.ram;  return (r && r.total) ? Math.round(r.used/r.total*100) : 0; },
@@ -583,9 +588,9 @@ function dashboardPage() {
       if (cpuRamEl && !this._charts.cpuram) {
         this._charts.cpuram = new Chart(cpuRamEl, {
           type: 'line',
-          data: { labels: this._hist.labels, datasets: [
-            { label:'CPU %', data:this._hist.cpu, borderColor:c.cpu, backgroundColor:c.cpu+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
-            { label:'RAM %', data:this._hist.ram, borderColor:c.ram, backgroundColor:c.ram+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+          data: { labels: Alpine.raw(this._hist.labels), datasets: [
+            { label:'CPU %', data:Alpine.raw(this._hist.cpu), borderColor:c.cpu, backgroundColor:c.cpu+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'RAM %', data:Alpine.raw(this._hist.ram), borderColor:c.ram, backgroundColor:c.ram+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
           ]},
           options: baseOpts(100, '%'),
         });
@@ -595,9 +600,9 @@ function dashboardPage() {
       if (netEl && !this._charts.net) {
         this._charts.net = new Chart(netEl, {
           type: 'line',
-          data: { labels: this._hist.labels, datasets: [
-            { label:'↓ In',  data:this._hist.netRx, borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
-            { label:'↑ Out', data:this._hist.netTx, borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+          data: { labels: Alpine.raw(this._hist.labels), datasets: [
+            { label:'↓ In',  data:Alpine.raw(this._hist.netRx), borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'↑ Out', data:Alpine.raw(this._hist.netTx), borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
           ]},
           options: { ...baseOpts(undefined, ''),
             scales: { ...baseOpts(undefined,'').scales,
@@ -608,14 +613,21 @@ function dashboardPage() {
 
     _updateCharts() {
       if (!this._charts.cpuram) { this._initCharts(); if(!this._charts.cpuram) return; }
-      this._charts.cpuram.data.labels = this._hist.labels;
-      this._charts.cpuram.data.datasets[0].data = this._hist.cpu;
-      this._charts.cpuram.data.datasets[1].data = this._hist.ram;
+      // Alpine.raw() unwraps the reactive Proxy before handing arrays to
+      // Chart.js -- confirmed via a real browser console dump that passing
+      // the raw reactive Proxy directly caused an infinite recursion crash
+      // (Chart.js's own internal property reads kept re-triggering Alpine's
+      // Proxy traps, which re-triggered Chart.js, forever). This is Alpine's
+      // documented pattern for integrating with libraries that do their own
+      // internal instrumentation on the data they're given.
+      this._charts.cpuram.data.labels = Alpine.raw(this._hist.labels);
+      this._charts.cpuram.data.datasets[0].data = Alpine.raw(this._hist.cpu);
+      this._charts.cpuram.data.datasets[1].data = Alpine.raw(this._hist.ram);
       this._charts.cpuram.update('none');
       if (this._charts.net) {
-        this._charts.net.data.labels = this._hist.labels;
-        this._charts.net.data.datasets[0].data = this._hist.netRx;
-        this._charts.net.data.datasets[1].data = this._hist.netTx;
+        this._charts.net.data.labels = Alpine.raw(this._hist.labels);
+        this._charts.net.data.datasets[0].data = Alpine.raw(this._hist.netRx);
+        this._charts.net.data.datasets[1].data = Alpine.raw(this._hist.netTx);
         this._charts.net.update('none');
       }
     },
@@ -646,6 +658,14 @@ function websitesPage() {
       integrityStatus:{enabled:false,created:'',file_count:0},
       diskUsage:{loading:false,size_human:'',size_bytes:0,file_count:0,dir_count:0},
       integrityScanning:false, integrityResult:null, integrityLoading:false,
+      // directory.path has a real backend endpoint (GET/PUT /api/websites/<domain>/directory)
+      // and working load code that was missing this object to assign into.
+      // antixss/accesslog have NO backend support anywhere in the codebase --
+      // kept here only so the checkboxes don't throw console errors; they are
+      // not wired to anything real yet and need actual backend work.
+      directory: {path:'', antixss:false, accesslog:false},
+      hotlink: {enabled:false, suffixes:'jpg,jpeg,gif,png,js,css', domains:'', response:'404'},
+      limitRules: [], limitForm: {name:'', path:'/admin', user:'', pass:''},
     },
     drawerTabs:[
       {id:'domains',label:'🌐 Domain Manager'},
@@ -716,6 +736,9 @@ function websitesPage() {
         nodejsEnabled:false,nodejsForm:{app_path:s.path||'',startup:'index.js',port:'3000',runtime:'node'},
         maintEnabled:false,maintMessage:'We are performing scheduled maintenance.',
         sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',
+        directory: {path:'', antixss:false, accesslog:false},
+        hotlink: {enabled:false, suffixes:'jpg,jpeg,gif,png,js,css', domains:'', response:'404'},
+        limitRules: [], limitForm: {name:'', path:'/admin', user:'', pass:''},
       };
       this.refreshPhpVersions();
       this.loadDrawerTab();
@@ -754,7 +777,7 @@ function websitesPage() {
       else if(d.tab==='domains'){const r=await get('/api/websites/'+domain+'/domains');if(r.ok)d.domains=r.domains||[];}
       else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok)d.directory.path=r.path||d.site?.path||''; this.loadDiskUsage();}
       else if(d.tab==='rewrite'){const r=await get('/api/websites/'+domain+'/rewrite');if(r.ok)d.rewriteContent=r.content||'';const rt=await get('/api/websites/'+domain+'/rewrite/templates');if(rt.ok)d.rewriteTemplates=rt.templates||[];}
-      else if(d.tab==='hotlink'){const r=await get('/api/websites/'+domain+'/hotlink');if(r.ok){d.hotlink.enabled=r.enabled||false;d.hotlink.suffixes=r.suffixes||'jpg,jpeg,gif,png,js,css';d.hotlink.domains=r.domains||'';d.hotlink.response=r.response||'404';}}
+      else if(d.tab==='hotlink'){const r=await get('/api/websites/'+domain+'/hotlink');if(r.ok){d.hotlink.enabled=r.enabled||false;d.hotlink.suffixes=r.suffixes||'jpg,jpeg,gif,png,js,css';d.hotlink.domains=r.access_domain||'';d.hotlink.response=r.response||'404';}}
       else if(d.tab==='limit'){const r=await get('/api/websites/'+domain+'/limit-access');if(r.ok)d.limitRules=r.rules||[];}
       else if(d.tab==='logs'){const r=await get('/api/websites/'+domain+'/logs');if(r.ok){d.accessLog=r.access||'No access logs';d.errorLog=r.error||'No error logs';}}
       else if(d.tab==='integrity'){await this.loadIntegrityStatus();}
@@ -1920,6 +1943,7 @@ function filesPage() {
 function aiAssistant() {
   return {
     open:        false,
+    loggedIn:    false,
     configured:  false,
     modelName:   'NeonCodex',
     messages:    [],   // [{role:'user'|'assistant', content}]
@@ -1946,6 +1970,10 @@ function aiAssistant() {
     ],
 
     async init() {
+      const chk = await get('/api/auth/check').catch(()=>({ok:false}));
+      this.loggedIn = !!(chk.ok && chk.logged_in);
+      document.addEventListener('vortex-logged-in', () => { this.loggedIn = true; });
+      document.addEventListener('vortex-logged-out', () => { this.loggedIn = false; });
       // Listen for sidebar button toggle
       document.addEventListener('vortex-toggle-ai', () => {
         this.open = !this.open;
@@ -2899,6 +2927,7 @@ function backupsPage() {
     restoreModal: {show:false, name:'', type:'', target:'', customPath:''},
     showUpload:   false, uploadFile:null, uploadType:'website', uploadTarget:'',
     uploading:    false,
+    form: {website:{domain:''}, db:{name:''}},
 
     async init() { await Promise.all([this.load(), this.loadInfo()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="backups") this.load(); }); },
 
@@ -3532,9 +3561,12 @@ function securityPage() {
     health: {config:{enabled:false, protocol:'http', check_path:'/health', interval_seconds:10,
                      timeout_seconds:3, unhealthy_threshold:3, healthy_threshold:2, servers:[]},
              state:{}, service_active:false, log:''},
+    sites: [],
 
     async init() {
       if (window.__vpPendingSecurityTab) { this.tab = window.__vpPendingSecurityTab; window.__vpPendingSecurityTab = null; }
+      const sr = await get('/api/websites').catch(()=>({ok:false}));
+      if (sr.ok) this.sites = sr.sites || [];
       await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="security") { this.loadScore(); this.loadSSH(); } });
       window.addEventListener('vp:module-changed', (e) => {
         if (e.detail?.id === 'modsecurity') this.loadModsec();

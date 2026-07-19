@@ -12,7 +12,7 @@
 <script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="/static/js/vendor/chart.umd.min.js"></script>
 <!--TEMP
 <link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
 <script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
@@ -619,7 +619,7 @@
                   </div>
                 </div>
                 <button class="btn btn-primary btn-sm" style="margin-top:16px"
-                        @click="post('/api/websites/'+drawer.site?.domain+'/hotlink',drawer.hotlink).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                        @click="post('/api/websites/'+drawer.site?.domain+'/hotlink',{enable:drawer.hotlink.enabled,suffixes:drawer.hotlink.suffixes,access_domain:drawer.hotlink.domains,response:drawer.hotlink.response}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
                 <div style="margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.8">
                   • By default, resources are allowed to be accessed directly<br>
                   • Multiple URL suffixes and domains should be separated by comma<br>
@@ -7492,9 +7492,9 @@
             </div>
             <div style="padding:18px">
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Hashed with Argon2id (OWASP #1 recommended). Min 8 characters.</div>
-              <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="pwForm.current"></div>
-              <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwForm.newpw"></div>
-              <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="pwForm.confirm"></div>
+              <div class="form-group"><label class="form-label">Current Password</label><input class="form-input" type="password" x-model="$store.vp.security.pwForm.current"></div>
+              <div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="$store.vp.security.pwForm.newpw"></div>
+              <div class="form-group"><label class="form-label">Confirm New Password</label><input class="form-input" type="password" x-model="$store.vp.security.pwForm.confirm"></div>
               <button class="btn btn-primary" @click="changePanelPassword()">Change Password</button>
             </div>
           </div>
