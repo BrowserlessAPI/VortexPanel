@@ -292,6 +292,7 @@ function rootApp() {
     online: true,
     moduleStatus: {},
     updateAvailable: false,
+    panelVersion: '',
     updateModal: {
       show:false, current:'v3.1.0', latest:'', name:'',
       body:'', published:'', url:'', error:'',
@@ -412,6 +413,11 @@ function rootApp() {
         const r = await get('/api/modules');
         if (r.ok) r.modules.forEach(m => { this.moduleStatus[m.id] = m.installed; });
       } catch {}
+      // Sidebar version display
+      try {
+        const uv = await get('/api/update/version');
+        if (uv.ok) this.panelVersion = uv.version;
+      } catch {}
       // Silent update check after 3s
       setTimeout(() => this.silentUpdateCheck(), 3000);
       document.dispatchEvent(new CustomEvent('vortex-logged-in'));
@@ -466,10 +472,7 @@ function rootApp() {
     },
 
     async openUpdateModal() {
-      this.updateModal.show = true;
-      this.$nextTick(() => {
-        document.dispatchEvent(new CustomEvent('vortex-check-update'));
-      });
+      document.dispatchEvent(new CustomEvent('vortex-open-update-modal'));
     },
   };
 }
@@ -498,7 +501,7 @@ function dashboardPage() {
     async init() {
       await Promise.all([this.loadStats(),this.loadServices(),this.loadSslAlerts()]);
       this.loading = false;
-      this.$nextTick(() => this._initCharts());
+      this._waitForChartJs();
       setInterval(()=>this.loadStats(),5000);
       setInterval(()=>this.loadSslAlerts(),60000); // recheck every minute, not every 5s
       document.addEventListener("vortex-logged-in", () => { this.init(); });
@@ -554,6 +557,12 @@ function dashboardPage() {
         grid:  css.getPropertyValue('--border').trim()     || 'rgba(148,163,184,.15)',
         text:  css.getPropertyValue('--text-muted').trim() || '#94a3b8',
       };
+    },
+
+    _waitForChartJs(attempt = 0) {
+      if (typeof Chart !== 'undefined') { this.$nextTick(() => this._initCharts()); return; }
+      if (attempt >= 40) { console.warn('[VortexPanel] Chart.js failed to load after 10s — dashboard charts will stay empty. Check the Network tab for a failed request to cdnjs.cloudflare.com/ajax/libs/Chart.js.'); return; }
+      setTimeout(() => this._waitForChartJs(attempt + 1), 250);
     },
 
     _initCharts() {
@@ -4676,12 +4685,14 @@ function cdnPage() {
 // --- UPDATE MODAL ---------------------------------------------------------------
 function updateModalData() {
   return {
+    show: false, current: '', latest: '', name: '', body: '', published: '',
     checkState: 'checking',
     updating: false, updateDone: false, updateSuccess: false,
     updateError: '', updateLines: [], updateProgress: 0,
     errorMsg: '', _pollTimer: null,
 
     async init() {
+      document.addEventListener('vortex-open-update-modal', ()=>{ this.show=true; this.checkForUpdates(); });
       document.addEventListener('vortex-check-update', ()=>this.checkForUpdates());
       await this.checkForUpdates();
     },
@@ -4691,18 +4702,19 @@ function updateModalData() {
       try {
         const r = await get('/api/update/check');
 
-        // Sync version to parent rootApp
+        this.current   = r.current   || 'v3.0.0';
+        this.latest    = r.latest    || r.current || 'v3.0.0';
+        this.name      = r.name      || 'VortexPanel';
+        this.body      = r.body      || '';
+        this.published = r.published || '';
+
+        // Sync updateAvailable to rootApp -- that flag drives the topbar
+        // button's glow/badge, which genuinely lives in rootApp's own scope
+        // (unlike this modal, which sits in the disconnected portal).
         try {
           const appEl = document.querySelector('[x-data="rootApp()"]');
           const app   = appEl ? Alpine.$data(appEl) : null;
-          if (app) {
-            app.updateModal.current   = r.current   || 'v3.0.0';
-            app.updateModal.latest    = r.latest    || r.current || 'v3.0.0';
-            app.updateModal.name      = r.name      || 'VortexPanel';
-            app.updateModal.body      = r.body      || '';
-            app.updateModal.published = r.published || '';
-            if (r.has_update) app.updateAvailable = true;
-          }
+          if (app && r.has_update) app.updateAvailable = true;
         } catch {}
 
         if (r.error && !r.current) { this.errorMsg=r.error; this.checkState='error'; return; }
@@ -4715,11 +4727,7 @@ function updateModalData() {
     },
 
     async startUpdate() {
-      let version = '';
-      try {
-        const appEl = document.querySelector('[x-data="rootApp()"]');
-        if (appEl) version = Alpine.$data(appEl).updateModal.latest || '';
-      } catch {}
+      const version = this.latest || '';
       this.updating=true; this.updateDone=false; this.updateSuccess=false;
       this.updateLines=[`🚀 Starting update to ${version}…`]; this.updateProgress=5;
       const r = await post('/api/update/start', {version});

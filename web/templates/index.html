@@ -103,7 +103,7 @@
       <div class="logo-icon">⚡</div>
       <div>
         <div class="logo-text">VortexPanel</div>
-        <div class="logo-ver">v3.4</div>
+        <div class="logo-ver" x-text="panelVersion||'v3.4'"></div>
       </div>
     </div>
 
@@ -7976,9 +7976,9 @@
 </div>
 
 <!-- PANEL UPDATE MODAL -->
-<div class="modal-overlay" x-show="updateModal.show" style="z-index:500"
+<div class="modal-overlay" x-show="show" style="z-index:500"
      x-data="updateModalData()"
-     @click.self="updateModal.show=false">
+     @click.self="show=false">
   <div class="modal" style="max-width:600px">
 
     <!-- Header -->
@@ -7988,11 +7988,11 @@
         <div>
           <div class="modal-title">VortexPanel Update</div>
           <div style="font-size:11px;color:var(--text-muted);margin-top:1px">
-            Current: <span style="font-family:var(--font-mono);color:var(--accent)" x-text="updateModal.current"></span>
+            Current: <span style="font-family:var(--font-mono);color:var(--accent)" x-text="current"></span>
           </div>
         </div>
       </div>
-      <button class="modal-close" @click="updateModal.show=false">×</button>
+      <button class="modal-close" @click="show=false">×</button>
     </div>
 
     <!-- Checking state -->
@@ -8005,7 +8005,7 @@
     <div x-show="checkState==='uptodate'" style="text-align:center;padding:32px">
       <div style="font-size:40px;margin-bottom:12px">✅</div>
       <div style="font-size:16px;font-weight:600;margin-bottom:6px">You are up to date!</div>
-      <div style="font-size:13px;color:var(--text-muted)" x-text="'VortexPanel '+(updateModal.current||'v3.0.0')+' is the latest version'"></div>
+      <div style="font-size:13px;color:var(--text-muted)" x-text="'VortexPanel '+(current||'v3.0.0')+' is the latest version'"></div>
       <div style="margin-top:16px">
         <a href="https://github.com/BrowserlessAPI/Vortexpanel/releases" target="_blank" style="font-size:12px;color:var(--accent);text-decoration:none">View all releases on GitHub ↗</a>
       </div>
@@ -8018,20 +8018,20 @@
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div>
             <div style="font-size:12px;color:var(--text-muted);margin-bottom:3px">New version available</div>
-            <div style="font-size:22px;font-weight:700;color:var(--accent)" x-text="updateModal.latest"></div>
+            <div style="font-size:22px;font-weight:700;color:var(--accent)" x-text="latest"></div>
           </div>
           <div style="text-align:right">
             <div style="font-size:11px;color:var(--text-muted)">Released</div>
-            <div style="font-size:12px;font-weight:500" x-text="updateModal.published ? new Date(updateModal.published).toLocaleDateString() : ''"></div>
+            <div style="font-size:12px;font-weight:500" x-text="published ? new Date(published).toLocaleDateString() : ''"></div>
           </div>
         </div>
       </div>
 
       <!-- Release notes -->
-      <div x-show="updateModal.body" style="margin-bottom:16px">
+      <div x-show="body" style="margin-bottom:16px">
         <div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">📋 What's New</div>
         <div style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;max-height:200px;overflow-y:auto;font-size:12px;color:var(--text-secondary);line-height:1.7;white-space:pre-wrap"
-             x-text="updateModal.body"></div>
+             x-text="body"></div>
       </div>
 
       <!-- Warning -->
@@ -8040,7 +8040,7 @@
       </div>
 
       <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:14px;padding:12px" @click="startUpdate()">
-        Update to <span x-text="updateModal.latest" style="margin-left:4px"></span>
+        Update to <span x-text="latest" style="margin-left:4px"></span>
       </button>
     </div>
 
@@ -8094,9 +8094,9 @@
         </div>
         <div x-show="updateDone && !updateSuccess" style="font-size:12px;color:var(--red)" x-text="'✗ '+updateError"></div>
         <div style="flex:1"></div>
-        <button class="btn btn-ghost" @click="updateModal.show=false" x-show="!updateDone">Running...</button>
+        <button class="btn btn-ghost" @click="show=false" x-show="!updateDone">Running...</button>
         <button class="btn btn-primary" @click="location.reload()" x-show="updateDone && updateSuccess">Reload Page</button>
-        <button class="btn btn-ghost" @click="updateModal.show=false" x-show="updateDone && !updateSuccess">Close</button>
+        <button class="btn btn-ghost" @click="show=false" x-show="updateDone && !updateSuccess">Close</button>
       </div>
     </div>
 

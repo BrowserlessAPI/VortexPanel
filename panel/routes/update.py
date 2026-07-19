@@ -16,24 +16,31 @@ update_bp = Blueprint('update', __name__)
 def req(): return 'user' in session
 
 GITHUB_REPO   = 'BrowserlessAPI/VortexPanel'
-CURRENT_VERSION = 'v3.4.0'
 VERSION_FILE  = '/opt/vortexpanel/version.txt'
 INSTALL_DIR   = '/opt/vortexpanel'
 REPO_DIR      = '/root/Vortexpanel'
+CURRENT_VERSION = 'v3.4.1'  # last-resort only, used solely if nothing below is readable
 
 _update_job = {'running': False, 'lines': [], 'done': False, 'success': False, 'error': ''}
 
 def get_current_version():
-    # 1. Check explicit version file written on update
+    # 1. Check explicit version file written after a successful in-panel update
     if os.path.exists(VERSION_FILE):
         v = open(VERSION_FILE).read().strip()
         if v and v.startswith('v'): return v
-    # 2. Check VERSION file in install dir
-    vf = os.path.join(INSTALL_DIR, 'VERSION')
+    # 2. Fall back to the repo's own VERSION file (/root/Vortexpanel/VERSION) --
+    #    this is the file git pull actually keeps current, unlike
+    #    /opt/vortexpanel/VERSION which nothing in the update process ever
+    #    writes (only panel/, web/, app.py get copied to INSTALL_DIR), so that
+    #    old check #2 here was silently dead code checking a file that could
+    #    never exist. Reading the repo source directly means this self-updates
+    #    on every git pull without needing a second hand-maintained constant.
+    vf = os.path.join(REPO_DIR, 'VERSION')
     if os.path.exists(vf):
         v = open(vf).read().strip()
         if v: return 'v' + v.lstrip('v')
-    # 3. Default to hardcoded constant — always valid semver
+    # 3. Absolute last resort — hardcoded constant, only reached if the repo
+    #    checkout itself is somehow missing its VERSION file entirely.
     return CURRENT_VERSION
 
 def save_current_version(version):
