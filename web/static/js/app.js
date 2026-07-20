@@ -480,6 +480,16 @@ function rootApp() {
 
 // --- DASHBOARD ------------------------------------------------------------------
 function dashboardPage() {
+  // Chart history lives here, OUTSIDE the object Alpine wraps in reactivity below.
+  // Alpine.raw() was tried first to unwrap the Proxy before handing arrays to
+  // Chart.js, but a real browser console dump confirmed recursion crashes
+  // persisted even with genuinely fresh, cache-busted code -- meaning that
+  // approach wasn't fully solving it. Keeping this data in a closure variable
+  // instead means it's plain JS from the start and can never become a Proxy,
+  // so there's nothing left for Chart.js's own internal instrumentation to
+  // conflict with.
+  const hist = { labels:[], cpu:[], ram:[], netRx:[], netTx:[] };
+  const charts = {};
   return {
     stats:{cpu:0,ram:0,disk:0,uptime:'',load:'',ramTotal:'',diskTotal:'',network:''},
     wsConflict:{conflict:false, active:[], message:''},
@@ -493,10 +503,7 @@ function dashboardPage() {
     ],
     loading: true,
     sslAlerts: [],
-    // Rolling client-side history for charts (last 30 polls ≈ 2.5 min at 5s interval)
-    _hist: { labels:[], cpu:[], ram:[], netRx:[], netTx:[] },
     _prevNet: null,
-    _charts: {},
 
     async init() {
       try {
@@ -531,7 +538,7 @@ function dashboardPage() {
     _pushHistory(r) {
       const now = new Date();
       const label = now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0')+':'+now.getSeconds().toString().padStart(2,'0');
-      const h = this._hist;
+      const h = hist;
       h.labels.push(label);
       h.cpu.push(r.cpu || 0);
       h.ram.push(this.ramPct());
@@ -585,24 +592,24 @@ function dashboardPage() {
       });
 
       const cpuRamEl = document.getElementById('vp-chart-cpuram');
-      if (cpuRamEl && !this._charts.cpuram) {
-        this._charts.cpuram = new Chart(cpuRamEl, {
+      if (cpuRamEl && !charts.cpuram) {
+        charts.cpuram = new Chart(cpuRamEl, {
           type: 'line',
-          data: { labels: Alpine.raw(this._hist.labels), datasets: [
-            { label:'CPU %', data:Alpine.raw(this._hist.cpu), borderColor:c.cpu, backgroundColor:c.cpu+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
-            { label:'RAM %', data:Alpine.raw(this._hist.ram), borderColor:c.ram, backgroundColor:c.ram+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+          data: { labels: hist.labels, datasets: [
+            { label:'CPU %', data:hist.cpu, borderColor:c.cpu, backgroundColor:c.cpu+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'RAM %', data:hist.ram, borderColor:c.ram, backgroundColor:c.ram+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
           ]},
           options: baseOpts(100, '%'),
         });
       }
 
       const netEl = document.getElementById('vp-chart-net');
-      if (netEl && !this._charts.net) {
-        this._charts.net = new Chart(netEl, {
+      if (netEl && !charts.net) {
+        charts.net = new Chart(netEl, {
           type: 'line',
-          data: { labels: Alpine.raw(this._hist.labels), datasets: [
-            { label:'↓ In',  data:Alpine.raw(this._hist.netRx), borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
-            { label:'↑ Out', data:Alpine.raw(this._hist.netTx), borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+          data: { labels: hist.labels, datasets: [
+            { label:'↓ In',  data:hist.netRx, borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'↑ Out', data:hist.netTx, borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
           ]},
           options: { ...baseOpts(undefined, ''),
             scales: { ...baseOpts(undefined,'').scales,
@@ -612,23 +619,23 @@ function dashboardPage() {
     },
 
     _updateCharts() {
-      if (!this._charts.cpuram) { this._initCharts(); if(!this._charts.cpuram) return; }
-      // Alpine.raw() unwraps the reactive Proxy before handing arrays to
-      // Chart.js -- confirmed via a real browser console dump that passing
-      // the raw reactive Proxy directly caused an infinite recursion crash
-      // (Chart.js's own internal property reads kept re-triggering Alpine's
-      // Proxy traps, which re-triggered Chart.js, forever). This is Alpine's
-      // documented pattern for integrating with libraries that do their own
-      // internal instrumentation on the data they're given.
-      this._charts.cpuram.data.labels = Alpine.raw(this._hist.labels);
-      this._charts.cpuram.data.datasets[0].data = Alpine.raw(this._hist.cpu);
-      this._charts.cpuram.data.datasets[1].data = Alpine.raw(this._hist.ram);
-      this._charts.cpuram.update('none');
-      if (this._charts.net) {
-        this._charts.net.data.labels = Alpine.raw(this._hist.labels);
-        this._charts.net.data.datasets[0].data = Alpine.raw(this._hist.netRx);
-        this._charts.net.data.datasets[1].data = Alpine.raw(this._hist.netTx);
-        this._charts.net.update('none');
+      if (!charts.cpuram) { this._initCharts(); if(!charts.cpuram) return; }
+      // hist is a plain closure variable (see top of dashboardPage), never
+      // touched by Alpine's reactivity -- confirmed via a real browser
+      // console dump that an earlier Alpine.raw()-unwrapping approach still
+      // caused an infinite recursion crash even with genuinely fresh code.
+      // Keeping this data outside Alpine's reactive object entirely means
+      // there's nothing for Chart.js's own internal instrumentation to
+      // conflict with.
+      charts.cpuram.data.labels = hist.labels;
+      charts.cpuram.data.datasets[0].data = hist.cpu;
+      charts.cpuram.data.datasets[1].data = hist.ram;
+      charts.cpuram.update('none');
+      if (charts.net) {
+        charts.net.data.labels = hist.labels;
+        charts.net.data.datasets[0].data = hist.netRx;
+        charts.net.data.datasets[1].data = hist.netTx;
+        charts.net.update('none');
       }
     },
   };
