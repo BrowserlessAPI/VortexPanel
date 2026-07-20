@@ -7,21 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/theme.css">
-<link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
-<script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
-<script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
-<script src="/static/js/vendor/chart.umd.min.js"></script>
-<!--TEMP
-<link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
-<script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
-<script src="https://unpkg.com/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
--->
-  <style>[x-cloak]{display:none!important}</style>
+<link rel="stylesheet" href="/static/css/vendor/xterm/xterm.css">
+<script src="/static/js/vendor/xterm/xterm.js"></script>
+<script src="/static/js/vendor/xterm/xterm-addon-fit.js"></script>
+<link rel="stylesheet" href="/static/css/vendor/codemirror/codemirror.css">
+<link rel="stylesheet" href="/static/css/vendor/codemirror/theme/material-darker.css">
+<script src="/static/js/vendor/chart.umd.min.js"></script>  <style>[x-cloak]{display:none!important}</style>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js?v={{ panel_version }}"></script>
-  <script src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js" defer></script>
+  <script src="/static/js/vendor/alpine.cdn.min.js" defer></script>
 </head>
 <body>
 
@@ -2049,8 +2043,8 @@
                 <div>
                   <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain Name
                     <span x-show="wsInfo" style="font-weight:400;margin-left:6px"
-                          :style="wsInfo.webserver?'color:var(--green)':'color:var(--red)'"
-                          x-text="wsInfo.webserver ? '→ proxy via '+wsInfo.webserver : '⚠ '+wsInfo.message"></span>
+                          :style="wsInfo?.webserver?'color:var(--green)':'color:var(--red)'"
+                          x-text="wsInfo?.webserver ? '→ proxy via '+wsInfo.webserver : '⚠ '+(wsInfo?.message||'')"></span>
                   </label>
                   <textarea class="form-input" x-model="addModal.domain" rows="3" style="margin-top:4px;resize:vertical"
                             placeholder="One domain per line&#10;myapp.com&#10;*.myapp.com&#10;myapp.com:8080"></textarea>
@@ -3198,7 +3192,7 @@
                 <th style="width:180px">Name</th>
                 <th>Description</th>
                 <th style="width:130px">Status / Version</th>
-                <th style="width:200px">Actions</th>
+                <th style="width:225px">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -3237,13 +3231,20 @@
                   <!-- Actions -->
                   <td>
                     <!-- INSTALLED -->
-                    <div x-show="m.installed" style="display:flex;gap:5px;flex-wrap:wrap">
-                      <button class="btn btn-ghost btn-xs" @click="openSettings(m)" style="gap:3px">
-                        Settings
-                      </button>
-                      <!-- PHP: Add Version button -->
+                    <div x-show="m.installed" style="display:flex;flex-direction:column;gap:5px">
+                      <div style="display:flex;gap:5px;align-items:center">
+                        <button class="btn btn-ghost btn-xs" @click="openSettings(m)" style="gap:3px">
+                          Settings
+                        </button>
+                        <span x-show="m.builtin" class="badge badge-gray" style="font-size:10px">Built-in</span>
+                        <button class="btn btn-danger btn-xs" @click="uninstall(m)" :disabled="m.loading" x-show="!m.builtin">
+                          <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
+                          <span x-text="m.loading?'…':'Uninstall'"></span>
+                        </button>
+                      </div>
+                      <!-- PHP: Add Version row -->
                       <div x-show="m.id==='php'" style="display:flex;align-items:center;gap:4px">
-                        <select class="form-input" style="font-size:11px;padding:3px 6px;min-width:90px;max-width:160px;text-overflow:ellipsis" x-model="m.selVer">
+                        <select class="form-input" style="font-size:11px;padding:3px 6px;min-width:90px;max-width:115px;text-overflow:ellipsis" x-model="m.selVer">
                           <template x-for="v in m.versions" :key="v.value">
                             <option :value="v.value" x-text="v.label"></option>
                           </template>
@@ -3253,15 +3254,6 @@
                           <span x-text="m.loading?'…':'+ Add'"></span>
                         </button>
                       </div>
-                      <span x-show="m.builtin" class="badge badge-gray" style="font-size:10px">Built-in</span>
-                      <button class="btn btn-danger btn-xs" @click="uninstall(m)" :disabled="m.loading" x-show="m.id!=='php' && !m.builtin">
-                        <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
-                        <span x-text="m.loading?'…':'Uninstall'"></span>
-                      </button>
-                      <!-- PHP uninstall via version picker -->
-                      <button class="btn btn-danger btn-xs" @click="uninstall(m)" :disabled="m.loading" x-show="m.id==='php'">
-                        <span x-text="m.loading?'…':'Uninstall'"></span>
-                      </button>
                     </div>
                     <!-- NOT INSTALLED -->
                     <div x-show="!m.installed" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -6807,7 +6799,7 @@
             <!-- Provider header -->
             <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)">
               <div style="width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:26px"
-                   :style="'background:'+(selectedProvider.color||'#333')+'22'">
+                   :style="'background:'+(selectedProvider?.color||'#333')+'22'">
                 <span x-text="selectedProvider?.icon"></span>
               </div>
               <div>

@@ -160,10 +160,11 @@ def create_app():
         response.headers['X-XSS-Protection']       = '1; mode=block'
         response.headers['Referrer-Policy']         = 'strict-origin-when-cross-origin'
         response.headers['Permissions-Policy']      = 'geolocation=(), camera=(), microphone=()'
-        # CSP — Alpine.js needs unsafe-inline; adjust if you add a nonce
+        # CSP — everything is self-hosted now (Alpine, Chart.js, xterm, CodeMirror),
+        # so no external script/style origins need to be trusted anymore.
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' data: https://fonts.gstatic.com; "
             "img-src 'self' data: https:; "

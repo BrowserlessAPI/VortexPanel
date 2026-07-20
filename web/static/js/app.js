@@ -1480,25 +1480,25 @@ function filesPage() {
     async ensureCodeMirror() {
       if (window.CodeMirror) return;
       if (this.cmLoadPromise) return this.cmLoadPromise;
-      const base = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/';
+      const base = '/static/js/vendor/codemirror/';
       const files = [
-        'codemirror.min.js',
-        'mode/xml/xml.min.js',
-        'mode/javascript/javascript.min.js',
-        'mode/css/css.min.js',
-        'mode/clike/clike.min.js',
-        'mode/htmlmixed/htmlmixed.min.js',
-        'mode/php/php.min.js',
-        'mode/python/python.min.js',
-        'mode/shell/shell.min.js',
-        'mode/yaml/yaml.min.js',
-        'mode/markdown/markdown.min.js',
-        'mode/sql/sql.min.js',
-        'mode/ruby/ruby.min.js',
-        'addon/edit/matchbrackets.min.js',
-        'addon/edit/closebrackets.min.js',
-        'addon/selection/active-line.min.js',
-        'addon/search/searchcursor.min.js',
+        'codemirror.js',
+        'mode/xml/xml.js',
+        'mode/javascript/javascript.js',
+        'mode/css/css.js',
+        'mode/clike/clike.js',
+        'mode/htmlmixed/htmlmixed.js',
+        'mode/php/php.js',
+        'mode/python/python.js',
+        'mode/shell/shell.js',
+        'mode/yaml/yaml.js',
+        'mode/markdown/markdown.js',
+        'mode/sql/sql.js',
+        'mode/ruby/ruby.js',
+        'addon/edit/matchbrackets.js',
+        'addon/edit/closebrackets.js',
+        'addon/selection/active-line.js',
+        'addon/search/searchcursor.js',
       ];
       const loadScript = src => new Promise((resolve, reject) => {
         const s = document.createElement('script');
