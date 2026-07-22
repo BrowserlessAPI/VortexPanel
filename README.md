@@ -1,9 +1,9 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.4-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.4">
+<img src="https://img.shields.io/badge/VortexPanel-v3.4.5-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.4.5">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
-<img src="https://img.shields.io/badge/Alpine.js-3.14-8bc0d0?style=for-the-badge">
+<img src="https://img.shields.io/badge/Alpine.js-3.15-8bc0d0?style=for-the-badge">
 <img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge">
 <img src="https://img.shields.io/github/stars/BrowserlessAPI/VortexPanel?style=for-the-badge&color=f59e0b">
 <img src="https://img.shields.io/github/last-commit/BrowserlessAPI/VortexPanel?style=for-the-badge&color=6c7fff">
@@ -170,7 +170,7 @@ The installer auto-detects your OS and package manager. On RHEL 8-family systems
 | Layer | Technology |
 |---|---|
 | **Backend** | Python 3.8+ · Flask 3.x · Gunicorn (4 workers × 4 threads) |
-| **Frontend** | Alpine.js 3.14 · Vanilla CSS (no build step, no npm) |
+| **Frontend** | Alpine.js 3.15 · Vanilla CSS (no build step, no npm) · all JS deps self-hosted (no third-party CDNs) |
 | **Auth** | Session-based · Argon2id password hashing · TOTP 2FA |
 | **Panel config** | JSON files (no external database required) |
 | **Service** | systemd · auto-start on boot |
@@ -197,7 +197,7 @@ python3 app.py   # runs on :8888
 
 ## 🗺 Roadmap
 
-**v3.4 (current) — shipped:**
+**v3.4 — shipped:**
 - [x] Go Projects — binary deployment, Go SDK manager, WebSocket proxy, Let's Encrypt per-domain, resource limits, health checks, version rollback
 - [x] Node.js Projects — PM2 + systemd, nvm version switching
 - [x] Website Import wizard — cPanel, aaPanel, HestiaCP backup upload (files + database)
@@ -210,6 +210,16 @@ python3 app.py   # runs on :8888
 - [x] RHEL-family install fixes — nginx, MySQL, Caddy, MongoDB, PostgreSQL now install correctly on RHEL/CentOS/Fedora/AlmaLinux/Rocky
 - [x] arm64 fixes — MongoDB and PostgreSQL RHEL install paths
 - [x] Modal/layout system overhaul — centering, horizontal scrollbar, cross-component scoping bugs
+
+**v3.4.5 (current) — reliability & security hardening:**
+- [x] Mail, DNS, Cron, Fail2ban — full functional test pass against real running services (not just code review); found and fixed 4 confirmed bugs: disabled cron jobs silently vanishing from the job list instead of showing as disabled, mail account maildirs created with the wrong directory structure (silently broke every new mailbox), DNS zones written to disk but never actually declared to BIND9 (zones were completely unservable), Fail2ban website-jails monitoring the wrong log source entirely due to an unset backend
+- [x] ModSecurity WAF, UFW Firewall, Docker deploy — same full test pass, all verified working correctly against real services, no bugs found
+- [x] WP Toolkit — install-status checks now honest at every layer (was silently reporting Nginx/MySQL as installed when they weren't, both in the UI and in the install logic itself)
+- [x] Fixed 3 pages (WP Toolkit, Databases, Node.js Projects) where navigating in didn't refresh data, due to a broken event listener repeated across all three
+- [x] Security settings modals — fixed floating-popup positioning
+- [x] Dashboard charts — root-caused two separate issues: an external CDN dependency that silently failed to load, and an Alpine.js reactivity/Chart.js conflict causing an infinite-recursion crash
+- [x] All frontend JS/CSS dependencies now self-hosted (Alpine.js upgraded 3.14 → 3.15, plus Chart.js, xterm, CodeMirror) instead of loading from third-party CDNs
+- [x] Tightened Content-Security-Policy — fixed Terminal and code-editor styling that had been silently broken by a CSP/CDN mismatch
 
 **v3.5 (next):**
 - [ ] Bandwidth Monitor — per-domain traffic graphs (daily/weekly/monthly)
