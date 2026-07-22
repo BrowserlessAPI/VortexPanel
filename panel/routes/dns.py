@@ -52,7 +52,20 @@ mail IN A   {ip}
 @   IN MX 10 mail.{domain}.
 """
     with open(zone_file,'w') as f: f.write(template)
-    sh(f'systemctl reload bind9 2>/dev/null || rndc reload 2>/dev/null')
+    # Declare the zone to BIND9 -- without this, the zone file exists on disk
+    # and is syntactically valid, but BIND9 has no idea it should serve it at
+    # all. Confirmed via a real dig query returning nothing until this was
+    # added. delete_zone() already assumed a stanza like this existed (it
+    # tries to remove one), so this was a genuine gap, not a design choice.
+    conf = '/etc/bind/named.conf.local'
+    stanza = f'\nzone "{domain}" {{\n    type master;\n    file "{zone_file}";\n}};\n'
+    existing = open(conf).read() if os.path.exists(conf) else ''
+    if f'zone "{domain}"' not in existing:
+        with open(conf, 'a') as f: f.write(stanza)
+    check = subprocess.run(f'named-checkconf {conf}', shell=True, capture_output=True, text=True)
+    if check.returncode != 0:
+        return jsonify({'ok':False,'error':f'BIND9 config validation failed: {check.stderr.strip() or check.stdout.strip()}'}), 500
+    sh('systemctl reload bind9 2>/dev/null || rndc reload 2>/dev/null || systemctl reload named 2>/dev/null')
     return jsonify({'ok':True,'domain':domain})
 
 @dns_bp.route('/api/dns/zones/<domain>/records')

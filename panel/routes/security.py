@@ -351,6 +351,7 @@ def create_website_jail():
         f'maxretry = {maxretry}\n'
         f'findtime = {findtime}\n'
         f'bantime = {bantime}\n'
+        f'backend = polling\n'
         f'action = iptables-multiport[name={safe_site}, port="{port_val}", protocol=tcp]\n'
         f'_vortex_site = {site}\n'
         f'_vortex_mode = {mode}\n'

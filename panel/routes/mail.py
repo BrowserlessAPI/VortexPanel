@@ -69,7 +69,7 @@ def create_account():
     user, domain = email.split('@',1)
     # Create maildir
     maildir = f'/var/mail/vhosts/{domain}/{user}/'
-    sh(f'mkdir -p {maildir}{{cur,new,tmp}}')
+    sh(f'mkdir -p {maildir}cur {maildir}new {maildir}tmp')
     sh(f'chown -R vmail:vmail /var/mail/vhosts/ 2>/dev/null || true')
     # Add to postfix maps
     for f in ['/etc/postfix/virtual_mailbox_maps']:

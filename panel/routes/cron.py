@@ -36,16 +36,29 @@ def parse_crontab(raw, meta):
     jobs = []
     for line in raw.split('\n'):
         s = line.strip()
-        if not s or s.startswith('#'): continue
-        # Extract vp-id tag if present: # vp:uuid
+        if not s: continue
+        # Extract vp-id tag if present: # vp:uuid -- this MUST happen before
+        # deciding whether to skip a comment line. cron's own convention for
+        # disabling a job is prefixing the whole line with '#', so a disabled
+        # VP job's line legitimately starts with '#' too. Skipping every
+        # '#'-prefixed line here (as before) made disabled jobs disappear
+        # from parse_crontab's results entirely -- confirmed via direct
+        # testing against a real crontab -- with no way to re-enable them
+        # through the UI since they no longer showed up in the job list at all.
         vid_m = re.search(r'#\s*vp:([a-f0-9-]+)', s)
-        vid   = vid_m.group(1) if vid_m else None
-        # Strip meta tag from line for display
+        if not vid_m and s.startswith('#'):
+            continue  # a genuine non-VP comment line, not a job at all
+        is_enabled = not s.startswith('#')
+        # Strip meta tag, then strip a leading disable '#' if present, before
+        # parsing the schedule/command out of what remains.
         clean = re.sub(r'\s*#\s*vp:[a-f0-9-]+', '', s).strip()
+        if not is_enabled:
+            clean = clean.lstrip('#').strip()
         parts = clean.split(None, 5)
         if len(parts) < 6: continue
         schedule = ' '.join(parts[:5])
         command  = parts[5]
+        vid = vid_m.group(1) if vid_m else None
         m = meta.get(vid, {}) if vid else {}
         jobs.append({
             'id':        vid or clean,
@@ -57,7 +70,7 @@ def parse_crontab(raw, meta):
             'logs':      m.get('last_log', ''),
             'last_run':  m.get('last_run', ''),
             'last_exit': m.get('last_exit', ''),
-            'enabled':   not s.startswith('#'),
+            'enabled':   is_enabled,
             'raw_line':  s,
         })
     return jobs
