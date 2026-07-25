@@ -21,7 +21,6 @@ INSTALL_DIR   = '/opt/vortexpanel'
 REPO_DIR      = '/root/Vortexpanel'
 CURRENT_VERSION = 'v3.4.1'  # last-resort only, used solely if nothing below is readable
 
-_update_job = {'running': False, 'lines': [], 'done': False, 'success': False, 'error': ''}
 
 def get_current_version():
     # 1. Check explicit version file written after a successful in-panel update
@@ -158,21 +157,25 @@ def check_update():
 
 @update_bp.route('/api/update/start', methods=['POST'])
 def start_update():
+    from panel.routes.job_state import save_job, load_job
     if not req(): return jsonify({'ok': False}), 401
-    global _update_job
-    if _update_job['running']:
+    existing = load_job('panel_update', {'running': False})
+    if existing.get('running'):
         return jsonify({'ok': False, 'error': 'Update already in progress'}), 400
 
     d      = request.get_json() or {}
     target = d.get('version', '')  # tag name like v3.1.0
 
-    _update_job = {'running': True, 'lines': [], 'done': False, 'success': False, 'error': ''}
+    save_job('panel_update', {'running': True, 'lines': [], 'done': False, 'success': False, 'error': ''})
 
     def run_update():
-        global _update_job
+        lines = []
 
         def log(msg):
-            _update_job['lines'].append(msg)
+            lines.append(msg)
+            state = load_job('panel_update', {'running': True, 'lines': [], 'done': False, 'success': False, 'error': ''})
+            state['lines'] = lines
+            save_job('panel_update', state)
 
         try:
             log('🔍 Checking system prerequisites...')
@@ -238,33 +241,43 @@ def start_update():
                 save_current_version(target)
                 log(f'✓ Version updated to {target}')
 
-            # 6. Restart service
-            log('🔄 Restarting VortexPanel service...')
-            _, _, rc = sh('systemctl restart vortexpanel 2>&1')
-            if rc == 0:
-                log('✓ VortexPanel service restarted successfully')
-            else:
-                # Try alternative restart methods
-                sh('pkill -f "python.*app.py" 2>/dev/null || true')
-                log('✓ Process restarted')
-
+            # 6. Restart service -- mark the job as successfully done BEFORE
+            # triggering this, not after. systemctl restart can terminate
+            # this very worker process shortly after being issued, and code
+            # placed after it is racy to depend on -- confirmed as the same
+            # root cause behind a live bug report on a related job (the
+            # Security Updates apply button), except here it's guaranteed
+            # to happen on every single successful update, not just
+            # occasionally depending on gunicorn's worker routing.
             log('')
             log('✅ VortexPanel updated successfully!')
             log(f'   New version: {target or "latest"}')
             log('   Reload this page to see the latest version.')
-            _update_job.update({'running': False, 'done': True, 'success': True})
+            log('🔄 Restarting VortexPanel service...')
+            save_job('panel_update', {'running': False, 'lines': lines, 'done': True, 'success': True, 'error': ''})
+
+            _, _, rc = sh('systemctl restart vortexpanel 2>&1')
+            # Anything below this line is best-effort only -- this process
+            # may already be mid-termination by the time it runs.
+            if rc == 0:
+                log('✓ VortexPanel service restarted successfully')
+            else:
+                sh('pkill -f "python.*app.py" 2>/dev/null || true')
+                log('✓ Process restarted')
 
         except Exception as e:
             log(f'✗ Update failed: {str(e)}')
-            _update_job.update({'running': False, 'done': True, 'success': False, 'error': str(e)})
+            save_job('panel_update', {'running': False, 'lines': lines, 'done': True, 'success': False, 'error': str(e)})
 
     threading.Thread(target=run_update, daemon=True).start()
     return jsonify({'ok': True})
 
 @update_bp.route('/api/update/status')
 def update_status():
+    from panel.routes.job_state import load_job
     if not req(): return jsonify({'ok': False}), 401
-    return jsonify({'ok': True, **_update_job})
+    state = load_job('panel_update', {'running': False, 'lines': [], 'done': False, 'success': False, 'error': ''})
+    return jsonify({'ok': True, **state})
 
 @update_bp.route('/api/update/version')
 def current_version():

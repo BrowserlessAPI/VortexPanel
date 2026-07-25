@@ -473,8 +473,6 @@ def check_security_updates():
     return jsonify({'ok': True, 'total': len(packages), 'critical': critical, 'packages': packages[:50]})
 
 
-_security_update_job = {'running': False, 'done': False, 'success': None, 'output': '', 'started': None}
-
 @settings_bp.route('/api/settings/security-updates/apply', methods=['POST'])
 def apply_security_updates():
     """Applies ONLY the packages flagged as security updates -- distinct
@@ -484,13 +482,15 @@ def apply_security_updates():
     generic dist-upgrade, so nothing outside the flagged security set
     gets touched. On RHEL-family, dnf's own --security flag does this
     natively -- no need to enumerate packages ourselves there."""
+    from panel.routes.job_state import save_job, load_job
     if not req(): return jsonify({'ok':False}), 401
-    if _security_update_job['running']:
+    existing = load_job('security_update', {'running': False})
+    if existing.get('running'):
         return jsonify({'ok': False, 'error': 'A security update is already in progress'}), 409
 
     import threading, time as _time
     def do_apply():
-        _security_update_job.update({'running': True, 'done': False, 'success': None, 'output': '', 'started': _time.time()})
+        save_job('security_update', {'running': True, 'done': False, 'success': None, 'output': '', 'started': _time.time()})
         os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
         if re.search(r'rhel|fedora|centos', os_family, re.I):
             out = sh('dnf update --security -y 2>&1 || yum update --security -y 2>&1', t=600)
@@ -506,7 +506,7 @@ def apply_security_updates():
                 out = 'No pending security packages found (they may have changed since the last check -- try refreshing).'
             else:
                 out = sh('apt-get install --only-upgrade -y ' + ' '.join(pkgs) + ' 2>&1', t=600)
-        _security_update_job.update({'running': False, 'done': True, 'success': True, 'output': out})
+        save_job('security_update', {'running': False, 'done': True, 'success': True, 'output': out})
 
     threading.Thread(target=do_apply, daemon=True).start()
     return jsonify({'ok': True, 'message': 'Applying security updates in background'})
@@ -514,8 +514,10 @@ def apply_security_updates():
 
 @settings_bp.route('/api/settings/security-updates/status')
 def security_update_status():
+    from panel.routes.job_state import load_job
     if not req(): return jsonify({'ok':False}), 401
-    return jsonify({'ok': True, **_security_update_job})
+    state = load_job('security_update', {'running': False, 'done': False, 'success': None, 'output': '', 'started': None})
+    return jsonify({'ok': True, **state})
 
 
 @settings_bp.route('/api/settings/sync-time', methods=['POST'])
