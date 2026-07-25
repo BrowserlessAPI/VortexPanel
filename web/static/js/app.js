@@ -3284,9 +3284,12 @@ function settingsPage() {
     aiConfig: {enabled:true, api_key:'', base_url:'https://neoncodex.io/api/v1', model:'neoncodex-default', max_tokens:2048},
     aiModels: [], showApiKey: false,
     aiTesting: false, aiTestResult: '', aiTestOk: false,
+    securityUpdates: {total:0, critical:0, packages:[], checked:false, loading:false},
+    applyingSecurityUpdates: false, securityUpdateOutput: '', securityUpdatePollTimer: null,
 
     async init() {
       await this.loadSettings();
+      this.loadSecurityUpdates();
       const s = Alpine.store('vp').security;
       const r2 = await get('/api/auth/2fa/status').catch(()=>({ok:false}));
       if (r2.ok) s.twofa.enabled = r2.enabled;
@@ -3295,7 +3298,37 @@ function settingsPage() {
       const sp = await get('/api/settings/webshell-scan/paths').catch(()=>({ok:false}));
       if (sp.ok) this.scanPaths = sp.paths||['/www/wwwroot'];
       if (this.scanPaths.length) this.scanPath = this.scanPaths[0];
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); } });
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); this.loadSecurityUpdates(); } });
+    },
+
+    async loadSecurityUpdates() {
+      this.securityUpdates.loading = true;
+      const r = await get('/api/settings/security-updates').catch(()=>({ok:false}));
+      if (r.ok) this.securityUpdates = {total:r.total, critical:r.critical, packages:r.packages||[], checked:true, loading:false};
+      else this.securityUpdates.loading = false;
+    },
+
+    async applySecurityUpdates() {
+      if (this.applyingSecurityUpdates) return;
+      this.applyingSecurityUpdates = true;
+      this.securityUpdateOutput = 'Starting...';
+      const r = await post('/api/settings/security-updates/apply', {}).catch(()=>({ok:false}));
+      if (!r.ok) {
+        toast(r.error || 'Failed to start', 'error');
+        this.applyingSecurityUpdates = false;
+        return;
+      }
+      this.securityUpdatePollTimer = setInterval(async () => {
+        const s = await get('/api/settings/security-updates/status').catch(()=>({ok:false}));
+        if (!s.ok) return;
+        this.securityUpdateOutput = s.output || '';
+        if (s.done) {
+          clearInterval(this.securityUpdatePollTimer);
+          this.applyingSecurityUpdates = false;
+          toast(s.success ? 'Security updates applied' : 'Update failed — see output', s.success ? 'success' : 'error');
+          this.loadSecurityUpdates(); // refresh the list — should now be empty or shorter
+        }
+      }, 2000);
     },
 
     async loadSettings() {

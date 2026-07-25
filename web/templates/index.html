@@ -7131,6 +7131,37 @@
         <!-- == CARD GRID == -->
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
 
+          <!-- 0. Security Updates -->
+          <div class="card" x-show="securityUpdates.checked && securityUpdates.total>0" style="border-color:#fecaca">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#ef4444,#b91c1c);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px">🛡️</div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Security Updates</div><div style="font-size:11px;color:var(--text-muted)" x-text="securityUpdates.total+' pending — applies only these, not a full system upgrade'"></div></div>
+            </div>
+
+            <div style="max-height:180px;overflow-y:auto;margin-bottom:12px" x-show="!applyingSecurityUpdates">
+              <template x-for="p in securityUpdates.packages" :key="p.package">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border-light)">
+                  <span style="font-size:12px;font-family:var(--font-mono)" x-text="p.package"></span>
+                  <span :style="'font-size:10px;padding:1px 7px;border-radius:8px;font-weight:600;'+((p.severity==='Critical'||p.severity==='Security')?'background:#fee2e2;color:#991b1b':p.severity==='Important'?'background:#fed7aa;color:#9a3412':'background:#fef3c7;color:#92400e')"
+                        x-text="p.severity"></span>
+                </div>
+              </template>
+            </div>
+
+            <div x-show="applyingSecurityUpdates" style="margin-bottom:12px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                <span style="font-size:12px;color:var(--text-secondary)">Applying — this can take a few minutes</span>
+              </div>
+              <pre style="max-height:140px;overflow-y:auto;background:var(--bg-raised);border-radius:6px;padding:8px;font-size:10px;color:var(--text-muted);white-space:pre-wrap" x-text="securityUpdateOutput.slice(-2000)"></pre>
+            </div>
+
+            <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" :disabled="applyingSecurityUpdates" @click="applySecurityUpdates()">
+              <span x-show="!applyingSecurityUpdates" x-text="'Apply '+securityUpdates.total+' security update'+(securityUpdates.total>1?'s':'')"></span>
+              <span x-show="applyingSecurityUpdates">Applying…</span>
+            </button>
+          </div>
+
           <!-- 1. Network & Access -->
           <div class="card">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">

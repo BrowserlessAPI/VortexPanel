@@ -473,6 +473,51 @@ def check_security_updates():
     return jsonify({'ok': True, 'total': len(packages), 'critical': critical, 'packages': packages[:50]})
 
 
+_security_update_job = {'running': False, 'done': False, 'success': None, 'output': '', 'started': None}
+
+@settings_bp.route('/api/settings/security-updates/apply', methods=['POST'])
+def apply_security_updates():
+    """Applies ONLY the packages flagged as security updates -- distinct
+    from the existing /api/settings/update button, which blindly upgrades
+    everything with no way to scope it. On Debian/Ubuntu this means
+    passing the exact package list to --only-upgrade rather than a
+    generic dist-upgrade, so nothing outside the flagged security set
+    gets touched. On RHEL-family, dnf's own --security flag does this
+    natively -- no need to enumerate packages ourselves there."""
+    if not req(): return jsonify({'ok':False}), 401
+    if _security_update_job['running']:
+        return jsonify({'ok': False, 'error': 'A security update is already in progress'}), 409
+
+    import threading, time as _time
+    def do_apply():
+        _security_update_job.update({'running': True, 'done': False, 'success': None, 'output': '', 'started': _time.time()})
+        os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
+        if re.search(r'rhel|fedora|centos', os_family, re.I):
+            out = sh('dnf update --security -y 2>&1 || yum update --security -y 2>&1', t=600)
+        else:
+            sh('apt-get update -q 2>/dev/null', t=120)
+            raw = sh('apt-get -s dist-upgrade 2>/dev/null', t=60)
+            pkgs = []
+            for line in raw.split('\n'):
+                if line.startswith('Inst') and 'security' in line.lower():
+                    m = re.match(r'^Inst (\S+)', line)
+                    if m: pkgs.append(m.group(1))
+            if not pkgs:
+                out = 'No pending security packages found (they may have changed since the last check -- try refreshing).'
+            else:
+                out = sh('apt-get install --only-upgrade -y ' + ' '.join(pkgs) + ' 2>&1', t=600)
+        _security_update_job.update({'running': False, 'done': True, 'success': True, 'output': out})
+
+    threading.Thread(target=do_apply, daemon=True).start()
+    return jsonify({'ok': True, 'message': 'Applying security updates in background'})
+
+
+@settings_bp.route('/api/settings/security-updates/status')
+def security_update_status():
+    if not req(): return jsonify({'ok':False}), 401
+    return jsonify({'ok': True, **_security_update_job})
+
+
 @settings_bp.route('/api/settings/sync-time', methods=['POST'])
 def sync_time():
     if not req(): return jsonify({'ok':False}), 401
