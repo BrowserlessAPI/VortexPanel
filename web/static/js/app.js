@@ -503,6 +503,7 @@ function dashboardPage() {
     ],
     loading: true,
     sslAlerts: [],
+    securityUpdates: {total:0, critical:0, packages:[], checked:false},
     _prevNet: null,
 
     async init() {
@@ -514,14 +515,23 @@ function dashboardPage() {
         this.loading = false;
       }
       this._waitForChartJs();
+      this.loadSecurityUpdates();  // non-blocking -- runs real apt/dnf commands, don't hold up the page for it
       setInterval(()=>this.loadStats(),5000);
       setInterval(()=>this.loadSslAlerts(),60000); // recheck every minute, not every 5s
       document.addEventListener("vortex-logged-in", () => { this.init(); });
-      window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); this.loadSslAlerts(); } });
+      window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); this.loadSslAlerts(); this.loadSecurityUpdates(); } });
     },
     async loadSslAlerts() {
       const r = await get('/api/dashboard/ssl-alerts').catch(()=>({ok:false}));
       if (r.ok) this.sslAlerts = r.alerts || [];
+    },
+    async loadSecurityUpdates() {
+      // Deliberately NOT on a tight interval like loadSslAlerts -- this
+      // runs real apt-get/dnf commands server-side and takes several
+      // seconds, unlike the lightweight SSL check. Once per dashboard
+      // visit is enough; security updates don't change minute to minute.
+      const r = await get('/api/settings/security-updates').catch(()=>({ok:false}));
+      if (r.ok) this.securityUpdates = {total:r.total, critical:r.critical, packages:r.packages||[], checked:true};
     },
     async loadStats() {
       const r = await get('/api/dashboard/stats').catch(()=>({ok:false}));

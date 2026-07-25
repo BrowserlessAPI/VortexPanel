@@ -146,10 +146,10 @@ def create_sudo_user():
 
     # Set password
     if password:
-        _, err, rc = sh(f'echo "{username}:{password}" | chpasswd 2>&1')
-        if rc != 0:
+        pw_proc = subprocess.run(['chpasswd'], input=f'{username}:{password}', text=True, capture_output=True)
+        if pw_proc.returncode != 0:
             sh(f'userdel -r {username} 2>/dev/null')
-            return jsonify({'ok':False,'error':f'Failed to set password: {err}'}), 500
+            return jsonify({'ok':False,'error':f'Failed to set password: {pw_proc.stderr.strip()}'}), 500
 
     # Add to sudo/wheel group
     os_family = sh('. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian')

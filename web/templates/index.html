@@ -247,6 +247,18 @@
           <button class="btn btn-sm" style="background:#fef3c7;color:#92400e;border-color:#fde68a;flex-shrink:0" @click="go('websites')">Renew</button>
         </div>
 
+        <!-- Security updates warning banner -->
+        <div x-show="securityUpdates.checked && securityUpdates.total>0"
+             style="display:flex;align-items:flex-start;gap:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
+          <span style="font-size:18px;flex-shrink:0">🛡️</span>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:#991b1b;margin-bottom:3px"
+                 x-text="securityUpdates.total+' pending security update'+(securityUpdates.total>1?'s':'')+' — including the current wave of Linux kernel CVEs'"></div>
+            <div style="font-size:12px;color:#b91c1c" x-text="securityUpdates.packages.slice(0,6).map(p=>p.package).join(', ')+(securityUpdates.total>6?' and '+(securityUpdates.total-6)+' more':'')"></div>
+          </div>
+          <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;flex-shrink:0" @click="go('settings')">Review</button>
+        </div>
+
         <!-- Webserver conflict warning banner -->
         <div x-show="wsConflict.conflict"
              style="display:flex;align-items:flex-start;gap:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">

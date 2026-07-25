@@ -82,7 +82,21 @@ def mysql_dbs():
 
 # --- PostgreSQL helpers ---------------------------------------------------------
 def pg_cmd(query, db='postgres'):
-    out, err, rc = sh(f'sudo -u postgres psql -d {db} -c "{query}" -t 2>/dev/null')
+    """Matches mysql_cmd's approach: write the query to a temp file instead
+    of embedding it in a shell -c "..." string. Previously the query was
+    interpolated directly into a double-quoted shell string, meaning any
+    content containing a double-quote or backtick could break out of the
+    shell invocation entirely -- a different, additional risk on top of
+    the SQL-injection-via-password issue already fixed separately. Moving
+    the query to a file (like MySQL already does) means its content never
+    needs to survive shell string interpretation at all."""
+    import tempfile as _tmp
+    tf = _tmp.NamedTemporaryFile(mode='w', suffix='.sql', delete=False)
+    tf.write(query + '\n')
+    tf.flush(); tf.close()
+    os.chmod(tf.name, 0o644)  # psql runs as 'postgres' via sudo -- needs read access
+    out, err, rc = sh(f'sudo -u postgres psql -d {db} -t -f {tf.name} 2>/dev/null')
+    os.unlink(tf.name)
     if rc == 0: return out, None
     return '', f'PostgreSQL error: {err}'
 
@@ -179,7 +193,7 @@ def create_db():
         _, err = mysql_cmd(f'CREATE DATABASE IF NOT EXISTS `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;')
         if err: return jsonify({'ok':False,'error':err})
         if user and pwd:
-            mysql_cmd(f"CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{pwd}';")
+            mysql_cmd(f"CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{_sql_escape(pwd)}';")
             mysql_cmd(f"GRANT ALL PRIVILEGES ON `{name}`.* TO '{user}'@'localhost'; FLUSH PRIVILEGES;")
         return jsonify({'ok':True,'name':name})
 
@@ -187,8 +201,8 @@ def create_db():
         _, err, rc = sh(f"sudo -u postgres createdb '{name}' 2>/dev/null")
         if rc != 0: return jsonify({'ok':False,'error':err or 'Failed to create PostgreSQL database'})
         if user and pwd:
-            sh(f"sudo -u postgres psql -c \"CREATE USER {user} WITH PASSWORD '{pwd}';\" 2>/dev/null")
-            sh(f"sudo -u postgres psql -c \"GRANT ALL PRIVILEGES ON DATABASE {name} TO {user};\" 2>/dev/null")
+            pg_cmd(f"CREATE USER {user} WITH PASSWORD '{_sql_escape(pwd)}';")
+            pg_cmd(f"GRANT ALL PRIVILEGES ON DATABASE {name} TO {user};")
         return jsonify({'ok':True,'name':name})
 
     elif engine == 'mongodb':
@@ -311,58 +325,67 @@ def create_user():
     engine = d.get('engine','mysql')
     if not user or not pwd: return jsonify({'ok':False,'error':'Username and password required'})
     if engine in ('mysql','mariadb'):
-        mysql_cmd(f"CREATE USER IF NOT EXISTS '{user}'@'{host}' IDENTIFIED BY '{pwd}';")
-        if db: mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'{host}'; FLUSH PRIVILEGES;")
+        mysql_cmd(f"CREATE USER IF NOT EXISTS '{user}'@'{_sql_escape(host)}' IDENTIFIED BY '{_sql_escape(pwd)}';")
+        if db: mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'{_sql_escape(host)}'; FLUSH PRIVILEGES;")
         else: mysql_cmd("FLUSH PRIVILEGES;")
     elif engine == 'postgresql':
-        sh(f"sudo -u postgres psql -c \"CREATE USER {user} WITH PASSWORD '{pwd}';\" 2>/dev/null")
-        if db: sh(f"sudo -u postgres psql -c \"GRANT ALL PRIVILEGES ON DATABASE {db} TO {user};\" 2>/dev/null")
+        pg_cmd(f"CREATE USER {user} WITH PASSWORD '{_sql_escape(pwd)}';")
+        if db: pg_cmd(f"GRANT ALL PRIVILEGES ON DATABASE {db} TO {user};")
     elif engine == 'mongodb':
+        if "'" in pwd or "'" in user:
+            return jsonify({'ok':False,'error':"Password/username cannot contain a single quote for MongoDB accounts"}), 400
+        pwd_js = pwd.replace('\\', '\\\\').replace('"', '\\"')
         roles = f'[{{role:"readWrite",db:"{db}"}}]' if db else '[{role:"read",db:"admin"}]'
-        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\"admin\").createUser({{user:\"{user}\",pwd:\"{pwd}\",roles:{roles}}})' 2>/dev/null")
+        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\\\"admin\\\").createUser({{user:\\\"{user}\\\",pwd:\\\"{pwd_js}\\\",roles:{roles}}})' 2>/dev/null")
     return jsonify({'ok':True})
 
 @databases_bp.route('/api/databases/users/<user>', methods=['DELETE'])
 def drop_user(user):
     if not req(): return jsonify({'ok':False}), 401
+    user = re.sub(r'[^a-zA-Z0-9_]','', user)
     engine = request.args.get('engine','mysql')
     host   = request.args.get('host','localhost')
     if engine in ('mysql','mariadb'):
-        mysql_cmd(f"DROP USER IF EXISTS '{user}'@'{host}'; FLUSH PRIVILEGES;")
+        mysql_cmd(f"DROP USER IF EXISTS '{user}'@'{_sql_escape(host)}'; FLUSH PRIVILEGES;")
     elif engine == 'postgresql':
-        sh(f"sudo -u postgres psql -c \"DROP USER IF EXISTS {user};\" 2>/dev/null")
+        pg_cmd(f"DROP USER IF EXISTS {user};")
     elif engine == 'mongodb':
-        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\"admin\").dropUser(\"{user}\")' 2>/dev/null")
+        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\\\"admin\\\").dropUser(\\\"{user}\\\")' 2>/dev/null")
     return jsonify({'ok':True})
 
 @databases_bp.route('/api/databases/users/<user>/password', methods=['PUT'])
 def change_password(user):
     if not req(): return jsonify({'ok':False}), 401
+    user = re.sub(r'[^a-zA-Z0-9_]','', user)
     d = request.get_json() or {}
     pwd    = d.get('password','')
     engine = d.get('engine','mysql')
     host   = d.get('host','localhost')
     if not pwd: return jsonify({'ok':False,'error':'Password required'})
     if engine in ('mysql','mariadb'):
-        mysql_cmd(f"ALTER USER '{user}'@'{host}' IDENTIFIED BY '{pwd}'; FLUSH PRIVILEGES;")
+        mysql_cmd(f"ALTER USER '{user}'@'{_sql_escape(host)}' IDENTIFIED BY '{_sql_escape(pwd)}'; FLUSH PRIVILEGES;")
     elif engine == 'postgresql':
-        sh(f"sudo -u postgres psql -c \"ALTER USER {user} WITH PASSWORD '{pwd}';\" 2>/dev/null")
+        pg_cmd(f"ALTER USER {user} WITH PASSWORD '{_sql_escape(pwd)}';")
     elif engine == 'mongodb':
-        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\"admin\").updateUser(\"{user}\",{{pwd:\"{pwd}\"}})' 2>/dev/null")
+        if "'" in pwd:
+            return jsonify({'ok':False,'error':"Password cannot contain a single quote for MongoDB accounts"}), 400
+        pwd_js = pwd.replace('\\', '\\\\').replace('"', '\\"')
+        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\\\"admin\\\").updateUser(\\\"{user}\\\",{{pwd:\\\"{pwd_js}\\\"}})' 2>/dev/null")
     return jsonify({'ok':True})
 
 @databases_bp.route('/api/databases/users/<user>/grant', methods=['POST'])
 def grant_db(user):
     if not req(): return jsonify({'ok':False}), 401
+    user = re.sub(r'[^a-zA-Z0-9_]','', user)
     d = request.get_json() or {}
     db     = d.get('database','')
     host   = d.get('host','localhost')
     engine = d.get('engine','mysql')
     if not db: return jsonify({'ok':False,'error':'Database required'})
     if engine in ('mysql','mariadb'):
-        mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'{host}'; FLUSH PRIVILEGES;")
+        mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'{_sql_escape(host)}'; FLUSH PRIVILEGES;")
     elif engine == 'postgresql':
-        sh(f"sudo -u postgres psql -c \"GRANT ALL PRIVILEGES ON DATABASE {db} TO {user};\" 2>/dev/null")
+        pg_cmd(f"GRANT ALL PRIVILEGES ON DATABASE {db} TO {user};")
     elif engine == 'mongodb':
-        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\"admin\").grantRolesToUser(\"{user}\",[{{role:\"readWrite\",db:\"{db}\"}}])' 2>/dev/null")
+        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\\\"admin\\\").grantRolesToUser(\\\"{user}\\\",[{{role:\\\"readWrite\\\",db:\\\"{db}\\\"}}])' 2>/dev/null")
     return jsonify({'ok':True})

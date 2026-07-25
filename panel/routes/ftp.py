@@ -107,19 +107,21 @@ def create_account():
     if daemon == 'pure-ftpd':
         # Pure-FTPd virtual user
         sh(f'useradd -s /bin/false -d {home} {user} 2>/dev/null || true')
-        result = sh(f'printf "%s\n%s\n" "{pwd}" "{pwd}" | pure-pw useradd {user} -u {user} -d {home} 2>&1')
+        result = subprocess.run(['pure-pw', 'useradd', user, '-u', user, '-d', home],
+                                 input=f'{pwd}\n{pwd}\n', text=True, capture_output=True)
         sh('pure-pw mkdb 2>/dev/null')
         sh('systemctl reload pure-ftpd 2>/dev/null || true')
     else:
         # Generic system user
         sh(f'useradd -m -d {home} -s /sbin/nologin {user} 2>/dev/null || true')
-        sh(f'echo "{user}:{pwd}" | chpasswd')
+        subprocess.run(['chpasswd'], input=f'{user}:{pwd}', text=True, capture_output=True)
 
     return jsonify({'ok':True, 'user':user, 'home':home})
 
 @ftp_bp.route('/api/ftp/accounts/<user>', methods=['DELETE'])
 def delete_account(user):
     if not req(): return jsonify({'ok':False}), 401
+    user = re.sub(r'[^a-zA-Z0-9_-]', '', user)
     daemon, _ = get_ftp_daemon()
     if daemon == 'pure-ftpd':
         sh(f'pure-pw userdel {user} 2>/dev/null && pure-pw mkdb 2>/dev/null')
@@ -129,11 +131,13 @@ def delete_account(user):
 @ftp_bp.route('/api/ftp/accounts/<user>/password', methods=['PUT'])
 def change_password(user):
     if not req(): return jsonify({'ok':False}), 401
+    user = re.sub(r'[^a-zA-Z0-9_-]', '', user)
     pwd = (request.get_json() or {}).get('password','')
     if len(pwd) < 6: return jsonify({'ok':False,'error':'Min 6 characters'}), 400
     daemon, _ = get_ftp_daemon()
     if daemon == 'pure-ftpd':
-        sh(f'printf "%s\n%s\n" "{pwd}" "{pwd}" | pure-pw passwd {user} 2>/dev/null && pure-pw mkdb 2>/dev/null')
+        subprocess.run(['pure-pw', 'passwd', user], input=f'{pwd}\n{pwd}\n', text=True, capture_output=True)
+        sh('pure-pw mkdb 2>/dev/null')
     else:
-        sh(f'echo "{user}:{pwd}" | chpasswd')
+        subprocess.run(['chpasswd'], input=f'{user}:{pwd}', text=True, capture_output=True)
     return jsonify({'ok':True})

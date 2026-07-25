@@ -359,17 +359,28 @@ def set_php_version(domain):
 
 
 # --- DIRECTORY ------------------------------------------------------------------
+DIRECTORY_INI_MARKER = '; Added by VortexPanel Directory Protection (Anti-XSS / open_basedir)'
+
 @websites_bp.route('/api/websites/<domain>/directory')
 def get_directory(domain):
     if not req(): return jsonify({'ok':False}), 401
     avail, _ = get_nginx_dirs()
     conf_path = os.path.join(avail, f'{domain}.conf')
     root_path = get_webroot() + '/' + domain
+    accesslog_off = False
     if os.path.exists(conf_path):
         with open(conf_path) as f: content = f.read()
         m = re.search(r'root\s+([^;]+);', content)
         if m: root_path = m.group(1).strip()
-    return jsonify({'ok':True,'path':root_path})
+        accesslog_off = bool(re.search(r'access_log\s+off\s*;', content))
+    ini_path = os.path.join(root_path, '.user.ini')
+    antixss = False
+    if os.path.exists(ini_path):
+        try:
+            antixss = 'open_basedir' in open(ini_path).read()
+        except Exception:
+            pass
+    return jsonify({'ok':True,'path':root_path, 'antixss':antixss, 'accesslog': not accesslog_off})
 
 
 @websites_bp.route('/api/websites/<domain>/directory', methods=['PUT'])
@@ -392,6 +403,100 @@ def set_directory(domain):
         return jsonify({'ok':False,'error':test})
     reload_nginx()
     return jsonify({'ok':True})
+
+
+@websites_bp.route('/api/websites/<domain>/directory/antixss', methods=['POST'])
+def set_directory_antixss(domain):
+    """Anti-XSS / 'Base directory limit' (aaPanel's naming for PHP's
+    open_basedir). Implemented via a per-directory .user.ini file rather
+    than editing the shared PHP-FPM pool config -- every site on this
+    server currently shares one pool per PHP version (confirmed: nginx
+    vhosts all point at /run/php/php{version}-fpm.sock, not a per-site
+    socket), so writing open_basedir into that shared pool would restrict
+    every other site running the same PHP version too. .user.ini is
+    PHP's own directory-scoped mechanism and only affects this site."""
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    enabled = bool(d.get('enabled', False))
+
+    avail, _ = get_nginx_dirs()
+    conf_path = os.path.join(avail, f'{domain}.conf')
+    root_path = get_webroot() + '/' + domain
+    if os.path.exists(conf_path):
+        with open(conf_path) as f: content = f.read()
+        m = re.search(r'root\s+([^;]+);', content)
+        if m: root_path = m.group(1).strip()
+
+    if not os.path.isdir(root_path):
+        return jsonify({'ok':False, 'error': f'Site directory not found: {root_path}'}), 404
+
+    ini_path = os.path.join(root_path, '.user.ini')
+
+    if enabled:
+        directive = f'open_basedir = "{root_path}/:/tmp/:/var/tmp/:/proc/:/dev/urandom"'
+        try:
+            with open(ini_path, 'w') as f:
+                f.write(f'{DIRECTORY_INI_MARKER}\n{directive}\n')
+            ensure_web_ownership(ini_path)
+        except Exception as e:
+            return jsonify({'ok':False, 'error': f'Could not write .user.ini: {e}'}), 500
+    else:
+        if os.path.exists(ini_path):
+            try:
+                existing = open(ini_path).read()
+            except Exception as e:
+                return jsonify({'ok':False, 'error': str(e)}), 500
+            if DIRECTORY_INI_MARKER not in existing:
+                # A .user.ini exists but wasn't created by this feature --
+                # don't blindly delete a file the site owner added for
+                # unrelated reasons.
+                return jsonify({'ok':False, 'error': '.user.ini exists with content not managed by VortexPanel — remove it manually if you want to disable this'}), 400
+            try:
+                os.remove(ini_path)
+            except Exception as e:
+                return jsonify({'ok':False, 'error': str(e)}), 500
+
+    return jsonify({'ok':True, 'enabled':enabled,
+                     'note':"PHP re-reads .user.ini every ~5 minutes by default (user_ini.cache_ttl) — restart PHP-FPM for this site's version to apply immediately"})
+
+
+@websites_bp.route('/api/websites/<domain>/directory/accesslog', methods=['POST'])
+def set_directory_accesslog(domain):
+    """Toggle this site's nginx access_log on/off. Note: Fail2ban's
+    website anti-CC/anti-scan jails (Security -> Fail2ban) tail this
+    exact log file -- disabling it here will silently stop those jails
+    from seeing any traffic for this site."""
+    if not req(): return jsonify({'ok':False}), 401
+    d = request.get_json() or {}
+    enabled = bool(d.get('enabled', True))
+
+    avail, _ = get_nginx_dirs()
+    conf_path = os.path.join(avail, f'{domain}.conf')
+    if not os.path.exists(conf_path):
+        return jsonify({'ok':False,'error':'Config not found'}), 404
+
+    with open(conf_path) as f: original = f.read()
+    real_log_path = f'/var/log/nginx/{domain}.access.log'
+    if enabled:
+        content = re.sub(r'access_log\s+[^;]+;', f'access_log {real_log_path};', original)
+    else:
+        content = re.sub(r'access_log\s+[^;]+;', 'access_log off;', original)
+
+    with open(conf_path, 'w') as f: f.write(content)
+    test = sh('nginx -t 2>&1')
+    if 'failed' in test.lower():
+        with open(conf_path, 'w') as f: f.write(original)  # roll back — never leave nginx broken
+        return jsonify({'ok':False, 'error': test}), 500
+    reload_nginx()
+
+    warning = None
+    if not enabled:
+        safe_site = re.sub(r'[^a-zA-Z0-9_-]', '', domain.replace('.', '_'))[:60]
+        jail_conf = f'/etc/fail2ban/jail.d/vortex-site-{safe_site}.conf'
+        if os.path.exists(jail_conf):
+            warning = 'This site has an active Fail2ban protection jail that reads this log — disabling it will stop that jail from detecting new traffic.'
+
+    return jsonify({'ok':True, 'enabled':enabled, 'warning':warning})
 
 
 # --- LOGS -----------------------------------------------------------------------

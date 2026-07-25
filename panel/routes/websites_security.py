@@ -1,4 +1,4 @@
-import os, re
+import os, re, subprocess
 from flask import jsonify, request
 
 try:
@@ -98,7 +98,15 @@ def manage_limit_access(domain):
         htdir  = '/etc/nginx/htpasswd'
         os.makedirs(htdir, exist_ok=True)
         htfile = htdir + '/' + domain + '_' + name
-        sh('htpasswd -cb ' + htfile + ' "' + name + '" "' + password + '" 2>/dev/null || echo "' + name + ':$(openssl passwd -apr1 ' + password + ')" > ' + htfile)
+        # subprocess with an argument list (no shell=True) -- name/password
+        # are user-supplied and were previously concatenated directly into
+        # a shell string with zero escaping, a genuine shell injection
+        # vulnerability (either field containing backticks, $(), quotes,
+        # or semicolons could execute arbitrary commands as root).
+        htpasswd_proc = subprocess.run(['htpasswd', '-cb', htfile, name, password],
+                                        capture_output=True, text=True)
+        if htpasswd_proc.returncode != 0:
+            return jsonify({'ok':False, 'error': f'Failed to create password file: {htpasswd_proc.stderr.strip()}'}), 500
         block = (
             '\n    #VP_LIMIT:' + name + '|' + path +
             '\n    location ' + path + ' {'
@@ -129,16 +137,27 @@ def manage_limit_access(domain):
 
 @websites_bp.route('/api/websites/<domain>/limit-access/<name>', methods=['DELETE'])
 def delete_limit_access(domain, name):
+    """Matches the #VP_LIMIT:name|path marker and htpasswd path that
+    add_rule() actually writes -- this endpoint previously looked for a
+    completely different, never-written marker format and htpasswd path,
+    meaning it had never successfully deleted a rule created by add_rule."""
     if not req(): return jsonify({'ok':False}), 401
+    path = (request.args.get('path') or '').strip()
     avail, _ = get_nginx_dirs()
     conf_path = os.path.join(avail, f'{domain}.conf')
-    htpasswd = f'/etc/nginx/.htpasswd_{domain}_{name}'
+    htfile = f'/etc/nginx/htpasswd/{domain}_{name}'
     try:
-        if os.path.exists(htpasswd): os.unlink(htpasswd)
+        if os.path.exists(htfile): os.unlink(htfile)
         if os.path.exists(conf_path):
             with open(conf_path) as f: content = f.read()
-            content = re.sub(rf'#LIMIT-{re.escape(name)}-START.*?#LIMIT-{re.escape(name)}-END\s*', '', content, flags=re.DOTALL)
+            if path:
+                content = re.sub(r'\s*#VP_LIMIT:' + re.escape(name) + r'\|' + re.escape(path) + r'\n\s*location[^{]+\{[^}]+\}\n?', '\n', content)
+            else:
+                # No path given -- match this rule name regardless of path
+                content = re.sub(r'\s*#VP_LIMIT:' + re.escape(name) + r'\|[^\n]+\n\s*location[^{]+\{[^}]+\}\n?', '\n', content)
             with open(conf_path,'w') as f: f.write(content)
+            test = sh('nginx -t 2>&1')
+            if 'failed' in test.lower(): return jsonify({'ok':False,'error':test}), 400
         reload_nginx()
         return jsonify({'ok':True})
     except Exception as e:

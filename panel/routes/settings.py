@@ -440,6 +440,39 @@ def set_hostname():
     return jsonify({'ok':True})
 
 
+@settings_bp.route('/api/settings/security-updates')
+def check_security_updates():
+    """Read-only check for PENDING security updates specifically, using
+    each distro's own continuously-maintained security metadata rather
+    than a hardcoded CVE/version lookup table baked into VortexPanel's
+    source -- that kind of table goes stale the moment a new critical
+    CVE appears that isn't in it, giving false reassurance. This defers
+    entirely to apt's/dnf's own live, current security tagging instead.
+    Does NOT apply anything -- that's still the existing /api/settings/update
+    button; this just tells the admin what's actually pending first."""
+    if not req(): return jsonify({'ok':False}), 401
+    os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
+
+    packages = []
+    if re.search(r'rhel|fedora|centos', os_family, re.I):
+        sh('dnf makecache 2>/dev/null || yum makecache 2>/dev/null', t=120)
+        raw = sh('dnf updateinfo list security 2>/dev/null || yum updateinfo list security 2>/dev/null', t=60)
+        for line in raw.split('\n'):
+            m = re.match(r'^\S+\s+(Critical|Important|Moderate|Low)/Sec\.\s+(\S+)', line.strip())
+            if m:
+                packages.append({'severity': m.group(1), 'package': m.group(2)})
+    else:
+        sh('apt-get update -q 2>/dev/null', t=120)
+        raw = sh('apt-get -s dist-upgrade 2>/dev/null', t=60)
+        for line in raw.split('\n'):
+            if line.startswith('Inst') and 'security' in line.lower():
+                m = re.match(r'^Inst (\S+)', line)
+                if m: packages.append({'severity': 'Security', 'package': m.group(1)})
+
+    critical = sum(1 for p in packages if p['severity'] in ('Critical', 'Important', 'Security'))
+    return jsonify({'ok': True, 'total': len(packages), 'critical': critical, 'packages': packages[:50]})
+
+
 @settings_bp.route('/api/settings/sync-time', methods=['POST'])
 def sync_time():
     if not req(): return jsonify({'ok':False}), 401

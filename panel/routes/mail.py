@@ -65,7 +65,8 @@ def create_account():
     d = request.get_json() or {}
     email    = d.get('email','').strip()
     password = d.get('password','')
-    if not email or '@' not in email: return jsonify({'ok':False,'error':'Valid email required'}),400
+    if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', email):
+        return jsonify({'ok':False,'error':'Valid email required'}),400
     user, domain = email.split('@',1)
     # Create maildir
     maildir = f'/var/mail/vhosts/{domain}/{user}/'
@@ -76,8 +77,12 @@ def create_account():
         if os.path.exists(f):
             with open(f,'a') as fh: fh.write(f'{email} {domain}/{user}/\n')
             sh(f'postmap {f}')
-    # Set dovecot password
-    pw_hash = sh(f'doveadm pw -s SHA512-CRYPT -p "{password}" 2>/dev/null')
+    # Set dovecot password -- subprocess with an argument list instead of
+    # shell string interpolation eliminates the injection entirely rather
+    # than trying to escape the password correctly.
+    hash_proc = subprocess.run(['doveadm', 'pw', '-s', 'SHA512-CRYPT', '-p', password],
+                                capture_output=True, text=True)
+    pw_hash = hash_proc.stdout.strip()
     os.makedirs(os.path.dirname(MAIL_USERS_FILE), exist_ok=True)
     with open(MAIL_USERS_FILE,'a') as f: f.write(f'{email}:{pw_hash}\n')
     sh('systemctl reload postfix dovecot 2>/dev/null')
@@ -101,7 +106,9 @@ def reset_mail_password(email):
     d = request.get_json() or {}
     password = d.get('password','')
     if not password: return jsonify({'ok':False,'error':'Password required'}),400
-    pw_hash = sh(f'doveadm pw -s SHA512-CRYPT -p "{password}" 2>/dev/null')
+    hash_proc = subprocess.run(['doveadm', 'pw', '-s', 'SHA512-CRYPT', '-p', password],
+                                capture_output=True, text=True)
+    pw_hash = hash_proc.stdout.strip()
     if not pw_hash: return jsonify({'ok':False,'error':'Failed to hash password'}),500
     updated = False
     if os.path.exists(MAIL_USERS_FILE):

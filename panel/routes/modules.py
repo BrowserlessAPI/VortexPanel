@@ -848,13 +848,26 @@ apt-get autoremove -y 2>/dev/null || true''',
         'versions':[
             {'label':'1.1.0 (Latest Stable)', 'value':'latest'},
         ],
-        'install':r'''apt-get install -y python3 python3-pip curl gzip && \
-F2B_VER=$(curl -fsSL https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
-F2B_VER=${F2B_VER:-1.1.0} && \
-curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
-(dpkg -i /tmp/fail2ban.deb 2>/dev/null || apt-get install -y fail2ban) && \
-systemctl enable fail2ban && systemctl start fail2ban''',
-        'uninstall':'systemctl stop fail2ban 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold fail2ban && apt-get autoremove -y',
+        'install':r'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian) && \
+if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
+  apt-get install -y python3 python3-pip curl gzip && \
+  F2B_VER=$(curl -fsSL https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
+  F2B_VER=${F2B_VER:-1.1.0} && \
+  curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
+  (dpkg -i /tmp/fail2ban.deb 2>/dev/null || apt-get install -y fail2ban) && \
+  systemctl enable fail2ban && systemctl start fail2ban; \
+elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then \
+  echo "[VortexPanel] fail2ban is not in the default RHEL-family repos -- enabling EPEL first" && \
+  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && \
+  (dnf install -y fail2ban fail2ban-firewalld 2>/dev/null || yum install -y fail2ban fail2ban-firewalld 2>/dev/null || dnf install -y fail2ban 2>/dev/null || yum install -y fail2ban) && \
+  systemctl enable --now fail2ban; \
+fi''',
+        'uninstall':(
+            'systemctl stop fail2ban 2>/dev/null; '
+            'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold fail2ban 2>/dev/null; '
+            'apt-get autoremove -y 2>/dev/null; '
+            'dnf remove -y fail2ban fail2ban-firewalld 2>/dev/null; yum remove -y fail2ban fail2ban-firewalld 2>/dev/null; true'
+        ),
         'service':'fail2ban', 'manage':True,
     },
     {
@@ -897,36 +910,55 @@ systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl 
             {'label':'9.20.x (Stable - ISC official)',  'value':'9.20'},
         ],
         'install_tpl':(
-            'apt-get install -y software-properties-common && '
-            'if [ "{ver}" = "9.20" ]; then '
-            # Same failure class already confirmed for ondrej/php and
-            # ondrej/apache2: isc/bind may have no release for a very new
-            # Ubuntu codename, and add-apt-repository writes it regardless,
-            # poisoning every future apt-get update if left behind.
-            '  add-apt-repository -y ppa:isc/bind && '
-            '  if ! apt-get update -q 2>/tmp/vp_bind_repo_err.log; then '
-            '    echo "[VortexPanel] isc/bind has no release for {codename} yet -- removing it, using stock Ubuntu bind9 (9.18) instead"; '
-            '    add-apt-repository --remove -y ppa:isc/bind 2>/dev/null; '
-            '    rm -f /etc/apt/sources.list.d/isc-ubuntu-bind-*.list /etc/apt/sources.list.d/isc-ubuntu-bind-*.sources 2>/dev/null; '
-            '    apt-get update -q; '
-            '  fi; '
-            '  apt-get install -y bind9 bind9utils bind9-doc; '
-            'else '
-            '  apt-get update -q && apt-get install -y bind9 bind9utils bind9-doc; '
-            'fi && '
-            'mkdir -p /etc/bind/zones && '
-            '(systemctl enable named 2>/dev/null || systemctl enable bind9 2>/dev/null) && '
-            '(systemctl start named 2>/dev/null || systemctl start bind9 2>/dev/null)'
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian) && '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  apt-get install -y software-properties-common && '
+            '  if [ "{ver}" = "9.20" ]; then '
+                 # Same failure class already confirmed for ondrej/php and
+                 # ondrej/apache2: isc/bind may have no release for a very new
+                 # Ubuntu codename, and add-apt-repository writes it regardless,
+                 # poisoning every future apt-get update if left behind.
+            '    add-apt-repository -y ppa:isc/bind && '
+            '    if ! apt-get update -q 2>/tmp/vp_bind_repo_err.log; then '
+            '      echo "[VortexPanel] isc/bind has no release for {codename} yet -- removing it, using stock Ubuntu bind9 (9.18) instead"; '
+            '      add-apt-repository --remove -y ppa:isc/bind 2>/dev/null; '
+            '      rm -f /etc/apt/sources.list.d/isc-ubuntu-bind-*.list /etc/apt/sources.list.d/isc-ubuntu-bind-*.sources 2>/dev/null; '
+            '      apt-get update -q; '
+            '    fi; '
+            '    apt-get install -y bind9 bind9utils bind9-doc; '
+            '  else '
+            '    apt-get update -q && apt-get install -y bind9 bind9utils bind9-doc; '
+            '  fi && '
+            '  mkdir -p /etc/bind/zones && '
+            '  (systemctl enable named 2>/dev/null || systemctl enable bind9 2>/dev/null) && '
+            '  (systemctl start named 2>/dev/null || systemctl start bind9 2>/dev/null); '
+            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+                 # Package names are 'bind'+'bind-utils' on RHEL-family, NOT
+                 # 'bind9' -- confirmed against multiple current, official
+                 # RHEL/AlmaLinux/Rocky documentation sources. No verified
+                 # ISC-official repo exists for RHEL-family the way it does
+                 # for Ubuntu, so this always installs whatever version the
+                 # distro's own default repo provides, regardless of {ver} --
+                 # honest about that rather than inventing an unverified repo URL.
+            '  echo "[VortexPanel] Installing BIND from the distro default repo on RHEL-family (no verified ISC-official RHEL repo for a specific version)"; '
+            '  (dnf install -y bind bind-utils 2>/dev/null || yum install -y bind bind-utils) && '
+            '  mkdir -p /var/named && '
+            '  systemctl enable --now named; '
+            'fi'
         ),
         'install':(
-            'apt-get install -y bind9 bind9utils bind9-doc && '
-            'mkdir -p /etc/bind/zones && '
-            'systemctl enable bind9 && systemctl start bind9'
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  apt-get install -y bind9 bind9utils bind9-doc && mkdir -p /etc/bind/zones && systemctl enable bind9 && systemctl start bind9; '
+            'else '
+            '  (dnf install -y bind bind-utils 2>/dev/null || yum install -y bind bind-utils) && mkdir -p /var/named && systemctl enable --now named; '
+            'fi'
         ),
         'uninstall':(
             'systemctl stop named 2>/dev/null; systemctl stop bind9 2>/dev/null; '
-            'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold bind9 bind9utils bind9-doc && '
-            'apt-get autoremove -y && rm -rf /etc/bind/zones'
+            'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold bind9 bind9utils bind9-doc 2>/dev/null; '
+            'dnf remove -y bind bind-utils 2>/dev/null; yum remove -y bind bind-utils 2>/dev/null; '
+            'apt-get autoremove -y 2>/dev/null; rm -rf /etc/bind/zones /var/named/*.local 2>/dev/null'
         ),
         'service':'named', 'manage':True,
     },
