@@ -7148,12 +7148,13 @@
               </template>
             </div>
 
-            <div x-show="applyingSecurityUpdates" style="margin-bottom:12px">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <div x-show="applyingSecurityUpdates || securityUpdateOutput" style="margin-bottom:12px">
+              <div x-show="applyingSecurityUpdates" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                 <span class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
                 <span style="font-size:12px;color:var(--text-secondary)">Applying — this can take a few minutes</span>
               </div>
               <pre style="max-height:140px;overflow-y:auto;background:var(--bg-raised);border-radius:6px;padding:8px;font-size:10px;color:var(--text-muted);white-space:pre-wrap" x-text="securityUpdateOutput.slice(-2000)"></pre>
+              <button x-show="!applyingSecurityUpdates" class="btn btn-ghost btn-xs" style="margin-top:6px" @click="securityUpdateOutput=''">Dismiss</button>
             </div>
 
             <button class="btn btn-danger btn-sm" style="width:100%;justify-content:center" :disabled="applyingSecurityUpdates" @click="applySecurityUpdates()">

@@ -440,6 +440,30 @@ def set_hostname():
     return jsonify({'ok':True})
 
 
+def _pending_security_packages(refresh=True):
+    """Shared detection used by BOTH the check endpoint and the apply
+    endpoint's post-run verification -- so 'did it actually work?' is
+    answered by the same logic that decided what was pending in the
+    first place, rather than by trusting an exit code."""
+    os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
+    packages = []
+    if re.search(r'rhel|fedora|centos', os_family, re.I):
+        if refresh: sh('dnf makecache 2>/dev/null || yum makecache 2>/dev/null', t=120)
+        raw = sh('dnf updateinfo list security 2>/dev/null || yum updateinfo list security 2>/dev/null', t=60)
+        for line in raw.split('\n'):
+            m = re.match(r'^\S+\s+(Critical|Important|Moderate|Low)/Sec\.\s+(\S+)', line.strip())
+            if m:
+                packages.append({'severity': m.group(1), 'package': m.group(2)})
+    else:
+        if refresh: sh('apt-get update -q 2>/dev/null', t=120)
+        raw = sh('apt-get -s dist-upgrade 2>/dev/null', t=60)
+        for line in raw.split('\n'):
+            if line.startswith('Inst') and 'security' in line.lower():
+                m = re.match(r'^Inst (\S+)', line)
+                if m: packages.append({'severity': 'Security', 'package': m.group(1)})
+    return packages
+
+
 @settings_bp.route('/api/settings/security-updates')
 def check_security_updates():
     """Read-only check for PENDING security updates specifically, using
@@ -447,28 +471,9 @@ def check_security_updates():
     than a hardcoded CVE/version lookup table baked into VortexPanel's
     source -- that kind of table goes stale the moment a new critical
     CVE appears that isn't in it, giving false reassurance. This defers
-    entirely to apt's/dnf's own live, current security tagging instead.
-    Does NOT apply anything -- that's still the existing /api/settings/update
-    button; this just tells the admin what's actually pending first."""
+    entirely to apt's/dnf's own live, current security tagging instead."""
     if not req(): return jsonify({'ok':False}), 401
-    os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
-
-    packages = []
-    if re.search(r'rhel|fedora|centos', os_family, re.I):
-        sh('dnf makecache 2>/dev/null || yum makecache 2>/dev/null', t=120)
-        raw = sh('dnf updateinfo list security 2>/dev/null || yum updateinfo list security 2>/dev/null', t=60)
-        for line in raw.split('\n'):
-            m = re.match(r'^\S+\s+(Critical|Important|Moderate|Low)/Sec\.\s+(\S+)', line.strip())
-            if m:
-                packages.append({'severity': m.group(1), 'package': m.group(2)})
-    else:
-        sh('apt-get update -q 2>/dev/null', t=120)
-        raw = sh('apt-get -s dist-upgrade 2>/dev/null', t=60)
-        for line in raw.split('\n'):
-            if line.startswith('Inst') and 'security' in line.lower():
-                m = re.match(r'^Inst (\S+)', line)
-                if m: packages.append({'severity': 'Security', 'package': m.group(1)})
-
+    packages = _pending_security_packages()
     critical = sum(1 for p in packages if p['severity'] in ('Critical', 'Important', 'Security'))
     return jsonify({'ok': True, 'total': len(packages), 'critical': critical, 'packages': packages[:50]})
 
@@ -492,21 +497,46 @@ def apply_security_updates():
     def do_apply():
         save_job('security_update', {'running': True, 'done': False, 'success': None, 'output': '', 'started': _time.time()})
         os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
+        before = _pending_security_packages()
+
         if re.search(r'rhel|fedora|centos', os_family, re.I):
-            out = sh('dnf update --security -y 2>&1 || yum update --security -y 2>&1', t=600)
+            out, err, rc = sh3('dnf update --security -y 2>&1 || yum update --security -y 2>&1', t=600)
+            combined = out or err
         else:
-            sh('apt-get update -q 2>/dev/null', t=120)
-            raw = sh('apt-get -s dist-upgrade 2>/dev/null', t=60)
-            pkgs = []
-            for line in raw.split('\n'):
-                if line.startswith('Inst') and 'security' in line.lower():
-                    m = re.match(r'^Inst (\S+)', line)
-                    if m: pkgs.append(m.group(1))
+            pkgs = [p['package'] for p in before]
             if not pkgs:
-                out = 'No pending security packages found (they may have changed since the last check -- try refreshing).'
+                combined, rc = 'No pending security packages found (they may have changed since the last check — try refreshing).', 0
             else:
-                out = sh('apt-get install --only-upgrade -y ' + ' '.join(pkgs) + ' 2>&1', t=600)
-        save_job('security_update', {'running': False, 'done': True, 'success': True, 'output': out})
+                # NOT --only-upgrade. That flag refuses to install any new
+                # dependency, so a package whose upgrade pulls one in is
+                # silently skipped while apt still exits 0 -- confirmed in
+                # testing ("0 upgraded ... N not upgraded"), which is
+                # exactly why packages kept reappearing as pending after a
+                # reported-successful apply. Naming only already-installed
+                # packages means apt resolves precisely the dependencies
+                # those upgrades need and nothing unrelated.
+                out, err, rc = sh3('apt-get install -y ' + ' '.join(pkgs) + ' 2>&1', t=600)
+                combined = out or err
+
+        # Verify against reality rather than trusting the exit code alone --
+        # apt can exit 0 having genuinely changed nothing.
+        after = _pending_security_packages()
+        remaining = len(after)
+        applied = max(0, len(before) - remaining)
+        success = (rc == 0 and remaining == 0)
+
+        summary = f'\n\n── Result ──\nApplied: {applied}   Still pending: {remaining}'
+        if remaining:
+            names = ', '.join(p['package'] for p in after[:10])
+            summary += (f'\nStill pending: {names}'
+                        f'\n\nThese did not upgrade. Most often that means they are held back by the '
+                        f'distribution (a phased rollout, or a dependency conflict apt will not resolve '
+                        f'automatically). Running "apt-get dist-upgrade" manually over SSH will show the '
+                        f'specific reason for each one.')
+
+        save_job('security_update', {'running': False, 'done': True, 'success': success,
+                                      'output': combined + summary,
+                                      'applied': applied, 'remaining': remaining})
 
     threading.Thread(target=do_apply, daemon=True).start()
     return jsonify({'ok': True, 'message': 'Applying security updates in background'})
