@@ -464,6 +464,39 @@ def _pending_security_packages(refresh=True):
     return packages
 
 
+def _pending_vendor_updates():
+    """Pending upgrades for packages installed from VENDOR repos rather
+    than the distribution's own archives.
+
+    These are invisible to _pending_security_packages() by design, not by
+    accident: that check matches the archive name (e.g. 'noble-security'),
+    and a vendor repo's archive is its own name -- nginx.org publishes as
+    'nginx:noble', MariaDB as its own, PGDG as its own. None contain the
+    string 'security' no matter how critical the fix is. Verified directly:
+    a machine with 7 pending upgrades from 'noble-updates' matched the
+    security filter 0 times.
+
+    This matters concretely for VortexPanel, which installs nginx, MySQL,
+    MariaDB, PHP, PostgreSQL, MongoDB and Docker from vendor repos -- so
+    something like nginx CVE-2026-42533 (CVSS 9.2, pre-auth RCE, fixed in
+    1.30.4/1.31.3) would never appear in the security card at all."""
+    raw = sh('apt-get -s dist-upgrade 2>/dev/null', t=60)
+    vendor = []
+    for line in raw.split('\n'):
+        if not line.startswith('Inst'):
+            continue
+        m = re.match(r'^Inst (\S+)\s+\[([^\]]*)\]\s+\(([^\s]+)\s+([^\s\[]+)', line)
+        if not m:
+            continue
+        pkg, cur_ver, new_ver, archive = m.group(1), m.group(2), m.group(3), m.group(4).rstrip(',')
+        # Distro-provided archives are already covered by the security
+        # check above -- anything else came from a vendor repo we added.
+        if re.match(r'^(Ubuntu|Debian):', archive, re.I):
+            continue
+        vendor.append({'package': pkg, 'current': cur_ver, 'available': new_ver, 'source': archive})
+    return vendor
+
+
 @settings_bp.route('/api/settings/security-updates')
 def check_security_updates():
     """Read-only check for PENDING security updates specifically, using
@@ -475,7 +508,12 @@ def check_security_updates():
     if not req(): return jsonify({'ok':False}), 401
     packages = _pending_security_packages()
     critical = sum(1 for p in packages if p['severity'] in ('Critical', 'Important', 'Security'))
-    return jsonify({'ok': True, 'total': len(packages), 'critical': critical, 'packages': packages[:50]})
+    vendor = []
+    os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
+    if not re.search(r'rhel|fedora|centos', os_family, re.I):
+        vendor = _pending_vendor_updates()
+    return jsonify({'ok': True, 'total': len(packages), 'critical': critical,
+                     'packages': packages[:50], 'vendor': vendor[:50], 'vendor_total': len(vendor)})
 
 
 @settings_bp.route('/api/settings/security-updates/apply', methods=['POST'])
@@ -498,14 +536,20 @@ def apply_security_updates():
         save_job('security_update', {'running': True, 'done': False, 'success': None, 'output': '', 'started': _time.time()})
         os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
         before = _pending_security_packages()
+        vendor_before = [] if re.search(r'rhel|fedora|centos', os_family, re.I) else _pending_vendor_updates()
 
         if re.search(r'rhel|fedora|centos', os_family, re.I):
             out, err, rc = sh3('dnf update --security -y 2>&1 || yum update --security -y 2>&1', t=600)
             combined = out or err
         else:
-            pkgs = [p['package'] for p in before]
+            # Vendor-repo packages are included deliberately: they carry no
+            # distro security tag, so if they were left out, a critical
+            # vendor CVE (e.g. nginx CVE-2026-42533) could be displayed as
+            # pending but never actually be fixable from this panel.
+            pkgs = [p['package'] for p in before] + [v['package'] for v in vendor_before]
+            pkgs = list(dict.fromkeys(pkgs))  # de-dupe, preserve order
             if not pkgs:
-                combined, rc = 'No pending security packages found (they may have changed since the last check — try refreshing).', 0
+                combined, rc = 'Nothing pending (it may have changed since the last check — try refreshing).', 0
             else:
                 # NOT --only-upgrade. That flag refuses to install any new
                 # dependency, so a package whose upgrade pulls one in is
@@ -521,13 +565,15 @@ def apply_security_updates():
         # Verify against reality rather than trusting the exit code alone --
         # apt can exit 0 having genuinely changed nothing.
         after = _pending_security_packages()
-        remaining = len(after)
-        applied = max(0, len(before) - remaining)
+        vendor_after = [] if re.search(r'rhel|fedora|centos', os_family, re.I) else _pending_vendor_updates()
+        remaining = len(after) + len(vendor_after)
+        total_before = len(before) + len(vendor_before)
+        applied = max(0, total_before - remaining)
         success = (rc == 0 and remaining == 0)
 
         summary = f'\n\n── Result ──\nApplied: {applied}   Still pending: {remaining}'
         if remaining:
-            names = ', '.join(p['package'] for p in after[:10])
+            names = ', '.join([p['package'] for p in after[:6]] + [v['package'] for v in vendor_after[:6]])
             summary += (f'\nStill pending: {names}'
                         f'\n\nThese did not upgrade. Most often that means they are held back by the '
                         f'distribution (a phased rollout, or a dependency conflict apt will not resolve '

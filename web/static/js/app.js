@@ -2516,7 +2516,8 @@ function modulesPage() {
         this.settingsModal.modsecInstalled = r.modsec_installed;
         this.settingsModal.connectorLoaded = r.connector_loaded;
         this.settingsModal.engineState     = r.engine_state    || '';
-        this.settingsModal.nginxStatus     = r.nginx_status    || '';
+        this.settingsModal.webserverName   = r.webserver_name  || 'nginx';
+        this.settingsModal.webserverStatus = r.webserver_status || r.nginx_status || '';
         this.settingsModal.ddnsStatus      = {enabled:r.enabled||false,current_ip:r.current_ip||'',interval:r.interval||300};
         this.settingsModal.ddnsLog         = r.log            || '';
         this.settingsModal.showAddDomain   = false;
@@ -4187,10 +4188,30 @@ function wafPage() {
       if (this.modsecInstalled) {
         await this.loadStats();
       }
-      window.addEventListener('vp:page', (e) => {
-        if (e.detail === 'waf' && this.modsecInstalled) {
-          this.wtab === 'overview' ? this.loadStats() : this.loadBlockadeLog();
+      window.addEventListener('vp:page', async (e) => {
+        if (e.detail !== 'waf') return;
+        // Always re-check install status on returning to this page --
+        // it can genuinely change while the user was elsewhere (installed
+        // or uninstalled via the App Store). Trusting the flag from the
+        // very first load meant a fresh install never showed anything
+        // but the stale "not installed" state without a full page reload.
+        const wasInstalled = this.modsecInstalled;
+        const r2 = await get('/api/security/modsecurity');
+        this.modsecInstalled = !!(r2.ok && r2.installed);
+        if (this.modsecInstalled) {
+          if (!wasInstalled || this.wtab === 'overview') this.loadStats();
+          else this.loadBlockadeLog();
         }
+      });
+      window.addEventListener('vp:module-changed', async (e) => {
+        // Real-time update the moment an install/uninstall actually
+        // completes, matching the same pattern already used on the
+        // Security page's WAF tab -- don't make the user navigate away
+        // and back just to see a fresh install take effect.
+        if (e.detail?.id !== 'modsecurity') return;
+        const r3 = await get('/api/security/modsecurity');
+        this.modsecInstalled = !!(r3.ok && r3.installed);
+        if (this.modsecInstalled) this.loadStats();
       });
     },
 

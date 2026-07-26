@@ -183,8 +183,8 @@ MODULES = [
         'desc':'High-performance HTTP & reverse proxy server',
         'check':'which nginx 2>/dev/null',
         'versions':[
-            {'label':'1.30.3 (Stable)',   'value':'stable'},
-            {'label':'1.31.2 (Mainline)', 'value':'mainline'},
+            {'label':'1.30.4 (Stable — security)',   'value':'stable'},
+            {'label':'1.31.3 (Mainline — security)', 'value':'mainline'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -278,8 +278,8 @@ systemctl enable lsws && systemctl start lsws''',
         'desc':'Auto-HTTPS web server — HTTP/3, zero-config TLS via Lets Encrypt',
         'check':'which caddy 2>/dev/null',
         'versions':[
-            {'label':'v2.11.3 (Latest Stable)', 'value':'2.11.3'},
-            {'label':'v2.11.2 (Stable)',         'value':'2.11.2'},
+            {'label':'v2.11.4 (Latest — security)', 'value':'2.11.4'},
+            {'label':'v2.11.3 (Stable — security)', 'value':'2.11.3'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
@@ -717,12 +717,12 @@ systemctl enable --now mariadb''',
         'desc':'PHP-FPM — multiple versions supported side by side',
         'check':'which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 2>/dev/null | head -1',
         'versions':[
-            {'label':'7.4 (Legacy)',    'value':'7.4'},
-            {'label':'8.1 (Security)',  'value':'8.1'},
-            {'label':'8.2 (Active)',    'value':'8.2'},
-            {'label':'8.3 (Active)',    'value':'8.3'},
-            {'label':'8.4 (Current)',   'value':'8.4'},
-            {'label':'8.5 (Latest)',    'value':'8.5'},
+            {'label':'8.5 (Latest — active)',        'value':'8.5'},
+            {'label':'8.4 (Active)',                 'value':'8.4'},
+            {'label':'8.3 (Security only)',          'value':'8.3'},
+            {'label':'8.2 (Security only — EOL Dec 2026)', 'value':'8.2'},
+            {'label':'8.1 (EOL — unpatched)',        'value':'8.1'},
+            {'label':'7.4 (EOL — unpatched)',        'value':'7.4'},
         ],
         'install_tpl':'''apt-get install -y software-properties-common && \
 add-apt-repository -y ppa:ondrej/php && apt-get update -q && \
@@ -1166,199 +1166,61 @@ chown -R www-data:www-data /var/www/roundcube/''',
         # same treatment now that it's a from-source build rather than an apt
         # package that either installs cleanly or is simply absent.
         'check':(
+            '('
             '(test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 || '
             'test -f /usr/lib64/libmodsecurity.so.3 || '
             'test -f /usr/lib/aarch64-linux-gnu/libmodsecurity.so.3 || '
             'which modsec_rules_check 2>/dev/null 1>&2) && '
             'test -f /etc/nginx/modsec/modsecurity.conf && '
             '(find /usr/lib/nginx/modules /usr/lib64/nginx/modules -name "ngx_http_modsecurity_module.so" 2>/dev/null | grep -q .) && '
-            'grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null && echo found'
+            'grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null'
+            ') || ('
+            'dpkg -l libapache2-mod-security2 2>/dev/null | grep -q "^ii" && '
+            'test -f /etc/modsecurity/modsecurity.conf && '
+            '(a2query -m security2 2>/dev/null | grep -q enabled || grep -rq "security2" /etc/apache2/mods-enabled/ 2>/dev/null)'
+            ') && echo found'
         ),
         'versions':[
             {'label':'v3 + OWASP CRS v4 (Recommended)', 'value':'3'},
             {'label':'v2 + OWASP CRS v4 (Apache legacy)', 'value':'2'},
         ],
         'install_tpl':(
-            # --- Step 1: install libmodsecurity + compile the nginx connector from
-            # source, matched to the exact running nginx version -------------------
-            # CONFIRMED root cause of a real, reproduced failure: Debian/Ubuntu's
-            # libnginx-mod-http-modsecurity package has a hard versioned dependency
-            # on UBUNTU'S OWN nginx build. VortexPanel installs nginx from nginx.org's
-            # own repo (different package, different version string), so apt
-            # correctly refuses to pull in a conflicting second nginx build to
-            # satisfy that dependency — the connector package silently never
-            # installs. The old script swallowed that as a WARN and unconditionally
-            # wrote "modsecurity on;" into nginx.conf anyway, which took nginx down
-            # with "unknown directive modsecurity" on every fresh install. Building
-            # the connector from source against the exact installed nginx version
-            # (the officially documented way to build a third-party nginx dynamic
-            # module — see ModSecurity-nginx's own README) is the only approach that
-            # can work here. nginx.conf is now only ever touched if that build
-            # genuinely succeeds — verified via real exit status, not assumed.
-            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
-            'echo "[VortexPanel] Installing ModSecurity engine..."; '
-            'CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules; '
-            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            # These two apt calls are DELIBERATELY separate. Bundling PCRE with the
-            # essential packages was a real, reproduced bug: libpcre3-dev doesn'"'"'t
-            # exist on this server'"'"'s Ubuntu release, and apt-get aborts the ENTIRE
-            # transaction when any one named package has no candidate — so
-            # libmodsecurity-dev silently never installed either, and the connector
-            # build failed with a misleading "ModSecurity library not found" even
-            # though the real problem was an unrelated missing PCRE variant package.
-            '  apt-get update -qq && apt-get install -y libmodsecurity-dev build-essential git '
-            '    zlib1g-dev libssl-dev 2>&1 '
-            '    || echo "[WARN] libmodsecurity/build-tooling install reported errors"; '
-            '  apt-get install -y libpcre2-dev 2>&1 || apt-get install -y libpcre3-dev 2>&1 '
-            '    || echo "[WARN] Neither libpcre2-dev nor libpcre3-dev available on this system — proceeding anyway, nginx'"'"'s own ./configure will report clearly if it actually needs one"; '
-            '  NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\K[0-9.]+\'); '
-            '  DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\K[^ ]+\'); '
-            '  [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP"; '
-            '  if [ -n "$NGINX_VER" ]; then '
-            '    BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" && '
-            '    echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER..."; '
-            '    if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz '
-            '        && tar -xzf nginx.tar.gz '
-            '        && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git '
-            '        && cd "nginx-${NGINX_VER}" '
-            '        && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx '
-            '             > /tmp/modsec-connector-configure.log 2>&1 '
-            '        && make modules > /tmp/modsec-connector-make.log 2>&1 '
-            '        && mkdir -p "$MODULES_PATH" '
-            '        && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then '
-            '      CONNECTOR_OK=1; '
-            '      echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER — WAF can actually load in nginx"; '
-            '    else '
-            '      echo "[ERROR] Connector build failed against nginx $NGINX_VER — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server. nginx.conf will NOT be modified, so nginx stays working; the engine/CRS below still get prepared but the WAF will not actually be active until this is resolved."; '
-            '    fi; '
-            '    cd / && rm -rf "$BUILD_DIR"; '
-            '  else '
-            '    echo "[ERROR] Could not detect installed nginx version via \"nginx -v\" — skipping connector build. nginx.conf will NOT be modified."; '
-            '  fi; '
-            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
-            '  dnf install -y epel-release 2>/dev/null || true; '
-            '  dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"; '
-            '  dnf install -y nginx-mod-modsecurity 2>&1 && CONNECTOR_OK=1 '
-            '    || echo "[WARN] nginx-mod-modsecurity install reported errors — this RHEL-family path has NOT been independently verified against a real nginx.org-installed nginx the way the Debian/Ubuntu path just was, and may have the same version-mismatch problem. Flagging rather than assuming it works."; '
-            'fi; '
-            # --- Step 2: write core engine config — ALWAYS attempted, independent
-            # of whether CRS (step 3 below) succeeds. This is what makes the engine
-            # itself (Engine Mode toggle) usable even if the ruleset download fails. ---
-            'echo "[VortexPanel] Writing core engine config..."; '
-            'mkdir -p /etc/nginx/modsec && '
-            'CONF_OK=0; '
-            'for attempt in 1 2 3; do '
-            '  wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended '
-            '    -O /etc/nginx/modsec/modsecurity.conf && CONF_OK=1 && break; '
-            '  echo "[VortexPanel] modsecurity.conf download attempt $attempt failed, retrying..."; sleep 2; '
-            'done; '
-            'if [ "$CONF_OK" = "1" ]; then '
-            '  sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf; '
-            '  sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf; '
-            # modsecurity.conf-recommended references "unicode.mapping" as a bare
-            # relative filename (SecUnicodeMapFile unicode.mapping 20127) — it was
-            # never actually downloaded, so nginx -t failed at rule-load time with
-            # "Failed to locate the unicode map file" the moment the connector
-            # actually started loading real rules. Confirmed the file exists in the
-            # same upstream repo directory; fetching it and rewriting the directive
-            # to an absolute path so it doesn'"'"'t depend on nginx'"'"'s working directory.
-            '  wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/unicode.mapping '
-            '    -O /etc/nginx/modsec/unicode.mapping && '
-            '    sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/nginx/modsec/unicode.mapping#" /etc/nginx/modsec/modsecurity.conf '
-            '    || echo "[WARN] Could not download unicode.mapping — nginx -t will fail until this is retried from the WAF page"; '
-            '  echo "[VortexPanel] ✓ Core engine config written — Engine Mode toggle will work"; '
-            'else '
-            '  echo "[ERROR] Could not download modsecurity.conf after 3 attempts — writing a minimal fallback config so the engine is still usable"; '
-            '  printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/nginx/modsec/modsecurity.conf; '
-            'fi; '
-            # --- Step 3: download OWASP CRS ruleset — retriable, NEVER blocks the
-            # core engine from being marked usable even if this fails entirely ---
-            'echo "[VortexPanel] Downloading OWASP CRS ruleset..."; '
-            'mkdir -p /etc/nginx/modsec/crs && '
-            'CRS_OK=0; '
-            'for attempt in 1 2 3; do '
-            '  CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
-            '    | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null); '
-            '  CRS_TAG=${CRS_TAG:-v4.0.0}; '
-            '  wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz '
-            '    && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 2>/dev/null '
-            '    && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break; '
-            '  echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; '
-            'done; '
-            'if [ "$CRS_OK" = "1" ] && [ -f /etc/nginx/modsec/crs/crs-setup.conf.example ]; then '
-            '  cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf; '
-            '  echo "[VortexPanel] ✓ OWASP CRS $CRS_TAG installed — Paranoia level control will work"; '
-            'else '
-            '  echo "[WARN] Could not download OWASP CRS ruleset after 3 attempts. The core engine (Engine Mode toggle) is still usable, but no attack-pattern rules are loaded yet and Paranoia level will show unavailable until you retry from the WAF page (Repair CRS button)."; '
-            'fi; '
-            # --- Step 4: build main.conf — only includes CRS lines if CRS actually
-            # downloaded successfully, so nginx doesn't fail to start on a missing include ---
-            'if [ "$CRS_OK" = "1" ]; then '
-            '  printf "Include /etc/nginx/modsec/modsecurity.conf\\nInclude /etc/nginx/modsec/crs/crs-setup.conf\\nInclude /etc/nginx/modsec/crs/rules/*.conf\\n" > /etc/nginx/modsec/main.conf; '
-            'else '
-            '  printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; '
-            'fi; '
-            # --- Step 5: enable in nginx.conf — ONLY if the connector actually
-            # compiled. This is the fix for the reproduced failure: nginx.conf used
-            # to be written unconditionally here regardless of whether the connector
-            # module from Step 1 was ever actually present, which is exactly what
-            # broke nginx with "unknown directive modsecurity" on a fresh install. ---
-            'cp /etc/nginx/nginx.conf /tmp/nginx.conf.pre-modsecurity 2>/dev/null; '
-            'if [ "$CONNECTOR_OK" = "1" ]; then '
-            '  grep -q "ngx_http_modsecurity_module.so" /etc/nginx/nginx.conf 2>/dev/null || '
-            '    sed -i "1i load_module ${MODULES_PATH}/ngx_http_modsecurity_module.so;" /etc/nginx/nginx.conf; '
-            '  grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null || '
-            '    sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;" '
-            '    /etc/nginx/nginx.conf 2>/dev/null || true; '
-            'else '
-            '  echo "[VortexPanel] Skipping nginx.conf changes — connector module isn'"'"'t present. nginx stays working; WAF stays inactive until the connector build succeeds."; '
-            'fi; '
-            # --- Step 6: auto-update cron (weekly, only useful once CRS is present) ---
-            'echo "0 3 * * 0 root /bin/bash -c \\"'
-            'CRS_TAG=\\$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest '
-            '| python3 -c \\"import json,sys; print(json.load(sys.stdin)[chr(39)+chr(116)+chr(97)+chr(103)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101)+chr(39)])\\" 2>/dev/null) && '
-            'wget -q --timeout=15 https://github.com/coreruleset/coreruleset/archive/refs/tags/\\${CRS_TAG}.tar.gz -O /tmp/crs.tar.gz && '
-            'tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 && '
-            'rm -f /tmp/crs.tar.gz && '
-            'nginx -t && systemctl reload nginx\\"" > /etc/cron.d/vortex-crs-update && '
-            'chmod 644 /etc/cron.d/vortex-crs-update; '
-            # Final gate: nginx -t is the only thing that gets to decide whether
-            # this install actually worked. If it fails for ANY reason — a bad
-            # connector build, a broken modsecurity.conf, a missing support file
-            # like unicode.mapping, anything — restore nginx.conf to exactly what
-            # it was before this install touched it, so nginx is GUARANTEED to
-            # still serve traffic. A "the WAF might be broken" state is acceptable;
-            # "the whole server is down" is not, and this install must never cause
-            # that again regardless of what fails inside ModSecurity itself.
-            'if nginx -t 2>&1; then '
-            '  systemctl reload nginx 2>/dev/null; '
-            '  echo "[VortexPanel] ✓ nginx config test passed — WAF is actually serving traffic"; '
-            'else '
-            '  echo "[ERROR] nginx -t failed after this install — restoring nginx.conf to its pre-install state so the server keeps working. WAF is NOT active; fix the underlying issue and reinstall."; '
-            '  if [ -f /tmp/nginx.conf.pre-modsecurity ]; then '
-            '    cp /tmp/nginx.conf.pre-modsecurity /etc/nginx/nginx.conf; '
-            '    nginx -t 2>&1 && systemctl reload nginx 2>/dev/null && echo "[VortexPanel] ✓ nginx.conf restored, server is back up" '
-            '      || echo "[ERROR] Restore also failed nginx -t — nginx.conf may have been broken before this install ran too. Manual check required."; '
-            '  fi; '
-            'fi; '
-            'echo "[VortexPanel] ModSecurity install finished. Connector: $([ \\"$CONNECTOR_OK\\" = \\"1\\" ] && echo compiled-and-enabled || echo FAILED — WAF NOT active, see /tmp/modsec-connector-*.log). Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."'
+    'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); echo "[VortexPanel] Installing ModSecurity engine..."; WAF_VER="{ver}"; if [ "$WAF_VER" = "2" ]; then apt-get install -y libapache2-mod-security2 2>&1   || echo "[WARN] libapache2-mod-security2 install reported errors"; a2enmod security2 >/dev/null 2>&1 || true; mkdir -p /etc/modsecurity; if [ -f /etc/modsecurity/modsecurity.conf-recommended ]; then   cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf;   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/modsecurity/modsecurity.conf;   sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/modsecurity/unicode.mapping#" /etc/modsecurity/modsecurity.conf;   echo "[VortexPanel] OK Core engine config written (Apache)"; else   echo "[ERROR] modsecurity.conf-recommended not found - writing fallback";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/modsecurity/modsecurity.conf; fi; if [ -f /usr/share/modsecurity-crs/owasp-crs.load ]; then   mv /usr/share/modsecurity-crs/owasp-crs.load /usr/share/modsecurity-crs/owasp-crs.load.disabled-by-vortexpanel 2>/dev/null; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/modsecurity/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/modsecurity/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/modsecurity/crs/crs-setup.conf.example ]; then   cp /etc/modsecurity/crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf;   printf "Include /etc/modsecurity/crs/crs-setup.conf\\nInclude /etc/modsecurity/crs/rules/*.conf\\n" > /etc/modsecurity/main.conf;   echo "[VortexPanel] OK OWASP CRS $CRS_TAG installed"; else   printf "" > /etc/modsecurity/main.conf;   echo "[WARN] Could not download CRS after 3 attempts."; fi; echo "0 3 * * 0 root /bin/bash -c \\"CRS_TAG=\\$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest | python3 -c \\"import json,sys; print(json.load(sys.stdin)[chr(39)+chr(116)+chr(97)+chr(103)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101)+chr(39)])\\" 2>/dev/null) && wget -q --timeout=15 https://github.com/coreruleset/coreruleset/archive/refs/tags/\\${CRS_TAG}.tar.gz -O /tmp/crs.tar.gz && tar -xzf /tmp/crs.tar.gz -C /etc/modsecurity/crs --strip-components=1 && rm -f /tmp/crs.tar.gz && apache2ctl configtest && systemctl reload apache2\\"" > /etc/cron.d/vortex-crs-update-apache && chmod 644 /etc/cron.d/vortex-crs-update-apache; if apache2ctl configtest 2>&1; then   systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null;   echo "[VortexPanel] OK apache2 config test passed"; else   echo "[ERROR] apache2 configtest failed - disabling security2 module";   a2dismod security2 >/dev/null 2>&1;   (apache2ctl configtest 2>&1 && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null) && echo "[VortexPanel] OK security2 disabled, apache2 back up")     || echo "[ERROR] apache2 still failing even with security2 disabled"; fi; else CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules; if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then   apt-get update -qq && apt-get install -y libmodsecurity-dev build-essential git     zlib1g-dev libssl-dev 2>&1     || echo "[WARN] libmodsecurity/build-tooling install reported errors";   apt-get install -y libpcre2-dev 2>&1 || apt-get install -y libpcre3-dev 2>&1     || echo "[WARN] Neither libpcre2-dev nor libpcre3-dev available on this system — proceeding anyway, nginx\'s own ./configure will report clearly if it actually needs one";   NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\');   DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\');   [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP";   if [ -n "$NGINX_VER" ]; then     BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&     echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER...";     if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz         && tar -xzf nginx.tar.gz         && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git         && cd "nginx-${NGINX_VER}"         && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx              > /tmp/modsec-connector-configure.log 2>&1         && make modules > /tmp/modsec-connector-make.log 2>&1         && mkdir -p "$MODULES_PATH"         && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then       CONNECTOR_OK=1;       echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER — WAF can actually load in nginx";     else       echo "[ERROR] Connector build failed against nginx $NGINX_VER — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server. nginx.conf will NOT be modified, so nginx stays working; the engine/CRS below still get prepared but the WAF will not actually be active until this is resolved.";     fi;     cd / && rm -rf "$BUILD_DIR";   else     echo "[ERROR] Could not detect installed nginx version via "nginx -v" — skipping connector build. nginx.conf will NOT be modified.";   fi; elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then   dnf install -y epel-release 2>/dev/null || true;   dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors";   dnf install -y nginx-mod-modsecurity 2>&1 && CONNECTOR_OK=1     || echo "[WARN] nginx-mod-modsecurity install reported errors — this RHEL-family path has NOT been independently verified against a real nginx.org-installed nginx the way the Debian/Ubuntu path just was, and may have the same version-mismatch problem. Flagging rather than assuming it works."; fi; echo "[VortexPanel] Writing core engine config..."; mkdir -p /etc/nginx/modsec && CONF_OK=0; for attempt in 1 2 3; do   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended     -O /etc/nginx/modsec/modsecurity.conf && CONF_OK=1 && break;   echo "[VortexPanel] modsecurity.conf download attempt $attempt failed, retrying..."; sleep 2; done; if [ "$CONF_OK" = "1" ]; then   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf;   sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf;   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/unicode.mapping     -O /etc/nginx/modsec/unicode.mapping &&     sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/nginx/modsec/unicode.mapping#" /etc/nginx/modsec/modsecurity.conf     || echo "[WARN] Could not download unicode.mapping — nginx -t will fail until this is retried from the WAF page";   echo "[VortexPanel] ✓ Core engine config written — Engine Mode toggle will work"; else   echo "[ERROR] Could not download modsecurity.conf after 3 attempts — writing a minimal fallback config so the engine is still usable";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/nginx/modsec/modsecurity.conf; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/nginx/modsec/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/nginx/modsec/crs/crs-setup.conf.example ]; then   cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf;   echo "[VortexPanel] ✓ OWASP CRS $CRS_TAG installed — Paranoia level control will work"; else   echo "[WARN] Could not download OWASP CRS ruleset after 3 attempts. The core engine (Engine Mode toggle) is still usable, but no attack-pattern rules are loaded yet and Paranoia level will show unavailable until you retry from the WAF page (Repair CRS button)."; fi; if [ "$CRS_OK" = "1" ]; then   printf "Include /etc/nginx/modsec/modsecurity.conf\\nInclude /etc/nginx/modsec/crs/crs-setup.conf\\nInclude /etc/nginx/modsec/crs/rules/*.conf\\n" > /etc/nginx/modsec/main.conf; else   printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; fi; cp /etc/nginx/nginx.conf /tmp/nginx.conf.pre-modsecurity 2>/dev/null; if [ "$CONNECTOR_OK" = "1" ]; then   grep -q "ngx_http_modsecurity_module.so" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "1i load_module ${MODULES_PATH}/ngx_http_modsecurity_module.so;" /etc/nginx/nginx.conf;   grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;"     /etc/nginx/nginx.conf 2>/dev/null || true; else   echo "[VortexPanel] Skipping nginx.conf changes — connector module isn\'t present. nginx stays working; WAF stays inactive until the connector build succeeds."; fi; echo "0 3 * * 0 root /bin/bash -c \\"CRS_TAG=\\$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest | python3 -c \\"import json,sys; print(json.load(sys.stdin)[chr(39)+chr(116)+chr(97)+chr(103)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101)+chr(39)])\\" 2>/dev/null) && wget -q --timeout=15 https://github.com/coreruleset/coreruleset/archive/refs/tags/\\${CRS_TAG}.tar.gz -O /tmp/crs.tar.gz && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 && rm -f /tmp/crs.tar.gz && nginx -t && systemctl reload nginx\\"" > /etc/cron.d/vortex-crs-update && chmod 644 /etc/cron.d/vortex-crs-update; if nginx -t 2>&1; then   systemctl reload nginx 2>/dev/null;   echo "[VortexPanel] ✓ nginx config test passed — WAF is actually serving traffic"; else   echo "[ERROR] nginx -t failed after this install — restoring nginx.conf to its pre-install state so the server keeps working. WAF is NOT active; fix the underlying issue and reinstall.";   if [ -f /tmp/nginx.conf.pre-modsecurity ]; then     cp /tmp/nginx.conf.pre-modsecurity /etc/nginx/nginx.conf;     nginx -t 2>&1 && systemctl reload nginx 2>/dev/null && echo "[VortexPanel] ✓ nginx.conf restored, server is back up"       || echo "[ERROR] Restore also failed nginx -t — nginx.conf may have been broken before this install ran too. Manual check required.";   fi; fi; echo "[VortexPanel] ModSecurity install finished. Connector: $([ \\"$CONNECTOR_OK\\" = \\"1\\" ] && echo compiled-and-enabled || echo FAILED — WAF NOT active, see /tmp/modsec-connector-*.log). Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."; fi; '
         ),
         'uninstall':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian); '
-            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            # libmodsecurity3 was never a real package name on modern Ubuntu (it's
-            # libmodsecurity3t64 there — confirmed live) — removing libmodsecurity-dev
-            # alone takes the runtime lib with it via its own dependency, same as how
-            # install now only ever names libmodsecurity-dev.
-            '  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold libmodsecurity-dev libmodsecurity3t64 libnginx-mod-http-modsecurity 2>/dev/null || true; '
-            '  apt-get autoremove -y 2>/dev/null || true; '
-            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
-            '  dnf remove -y mod_security nginx-mod-modsecurity 2>/dev/null || true; '
-            'fi && '
-            'find /usr/lib/nginx/modules /usr/lib64/nginx/modules -name "ngx_http_modsecurity_module.so" -delete 2>/dev/null; '
-            'rm -rf /etc/nginx/modsec /etc/cron.d/vortex-crs-update && '
-            'sed -i "/modsecurity/d" /etc/nginx/nginx.conf 2>/dev/null || true && '
-            'nginx -t && systemctl reload nginx 2>/dev/null || true'
+            'if [ -f /etc/modsecurity/modsecurity.conf ]; then '
+                # Apache path -- detected by the actual config file present,
+                # not by re-asking which version was originally selected,
+                # since that value isn't available at uninstall time and
+                # the wrong assumption is exactly what caused this bug:
+                # previously uninstall always ran the nginx removal
+                # regardless of what was genuinely installed.
+            '  if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '    apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold libapache2-mod-security2 modsecurity-crs 2>/dev/null || true; '
+            '    apt-get autoremove -y 2>/dev/null || true; '
+            '  elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+            '    dnf remove -y mod_security mod_security_crs 2>/dev/null || true; '
+            '  fi; '
+            '  a2dismod security2 >/dev/null 2>&1 || true; '
+            '  rm -rf /etc/modsecurity /etc/cron.d/vortex-crs-update-apache; '
+            '  if [ -f /usr/share/modsecurity-crs/owasp-crs.load.disabled-by-vortexpanel ]; then '
+            '    mv /usr/share/modsecurity-crs/owasp-crs.load.disabled-by-vortexpanel /usr/share/modsecurity-crs/owasp-crs.load 2>/dev/null || true; '
+            '  fi; '
+            '  apache2ctl configtest 2>&1 && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null) || true; '
+            'else '
+                # nginx path -- unchanged, already correct for this case.
+            '  if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '    apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold libmodsecurity-dev libmodsecurity3t64 libnginx-mod-http-modsecurity 2>/dev/null || true; '
+            '    apt-get autoremove -y 2>/dev/null || true; '
+            '  elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+            '    dnf remove -y mod_security nginx-mod-modsecurity 2>/dev/null || true; '
+            '  fi; '
+            '  find /usr/lib/nginx/modules /usr/lib64/nginx/modules -name "ngx_http_modsecurity_module.so" -delete 2>/dev/null; '
+            '  rm -rf /etc/nginx/modsec /etc/cron.d/vortex-crs-update; '
+            '  sed -i "/modsecurity/d" /etc/nginx/nginx.conf 2>/dev/null || true; '
+            '  nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true; '
+            'fi'
         ),
         'manage':False,
     },
@@ -1585,6 +1447,39 @@ def install_module(mod_id):
     def run_job():
         _job_append_line(job_id, f'[VortexPanel] Installing {mod["name"]} {ver}...')
         _final_cmd = translate_install_cmd(cmd)
+        # Make apt-get wait out lock contention instead of failing
+        # instantly -- confirmed via direct testing that apt's own
+        # -o DPkg::Lock::Timeout does NOT cover /var/lib/apt/lists/lock
+        # (only the separate dpkg-level locks), so a genuinely concurrent
+        # apt-get (e.g. the Security Updates check, or two installs
+        # started close together) fails every install instantly with
+        # "Could not get lock" instead of just waiting a few seconds.
+        # A real wrapper SCRIPT on PATH, not a shell function -- the
+        # first attempt at this used a function named apt-get, which
+        # dash (the actual shell subprocess.Popen(shell=True) invokes,
+        # not bash) rejects outright with "Bad function name" since
+        # dash doesn't allow hyphens in function names. Caught by
+        # testing under dash specifically before shipping it.
+        _wrap_dir = '/tmp/vp_apt_wrap'
+        os.makedirs(_wrap_dir, exist_ok=True)
+        with open(os.path.join(_wrap_dir, 'apt-get'), 'w') as _f:
+            _f.write(
+                '#!/bin/sh\n'
+                'max=90; w=0\n'
+                'while true; do\n'
+                '    out=$("$APT_GET_REAL" "$@" 2>&1); rc=$?\n'
+                '    if [ $rc -eq 0 ]; then echo "$out"; exit 0; fi\n'
+                '    if echo "$out" | grep -q "Could not get lock\\|Unable to lock"; then\n'
+                '        if [ $w -ge $max ]; then echo "$out"; echo "[VortexPanel] Timed out waiting for another apt process to finish"; exit $rc; fi\n'
+                '        echo "[VortexPanel] apt is busy with another process, waiting... (${w}s/${max}s)"\n'
+                '        sleep 3; w=$((w+3))\n'
+                '    else\n'
+                '        echo "$out"; exit $rc\n'
+                '    fi\n'
+                'done\n'
+            )
+        os.chmod(os.path.join(_wrap_dir, 'apt-get'), 0o755)
+        _final_cmd = f'export APT_GET_REAL=/usr/bin/apt-get; export PATH={_wrap_dir}:$PATH; ' + _final_cmd
 
         env = os.environ.copy()
         env['DEBIAN_FRONTEND'] = 'noninteractive'
@@ -2013,8 +1908,8 @@ def get_module_settings(mod_id):
         log_path = next((p for p in ['/var/log/nginx/error.log','/www/wwwlogs/nginx_error.log'] if os.path.exists(p)), '')
         logs = sh('tail -100 ' + log_path) if log_path else 'No error log found'
         nginx_versions = [
-            {'label':'1.30.3 (Stable)','value':'stable'},
-            {'label':'1.31.2 (Mainline)','value':'mainline'},
+            {'label':'1.30.4 (Stable — security)','value':'stable'},
+            {'label':'1.31.3 (Mainline — security)','value':'mainline'},
         ]
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'log_path':log_path,
@@ -2574,31 +2469,39 @@ def get_module_settings(mod_id):
             'log': log})
 
     elif mod_id == 'modsecurity':
-        # ModSecurity has no standalone systemd service — it's a shared module
-        # loaded INTO nginx (see the App Store install_tpl). The generic
-        # fallback below used to check `systemctl is-active modsecurity`,
-        # which can never exist and always reported "inactive" even while
-        # the WAF was genuinely blocking traffic — a real, confirmed
-        # contradiction between this tab and the actual WAF page. Reporting
-        # real, verifiable facts instead: whether the connector module is
-        # actually loaded, and what SecRuleEngine is currently set to.
-        from panel.routes.security import _modsec_installed, _connector_present, MODSEC_CONF
+        # ModSecurity has no standalone systemd service — it's a shared
+        # module loaded into whichever webserver is active (see the App
+        # Store install_tpl). Reusing security.py's real detection layer
+        # here rather than duplicating nginx-only logic a second time --
+        # that duplication is exactly what caused this same tab to show
+        # "nginx service: inactive" on a genuinely working Apache install.
+        from panel.routes.security import _modsec_installed, _connector_present, _modsec_conf, _modsec_target
         installed = _modsec_installed()
         connector = _connector_present()
+        target = _modsec_target()
         engine_state = 'not installed'
-        if os.path.exists(MODSEC_CONF):
+        conf = _modsec_conf()
+        if os.path.exists(conf):
             try:
-                conf = open(MODSEC_CONF).read()
-                m = _re.search(r'^SecRuleEngine\s+(\S+)', conf, _re.MULTILINE)
+                content = open(conf).read()
+                m = _re.search(r'^SecRuleEngine\s+(\S+)', content, _re.MULTILINE)
                 engine_state = m.group(1) if m else 'unknown'
             except Exception:
                 engine_state = 'unknown'
-        nginx_status = sh('systemctl is-active nginx 2>/dev/null') or 'inactive'
+        if target == 'apache':
+            webserver_name = 'apache2'
+            webserver_status = sh('systemctl is-active apache2 2>/dev/null') or 'inactive'
+        else:
+            webserver_name = 'nginx'
+            webserver_status = sh('systemctl is-active nginx 2>/dev/null') or 'inactive'
         return jsonify({'ok':True,
             'modsec_installed': installed,
             'connector_loaded': connector,
             'engine_state': engine_state,
-            'nginx_status': nginx_status})
+            'webserver_name': webserver_name,
+            'webserver_status': webserver_status,
+            'nginx_status': webserver_status})
+
 
     # Generic fallback
     mod = _get_mod(mod_id)

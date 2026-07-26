@@ -23,7 +23,7 @@ def security_status():
         except: return False
     return jsonify({'ok':True,
         'fail2ban': check('systemctl is-active fail2ban'),
-        'modsecurity': check('[ -f /etc/modsecurity/modsecurity.conf ]'),
+        'modsecurity': os.path.exists(_modsec_conf()),
         'ufw': check('ufw status | grep -q active'),
     })
 
@@ -593,13 +593,75 @@ def security_score():
 
 # --- ModSecurity ----------------------------------------------------------------
 
-MODSEC_CONF     = '/etc/nginx/modsec/modsecurity.conf'
-MODSEC_MAIN     = '/etc/nginx/modsec/main.conf'
-MODSEC_CRS_DIR  = '/etc/nginx/modsec/crs'
-MODSEC_CUSTOM   = '/etc/nginx/modsec/custom-rules.conf'
-MODSEC_AUDIT    = '/var/log/modsec_audit.log'
-MODSEC_LISTS_CONF = '/etc/nginx/modsec/vortex-lists.conf'
-MODSEC_LISTS_JSON = '/etc/nginx/modsec/vortex-lists.json'
+def _modsec_target():
+    """Which webserver's ModSecurity is actually installed on this box,
+    checked directly against disk rather than assumed. Returns 'nginx',
+    'apache', or None if neither config exists yet. Every path helper and
+    every endpoint below goes through this instead of a hardcoded nginx
+    path, which is the root cause behind four separate broken surfaces
+    found by a real user: the WAF Settings modal ('nginx service:
+    inactive' on an Apache box), WAF Analytics ('not installed' despite
+    a working install), the Security page WAF tab ('supports Nginx'
+    only), and the App Store status badge -- all of them ultimately call
+    into this same backend, and it only ever checked nginx paths."""
+    if os.path.exists('/etc/nginx/modsec/modsecurity.conf'):
+        return 'nginx'
+    if os.path.exists('/etc/modsecurity/modsecurity.conf'):
+        return 'apache'
+    return None
+
+def _modsec_conf():
+    return '/etc/modsecurity/modsecurity.conf' if _modsec_target() == 'apache' else '/etc/nginx/modsec/modsecurity.conf'
+
+def _modsec_main():
+    return '/etc/modsecurity/main.conf' if _modsec_target() == 'apache' else '/etc/nginx/modsec/main.conf'
+
+def _modsec_crs_dir():
+    return '/etc/modsecurity/crs' if _modsec_target() == 'apache' else '/etc/nginx/modsec/crs'
+
+def _modsec_custom():
+    return '/etc/modsecurity/custom-rules.conf' if _modsec_target() == 'apache' else '/etc/nginx/modsec/custom-rules.conf'
+
+def _modsec_dir():
+    return '/etc/modsecurity' if _modsec_target() == 'apache' else '/etc/nginx/modsec'
+
+def _modsec_lists_conf():
+    return os.path.join(_modsec_dir(), 'vortex-lists.conf')
+
+def _modsec_lists_json():
+    return os.path.join(_modsec_dir(), 'vortex-lists.json')
+
+def _modsec_audit():
+    """Read the actual SecAuditLog path from whichever modsecurity.conf
+    is active, rather than assume a shared constant -- the downloaded
+    recommended conf and VortexPanel's own fallback conf could specify
+    different paths, and nginx vs Apache builds may too."""
+    conf = _modsec_conf()
+    if os.path.exists(conf):
+        try:
+            m = re.search(r'SecAuditLog\s+(\S+)', open(conf).read())
+            if m: return m.group(1)
+        except Exception:
+            pass
+    return '/var/log/modsec_audit.log'
+
+def _modsec_configtest():
+    """Validate config for whichever webserver is active. Returns
+    (ok, output)."""
+    if _modsec_target() == 'apache':
+        out, err, rc = sh('apache2ctl configtest 2>&1')
+        return rc == 0, (out or err)
+    out, err, rc = sh('nginx -t 2>&1')
+    return rc == 0, (out or err)
+
+def _modsec_reload():
+    """Reload whichever webserver is active."""
+    if _modsec_target() == 'apache':
+        sh('systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null')
+    else:
+        sh('systemctl reload nginx 2>/dev/null')
+
+MODSEC_AUDIT    = '/var/log/modsec_audit.log'  # fallback default; _modsec_audit() reads the real value at runtime
 
 # --- WAF Blacklist / Whitelist ----------------------------------------------------
 # ID ranges reserved outside OWASP CRS's 900000-999999 space so this can never
@@ -635,10 +697,10 @@ def _modsec_str_escape(v):
 def _load_lists():
     import json
     default = {'ip_whitelist': [], 'ip_blacklist': [], 'ua_blacklist': [], 'url_blacklist': []}
-    if not os.path.exists(MODSEC_LISTS_JSON):
+    if not os.path.exists(_modsec_lists_json()):
         return default
     try:
-        data = json.load(open(MODSEC_LISTS_JSON))
+        data = json.load(open(_modsec_lists_json()))
         for k in default:
             data.setdefault(k, [])
         return data
@@ -647,8 +709,8 @@ def _load_lists():
 
 def _save_lists_json(data):
     import json
-    os.makedirs(os.path.dirname(MODSEC_LISTS_JSON), exist_ok=True)
-    with open(MODSEC_LISTS_JSON, 'w') as f:
+    os.makedirs(os.path.dirname(_modsec_lists_json()), exist_ok=True)
+    with open(_modsec_lists_json(), 'w') as f:
         json.dump(data, f, indent=2)
 
 def _render_lists_conf(data):
@@ -693,25 +755,45 @@ def _render_lists_conf(data):
 def _ensure_lists_included():
     """Insert the Include for vortex-lists.conf right after modsecurity.conf
     and BEFORE crs-setup.conf in main.conf, so whitelist's ruleEngine=Off can
-    actually skip CRS. Idempotent — safe to call on every save."""
-    if not os.path.exists(MODSEC_MAIN):
+    actually skip CRS. Idempotent — safe to call on every save.
+
+    Apache-only exception: Apache's security2.conf already does
+    IncludeOptional /etc/modsecurity/*.conf, which auto-includes
+    vortex-lists.conf (and modsecurity.conf, and custom-rules.conf) on
+    its own since they sit directly in that directory. Adding an
+    explicit Include for it here too causes double-inclusion — the same
+    rule ID gets loaded twice and Apache refuses to start. Confirmed via
+    a real reproduced failure. nginx has no equivalent auto-include, so
+    it genuinely needs this explicit wiring; Apache does not."""
+    if _modsec_target() == 'apache':
         return
-    main = open(MODSEC_MAIN).read()
-    include_line = f'Include {MODSEC_LISTS_CONF}'
+    if not os.path.exists(_modsec_main()):
+        return
+    main = open(_modsec_main()).read()
+    include_line = f'Include {_modsec_lists_conf()}'
     if include_line in main:
         return
-    base_include = 'Include /etc/nginx/modsec/modsecurity.conf'
+    base_include = f'Include {_modsec_conf()}'
     if base_include in main:
         main = main.replace(base_include, f'{base_include}\n{include_line}', 1)
     else:
         main = f'{include_line}\n{main}'
-    with open(MODSEC_MAIN, 'w') as f:
+    with open(_modsec_main(), 'w') as f:
         f.write(main)
 
 def _connector_present():
-    """The nginx-ModSecurity connector is now compiled from source (see the
-    App Store install_tpl) rather than installed as a distro package — check
-    for the actual .so plus the nginx.conf wiring, not just a package."""
+    """Whether the actual connector/module is present AND wired in for
+    whichever webserver this is. nginx's connector is compiled from
+    source (see the App Store install_tpl) so this checks for the real
+    .so plus the nginx.conf wiring, not just a package. Apache's
+    security2 module is a distro package that self-registers via
+    a2enmod, so this checks it's actually enabled."""
+    if _modsec_target() == 'apache':
+        enabled, _, _ = sh('a2query -m security2 2>&1')
+        if 'enabled' in (enabled or '').lower():
+            return True
+        return os.path.exists('/etc/apache2/mods-enabled/security2.load')
+
     so_present = any(
         os.path.exists(os.path.join(d, 'ngx_http_modsecurity_module.so'))
         for d in ['/usr/lib/nginx/modules', '/usr/lib64/nginx/modules']
@@ -725,24 +807,33 @@ def _connector_present():
     return so_present and wired
 
 def _modsec_installed():
-    """'Installed' = the core engine is actually usable, which requires the
-    library, modsecurity.conf, AND the nginx connector module actually being
-    loadable — checking only the first two was exactly the false-green
-    pattern already fixed once for the CRS chain; the connector needs the
-    same treatment now that it's a from-source build rather than an apt
-    package that either installs cleanly or is simply absent."""
-    lib_present = any(os.path.exists(p) for p in [
-        '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
-        '/usr/lib64/libmodsecurity.so.3',
-        '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
-    ])
-    return lib_present and os.path.exists(MODSEC_CONF) and _connector_present()
+    """'Installed' = the core engine is actually usable, which requires
+    the engine library, modsecurity.conf, AND the connector/module
+    actually being loadable — checking only the first two was exactly
+    the false-green pattern already fixed once for the CRS chain.
+    The engine library check differs by target: nginx's connector links
+    against libmodsecurity.so.3 (the v3 library), but Apache's
+    libapache2-mod-security2 is a self-contained v2 module that never
+    installs that library at all — confirmed via the actual install log
+    (only libapache2-mod-security2 + modsecurity-crs as new packages,
+    no v3 library pulled in). Checking for libmodsecurity.so.3
+    unconditionally would make this always return False on a genuinely
+    working Apache install."""
+    if _modsec_target() == 'apache':
+        engine_present = os.path.exists('/usr/lib/apache2/modules/mod_security2.so')
+    else:
+        engine_present = any(os.path.exists(p) for p in [
+            '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
+            '/usr/lib64/libmodsecurity.so.3',
+            '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
+        ])
+    return engine_present and os.path.exists(_modsec_conf()) and _connector_present()
 
 def _crs_version():
     """Read CRS version from the CHANGES file or setup.conf."""
-    for path in [f'{MODSEC_CRS_DIR}/CHANGES.md',
-                 f'{MODSEC_CRS_DIR}/CHANGES',
-                 f'{MODSEC_CRS_DIR}/crs-setup.conf.example']:
+    for path in [f'{_modsec_crs_dir()}/CHANGES.md',
+                 f'{_modsec_crs_dir()}/CHANGES',
+                 f'{_modsec_crs_dir()}/crs-setup.conf.example']:
         if not os.path.exists(path): continue
         try:
             for line in open(path):
@@ -753,7 +844,7 @@ def _crs_version():
 
 def _paranoia_level():
     """Read current paranoia level from crs-setup.conf."""
-    setup = f'{MODSEC_CRS_DIR}/crs-setup.conf'
+    setup = f'{_modsec_crs_dir()}/crs-setup.conf'
     if not os.path.exists(setup): return 1
     try:
         content = open(setup).read()
@@ -763,8 +854,8 @@ def _paranoia_level():
 
 def _engine_state():
     """Return engine state: On / DetectionOnly / Off."""
-    if not os.path.exists(MODSEC_CONF): return 'Off'
-    content = open(MODSEC_CONF).read()
+    if not os.path.exists(_modsec_conf()): return 'Off'
+    content = open(_modsec_conf()).read()
     if 'SecRuleEngine On' in content:             return 'On'
     if 'SecRuleEngine DetectionOnly' in content:  return 'DetectionOnly'
     return 'Off'
@@ -774,14 +865,14 @@ def modsec_status():
     if not req(): return jsonify({'ok':False}), 401
     installed = _modsec_installed()
     state     = _engine_state()
-    rules_out, _, _ = sh('find /etc/nginx/modsec/crs/rules/ -name "*.conf" 2>/dev/null | wc -l')
+    rules_out, _, _ = sh(f'find {_modsec_crs_dir()}/rules/ -name "*.conf" 2>/dev/null | wc -l')
     try:    rules_count = int(rules_out.strip() or 0)
     except: rules_count = 0
 
     # Custom rules
     custom_rules = ''
-    if os.path.exists(MODSEC_CUSTOM):
-        try: custom_rules = open(MODSEC_CUSTOM).read()
+    if os.path.exists(_modsec_custom()):
+        try: custom_rules = open(_modsec_custom()).read()
         except: pass
 
     # Sites with per-site overrides
@@ -811,7 +902,9 @@ def modsec_status():
         'paranoia_level':_paranoia_level() if installed else 1,
         'custom_rules':  custom_rules,
         'site_overrides':site_overrides,
-        'audit_log':     os.path.exists(MODSEC_AUDIT),
+        'audit_log':     os.path.exists(_modsec_audit()),
+        'webserver_name': 'apache2' if _modsec_target() == 'apache' else 'nginx',
+        'custom_rules_path': _modsec_custom(),
     })
 
 
@@ -820,7 +913,7 @@ def modsec_toggle():
     if not req(): return jsonify({'ok':False}), 401
     d      = request.get_json() or {}
     state  = d.get('state', 'On')     # 'On' | 'DetectionOnly' | 'Off'
-    conf   = MODSEC_CONF
+    conf   = _modsec_conf()
     if not os.path.exists(conf):
         return jsonify({'ok':False,'error':'ModSecurity not installed'}), 404
     content = open(conf).read()
@@ -828,10 +921,10 @@ def modsec_toggle():
     content = re.sub(r'SecRuleEngine\s+(On|DetectionOnly|Off)',
                      f'SecRuleEngine {state}', content)
     with open(conf,'w') as f: f.write(content)
-    out, err, rc = sh('nginx -t 2>&1')
-    if rc != 0:
-        return jsonify({'ok':False,'error':f'nginx config error: {out}{err}'}), 400
-    sh('systemctl reload nginx 2>/dev/null')
+    ok, out = _modsec_configtest()
+    if not ok:
+        return jsonify({'ok':False,'error':f'Config error: {out}'}), 400
+    _modsec_reload()
     return jsonify({'ok':True,'state':state})
 
 
@@ -841,7 +934,7 @@ def modsec_paranoia():
     if not req(): return jsonify({'ok':False}), 401
     level = int((request.get_json() or {}).get('level', 1))
     level = max(1, min(4, level))
-    setup = f'{MODSEC_CRS_DIR}/crs-setup.conf'
+    setup = f'{_modsec_crs_dir()}/crs-setup.conf'
     if not os.path.exists(setup):
         return jsonify({'ok':False,'error':'CRS setup.conf not found'}), 404
     content = open(setup).read()
@@ -851,7 +944,8 @@ def modsec_paranoia():
     else:
         content += f'\nSecAction "id:900000,phase:1,nolog,pass,t:none,setvar:tx.paranoia_level={level}"\n'
     with open(setup,'w') as f: f.write(content)
-    sh('nginx -t && systemctl reload nginx 2>/dev/null')
+    ok, _ = _modsec_configtest()
+    if ok: _modsec_reload()
     return jsonify({'ok':True,'level':level})
 
 
@@ -859,8 +953,8 @@ def modsec_paranoia():
 def modsec_get_custom():
     if not req(): return jsonify({'ok':False}), 401
     content = ''
-    if os.path.exists(MODSEC_CUSTOM):
-        try: content = open(MODSEC_CUSTOM).read()
+    if os.path.exists(_modsec_custom()):
+        try: content = open(_modsec_custom()).read()
         except: pass
     return jsonify({'ok':True,'rules':content})
 
@@ -870,18 +964,23 @@ def modsec_save_custom():
     """Save custom SecRule directives."""
     if not req(): return jsonify({'ok':False}), 401
     rules = (request.get_json() or {}).get('rules', '')
-    os.makedirs('/etc/nginx/modsec', exist_ok=True)
-    with open(MODSEC_CUSTOM,'w') as f: f.write(rules)
-    # Ensure it's included in main.conf
-    if os.path.exists(MODSEC_MAIN):
-        main = open(MODSEC_MAIN).read()
-        include_line = f'Include {MODSEC_CUSTOM}'
+    os.makedirs(_modsec_dir(), exist_ok=True)
+    with open(_modsec_custom(),'w') as f: f.write(rules)
+    # Ensure it's included in main.conf -- nginx only. Apache's
+    # security2.conf already glob-includes every top-level .conf file in
+    # /etc/modsecurity/ (confirmed: IncludeOptional /etc/modsecurity/*.conf),
+    # so custom-rules.conf is already loaded without this; adding an
+    # explicit Include here too caused a real, reproduced double-inclusion
+    # failure ("Found another rule with the same id").
+    if _modsec_target() != 'apache' and os.path.exists(_modsec_main()):
+        main = open(_modsec_main()).read()
+        include_line = f'Include {_modsec_custom()}'
         if include_line not in main:
-            with open(MODSEC_MAIN,'a') as f: f.write(f'\n{include_line}\n')
-    out, err, rc = sh('nginx -t 2>&1')
-    if rc != 0:
-        return jsonify({'ok':False,'error':f'Syntax error in rules: {out}{err}'}), 400
-    sh('systemctl reload nginx 2>/dev/null')
+            with open(_modsec_main(),'a') as f: f.write(f'\n{include_line}\n')
+    ok, out = _modsec_configtest()
+    if not ok:
+        return jsonify({'ok':False,'error':f'Syntax error in rules: {out}'}), 400
+    _modsec_reload()
     return jsonify({'ok':True})
 
 
@@ -913,31 +1012,31 @@ def modsec_save_lists():
         if bad:
             return jsonify({'ok':False, 'error': f'Invalid IP/CIDR in {key}: {", ".join(bad[:5])}'}), 400
 
-    os.makedirs('/etc/nginx/modsec', exist_ok=True)
+    os.makedirs(_modsec_dir(), exist_ok=True)
 
     backup = None
-    if os.path.exists(MODSEC_LISTS_CONF):
-        backup = open(MODSEC_LISTS_CONF).read()
-    main_backup = open(MODSEC_MAIN).read() if os.path.exists(MODSEC_MAIN) else None
+    if os.path.exists(_modsec_lists_conf()):
+        backup = open(_modsec_lists_conf()).read()
+    main_backup = open(_modsec_main()).read() if os.path.exists(_modsec_main()) else None
 
-    with open(MODSEC_LISTS_CONF, 'w') as f:
+    with open(_modsec_lists_conf(), 'w') as f:
         f.write(_render_lists_conf(incoming))
     _ensure_lists_included()
 
-    out, err, rc = sh('nginx -t 2>&1')
-    if rc != 0:
-        # Roll back both files to their pre-save state — nginx must never
-        # be left in a broken state by a rejected save.
+    ok, out = _modsec_configtest()
+    if not ok:
+        # Roll back both files to their pre-save state — the webserver must
+        # never be left in a broken state by a rejected save.
         if backup is not None:
-            with open(MODSEC_LISTS_CONF, 'w') as f: f.write(backup)
-        elif os.path.exists(MODSEC_LISTS_CONF):
-            os.remove(MODSEC_LISTS_CONF)
+            with open(_modsec_lists_conf(), 'w') as f: f.write(backup)
+        elif os.path.exists(_modsec_lists_conf()):
+            os.remove(_modsec_lists_conf())
         if main_backup is not None:
-            with open(MODSEC_MAIN, 'w') as f: f.write(main_backup)
-        return jsonify({'ok':False, 'error': f'Syntax error in generated rules: {out}{err}'}), 400
+            with open(_modsec_main(), 'w') as f: f.write(main_backup)
+        return jsonify({'ok':False, 'error': f'Syntax error in generated rules: {out}'}), 400
 
     _save_lists_json(incoming)
-    sh('systemctl reload nginx 2>/dev/null')
+    _modsec_reload()
     return jsonify({'ok':True, 'lists': incoming})
 
 
@@ -946,9 +1045,9 @@ def modsec_audit_log():
     """Return last N lines of ModSecurity audit log."""
     if not req(): return jsonify({'ok':False}), 401
     lines = int(request.args.get('lines', 100))
-    if not os.path.exists(MODSEC_AUDIT):
+    if not os.path.exists(_modsec_audit()):
         return jsonify({'ok':True,'entries':[],'raw':'','exists':False})
-    out, _, _ = sh(f'tail -n {min(lines, 500)} "{MODSEC_AUDIT}" 2>/dev/null')
+    out, _, _ = sh(f'tail -n {min(lines, 500)} "{_modsec_audit()}" 2>/dev/null')
     entries = _parse_modsec_entries(out)
     entries.reverse()
     return jsonify({'ok':True,'entries':entries[-100:],'raw':out,'exists':True})
@@ -1065,13 +1164,13 @@ def waf_stats():
     if not req(): return jsonify({'ok': False}), 401
     period = request.args.get('period', 'today')
 
-    if not os.path.exists(MODSEC_AUDIT):
+    if not os.path.exists(_modsec_audit()):
         return jsonify({'ok': True, 'exists': False, 'total': 0,
                          'categories': [], 'top_ips': [], 'top_uris': [], 'timeline': []})
 
     # Cap the read — a very busy site's audit log can be huge; this covers a
     # generous window of recent activity without loading the whole file.
-    out, _, _ = sh(f'tail -n 20000 "{MODSEC_AUDIT}" 2>/dev/null', t=20)
+    out, _, _ = sh(f'tail -n 20000 "{_modsec_audit()}" 2>/dev/null', t=20)
     entries = _parse_modsec_entries(out)
 
     now = datetime.now()
@@ -1129,14 +1228,14 @@ def waf_blockade_log():
     """Filterable version of the raw audit log — supports search by IP,
     URI, or rule category, plus pagination for larger result sets."""
     if not req(): return jsonify({'ok': False}), 401
-    if not os.path.exists(MODSEC_AUDIT):
+    if not os.path.exists(_modsec_audit()):
         return jsonify({'ok': True, 'entries': [], 'total': 0, 'exists': False})
 
     search   = (request.args.get('q') or '').strip().lower()
     page     = max(1, int(request.args.get('page', 1)))
     per_page = min(100, max(10, int(request.args.get('per_page', 20))))
 
-    out, _, _ = sh(f'tail -n 20000 "{MODSEC_AUDIT}" 2>/dev/null', t=20)
+    out, _, _ = sh(f'tail -n 20000 "{_modsec_audit()}" 2>/dev/null', t=20)
     entries = _parse_modsec_entries(out)
     for e in entries:
         e['category'] = _categorize_rule(e.get('rule_id'))
@@ -1172,26 +1271,26 @@ def modsec_repair():
     if not _modsec_installed():
         return jsonify({'ok': False, 'error': 'ModSecurity engine (libmodsecurity) is not installed at all — install it from the App Store first, this repair only fixes an incomplete config.'})
 
-    os.makedirs('/etc/nginx/modsec', exist_ok=True)
+    os.makedirs(_modsec_dir(), exist_ok=True)
 
     # 1. Fix modsecurity.conf if missing
-    conf_ok = os.path.exists(MODSEC_CONF)
+    conf_ok = os.path.exists(_modsec_conf())
     if not conf_ok:
         log.append('modsecurity.conf missing — downloading...')
         _, err, rc = sh(
-            f'wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended -O {MODSEC_CONF}',
+            f'wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended -O {_modsec_conf()}',
             t=20
         )
-        if rc == 0 and os.path.exists(MODSEC_CONF):
-            content = open(MODSEC_CONF).read()
+        if rc == 0 and os.path.exists(_modsec_conf()):
+            content = open(_modsec_conf()).read()
             content = content.replace('SecRuleEngine DetectionOnly', 'SecRuleEngine On')
             content = content.replace('SecAuditLogParts ABIJDEFHZ', 'SecAuditLogParts ABCEFHJKZ')
-            open(MODSEC_CONF, 'w').write(content)
+            open(_modsec_conf(), 'w').write(content)
             conf_ok = True
             log.append('✓ modsecurity.conf downloaded and configured')
         else:
             # Fallback minimal config so the engine is at least usable
-            open(MODSEC_CONF, 'w').write(
+            open(_modsec_conf(), 'w').write(
                 'SecRuleEngine On\nSecRequestBodyAccess On\n'
                 'SecAuditEngine RelevantOnly\nSecAuditLog /var/log/modsec_audit.log\n'
             )
@@ -1201,10 +1300,10 @@ def modsec_repair():
         log.append('✓ modsecurity.conf already present')
 
     # 2. Fix CRS if missing
-    crs_ok = os.path.exists(f'{MODSEC_CRS_DIR}/crs-setup.conf')
+    crs_ok = os.path.exists(f'{_modsec_crs_dir()}/crs-setup.conf')
     if not crs_ok:
         log.append('OWASP CRS missing — downloading...')
-        os.makedirs(MODSEC_CRS_DIR, exist_ok=True)
+        os.makedirs(_modsec_crs_dir(), exist_ok=True)
         api_out, _, _ = sh(
             'curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest'
             ' | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])"', t=15
@@ -1212,11 +1311,11 @@ def modsec_repair():
         tag = api_out.strip() if api_out.strip().startswith('v') else 'v4.0.0'
         _, err, rc = sh(
             f'wget -q --timeout=20 "https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz" -O /tmp/crs_repair.tar.gz && '
-            f'tar -xzf /tmp/crs_repair.tar.gz -C {MODSEC_CRS_DIR} --strip-components=1 && rm -f /tmp/crs_repair.tar.gz',
+            f'tar -xzf /tmp/crs_repair.tar.gz -C {_modsec_crs_dir()} --strip-components=1 && rm -f /tmp/crs_repair.tar.gz',
             t=60
         )
-        if rc == 0 and os.path.exists(f'{MODSEC_CRS_DIR}/crs-setup.conf.example'):
-            sh(f'cp {MODSEC_CRS_DIR}/crs-setup.conf.example {MODSEC_CRS_DIR}/crs-setup.conf')
+        if rc == 0 and os.path.exists(f'{_modsec_crs_dir()}/crs-setup.conf.example'):
+            sh(f'cp {_modsec_crs_dir()}/crs-setup.conf.example {_modsec_crs_dir()}/crs-setup.conf')
             crs_ok = True
             log.append(f'✓ OWASP CRS {tag} downloaded')
         else:
@@ -1225,28 +1324,37 @@ def modsec_repair():
         log.append('✓ OWASP CRS already present')
 
     # 3. Regenerate main.conf to match reality — never reference a CRS file
-    # that doesn't actually exist, or nginx will fail to reload entirely.
+    # that doesn't actually exist, or the webserver will fail to reload
+    # entirely. Apache-only nuance: modsecurity.conf is already
+    # auto-included by security2.conf's own glob (IncludeOptional
+    # /etc/modsecurity/*.conf), so re-including it here would double-load
+    # it -- confirmed via a real reproduced failure. Only CRS (in a
+    # subdirectory the glob doesn't reach) genuinely needs wiring there.
+    is_apache = _modsec_target() == 'apache'
     if crs_ok:
-        main_conf = ('Include /etc/nginx/modsec/modsecurity.conf\n'
-                     'Include /etc/nginx/modsec/crs/crs-setup.conf\n'
-                     'Include /etc/nginx/modsec/crs/rules/*.conf\n')
+        main_conf = (('' if is_apache else f'Include {_modsec_conf()}\n') +
+                     f'Include {_modsec_crs_dir()}/crs-setup.conf\n'
+                     f'Include {_modsec_crs_dir()}/rules/*.conf\n')
     else:
-        main_conf = 'Include /etc/nginx/modsec/modsecurity.conf\n'
-    open('/etc/nginx/modsec/main.conf', 'w').write(main_conf)
+        main_conf = '' if is_apache else f'Include {_modsec_conf()}\n'
+    open(_modsec_main(), 'w').write(main_conf)
     log.append(f'main.conf regenerated ({"with" if crs_ok else "without"} CRS includes)')
 
-    # 4. Ensure nginx.conf actually loads main.conf
-    if os.path.exists('/etc/nginx/nginx.conf'):
+    # 4. Ensure the webserver actually loads main.conf -- nginx-only step.
+    # Apache's security2.conf already auto-includes /etc/modsecurity/*.conf
+    # by default (confirmed by installing the package fresh and inspecting
+    # it), so there is no equivalent wiring step needed there.
+    if _modsec_target() != 'apache' and os.path.exists('/etc/nginx/nginx.conf'):
         nc = open('/etc/nginx/nginx.conf').read()
         if 'modsecurity_rules_file' not in nc:
-            sh('sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;" /etc/nginx/nginx.conf')
+            sh(f'sed -i "/^http {{/a\\    modsecurity on;\\n    modsecurity_rules_file {_modsec_main()};" /etc/nginx/nginx.conf')
             log.append('✓ Enabled modsecurity directives in nginx.conf')
 
-    test_out, test_err, test_rc = sh('nginx -t 2>&1', t=15)
-    if test_rc != 0:
-        return jsonify({'ok': False, 'error': f'nginx config test failed after repair: {test_out}{test_err}', 'log': log})
-    sh('systemctl reload nginx 2>/dev/null')
-    log.append('✓ nginx reloaded')
+    ok, out = _modsec_configtest()
+    if not ok:
+        return jsonify({'ok': False, 'error': f'Config test failed after repair: {out}', 'log': log})
+    _modsec_reload()
+    log.append('✓ webserver reloaded')
 
     return jsonify({'ok': True, 'conf_ok': conf_ok, 'crs_ok': crs_ok, 'log': log})
 
@@ -1264,15 +1372,17 @@ def modsec_update_crs():
     tag = api_out.strip() if rc == 0 and api_out.strip().startswith('v') else 'v4.0.0'
     ver = tag.lstrip('v')
 
+    reload_cmd = 'apache2ctl configtest && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null)' \
+        if _modsec_target() == 'apache' else 'nginx -t && systemctl reload nginx 2>/dev/null'
     out, err, rc = sh(
         f'wget -q https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz'
         f' -O /tmp/crs_update.tar.gz && '
-        f'mkdir -p {MODSEC_CRS_DIR}_backup && '
-        f'cp -r {MODSEC_CRS_DIR}/crs-setup.conf {MODSEC_CRS_DIR}_backup/ 2>/dev/null || true && '
-        f'tar -xzf /tmp/crs_update.tar.gz -C {MODSEC_CRS_DIR} --strip-components=1 && '
-        f'cp {MODSEC_CRS_DIR}/crs-setup.conf.example {MODSEC_CRS_DIR}/crs-setup.conf 2>/dev/null || true && '
-        f'cp {MODSEC_CRS_DIR}_backup/crs-setup.conf {MODSEC_CRS_DIR}/crs-setup.conf 2>/dev/null || true && '
-        f'nginx -t && systemctl reload nginx 2>/dev/null',
+        f'mkdir -p {_modsec_crs_dir()}_backup && '
+        f'cp -r {_modsec_crs_dir()}/crs-setup.conf {_modsec_crs_dir()}_backup/ 2>/dev/null || true && '
+        f'tar -xzf /tmp/crs_update.tar.gz -C {_modsec_crs_dir()} --strip-components=1 && '
+        f'cp {_modsec_crs_dir()}/crs-setup.conf.example {_modsec_crs_dir()}/crs-setup.conf 2>/dev/null || true && '
+        f'cp {_modsec_crs_dir()}_backup/crs-setup.conf {_modsec_crs_dir()}/crs-setup.conf 2>/dev/null || true && '
+        f'{reload_cmd}',
         t=120
     )
     return jsonify({
@@ -1284,8 +1394,14 @@ def modsec_update_crs():
 
 @security_bp.route('/api/security/modsecurity/per-site', methods=['POST'])
 def modsec_per_site():
-    """Enable or disable ModSecurity for a specific site's nginx vhost."""
+    """Enable or disable ModSecurity for a specific site's nginx vhost.
+    Apache uses a different per-vhost mechanism (IfModule blocks in a
+    different config location) that hasn't been built and tested yet --
+    explicitly say so rather than silently do nothing or risk an
+    untested edit to an Apache vhost file."""
     if not req(): return jsonify({'ok':False}), 401
+    if _modsec_target() == 'apache':
+        return jsonify({'ok':False,'error':'Per-site ModSecurity override is not yet available for Apache installs (global toggle, paranoia level, custom rules, and IP/UA/URL lists all work correctly). Use the global Engine Mode toggle for now.'}), 501
     d      = request.get_json() or {}
     domain = d.get('domain', '')
     enable = d.get('enable', True)   # True = use global setting, False = disable for this site
