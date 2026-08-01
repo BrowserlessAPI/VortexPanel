@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.4.8-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.4.8">
+<img src="https://img.shields.io/badge/VortexPanel-v3.4.9-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.4.9">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
 <img src="https://img.shields.io/badge/Alpine.js-3.15-8bc0d0?style=for-the-badge">
