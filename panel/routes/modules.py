@@ -854,7 +854,11 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
   F2B_VER=$(curl -fsSL https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
   F2B_VER=${F2B_VER:-1.1.0} && \
   curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
-  (dpkg -i /tmp/fail2ban.deb 2>/dev/null || apt-get install -y fail2ban) && \
+  dpkg -i /tmp/fail2ban.deb 2>/dev/null; \
+  if [ ! -f /lib/systemd/system/fail2ban.service ] && [ ! -f /usr/lib/systemd/system/fail2ban.service ]; then \
+    echo "[VortexPanel] Upstream package did not provide a systemd unit -- falling back to the distro package"; \
+    apt-get install -y fail2ban; \
+  fi && \
   systemctl enable fail2ban && systemctl start fail2ban; \
 elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then \
   echo "[VortexPanel] fail2ban is not in the default RHEL-family repos -- enabling EPEL first" && \
@@ -875,17 +879,14 @@ fi''',
         'desc':'Open source antivirus engine for mail gateways',
         'check':'which clamscan 2>/dev/null',
         'versions':[
-            {'label':'1.4.2 (Latest Stable)', 'value':'latest'},
+            {'label':'Distro-provided (Ubuntu security-maintained)', 'value':'latest'},
         ],
-        'install':r'''apt-get install -y curl && \
-CLAM_VER=$(curl -fsSL https://api.github.com/repos/Cisco-Talos/clamav/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
-CLAM_VER=${CLAM_VER:-clamav-1.4.2} && \
-CLAM_NUM=${CLAM_VER#clamav-} && \
-CLAM_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x86_64/') && \
-curl -fsSL https://www.clamav.net/downloads/production/clamav-${CLAM_NUM}.linux.${CLAM_ARCH}.deb -o /tmp/clamav.deb 2>/dev/null && \
-(dpkg -i /tmp/clamav.deb 2>/dev/null || apt-get install -y clamav clamav-daemon) && \
-apt-get install -f -y && \
-systemctl enable clamav-freshclam && freshclam 2>/dev/null || true && systemctl start clamav-daemon''',
+        'install':r'''export DEBIAN_FRONTEND=noninteractive && \
+apt-get install -y clamav clamav-daemon clamav-freshclam && \
+systemctl enable clamav-freshclam 2>/dev/null; systemctl enable clamav-daemon 2>/dev/null; \
+(freshclam 2>&1 || true) && \
+systemctl start clamav-freshclam 2>/dev/null; systemctl start clamav-daemon 2>/dev/null; \
+true''',
         'uninstall':'systemctl stop clamav-daemon clamav-freshclam 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
         'service':'clamav-daemon', 'manage':True,
     },

@@ -7903,7 +7903,7 @@
       <div style="margin-bottom:16px">
         <label class="form-label">Source Panel</label>
         <div style="display:flex;gap:8px;margin-top:6px">
-          <template x-for="p in [{id:'cpanel',label:'cPanel'},{id:'aapanel',label:'aaPanel'},{id:'hestia',label:'HestiaCP'}]" :key="p.id">
+          <template x-for="p in [{id:'cpanel',label:'cPanel'},{id:'aapanel',label:'aaPanel'},{id:'hestia',label:'HestiaCP'},{id:'cyberpanel',label:'CyberPanel'}]" :key="p.id">
             <button :class="'btn btn-sm '+($store.vp.importWizard.panelType===p.id?'btn-primary':'btn-ghost')"
                     style="flex:1" @click="$store.vp.importWizard.panelType=p.id" x-text="p.label"></button>
           </template>
@@ -7919,6 +7919,9 @@
         </template>
         <template x-if="$store.vp.importWizard.panelType==='hestia'">
           <span>Upload the full user backup <code>.tar</code> from <code>v-backup-user</code>.</span>
+        </template>
+        <template x-if="$store.vp.importWizard.panelType==='cyberpanel'">
+          <span>Upload the backup <code>.tar.gz</code> from Backup → Create Backup. The primary domain and any addon domains are read from the backup's <code>meta.xml</code> when present; database dumps are located by scanning the archive, since CyberPanel doesn't use one fixed path across versions — verify the detected database name in the next step.</span>
         </template>
       </div>
 

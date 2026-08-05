@@ -312,10 +312,109 @@ def _detect_hestia(extract_dir):
     return info
 
 
+def _detect_cyberpanel(extract_dir):
+    """CyberPanel backup format, confirmed against CyberPanel's own open-source
+    backupUtilities.py (github.com/usmannasir/cyberpanel) rather than assumed:
+
+      meta.xml          -- masterDomain, VERSION, BUILD, and a childDomain
+                            entry (domain + path) per addon/parked domain
+      public_html/      -- primary domain's site files (v2.0+ backups: a
+                            plain copied folder, not compressed)
+      public_html.tar.gz -- same, but for backups made by CyberPanel
+                            versions before 2.0 (they switched from
+                            make_archive to a plain copytree — both are
+                            handled here)
+      {domain}-docroot/ -- one such folder per child/addon domain
+
+    Database dump naming/location is NOT documented in what's publicly
+    verifiable from their source in the time available, so — matching the
+    same honest approach already used for aaPanel above — this does a
+    best-effort scan for .sql/.sql.gz anywhere in the archive rather than
+    assume a specific path, and says so.
+    """
+    info = {'panel_type': 'cyberpanel', 'domain': '', 'php_version': '', 'doc_root': '',
+            'databases': [], 'notes': [], 'child_domains': []}
+
+    meta_path = _find_first(extract_dir, 'meta.xml')
+    if meta_path:
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(meta_path)
+            root = tree.getroot()
+            master = root.find('masterDomain')
+            if master is not None and master.text and DOMAIN_RE.fullmatch(master.text.strip()):
+                info['domain'] = master.text.strip()
+                info['notes'].append(f'Detected master domain from meta.xml: {info["domain"]}')
+            for child in root.findall('.//childDomain'):
+                d = child.find('domain')
+                if d is not None and d.text:
+                    info['child_domains'].append(d.text.strip())
+            if info['child_domains']:
+                info['notes'].append(
+                    f'{len(info["child_domains"])} addon/parked domain(s) also found in this backup '
+                    f'({", ".join(info["child_domains"][:5])}{"..." if len(info["child_domains"]) > 5 else ""}) '
+                    '-- only the master domain is imported by this wizard; import addon domains separately if needed.')
+        except Exception as e:
+            info['notes'].append(f'⚠ Found meta.xml but could not parse it ({e}) — falling back to folder-name detection')
+    else:
+        info['notes'].append('⚠ No meta.xml found — this may not be a CyberPanel backup, or is from a version old enough to predate it')
+
+    # Site files: try the v2.0+ plain-folder layout first, then the older
+    # pre-2.0 tarball layout.
+    public_html_dir = _find_first(extract_dir, 'public_html')
+    if public_html_dir and os.path.isdir(public_html_dir):
+        info['doc_root'] = public_html_dir
+        info['notes'].append('Found public_html/ (CyberPanel 2.0+ backup format)')
+    else:
+        public_html_tar = _find_first(extract_dir, 'public_html.tar.gz')
+        if public_html_tar:
+            ph_extract = os.path.join(extract_dir, '_public_html_extracted')
+            ok, err = _extract_archive(public_html_tar, ph_extract)
+            if ok:
+                info['doc_root'] = ph_extract
+                info['notes'].append('Extracted public_html.tar.gz (pre-2.0 CyberPanel backup format)')
+            else:
+                info['notes'].append(f'⚠ Found public_html.tar.gz but failed to extract it: {err}')
+                info['doc_root'] = extract_dir
+        else:
+            info['doc_root'] = extract_dir
+            info['notes'].append('⚠ No public_html/ or public_html.tar.gz found — assuming archive root is the site files. Please verify.')
+
+    if not info['domain']:
+        # Fall back to the same domain-shaped-folder-name heuristic the
+        # aaPanel detector uses, since meta.xml was missing or unreadable.
+        try:
+            for entry in os.listdir(extract_dir):
+                if DOMAIN_RE.fullmatch(entry):
+                    info['domain'] = entry
+                    info['notes'].append(f'Detected domain-like folder: {entry}')
+                    break
+        except OSError:
+            pass
+        if not info['domain']:
+            info['notes'].append('⚠ Could not auto-detect domain — please enter it manually')
+
+    # Databases: no confirmed dump-naming convention to rely on, so scan
+    # honestly rather than assume one, matching the aaPanel detector's approach.
+    for root, dirs, files in os.walk(extract_dir):
+        for fname in files:
+            if fname.endswith('.sql') or fname.endswith('.sql.gz'):
+                base = fname.replace('.sql.gz', '').replace('.sql', '')
+                guessed_name = re.sub(r'[_-]?\d{8,}.*$', '', base)
+                info['databases'].append({'name': guessed_name or base, 'dump_path': os.path.join(root, fname),
+                                           'note': 'Name guessed from filename — please verify'})
+
+    if not info['databases']:
+        info['notes'].append('No .sql/.sql.gz database dump found in this archive — you can still import files-only, or upload the database separately afterward')
+
+    return info
+
+
 DETECTORS = {
     'cpanel': _detect_cpanel,
     'aapanel': _detect_aapanel,
     'hestia': _detect_hestia,
+    'cyberpanel': _detect_cyberpanel,
 }
 
 

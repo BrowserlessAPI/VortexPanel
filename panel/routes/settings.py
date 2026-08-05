@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, session
-import subprocess, os, json, re
+import subprocess, os, json, re, time
 from datetime import datetime
 
 try:
@@ -339,6 +339,20 @@ WEBSHELL_PATTERNS = [
     (r'create_function\s*\(',             'HIGH',     'create_function() — deprecated, often used in webshells'),
     # File write from user input
     (r'file_put_contents\s*\(\s*.*\$_(?:GET|POST|REQUEST)', 'HIGH', 'file_put_contents with user input — file upload via webshell'),
+    # Backtick shell-exec operator -- functionally identical to shell_exec()
+    # but a different syntax the earlier pattern list did not cover at all.
+    (r'`[^`]*\$_(?:GET|POST|REQUEST|COOKIE)[^`]*`', 'CRITICAL', 'Backtick shell-exec operator with user input — remote command execution'),
+    # Process-execution functions absent from the earlier list -- confirmed
+    # by direct testing that shell_exec/system/exec/passthru/popen coverage
+    # did not extend to these.
+    (r'proc_open\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)', 'CRITICAL', 'proc_open with user input — remote command execution'),
+    (r'pcntl_exec\s*\(', 'HIGH', 'pcntl_exec() — process replacement, rare in legitimate app code'),
+    # Delayed/indirected execution: passing user input as the CALLBACK to a
+    # function that will later invoke it, rather than calling it directly --
+    # confirmed to evade every earlier pattern since none of them look for
+    # user input in the callback POSITION of these functions.
+    (r'register_shutdown_function\s*\(\s*\$_(?:GET|POST|REQUEST)', 'CRITICAL', 'register_shutdown_function with user-controlled callback — delayed code execution'),
+    (r'(?:array_map|array_filter|array_walk|usort|uasort|uksort|call_user_func|call_user_func_array)\s*\(\s*\$_(?:GET|POST|REQUEST)', 'CRITICAL', 'Higher-order function with user-controlled callback — indirect code execution'),
     # Heavy obfuscation markers
     (r'\\x[0-9a-fA-F]{2}\\x[0-9a-fA-F]{2}\\x[0-9a-fA-F]{2}\\x[0-9a-fA-F]{2}', 'MEDIUM', 'Heavy hex encoding — possible obfuscation'),
     (r'chr\(\d+\)\s*\.\s*chr\(\d+\)\s*\.\s*chr\(\d+\)', 'MEDIUM', 'chr() string assembly — obfuscation technique'),
@@ -362,7 +376,7 @@ def webshell_scan():
         # Skip common safe dirs
         dirs[:] = [d for d in dirs if d not in ('node_modules','.git','.svn','vendor')]
         for fn in files:
-            if not fn.endswith('.php'): continue
+            if not fn.lower().endswith(('.php', '.phtml', '.php3', '.php4', '.php5', '.php7', '.pht', '.phar')): continue
             if scanned >= max_files: break
             fp = os.path.join(root, fn)
             scanned += 1
@@ -384,6 +398,32 @@ def webshell_scan():
                         })
                         # Only report first match per file (don't spam)
                         if severity == 'CRITICAL': break
+
+                # Whole-file heuristic for the intermediate-variable evasion:
+                # decode-and-write split across two lines evades every single
+                # regex above, since none of them can see $_POST if it never
+                # appears literally inside the file_put_contents() call.
+                # This cannot prove actual data flow between the two lines
+                # without a real PHP parser -- it flags suspicious
+                # co-occurrence in the same file, at lower confidence than
+                # the direct-match patterns above, and says so.
+                has_decode_from_input = re.search(
+                    r'(?:base64_decode|gzinflate|gzuncompress|str_rot13)\s*\([^)]*\$_(?:GET|POST|REQUEST|COOKIE)',
+                    content, re.IGNORECASE)
+                has_var_file_write = re.search(
+                    r'(?:file_put_contents|fwrite|fputs)\s*\(\s*[^,)]+,\s*\$[a-zA-Z_]\w*\s*[,)]',
+                    content, re.IGNORECASE)
+                if has_decode_from_input and has_var_file_write and not any(
+                        f['file'] == fp and f['severity'] == 'CRITICAL' for f in findings):
+                    line_no = content[:has_var_file_write.start()].count('\n') + 1
+                    snippet = content[max(0,has_var_file_write.start()-20):has_var_file_write.end()+40].strip().replace('\n',' ')[:120]
+                    findings.append({
+                        'file':     fp,
+                        'line':     line_no,
+                        'severity': 'MEDIUM',
+                        'pattern':  'Possible split decode-and-write (user input decoded on one line, written to a file on another) — heuristic, not a direct match; verify manually',
+                        'snippet':  snippet,
+                    })
             except Exception as e:
                 errors.append(str(fp))
 
@@ -506,14 +546,27 @@ def check_security_updates():
     CVE appears that isn't in it, giving false reassurance. This defers
     entirely to apt's/dnf's own live, current security tagging instead."""
     if not req(): return jsonify({'ok':False}), 401
+    from panel.routes.job_state import load_job, save_job
+    CACHE_TTL_SECONDS = 4 * 3600  # security posture doesn't need minute-level freshness
+
+    force = request.args.get('refresh') == '1'
+    cached = load_job('security_updates_check', {})
+    if not force and cached and (time.time() - cached.get('checked_at', 0)) < CACHE_TTL_SECONDS:
+        resp = dict(cached)
+        resp['cached'] = True
+        return jsonify(resp)
+
     packages = _pending_security_packages()
     critical = sum(1 for p in packages if p['severity'] in ('Critical', 'Important', 'Security'))
     vendor = []
-    os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
+    os_family = sh(". /etc/os-release 2>/dev/null && echo \"$ID $ID_LIKE\" || echo debian")
     if not re.search(r'rhel|fedora|centos', os_family, re.I):
         vendor = _pending_vendor_updates()
-    return jsonify({'ok': True, 'total': len(packages), 'critical': critical,
-                     'packages': packages[:50], 'vendor': vendor[:50], 'vendor_total': len(vendor)})
+    result = {'ok': True, 'total': len(packages), 'critical': critical,
+              'packages': packages[:50], 'vendor': vendor[:50], 'vendor_total': len(vendor),
+              'checked_at': time.time(), 'cached': False}
+    save_job('security_updates_check', result)
+    return jsonify(result)
 
 
 @settings_bp.route('/api/settings/security-updates/apply', methods=['POST'])

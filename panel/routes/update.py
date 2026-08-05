@@ -208,6 +208,17 @@ def start_update():
                     # (e.g. detected via the raw VERSION file ahead of tagging).
                     log(f'ℹ No tag "{target}" on GitHub yet — already on latest main branch, continuing')
                 else:
+                    # Re-attach main to this exact commit rather than leaving
+                    # HEAD detached. A tag checkout on its own detaches HEAD --
+                    # confirmed as the real cause of a live incident where a
+                    # user's own SSH git push afterward failed with "you are
+                    # not currently on a branch", silently leaving their next
+                    # commit unreachable from any branch. This keeps the
+                    # benefit of pinning to a specific tagged version while
+                    # never leaving the server's checkout in a state that
+                    # breaks the normal git workflow for anyone using SSH
+                    # alongside the in-panel updater.
+                    sh(f'cd {REPO_DIR} && git checkout -B main {target} 2>&1')
                     log(f'✓ Checked out {target}')
 
             # 3. Copy new files
