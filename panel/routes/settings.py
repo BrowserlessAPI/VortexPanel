@@ -327,6 +327,18 @@ WEBSHELL_PATTERNS = [
     (r'eval\s*\(\s*\$[a-zA-Z_]\w*\s*\)',  'HIGH',     'eval($variable) — dynamic code execution'),
     # System command execution via user input
     (r'(?:system|exec|passthru|shell_exec|popen)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)', 'CRITICAL', 'Shell exec with user input — remote command execution'),
+    # Hardcoded (no $_GET/$_POST/any variable at all) calls to these same
+    # functions were confirmed, via direct reproduction, to produce ZERO
+    # detections above -- a webshell doesn't need to read its command from
+    # user input if the reverse-shell command is just baked into the file
+    # outright. Flagging every hardcoded call to these functions unconditionally
+    # (as bluntly suggested) would flag legitimate exec('convert a.jpg a.png'),
+    # shell_exec('git pull'), etc. on real sites -- so this splits by
+    # confidence instead: CRITICAL when the hardcoded string also contains a
+    # known reverse-shell indicator, MEDIUM (manual review) for any other
+    # hardcoded call to these functions.
+    (r'(?:exec|shell_exec|passthru|popen|proc_open)\s*\([^)]{0,10}["\'][\s\S]{0,300}(?:/dev/tcp/|/dev/udp/|\bnc\s+-e\b|\bmkfifo\b|bash\s+-i\b|sh\s+-i\b|0>&1|>&\s*/dev/tcp)', 'CRITICAL', 'Hardcoded shell exec containing a reverse-shell indicator (e.g. /dev/tcp, bash -i, mkfifo) — this bypasses detection based on user-input patterns alone, since the command needs no input at all'),
+    (r'(?:exec|shell_exec|passthru|popen|proc_open)\s*\(\s*["\'][^"\')]+', 'MEDIUM', 'Hardcoded shell exec — may be legitimate (build tools, image/video processing, deploy scripts), but review manually since these functions can also run a baked-in payload with no user input at all'),
     # PHP function code injection
     (r'preg_replace\s*\(\s*[\'"].*\/e[\'"]', 'CRITICAL', 'preg_replace /e modifier — code execution via regex'),
     (r'assert\s*\(\s*\$_(?:GET|POST|REQUEST)', 'CRITICAL', 'assert() with user input — code injection'),

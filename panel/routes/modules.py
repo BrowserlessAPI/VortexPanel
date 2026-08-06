@@ -329,9 +329,10 @@ systemctl enable lsws && systemctl start lsws''',
         'desc':'The world\'s most popular open source database',
         'check':'systemctl is-active mysql 2>/dev/null | grep -q active && ! systemctl is-active mariadb 2>/dev/null | grep -q active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
         'versions':[
-            {'label':'9.x (Innovation — rolling, latest MySQL innovation release)', 'value':'9.x'},
-            {'label':'8.4.4 (LTS)',          'value':'8.4'},
-            {'label':'8.0.41 (LTS)',         'value':'8.0'},
+            {'label':'Innovation (rolling — currently 26.7.0, latest quarterly release)', 'value':'innovation'},
+            {'label':'9.7.2 (LTS)',           'value':'9.7'},
+            {'label':'8.4.11 (LTS)',          'value':'8.4'},
+            {'label':'8.0.46 (EOL since Apr 2026 — no security patches, not recommended)', 'value':'8.0'},
         ],
         'install_tpl':(
             # Hard guard, independent of the higher-level conflict check:
@@ -356,7 +357,7 @@ systemctl enable lsws && systemctl start lsws''',
             # even though the service happened not to be running at
             # that moment. The package-level conflict exists regardless
             # of whether the service is running.
-            'if dpkg -l mariadb-server 2>/dev/null | grep -q "^ii" || dpkg -l mysql-common 2>/dev/null | grep -qi maria; then '
+            'if dpkg -l mariadb-server 2>/dev/null | grep -q "^ii" || dpkg -l mysql-common 2>/dev/null | grep "^ii" | grep -qi maria; then '
             '  echo "[VortexPanel] MariaDB is already installed on this server (its packages own mysql-common/mysql-client). MySQL and MariaDB cannot coexist -- uninstall MariaDB first (App Store -> MariaDB -> Uninstall) if you want MySQL instead."; '
             '  exit 1; '
             'fi; '
@@ -394,7 +395,7 @@ systemctl enable lsws && systemctl start lsws''',
             # starting attempt only; the real selection happens afterward by
             # scanning what mysql-apt-config actually generated.
             '  MYSQL_TRACK_GUESS="mysql-8.4-lts"; '
-            '  case "{ver}" in 8.0*) MYSQL_TRACK_GUESS="mysql-8.0";; 8.4*) MYSQL_TRACK_GUESS="mysql-8.4-lts";; 9.*) MYSQL_TRACK_GUESS="mysql-innovation";; esac; '
+            '  case "{ver}" in 8.0*) MYSQL_TRACK_GUESS="mysql-8.0";; 8.4*) MYSQL_TRACK_GUESS="mysql-8.4-lts";; 9.7*) MYSQL_TRACK_GUESS="mysql-9.7-lts";; innovation) MYSQL_TRACK_GUESS="mysql-innovation";; esac; '
             '  echo "[VortexPanel] debconf preseed attempt: mysql-apt-config/select-server = $MYSQL_TRACK_GUESS"; '
             '  echo "mysql-apt-config mysql-apt-config/select-server select $MYSQL_TRACK_GUESS" | debconf-set-selections; '
             '  DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
@@ -419,7 +420,8 @@ systemctl enable lsws && systemctl start lsws''',
             '      case "{ver}" in '
             '        8.0*) for T in $ALL_TRACKS; do case "$T" in mysql-8.0*) MYSQL_TRACK="$T"; break;; esac; done ;; '
             '        8.4*) for T in $ALL_TRACKS; do case "$T" in mysql-8.4*) MYSQL_TRACK="$T"; break;; esac; done ;; '
-            '        9.*)  for T in $ALL_TRACKS; do case "$T" in mysql-innovation|mysql-9*) MYSQL_TRACK="$T"; break;; esac; done ;; '
+            '        9.7*) for T in $ALL_TRACKS; do case "$T" in mysql-9.7*|mysql-9*-lts) MYSQL_TRACK="$T"; break;; esac; done ;; '
+            '        innovation) for T in $ALL_TRACKS; do case "$T" in mysql-innovation|mysql-9*) MYSQL_TRACK="$T"; break;; esac; done ;; '
             '      esac; '
             '    fi; '
             '    echo "[VortexPanel] selected track for {ver}: ${MYSQL_TRACK:-<none found>}"; '
@@ -501,7 +503,16 @@ systemctl enable lsws && systemctl start lsws''',
             '      apt-get update -q; '
             '    fi; '
             '  fi && '
-            '  apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server && '
+            '  if [ "{ver}" = "innovation" ]; then '
+            # No version-suffixed package exists for Innovation at all --
+            # confirmed by the real "Unable to locate package
+            # mysql-server-9.x" failure this produced under the old value.
+            # Whatever "mysql-server" resolves to IS the current quarterly
+            # Innovation release; there is nothing more specific to ask for.
+            '    apt-get install -y mysql-server; '
+            '  else '
+            '    apt-get install -y mysql-server-{ver} 2>/dev/null || apt-get install -y mysql-server; '
+            '  fi && '
             '  systemctl enable --now mysql; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
                 # RHEL 8+ ships MySQL directly in the built-in AppStream module stream —
@@ -574,7 +585,8 @@ systemctl enable lsws && systemctl start lsws''',
             '        case "{ver}" in '
             '          8.0*) for R in $ALL_REPOIDS; do case "$R" in *80*) TARGET_REPO="$R"; break;; esac; done ;; '
             '          8.4*) for R in $ALL_REPOIDS; do case "$R" in *84*) TARGET_REPO="$R"; break;; esac; done ;; '
-            '          9.*)  for R in $ALL_REPOIDS; do case "$R" in *innovation*|*9?) TARGET_REPO="$R"; break;; esac; done ;; '
+            '          9.7*) for R in $ALL_REPOIDS; do case "$R" in *97*|*9.7*) TARGET_REPO="$R"; break;; esac; done ;; '
+            '          innovation) for R in $ALL_REPOIDS; do case "$R" in *innovation*) TARGET_REPO="$R"; break;; esac; done ;; '
             '        esac; '
             '      fi; '
             '      [ -n "$TARGET_REPO" ] && (dnf config-manager --set-enabled "$TARGET_REPO" 2>/dev/null || yum-config-manager --enable "$TARGET_REPO" 2>/dev/null); '
@@ -608,7 +620,7 @@ for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi
 apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && \
 systemctl enable --now mariadb''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && systemctl enable mariadb && systemctl start mariadb',
-        'uninstall':'systemctl stop mariadb 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop mariadb 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common mysql-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'mariadb', 'manage':True,
     },
     {
