@@ -574,9 +574,20 @@ def check_security_updates():
     os_family = sh(". /etc/os-release 2>/dev/null && echo \"$ID $ID_LIKE\" || echo debian")
     if not re.search(r'rhel|fedora|centos', os_family, re.I):
         vendor = _pending_vendor_updates()
+
+    reboot_required = os.path.exists('/var/run/reboot-required')
+    reboot_pkgs = []
+    if reboot_required:
+        try:
+            with open('/var/run/reboot-required.pkgs') as f:
+                reboot_pkgs = [l.strip() for l in f if l.strip()]
+        except Exception:
+            pass
+
     result = {'ok': True, 'total': len(packages), 'critical': critical,
               'packages': packages[:50], 'vendor': vendor[:50], 'vendor_total': len(vendor),
-              'checked_at': time.time(), 'cached': False}
+              'checked_at': time.time(), 'cached': False,
+              'reboot_required': reboot_required, 'reboot_pkgs': reboot_pkgs}
     save_job('security_updates_check', result)
     return jsonify(result)
 
@@ -636,8 +647,25 @@ def apply_security_updates():
         applied = max(0, total_before - remaining)
         success = (rc == 0 and remaining == 0)
 
+        reboot_required = os.path.exists('/var/run/reboot-required')
+        reboot_pkgs = []
+        if reboot_required:
+            try:
+                with open('/var/run/reboot-required.pkgs') as f:
+                    reboot_pkgs = [l.strip() for l in f if l.strip()]
+            except Exception:
+                pass
+
         summary = f'\n\n── Result ──\nApplied: {applied}   Still pending: {remaining}'
-        if remaining:
+        if reboot_required:
+            summary += (f'\n\n\u26a0 A reboot is required to finish applying '
+                        f'{"these updates" if not reboot_pkgs else ", ".join(reboot_pkgs)}. '
+                        f'This is normal for kernel and firmware packages -- apt has already '
+                        f'installed the new version, but the currently running kernel/module '
+                        f'stays active in memory until reboot. Re-checking before rebooting will '
+                        f'keep showing this as pending even though nothing further needs to be '
+                        f'applied; reboot from the Settings page to clear it.')
+        elif remaining:
             names = ', '.join([p['package'] for p in after[:6]] + [v['package'] for v in vendor_after[:6]])
             summary += (f'\nStill pending: {names}'
                         f'\n\nThese did not upgrade. Most often that means they are held back by the '
@@ -645,9 +673,11 @@ def apply_security_updates():
                         f'automatically). Running "apt-get dist-upgrade" manually over SSH will show the '
                         f'specific reason for each one.')
 
-        save_job('security_update', {'running': False, 'done': True, 'success': success,
+        save_job('security_update', {'running': False, 'done': True,
+                                      'success': success or reboot_required,
                                       'output': combined + summary,
-                                      'applied': applied, 'remaining': remaining})
+                                      'applied': applied, 'remaining': remaining,
+                                      'reboot_required': reboot_required, 'reboot_pkgs': reboot_pkgs})
 
     threading.Thread(target=do_apply, daemon=True).start()
     return jsonify({'ok': True, 'message': 'Applying security updates in background'})

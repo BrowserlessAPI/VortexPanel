@@ -39,6 +39,16 @@ def detect_engines():
         engines.append({'id':'mongodb','name':'MongoDB','icon':'🍃','version':ver,'active':True})
     return engines
 
+def _sql_escape(v):
+    """Escape a single-quote-delimited SQL string literal.
+
+    Confirmed missing entirely despite being called at every password/user
+    interpolation site in this file (create_db, create_user, change_password,
+    drop_user, grant_db) - every one of those was throwing a live NameError
+    on completely ordinary requests until this was added back.
+    """
+    return (v or '').replace('\\', '\\\\').replace("'", "''")
+
 # --- MySQL/MariaDB helpers ------------------------------------------------------
 def mysql_cmd(query, db=None, timeout=15):
     import shutil as _sh, tempfile as _tmp

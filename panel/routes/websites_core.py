@@ -219,10 +219,68 @@ def create_site():
     if not domain: return jsonify({'ok':False,'error':'Domain required'}), 400
 
     ok, result = create_site_core(domain, path, php)
-    if ok:
-        return jsonify({'ok': True, **result})
-    else:
+    if not ok:
         return jsonify({'ok': False, **result}), 400 if 'Domain' in result.get('error','') else 500
+
+    warnings = []
+
+    # The frontend's new-site form has sent createDb/createFtp all along --
+    # confirmed neither was ever read here, so checking the box silently
+    # did nothing. Both are best-effort: if either fails, the site itself
+    # still gets created successfully, and the failure is reported as a
+    # warning rather than aborting the whole request.
+    if d.get('createDb'):
+        try:
+            from panel.routes.databases import mysql_cmd, _sql_escape
+            db_name = re.sub(r'[^a-zA-Z0-9_]', '_', domain.replace('.', '_'))[:32]
+            db_user = ('u_' + re.sub(r'[^a-zA-Z0-9_]', '', domain.split('.')[0]))[:16]
+            db_pass = subprocess.run(
+                ['openssl', 'rand', '-base64', '16'], capture_output=True, text=True
+            ).stdout.strip().replace('/', '_').replace('+', '-')[:20]
+            _, err = mysql_cmd(f'CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;')
+            if err:
+                warnings.append(f'Database not created: {err}')
+            else:
+                mysql_cmd(f"CREATE USER IF NOT EXISTS '{db_user}'@'localhost' IDENTIFIED BY '{_sql_escape(db_pass)}';")
+                mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db_name}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;")
+                result['db_name'] = db_name
+                result['db_user'] = db_user
+                result['db_pass'] = db_pass
+        except Exception as e:
+            warnings.append(f'Database not created: {e}')
+
+    if d.get('createFtp'):
+        try:
+            from panel.routes.ftp import is_ftp_installed, get_ftp_daemon
+            if not is_ftp_installed():
+                warnings.append('FTP account not created: no FTP server (Pure-FTPd/ProFTPD) is installed — install one from the App Store first')
+            else:
+                ftp_user = re.sub(r'[^a-zA-Z0-9_-]', '', domain.split('.')[0])[:16] + '_' + re.sub(r'[^a-zA-Z0-9_]', '', domain.split('.')[-1])[:8]
+                ftp_pass = subprocess.run(
+                    ['openssl', 'rand', '-base64', '16'], capture_output=True, text=True
+                ).stdout.strip().replace('/', '_').replace('+', '-')[:20]
+                daemon, _ = get_ftp_daemon()
+                if not daemon:
+                    warnings.append('FTP account not created: no FTP daemon is currently running')
+                else:
+                    os.makedirs(path, exist_ok=True)
+                    if daemon == 'pure-ftpd':
+                        subprocess.run(['useradd', '-s', '/bin/false', '-d', path, ftp_user], capture_output=True)
+                        subprocess.run(['pure-pw', 'useradd', ftp_user, '-u', ftp_user, '-d', path],
+                                        input=f'{ftp_pass}\n{ftp_pass}\n', text=True, capture_output=True)
+                        subprocess.run(['pure-pw', 'mkdb'], capture_output=True)
+                        subprocess.run(['systemctl', 'reload', 'pure-ftpd'], capture_output=True)
+                    else:
+                        subprocess.run(['useradd', '-m', '-d', path, '-s', '/sbin/nologin', ftp_user], capture_output=True)
+                        subprocess.run(['chpasswd'], input=f'{ftp_user}:{ftp_pass}', text=True, capture_output=True)
+                    result['ftp_user'] = ftp_user
+                    result['ftp_pass'] = ftp_pass
+        except Exception as e:
+            warnings.append(f'FTP account not created: {e}')
+
+    if warnings:
+        result['warnings'] = warnings
+    return jsonify({'ok': True, **result})
 
 
 @websites_bp.route('/api/websites/<domain>', methods=['DELETE'])

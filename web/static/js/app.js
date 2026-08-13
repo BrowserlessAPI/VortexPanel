@@ -3327,7 +3327,8 @@ function settingsPage() {
           clearInterval(this.securityUpdatePollTimer);
           this.applyingSecurityUpdates = false;
           const applied = s.applied ?? 0, remaining = s.remaining ?? 0;
-          if (s.success) toast(`${applied} security update${applied===1?'':'s'} applied`, 'success');
+          if (s.reboot_required) toast(`Updates applied — reboot required to finish`, 'success');
+          else if (s.success) toast(`${applied} security update${applied===1?'':'s'} applied`, 'success');
           else if (remaining) toast(`${applied} applied, ${remaining} could not be upgraded — see details`, 'error');
           else toast('Update failed — see output', 'error');
           this.loadSecurityUpdates(); // refresh the list — should now be empty or shorter

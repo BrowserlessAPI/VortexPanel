@@ -778,7 +778,7 @@ apt-get autoremove -y 2>/dev/null || true''',
     {
         'id':'phpmyadmin', 'name':'phpMyAdmin', 'icon':'/static/icons/phpmyadmin.svg', 'category':'Admin Tools',
         'desc':'Web-based MySQL/MariaDB admin — auto-configured at port 8082',
-        'check':'test -d /usr/share/phpmyadmin && echo found',
+        'check':'test -f /usr/share/phpmyadmin/config.inc.php && echo found',
         'versions':[
             {'label':'5.2.2 (Latest)', 'value':'5.2.2'},
         ],
@@ -3012,34 +3012,94 @@ def save_module_settings(mod_id):
 
     elif action == 'pma_set_port':
         port = d.get('port', '8082')
-        conf = '/etc/nginx/conf.d/phpmyadmin.conf'
-        if os.path.exists(conf):
-            import re as _re
-            with open(conf) as f: c = f.read()
-            m = _re.search(r'listen\s+(\d+)', c)
-            old_port = m.group(1) if m else None
-            c = _re.sub(r'listen\s+\d+', f'listen {port}', c)
-            with open(conf, 'w') as f: f.write(c)
-            sh('nginx -t && systemctl reload nginx')
-            if old_port and old_port != port:
+        nginx_conf  = '/etc/nginx/conf.d/phpmyadmin.conf'
+        apache_conf = '/etc/apache2/conf-available/phpmyadmin.conf'
+        caddyfile   = '/etc/caddy/Caddyfile'
+
+        def _update_firewall(old_port, new_port):
+            if old_port and old_port != new_port:
                 sh(f'ufw status 2>/dev/null | grep -q "Status: active" && ufw delete allow {old_port}/tcp 2>/dev/null; '
                    f'firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --remove-port={old_port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null; true')
-            sh(f'ufw status 2>/dev/null | grep -q "Status: active" && ufw allow {port}/tcp comment "phpMyAdmin" 2>/dev/null; '
-               f'firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port={port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null; true')
+            sh(f'ufw status 2>/dev/null | grep -q "Status: active" && ufw allow {new_port}/tcp comment "phpMyAdmin" 2>/dev/null; '
+               f'firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port={new_port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null; true')
+
+        if os.path.exists(nginx_conf):
+            with open(nginx_conf) as f: c = f.read()
+            m = re.search(r'listen\s+(\d+)', c)
+            old_port = m.group(1) if m else None
+            c = re.sub(r'listen\s+\d+', f'listen {port}', c)
+            with open(nginx_conf, 'w') as f: f.write(c)
+            sh('nginx -t && systemctl reload nginx')
+            _update_firewall(old_port, port)
             return jsonify({'ok': True, 'port': port})
-        return jsonify({'ok': False, 'error': 'phpMyAdmin nginx config not found'})
+
+        if os.path.exists(apache_conf):
+            with open(apache_conf) as f: c = f.read()
+            m = re.search(r'Listen\s+(\d+)', c)
+            old_port = m.group(1) if m else None
+            c = re.sub(r'Listen\s+\d+', f'Listen {port}', c)
+            c = re.sub(r'<VirtualHost \*:\d+>', f'<VirtualHost *:{port}>', c)
+            with open(apache_conf, 'w') as f: f.write(c)
+            sh('apache2ctl configtest && systemctl reload apache2')
+            _update_firewall(old_port, port)
+            return jsonify({'ok': True, 'port': port})
+
+        if os.path.exists(caddyfile):
+            with open(caddyfile) as f: c = f.read()
+            m = re.search(r':(\d+)\s*\{\s*root \* /usr/share/phpmyadmin', c)
+            old_port = m.group(1) if m else None
+            if old_port:
+                c = c.replace(f':{old_port} {{\n  root * /usr/share/phpmyadmin', f':{port} {{\n  root * /usr/share/phpmyadmin')
+                with open(caddyfile, 'w') as f: f.write(c)
+                sh('systemctl reload caddy')
+                _update_firewall(old_port, port)
+                return jsonify({'ok': True, 'port': port})
+
+        return jsonify({'ok': False, 'error': 'phpMyAdmin config not found for any supported web server (nginx, Apache, Caddy)'})
 
     elif action == 'pma_set_php':
         php_ver = d.get('php_version', '')
-        conf    = '/etc/nginx/conf.d/phpmyadmin.conf'
-        if os.path.exists(conf) and php_ver:
-            import re as _re
-            with open(conf) as f: c = f.read()
-            c = _re.sub(r'php[\d.]+\-fpm\.sock', f'php{php_ver}-fpm.sock', c)
-            with open(conf, 'w') as f: f.write(c)
+        if not php_ver:
+            return jsonify({'ok': False, 'error': 'PHP version missing'})
+
+        # Mirror the install script's own webserver detection - it correctly
+        # writes to a different location depending on which webserver is
+        # active (nginx: conf.d file, Apache: conf-available file, Caddy:
+        # a block inside Caddyfile). This action was hardcoded to nginx's
+        # path only, so anyone running Apache or Caddy got "Config not
+        # found" on every attempt - confirmed from a real report matching
+        # this exact error message.
+        nginx_conf   = '/etc/nginx/conf.d/phpmyadmin.conf'
+        apache_conf  = '/etc/apache2/conf-available/phpmyadmin.conf'
+        caddyfile    = '/etc/caddy/Caddyfile'
+
+        if os.path.exists(nginx_conf):
+            with open(nginx_conf) as f: c = f.read()
+            c = re.sub(r'php[\d.]+\-fpm\.sock', f'php{php_ver}-fpm.sock', c)
+            with open(nginx_conf, 'w') as f: f.write(c)
             sh('nginx -t && systemctl reload nginx')
             return jsonify({'ok': True})
-        return jsonify({'ok': False, 'error': 'Config not found or PHP version missing'})
+
+        if os.path.exists(apache_conf):
+            with open(apache_conf) as f: c = f.read()
+            # Apache's block uses SetHandler "proxy:unix:$SOCK|fcgi://localhost"
+            # with the socket path already expanded at install time, not a
+            # literal PHP-version pattern - match the actual socket path form.
+            c = re.sub(r'unix:/run/php/php[\d.]+-fpm\.sock', f'unix:/run/php/php{php_ver}-fpm.sock', c)
+            with open(apache_conf, 'w') as f: f.write(c)
+            sh('apache2ctl configtest && systemctl reload apache2')
+            return jsonify({'ok': True})
+
+        if os.path.exists(caddyfile):
+            with open(caddyfile) as f: c = f.read()
+            if ':8082' in c:
+                c = re.sub(r'(:8082\s*\{[^}]*?php_fastcgi unix/)/run/php/php[\d.]+-fpm\.sock', 
+                           rf'\g<1>/run/php/php{php_ver}-fpm.sock', c, flags=re.DOTALL)
+                with open(caddyfile, 'w') as f: f.write(c)
+                sh('systemctl reload caddy')
+                return jsonify({'ok': True})
+
+        return jsonify({'ok': False, 'error': 'phpMyAdmin config not found for any supported web server (nginx, Apache, Caddy)'})
 
     elif action == 'set_php':
         # Used by Roundcube's PHP Version tab to switch which PHP-FPM

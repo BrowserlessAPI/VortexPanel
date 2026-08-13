@@ -2,7 +2,7 @@
 VortexPanel WP Toolkit
 Supports: PHP 7.4–8.5 | Nginx / Apache / OpenLiteSpeed / Caddy | MariaDB / MySQL
 """
-import os, re, json, uuid, shutil, subprocess, secrets, string
+import os, re, json, uuid, shutil, subprocess, secrets, string, threading
 from datetime import datetime
 from flask import Blueprint, jsonify, request, session
 
@@ -778,7 +778,16 @@ def list_sites():
 
 @wp_bp.route('/api/wp/install', methods=['POST'])
 def install_wp():
-    """Full WordPress install: download, create DB, configure, create vhost."""
+    """Full WordPress install: download, create DB, configure, create vhost.
+
+    Runs as a background job rather than one long blocking request -- this
+    is genuinely capable of taking longer than gunicorn's configured worker
+    timeout (120s) once you add WordPress core download, wp-cli's own
+    install/migration step, recursive chown/chmod, vhost writing and cron
+    setup together under real-world network/disk conditions. A killed
+    worker mid-request gives the frontend nothing at all, which is exactly
+    what "installation gets stuck, nothing happens" describes.
+    """
     if not req(): return jsonify({'ok': False}), 401
     d = request.get_json() or {}
 
@@ -797,9 +806,11 @@ def install_wp():
     system_cron = d.get('system_cron', True)
     block_xmlrpc = d.get('block_xmlrpc', False)
 
+    # Fast, cheap validation stays synchronous -- bad input should fail
+    # immediately, not after the caller waits on a job that was never
+    # going to succeed.
     if not domain:
         return jsonify({'ok': False, 'error': 'Domain is required'}), 400
-
     if not webserver:
         return jsonify({'ok': False, 'error': 'No web server is installed. Install Nginx, Apache2, OpenLiteSpeed, or Caddy from the App Store first.'}), 400
     if webserver not in _installed_webservers():
@@ -809,120 +820,127 @@ def install_wp():
     if not shutil.which(f'php{php_ver}') and not os.path.exists(f'/run/php/php{php_ver}-fpm.sock') and not os.path.exists(f'/var/run/php/php{php_ver}-fpm.sock'):
         return jsonify({'ok': False, 'error': f'PHP {php_ver} is not installed on this server. Install it from the App Store first.'}), 400
 
-    # Webroot path
+    from panel.routes.job_state import load_job, save_job
+    existing = load_job(f'wp_install_{domain}', {'running': False})
+    if existing.get('running'):
+        return jsonify({'ok': False, 'error': f'An install for {domain} is already in progress'}), 409
+
     webroot = '/www/wwwroot'
     if not os.path.isdir(webroot):
         webroot = '/var/www/html'
     path = d.get('path', f'{webroot}/{domain}').strip()
-    os.makedirs(path, exist_ok=True)
 
-    # 1. Ensure wp-cli is installed
-    if not _wp_installed():
-        ok = _install_wpcli()
-        if not ok:
-            return jsonify({'ok': False, 'error': 'Failed to install wp-cli'}), 500
+    def run_install():
+        import time as _t
+        save_job(f'wp_install_{domain}', {'running': True, 'done': False, 'step': 'Starting...', 'started': _t.time()})
 
-    # 2. Create DB and user
-    db_name = re.sub(r'[^a-zA-Z0-9_]', '_', domain.replace('.', '_'))[:32]
-    db_user = 'wp_' + _rand_str(8)
-    db_pass = _rand_pass(16)
+        def step(msg):
+            st = load_job(f'wp_install_{domain}', {})
+            st['step'] = msg
+            save_job(f'wp_install_{domain}', st)
 
-    _, db_err, db_rc = _mysql_cmd(
-        f"CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
-        engine=db_engine
-    )
-    if db_rc != 0:
-        return jsonify({'ok': False, 'error': f'DB creation failed: {db_err}'}), 500
+        def fail(msg):
+            save_job(f'wp_install_{domain}', {'running': False, 'done': True, 'success': False, 'error': msg})
 
-    _mysql_cmd(f"CREATE USER IF NOT EXISTS '{db_user}'@'localhost' IDENTIFIED BY '{db_pass}';", engine=db_engine)
-    _mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db_name}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;", engine=db_engine)
-
-    # 3. Download WordPress
-    ver_flag = f'--version={wp_ver}' if wp_ver and wp_ver != 'latest' else ''
-    out, err, rc = sh3(
-        f'{WP_CLI} core download --path="{path}" --locale={locale} {ver_flag} --allow-root --force 2>&1',
-        t=120
-    )
-    if rc != 0:
-        return jsonify({'ok': False, 'error': f'WP download failed: {out}{err}'}), 500
-
-    # 4. Create wp-config.php
-    site_url = f'http{"s" if auto_ssl else ""}://{domain}'
-    db_host_arg = '--dbhost=localhost'
-    out, err, rc = sh3(
-        f'{WP_CLI} config create --path="{path}" --allow-root'
-        f' --dbname={db_name} --dbuser={db_user} --dbpass="{db_pass}"'
-        f' {db_host_arg} --dbprefix={prefix} --force 2>&1',
-        t=30
-    )
-    if rc != 0:
-        return jsonify({'ok': False, 'error': f'wp-config creation failed: {out}{err}'}), 500
-
-    # 5. Add extra wp-config.php constants
-    extras = []
-    if system_cron:
-        extras.append(f"define('DISABLE_WP_CRON', true);")
-    if block_xmlrpc:
-        extras.append(f"define('XMLRPC_DISABLE', true);")
-
-    if extras:
         try:
-            cfg = open(f'{path}/wp-config.php').read()
-            insert = '\n'.join(extras) + '\n'
-            cfg = cfg.replace("/* That's all, stop editing!", insert + "\n/* That's all, stop editing!")
-            with open(f'{path}/wp-config.php', 'w') as f:
-                f.write(cfg)
-        except: pass
+            os.makedirs(path, exist_ok=True)
 
-    # 6. Run WP installer
-    out, err, rc = sh3(
-        f'{WP_CLI} core install --path="{path}" --allow-root'
-        f' --url="{site_url}" --title="{title}"'
-        f' --admin_user="{admin_user}" --admin_password="{admin_pass}"'
-        f' --admin_email="{admin_email}" --skip-email 2>&1',
-        t=60
-    )
-    if rc != 0:
-        return jsonify({'ok': False, 'error': f'WP install failed: {out}{err}'}), 500
+            step('Checking wp-cli...')
+            if not _wp_installed():
+                if not _install_wpcli():
+                    return fail('Failed to install wp-cli')
 
-    # 7. Set file ownership
-    web_user = _web_user()
-    sh(f'chown -R {web_user}:{web_user} "{path}" 2>/dev/null || true')
-    sh(f'find "{path}" -type d -exec chmod 755 {{}} \\; 2>/dev/null || true')
-    sh(f'find "{path}" -type f -exec chmod 644 {{}} \\; 2>/dev/null || true')
-    sh(f'chmod 600 "{path}/wp-config.php" 2>/dev/null || true')
+            step('Creating database...')
+            db_name = re.sub(r'[^a-zA-Z0-9_]', '_', domain.replace('.', '_'))[:32]
+            db_user = 'wp_' + _rand_str(8)
+            db_pass = _rand_pass(16)
+            _, db_err, db_rc = _mysql_cmd(
+                f"CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
+                engine=db_engine)
+            if db_rc != 0:
+                return fail(f'DB creation failed: {db_err}')
+            _mysql_cmd(f"CREATE USER IF NOT EXISTS '{db_user}'@'localhost' IDENTIFIED BY '{db_pass}';", engine=db_engine)
+            _mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db_name}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;", engine=db_engine)
 
-    # 8. Create vhost
-    ok, result = _write_vhost(domain, path, php_ver, webserver)
-    if not ok:
-        return jsonify({'ok': False, 'error': f'Vhost creation failed: {result}'}), 500
+            step('Downloading WordPress...')
+            ver_flag = f'--version={wp_ver}' if wp_ver and wp_ver != 'latest' else ''
+            out, err, rc = sh3(
+                f'{WP_CLI} core download --path="{path}" --locale={locale} {ver_flag} --allow-root --force 2>&1', t=180)
+            if rc != 0:
+                return fail(f'WP download failed: {out}{err}')
 
-    # 9. System cron entry
-    if system_cron:
-        cron_line = f'*/5 * * * * {web_user} {WP_CLI} --path="{path}" --allow-root cron event run --due-now >/dev/null 2>&1'
-        cron_file = f'/etc/cron.d/vortex-wp-{re.sub(chr(46), "_", domain)}'
-        try:
-            with open(cron_file, 'w') as f:
-                f.write(cron_line + '\n')
-        except: pass
+            step('Writing wp-config.php...')
+            site_url = f'http{"s" if auto_ssl else ""}://{domain}'
+            out, err, rc = sh3(
+                f'{WP_CLI} config create --path="{path}" --allow-root'
+                f' --dbname={db_name} --dbuser={db_user} --dbpass="{db_pass}"'
+                f' --dbhost=localhost --dbprefix={prefix} --force 2>&1', t=30)
+            if rc != 0:
+                return fail(f'wp-config creation failed: {out}{err}')
 
-    # 10. Invalidate cache
-    panel_cache.invalidate('wp_sites')
+            extras = []
+            if system_cron: extras.append("define('DISABLE_WP_CRON', true);")
+            if block_xmlrpc: extras.append("define('XMLRPC_DISABLE', true);")
+            if extras:
+                try:
+                    cfg = open(f'{path}/wp-config.php').read()
+                    cfg = cfg.replace("/* That's all, stop editing!", '\n'.join(extras) + "\n\n/* That's all, stop editing!")
+                    with open(f'{path}/wp-config.php', 'w') as f: f.write(cfg)
+                except Exception: pass
 
-    return jsonify({
-        'ok': True,
-        'domain': domain,
-        'path': path,
-        'site_url': site_url,
-        'admin_user': admin_user,
-        'admin_pass': admin_pass,
-        'admin_email': admin_email,
-        'db_name': db_name,
-        'db_user': db_user,
-        'db_pass': db_pass,
-        'webserver': webserver,
-        'php_version': php_ver,
-    })
+            step('Running WordPress installer...')
+            out, err, rc = sh3(
+                f'{WP_CLI} core install --path="{path}" --allow-root'
+                f' --url="{site_url}" --title="{title}"'
+                f' --admin_user="{admin_user}" --admin_password="{admin_pass}"'
+                f' --admin_email="{admin_email}" --skip-email 2>&1', t=90)
+            if rc != 0:
+                return fail(f'WP install failed: {out}{err}')
+
+            step('Setting file permissions...')
+            web_user = _web_user()
+            sh(f'chown -R {web_user}:{web_user} "{path}" 2>/dev/null || true')
+            sh(f'find "{path}" -type d -exec chmod 755 {{}} \\; 2>/dev/null || true')
+            sh(f'find "{path}" -type f -exec chmod 644 {{}} \\; 2>/dev/null || true')
+            sh(f'chmod 600 "{path}/wp-config.php" 2>/dev/null || true')
+
+            step('Creating web server config...')
+            ok, result = _write_vhost(domain, path, php_ver, webserver)
+            if not ok:
+                return fail(f'Vhost creation failed: {result}')
+
+            if system_cron:
+                cron_line = f'*/5 * * * * {web_user} {WP_CLI} --path="{path}" --allow-root cron event run --due-now >/dev/null 2>&1'
+                cron_file = f'/etc/cron.d/vortex-wp-{re.sub(chr(46), "_", domain)}'
+                try:
+                    with open(cron_file, 'w') as f: f.write(cron_line + '\n')
+                except Exception: pass
+
+            panel_cache.invalidate('wp_sites')
+
+            save_job(f'wp_install_{domain}', {
+                'running': False, 'done': True, 'success': True,
+                'domain': domain, 'path': path, 'site_url': site_url,
+                'admin_user': admin_user, 'admin_pass': admin_pass, 'admin_email': admin_email,
+                'db_name': db_name, 'db_user': db_user, 'db_pass': db_pass,
+                'webserver': webserver, 'php_version': php_ver,
+            })
+        except Exception as e:
+            fail(f'Unexpected error: {e}')
+
+    threading.Thread(target=run_install, daemon=True).start()
+    return jsonify({'ok': True, 'started': True, 'domain': domain})
+
+
+@wp_bp.route('/api/wp/install/status')
+def install_wp_status():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel.routes.job_state import load_job
+    domain = request.args.get('domain', '').strip().lower()
+    if not domain:
+        return jsonify({'ok': False, 'error': 'domain required'}), 400
+    state = load_job(f'wp_install_{domain}', {'running': False, 'done': False})
+    return jsonify({'ok': True, **state})
 
 
 @wp_bp.route('/api/wp/<domain>/info')
