@@ -143,11 +143,11 @@ def compress_file():
     if not paths or not output: return jsonify({'ok':False,'error':'paths and output required'}),400
     try:
         parent = os.path.dirname(paths[0])
-        names  = ' '.join(f'"{os.path.relpath(p, parent)}"' for p in paths)
+        names  = [os.path.relpath(p, parent) for p in paths]
         if fmt == 'zip':
-            r = subprocess.run(f'cd "{parent}" && zip -r "{output}" {names}', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['zip', '-r', output] + names, cwd=parent, capture_output=True, text=True)
         else:
-            r = subprocess.run(f'cd "{parent}" && tar -czf "{output}" {names}', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['tar', '-czf', output] + names, cwd=parent, capture_output=True, text=True)
         if r.returncode != 0: return jsonify({'ok':False,'error':r.stderr}),500
         return jsonify({'ok':True,'output':output})
     except Exception as e: return jsonify({'ok':False,'error':str(e)}),500
@@ -161,26 +161,26 @@ def extract_file():
     os.makedirs(dst, exist_ok=True)
     try:
         if src.endswith('.zip'):
-            r = subprocess.run(f'unzip -o "{src}" -d "{dst}"', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['unzip', '-o', src, '-d', dst], capture_output=True, text=True)
             # Fallback for AES-encrypted (compression method 99) or other zips unzip can't handle
             if r.returncode != 0 or 'unsupported compression method' in (r.stderr + r.stdout).lower():
-                r7 = subprocess.run(f'7z x "{src}" -o"{dst}" -y', shell=True, capture_output=True, text=True)
+                r7 = subprocess.run(['7z', 'x', src, f'-o{dst}', '-y'], capture_output=True, text=True)
                 if r7.returncode == 0:
                     return jsonify({'ok': True, 'error': ''})
                 err = (r.stderr or r.stdout)[:300] + ' | 7z: ' + (r7.stderr or r7.stdout)[:300]
                 return jsonify({'ok': False, 'error': err})
         elif src.endswith(('.tar.gz', '.tgz')):
-            r = subprocess.run(f'tar -xzf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['tar', '-xzf', src, '-C', dst], capture_output=True, text=True)
         elif src.endswith('.tar.bz2'):
-            r = subprocess.run(f'tar -xjf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['tar', '-xjf', src, '-C', dst], capture_output=True, text=True)
         elif src.endswith('.tar.xz'):
-            r = subprocess.run(f'tar -xJf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['tar', '-xJf', src, '-C', dst], capture_output=True, text=True)
         elif src.endswith('.tar'):
-            r = subprocess.run(f'tar -xf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['tar', '-xf', src, '-C', dst], capture_output=True, text=True)
         elif src.endswith(('.7z', '.rar')):
-            r = subprocess.run(f'7z x "{src}" -o"{dst}" -y', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['7z', 'x', src, f'-o{dst}', '-y'], capture_output=True, text=True)
         else:
-            r = subprocess.run(f'tar -xzf "{src}" -C "{dst}"', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['tar', '-xzf', src, '-C', dst], capture_output=True, text=True)
         return jsonify({'ok': r.returncode==0, 'error': r.stderr[:300] if r.returncode!=0 else ''})
     except Exception as e: return jsonify({'ok':False,'error':str(e)}),500
 
@@ -194,14 +194,14 @@ def search_files():
     results = []
     try:
         if in_file:
-            out = subprocess.run(f'grep -r -l --include="*" -m 1 "{keyword}" "{path}" 2>/dev/null | head -50',
-                                  shell=True, capture_output=True, text=True, timeout=15).stdout
-            for line in out.strip().split('\n'):
+            out = subprocess.run(['grep', '-r', '-l', '--include=*', '-m', '1', keyword, path],
+                                  capture_output=True, text=True, timeout=15, stderr=subprocess.DEVNULL).stdout
+            for line in out.strip().split('\n')[:50]:
                 if line.strip(): results.append({'path':line.strip(),'type':'file','name':os.path.basename(line.strip())})
         else:
-            out = subprocess.run(f'find "{path}" -maxdepth 6 -iname "*{keyword}*" 2>/dev/null | head -100',
-                                  shell=True, capture_output=True, text=True, timeout=10).stdout
-            for line in out.strip().split('\n'):
+            out = subprocess.run(['find', path, '-maxdepth', '6', '-iname', '*' + keyword + '*'],
+                                  capture_output=True, text=True, timeout=10, stderr=subprocess.DEVNULL).stdout
+            for line in out.strip().split('\n')[:100]:
                 if line.strip():
                     fp = line.strip()
                     results.append({'path':fp,'type':'dir' if os.path.isdir(fp) else 'file','name':os.path.basename(fp)})
@@ -214,8 +214,9 @@ def calc_size():
     path = safe_path(request.args.get('path',''))
     try:
         if os.path.isfile(path): return jsonify({'ok':True,'size':os.path.getsize(path)})
-        out = subprocess.run(f'du -sb "{path}" 2>/dev/null | cut -f1', shell=True, capture_output=True, text=True).stdout.strip()
-        return jsonify({'ok':True,'size':int(out) if out else 0})
+        out = subprocess.run(['du', '-sb', path], capture_output=True, text=True, stderr=subprocess.DEVNULL).stdout.strip()
+        size = int(out.split()[0]) if out and out.split()[0].isdigit() else 0
+        return jsonify({'ok':True,'size':size})
     except: return jsonify({'ok':True,'size':0})
 
 @files_bp.route('/api/files/remote-download', methods=['POST'])
@@ -248,8 +249,8 @@ def file_properties():
     except: group = str(st.st_gid)
     size = 0
     if os.path.isdir(path):
-        out = subprocess.run(f'du -sb "{path}" 2>/dev/null | cut -f1', shell=True, capture_output=True, text=True).stdout.strip()
-        size = int(out) if out.isdigit() else 0
+        out = subprocess.run(['du', '-sb', path], capture_output=True, text=True, stderr=subprocess.DEVNULL).stdout.strip()
+        size = int(out.split()[0]) if out and out.split()[0].isdigit() else 0
     else:
         size = st.st_size
     return jsonify({'ok':True,'props':{
@@ -271,17 +272,17 @@ def lint_file():
     errors = []
     try:
         if ext == '.php':
-            r = subprocess.run(f'php -l "{path}" 2>&1', shell=True, capture_output=True, text=True, timeout=10)
+            r = subprocess.run(['php', '-l', path], capture_output=True, text=True, timeout=10)
             if r.returncode != 0:
                 for line in r.stdout.split('\n'):
                     if 'error' in line.lower() or 'Parse' in line:
                         errors.append(line.strip())
         elif ext == '.py':
-            r = subprocess.run(f'python3 -m py_compile "{path}" 2>&1', shell=True, capture_output=True, text=True, timeout=10)
+            r = subprocess.run(['python3', '-m', 'py_compile', path], capture_output=True, text=True, timeout=10)
             if r.returncode != 0:
                 errors.append(r.stderr.strip())
         elif ext in ('.json',):
-            r = subprocess.run(f'python3 -c "import json,sys; json.load(open(sys.argv[1]))" "{path}" 2>&1', shell=True, capture_output=True, text=True)
+            r = subprocess.run(['python3', '-c', 'import json,sys; json.load(open(sys.argv[1]))', path], capture_output=True, text=True)
             if r.returncode != 0: errors.append(r.stdout.strip())
     except Exception as e:
         errors.append(str(e))
@@ -293,19 +294,19 @@ def scan_file():
     if 'user' not in _session: return jsonify({'ok':False}), 401
     import subprocess, json as _json
     d = request.get_json() or {}
-    path = d.get('path','').strip()
+    path = safe_path(d.get('path','').strip())
     if not path or not os.path.exists(path):
         return jsonify({'ok':False,'error':'Path not found'})
     
     # Use clamdscan if socket available, else clamscan
     socket = '/var/run/clamav/clamd.sock'
     if os.path.exists(socket):
-        cmd = f'clamdscan --config-file=/usr/local/etc/clamav/clamd.conf --no-summary "{path}" 2>&1'
+        cmd = ['clamdscan', '--config-file=/usr/local/etc/clamav/clamd.conf', '--no-summary', path]
     else:
-        cmd = f'clamscan --database=/var/lib/clamav --recursive "{path}" 2>&1'
+        cmd = ['clamscan', '--database=/var/lib/clamav', '--recursive', path]
     
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         output = r.stdout + r.stderr
         # Parse results
         infected = []
