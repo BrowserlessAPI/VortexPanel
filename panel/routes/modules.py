@@ -250,10 +250,22 @@ fi''',
         'install_tpl':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed={ver} 2>/dev/null || \
 apt-get install -y openlitespeed && \
-systemctl enable lsws && systemctl start lsws''',
+systemctl enable lsws && systemctl start lsws && \
+LSPHP_VER="lsphp83" && \
+apt-get install -y $LSPHP_VER $LSPHP_VER-common 2>&1 && \
+for ext in mysql curl opcache imagick intl mbstring xml zip gd soap; do \
+  apt-get install -y $LSPHP_VER-$ext 2>/dev/null || true; \
+done; \
+mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2>/dev/null; true''',
         'install':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed && \
-systemctl enable lsws && systemctl start lsws''',
+systemctl enable lsws && systemctl start lsws && \
+LSPHP_VER="lsphp83" && \
+apt-get install -y $LSPHP_VER $LSPHP_VER-common 2>&1 && \
+for ext in mysql curl opcache imagick intl mbstring xml zip gd soap; do \
+  apt-get install -y $LSPHP_VER-$ext 2>/dev/null || true; \
+done; \
+mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2>/dev/null; true''',
         'uninstall':(
             'systemctl stop lsws 2>/dev/null; systemctl disable lsws 2>/dev/null; '
             '/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; '

@@ -137,17 +137,25 @@ def get_sites():
 
 
 def create_site_core(domain, path=None, php='8.3'):
-    """Core site-creation logic — shared by the normal create_site() route AND
+    """Core site-creation logic -- shared by the normal create_site() route AND
     the website-import feature (cPanel/aaPanel/Hestia), so both paths always
-    produce identical, correct nginx vhosts with zero risk of drift between them.
-    Returns (ok: bool, result: dict) — result has 'domain'/'path' on success or
-    'error' on failure."""
+    produce identical, correct vhosts with zero risk of drift between them.
+    Returns (ok: bool, result: dict) -- result has 'domain'/'path' on success or
+    'error' on failure.
+
+    Detects and supports whichever webserver is actually installed (nginx,
+    Apache, OpenLiteSpeed, Caddy) rather than unconditionally writing an
+    nginx config -- confirmed as a real, severe bug via GitHub issue #14:
+    OpenLiteSpeed users creating a site through the normal flow got an
+    nginx config file OLS never reads at all, with no OLS vhost ever
+    created for the site. Reuses the existing, working multi-webserver
+    vhost logic from wp_toolkit.py instead of duplicating it.
+    """
     domain = (domain or '').strip().lower()
     path = (path or f'{get_webroot()}/{domain}').strip()
     if not domain:
         return False, {'error': 'Domain required'}
 
-    # Create webroot
     os.makedirs(path, exist_ok=True)
     idx = os.path.join(path, 'index.html')
     if not os.path.exists(idx):
@@ -156,57 +164,15 @@ def create_site_core(domain, path=None, php='8.3'):
 
     ensure_web_ownership(path)
 
-    avail, enabled_dir = get_nginx_dirs()
+    from panel.routes.wp_toolkit import _write_vhost, _detect_webserver
+    webserver = _detect_webserver()
+    if not webserver:
+        return False, {'error': 'No web server is installed. Install Nginx, Apache2, OpenLiteSpeed, or Caddy from the App Store first.'}
 
-    php_sock = f'/run/php/php{php}-fpm.sock'
-    for sock in [f'/run/php/php{php}-fpm.sock', f'/var/run/php/php{php}-fpm.sock',
-                 f'/tmp/php{php}-fpm.sock', f'/run/php-fpm/php{php}-fpm.sock',
-                 f'/run/php-fpm/www.sock', f'/var/run/php-fpm/www.sock']:
-        if os.path.exists(sock):
-            php_sock = sock
-            break
-
-    fastcgi = f"""
-    location ~ \\.php$ {{
-        include fastcgi_params;
-        fastcgi_pass unix:{php_sock};
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        fastcgi_index index.php;
-    }}""" if php != 'Static' else ''
-
-    conf = f"""server {{
-    listen 80;
-    server_name {domain} www.{domain};
-    root {path};
-    index index.php index.html index.htm;
-
-    access_log /var/log/nginx/{domain}.access.log;
-    error_log  /var/log/nginx/{domain}.error.log;
-
-    location / {{
-        try_files $uri $uri/ /index.php?$query_string;
-    }}
-    {fastcgi}
-    location ~ /\\.ht {{
-        deny all;
-    }}
-}}
-"""
-    conf_file = f'{domain}.conf'
-    conf_path = os.path.join(avail, conf_file)
-    enabled_path = os.path.join(enabled_dir, conf_file)
-
-    try:
-        with open(conf_path, 'w') as f: f.write(conf)
-        if avail != enabled_dir and not os.path.exists(enabled_path):
-            os.symlink(conf_path, enabled_path)
-        test = sh('nginx -t 2>&1')
-        if 'failed' in test.lower():
-            return False, {'error': f'Nginx config test failed: {test}'}
-        reload_nginx()
-        return True, {'domain': domain, 'path': path}
-    except Exception as e:
-        return False, {'error': str(e)}
+    ok, result = _write_vhost(domain, path, php, webserver)
+    if not ok:
+        return False, {'error': result}
+    return True, {'domain': domain, 'path': path, 'webserver': webserver}
 
 
 @websites_bp.route('/api/websites', methods=['POST'])
@@ -296,27 +262,60 @@ def delete_site(domain):
     return jsonify({'ok':True})
 
 
+def _find_site_config(domain):
+    """Locate a site's real config file regardless of which webserver it
+    was created under. Returns (path, webserver) or (None, None).
+
+    Previously get_config()/save_config() only ever checked nginx's path
+    (/etc/nginx/vortex/{domain}.conf) - confirmed via GitHub issue #14 that
+    this meant OpenLiteSpeed sites (config at a completely different path
+    and format) always hit a 404, and Apache/Caddy sites had the identical
+    problem despite not being reported yet.
+    """
+    candidates = [
+        (os.path.join('/etc/nginx/vortex', f'{domain}.conf'), 'nginx'),
+        (os.path.join('/etc/apache2/sites-available', f'{domain}.conf'), 'apache'),
+        (os.path.join(f'/usr/local/lsws/conf/vhosts/{domain}', 'vhconf.conf'), 'openlitespeed'),
+        (os.path.join('/etc/caddy/sites', f'{domain}.conf'), 'caddy'),
+    ]
+    for path, ws in candidates:
+        if os.path.exists(path):
+            return path, ws
+    return None, None
+
+
 @websites_bp.route('/api/websites/<domain>/config')
 def get_config(domain):
     if not req(): return jsonify({'ok':False}), 401
-    avail, _ = get_nginx_dirs()
-    fp = os.path.join(avail, f'{domain}.conf')
-    if os.path.exists(fp):
-        with open(fp) as f: return jsonify({'ok':True, 'content':f.read(), 'path':fp})
-    return jsonify({'ok':False, 'error':'Config not found'}), 404
+    fp, webserver = _find_site_config(domain)
+    if fp:
+        with open(fp) as f: return jsonify({'ok':True, 'content':f.read(), 'path':fp, 'webserver':webserver})
+    return jsonify({'ok':False, 'error':f'No config found for {domain} under any supported web server (nginx, Apache, OpenLiteSpeed, Caddy)'}), 404
 
 
 @websites_bp.route('/api/websites/<domain>/config', methods=['PUT'])
 def save_config(domain):
     if not req(): return jsonify({'ok':False}), 401
     content = (request.get_json() or {}).get('content','')
-    avail, _ = get_nginx_dirs()
-    fp = os.path.join(avail, f'{domain}.conf')
-    if os.path.exists(fp):
-        with open(fp,'w') as f: f.write(content)
+    fp, webserver = _find_site_config(domain)
+    if not fp:
+        return jsonify({'ok':False, 'error':f'No config found for {domain} under any supported web server'}), 404
+    with open(fp,'w') as f: f.write(content)
+    if webserver == 'nginx':
+        test = sh('nginx -t 2>&1')
+        if 'failed' in test.lower():
+            return jsonify({'ok':False, 'error':f'Nginx config test failed: {test}'}), 400
         reload_nginx()
-        return jsonify({'ok':True})
-    return jsonify({'ok':False, 'error':'Not found'}), 404
+    elif webserver == 'apache':
+        test = sh('apache2ctl configtest 2>&1')
+        if 'syntax error' in test.lower():
+            return jsonify({'ok':False, 'error':f'Apache config test failed: {test}'}), 400
+        sh('systemctl reload apache2 2>/dev/null || systemctl reload httpd 2>/dev/null')
+    elif webserver == 'openlitespeed':
+        sh('kill -USR1 $(cat /tmp/lshttpd.pid 2>/dev/null) 2>/dev/null || systemctl reload lsws 2>/dev/null')
+    elif webserver == 'caddy':
+        sh('systemctl reload caddy 2>/dev/null')
+    return jsonify({'ok':True})
 
 
 @websites_bp.route('/api/websites/webroot')

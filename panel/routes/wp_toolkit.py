@@ -241,31 +241,85 @@ RewriteRule . /index.php [L]
 # END WordPress
 """
 
+def _lsphp_binary(php_ver):
+    """Locate the actual LSPHP binary for a given VortexPanel PHP version
+    (e.g. "8.3" -> lsphp83). OpenLiteSpeed does NOT talk to php-fpm at all --
+    it uses its own bundled LSPHP builds via LSAPI, communicating through a
+    per-site unix socket that OLS spawns and manages itself. Confirmed
+    against a real, working vhconf.conf from a live aaPanel+OLS install
+    (GitHub issue #14) that the previous version of this function got
+    fundamentally wrong: it pointed 'path' at the system php-fpm binary and
+    used type=fcgi, neither of which OLS's LSAPI processor actually uses --
+    the site would never have been able to run PHP at all, regardless of
+    how correct the rest of the vhost config was.
+    """
+    short = php_ver.replace('.', '')
+    for candidate in [f'/usr/local/lsws/lsphp{short}/bin/lsphp']:
+        if os.path.exists(candidate):
+            return candidate
+    return f'/usr/local/lsws/lsphp{short}/bin/lsphp'
+
+
 def _ols_vhost(domain, path, php_ver):
-    """OpenLiteSpeed virtual host config in /usr/local/lsws/conf/vhosts/"""
-    sock = _php_sock(php_ver)
+    """OpenLiteSpeed virtual host config in /usr/local/lsws/conf/vhosts/.
+
+    Rebuilt to match a real, working vhconf.conf taken directly from a live
+    aaPanel+OpenLiteSpeed install (GitHub issue #14) rather than a plausible-
+    looking guess: extprocessor named after the domain (not a shared generic
+    "lsphp" processor -- this is what lets each site run its own PHP version
+    independently), type lsapi (not fcgi), address on a per-site unix socket
+    that OLS itself creates and owns, path pointing at OLS's own bundled
+    LSPHP binary, and a phpIniOverride restricting open_basedir to the
+    site's own webroot for isolation between sites.
+    """
+    php_bin = _lsphp_binary(php_ver)
+    web_user = _web_user()
     return f"""docRoot                   {path}/
 vhDomain                  {domain}
 vhAliases                 www.{domain}
 adminEmails               webmaster@{domain}
 enableGzip                1
+enableIpGeo               1
 
 index  {{
   useServer               0
   indexFiles              index.php, index.html
 }}
 
-extprocessor lsphp{{
-  type                    fcgi
-  address                 UDS://{sock}
+errorlog /var/log/openlitespeed/{domain}.error_log {{
+  useServer               0
+  logLevel                ERROR
+  rollingSize             10M
+}}
+
+accesslog /var/log/openlitespeed/{domain}.access_log {{
+  useServer               0
+  logFormat               '%h %l %u %t "%r" %>s %b "%{{Referer}}i" "%{{User-Agent}}i"'
+  logHeaders              5
+  rollingSize             10M
+  keepDays                10
+  compressArchive         1
+}}
+
+scripthandler  {{
+  add                     lsapi:{domain} php
+}}
+
+extprocessor {domain}{{
+  type                    lsapi
+  address                 UDS://tmp/lshttpd/{domain}.sock
   maxConns                35
   env                     PHP_LSAPI_CHILDREN=35
+  env                     LSAPI_AVOID_FORK=1
   initTimeout             60
   retryTimeout            0
   persistConn             1
+  pcKeepAliveTimeout      30
   respBuffer              0
-  autoStart               0
-  path                    {shutil.which('php' + php_ver) or '/usr/bin/php' + php_ver}
+  autoStart               1
+  path                    {php_bin}
+  extUser                 {web_user}
+  extGroup                {web_user}
   backlog                 100
   instances               1
   priority                0
@@ -275,8 +329,8 @@ extprocessor lsphp{{
   procHardLimit           500
 }}
 
-scripthandler  {{
-  add                     fcgi:lsphp php
+phpIniOverride  {{
+  php_admin_value open_basedir "{path}/:/tmp/"
 }}
 
 rewrite  {{
@@ -421,15 +475,11 @@ virtualhost {domain} {{
         content = content[:m.start(2)] + block_body + map_line + content[m.end(2):]
         changed = True
 
-    # 4. align OLS's worker user/group with php-fpm's socket ownership.
-    #    OLS defaults to `user nobody / group nogroup`. php-fpm's UDS socket
-    #    is typically owned by www-data:www-data with mode 0660, so OLS's
-    #    worker can never connect to PHP -- every request hangs until
-    #    timeout (looks like a dead site, not an obvious permissions error).
-    #    Adding nobody to the www-data group is additive and idempotent;
-    #    it does not change OLS's configured user/group, so it is safe to
-    #    run even if some other vhost's PHP pool uses a different owner.
-    sh("usermod -aG www-data nobody 2>/dev/null")
+    # (Previously step 4 here added OLS's default worker user to the
+    # www-data group, to work around php-fpm socket permissions. That
+    # workaround no longer applies -- OLS now spawns its own LSPHP process
+    # per site via LSAPI rather than connecting to an external php-fpm
+    # socket at all, so there is no shared socket permission to align.)
 
     if changed:
         shutil.copy(OLS_MAIN_CONF, OLS_MAIN_CONF + '.bak')

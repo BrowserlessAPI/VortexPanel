@@ -778,15 +778,16 @@
               <div x-show="drawer.tab==='config'">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                   <div>
-                    <div style="font-weight:600;font-size:13px">Nginx Configuration</div>
+                    <div style="font-weight:600;font-size:13px" x-text="(drawer.confWebserver ? {nginx:'Nginx',apache:'Apache',openlitespeed:'OpenLiteSpeed',caddy:'Caddy'}[drawer.confWebserver] || drawer.confWebserver : 'Web Server')+' Configuration'"></div>
                     <div style="font-size:11px;color:var(--text-muted)" x-text="drawer.confPath"></div>
                   </div>
                   <div style="display:flex;gap:8px">
                     <button class="btn btn-ghost btn-sm" @click="loadDrawerTab()">Reload</button>
-                    <button class="btn btn-primary btn-sm" @click="saveConf()">Save</button>
+                    <button class="btn btn-primary btn-sm" @click="saveConf()" :disabled="!!drawer.confError">Save</button>
                   </div>
                 </div>
-                <div style="background:#1a1b26;border:1px solid #2a2b3a;border-radius:8px;overflow:hidden">
+                <div x-show="drawer.confError" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:#991b1b" x-text="drawer.confError"></div>
+                <div x-show="!drawer.confError" style="background:#1a1b26;border:1px solid #2a2b3a;border-radius:8px;overflow:hidden">
                   <div style="padding:6px 12px;background:#161722;border-bottom:1px solid #2a2b3a;font-size:11px;font-family:var(--font-mono);color:#64748b;display:flex;gap:12px">
                     <span x-text="drawer.confPath"></span>
                     <span style="margin-left:auto">Ctrl+S to save</span>

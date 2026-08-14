@@ -762,7 +762,11 @@ function websitesPage() {
     },
     async loadDrawerTab() {
       const d=this.drawer; const domain=d.site?.domain; if(!domain) return;
-      if(d.tab==='config'){const r=await get('/api/websites/'+domain+'/config');if(r.ok){d.confContent=r.content;d.confPath=r.path;}}
+      if(d.tab==='config'){
+        const r=await get('/api/websites/'+domain+'/config');
+        if(r.ok){ d.confContent=r.content; d.confPath=r.path; d.confWebserver=r.webserver||'nginx'; d.confError=''; }
+        else { d.confContent=''; d.confPath=''; d.confError=r.error||'Config could not be loaded'; }
+      }
       else if(d.tab==='ssl'){
         const r=await get('/api/websites/'+domain+'/ssl/info');
         if(r.ok)d.sslInfo=r.info;
@@ -841,7 +845,7 @@ function websitesPage() {
       const r = await del('/api/websites/'+domain+'/integrity/baseline');
       if (r.ok) { toast('Disabled','success'); await this.loadIntegrityStatus(); }
     },
-    async saveConf(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/config',{content:this.drawer.confContent});toast(r.ok?'Saved':'Failed',r.ok?'success':'error');},
+    async saveConf(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/config',{content:this.drawer.confContent});toast(r.ok?'Saved':(r.error||'Failed'),r.ok?'success':'error');},
     async issueLetsEncrypt(){
       this.drawer.loading=true;
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/ssl/letsencrypt',{email:this.drawer.sslEmail});
