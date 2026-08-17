@@ -19,6 +19,8 @@ def detect_os():
                 line = line.strip().strip('"')
                 if line.startswith('ID='):
                     info['id'] = line[3:].lower().strip('"')
+                elif line.startswith('ID_LIKE='):
+                    info['id_like'] = line[8:].lower().strip('"')
                 elif line.startswith('VERSION_ID='):
                     info['version'] = line[11:].strip('"')
                 elif line.startswith('VERSION_CODENAME='):
@@ -28,6 +30,7 @@ def detect_os():
     except: pass
 
     os_id = info['id']
+    id_like = info.get('id_like', '')
     if os_id in ('ubuntu','debian','linuxmint','pop'):
         info['family'] = 'debian'
         info['pkg']    = 'apt'
@@ -37,7 +40,25 @@ def detect_os():
     elif os_id in ('fedora',):
         info['family'] = 'fedora'
         info['pkg']    = 'dnf'
-    elif os_id in ('rhel','centos','almalinux','rocky','ol'):
+    elif os_id in ('rhel','centos','almalinux','rocky','ol','cloudlinux'):
+        info['family'] = 'rhel'
+        info['pkg']    = 'dnf' if _dnf_available() else 'yum'
+    elif 'debian' in id_like or 'ubuntu' in id_like:
+        # Any Debian/Ubuntu derivative not in the explicit list above -
+        # confirmed via ID_LIKE rather than defaulting to this function's
+        # own Ubuntu-shaped initial value, which would be a coincidence
+        # rather than a genuine detection for anything not actually Ubuntu.
+        info['family'] = 'debian'
+        info['pkg']    = 'apt'
+        if not info.get('codename'):
+            info['codename'] = sh('lsb_release -cs 2>/dev/null') or 'noble'
+    elif 'fedora' in id_like or 'rhel' in id_like or 'centos' in id_like:
+        # Confirmed real-world case: CloudLinux reports ID="cloudlinux" with
+        # ID_LIKE="rhel fedora centos" - not in any explicit list above, so
+        # without this fallback it silently defaulted to this function's own
+        # family='debian' initialization, making every app try apt-get
+        # commands on a dnf/yum system. This fallback also covers any other
+        # current or future RHEL/Fedora derivative not yet added by name.
         info['family'] = 'rhel'
         info['pkg']    = 'dnf' if _dnf_available() else 'yum'
     return info
