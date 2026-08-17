@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.4.10-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.4.10">
+<img src="https://img.shields.io/badge/VortexPanel-v3.4.15-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.4.15">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
 <img src="https://img.shields.io/badge/Alpine.js-3.15-8bc0d0?style=for-the-badge">
@@ -138,7 +138,10 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 ```bash
 wget -O install.sh https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/install.sh && bash install.sh
 ```
-
+If wget not default installed.
+```bash
+curl -O https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/install.sh && bash install.sh
+```
 Access the panel at: **`http://YOUR-SERVER-IP:8888`**
 
 The installer auto-detects your OS and package manager. On RHEL 8-family systems (AlmaLinux 8 / Rocky 8, where default Python is 3.6) it automatically installs Python 3.11.
