@@ -997,9 +997,17 @@ true''',
             {'label':'v22 LTS — Maintenance (Jod)', 'value':'22'},
             {'label':'v26 Current (non-LTS)',       'value':'26'},
         ],
-        'install_tpl':'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
-        'install':'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg /usr/share/keyrings/nodesource-repo.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'install_tpl':'''mkdir -p /etc/apt/keyrings && \\
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{ver}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \\
+apt-get update -o APT::Update::Error-Mode=any && \\
+DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs''',
+        'install':'''mkdir -p /etc/apt/keyrings && \\
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \\
+apt-get update -o APT::Update::Error-Mode=any && \\
+DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs''',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg /usr/share/keyrings/nodesource-repo.gpg /etc/apt/keyrings/nodesource.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'manage':False,
     },
     {
@@ -1081,7 +1089,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'7.2.7 (Stable)', 'value':'7.2'},
             {'label':'8.0.2 (Latest)', 'value':'8.0'},
         ],
-        'install_tpl':'''curl -fsSL https://packages.redis.io/gpg | rm -f /usr/share/keyrings/redis-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+        'install_tpl':'''rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_redis_repo_err.log; then \
   echo "[VortexPanel] packages.redis.io has no release for $(lsb_release -cs) yet -- removing it, using distro-packaged redis-server instead"; \
@@ -1089,7 +1097,7 @@ if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_redis_repo_err.log;
   apt-get update -qq; \
 fi; \
 apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
-        'install':'''curl -fsSL https://packages.redis.io/gpg | rm -f /usr/share/keyrings/redis-archive-keyring.gpg && gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+        'install':'''rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
 apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
@@ -2799,7 +2807,17 @@ def save_module_settings(mod_id):
                 f'curl -fsSL --max-time 30 https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} --skip-maxscale; '
                 'for f in /etc/apt/sources.list.d/*.sources; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then awk -v RS="" -v ORS="\\n\\n" \'tolower($0) !~ /maxscale/\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi; done; '
                 'for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then sed -i \'/[Mm]ax[Ss]cale/d\' "$f"; fi; done; '
-                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
+                # Same self-healing already added to the main install_tpl:
+                # verify the repo genuinely resolves before relying on it,
+                # rather than leaving a broken entry to poison every other
+                # apt-get update afterward if this specific version/codename
+                # combination has no build yet.
+                'if ! apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 2>/tmp/vp_mariadb_switch_err.log; then '
+                '  echo "[VortexPanel] MariaDB repo has no usable build for this version/distro combination -- removing the broken repo entry"; '
+                '  rm -f /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp; '
+                '  apt-get update -qq 2>/dev/null; '
+                '  exit 1; '
+                'fi && '
                 'apt-get install -y --allow-downgrades --allow-change-held-packages '
                 '-o Dpkg::Options::="--force-confnew" mariadb-server && '
                 'systemctl start mariadb && systemctl enable mariadb'
@@ -2845,9 +2863,17 @@ def save_module_settings(mod_id):
         elif mod_id == 'apache2':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
-                'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null && '
-                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
-                f'apt-get install -y --allow-downgrades apache2={ver}-* 2>/dev/null || apt-get install -y apache2 && '
+                'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && '
+                # Same PPA-on-Debian bug already fixed in the main install_tpl
+                # and the earlier switch_version instance - ppa:ondrej/apache2
+                # is Launchpad/Ubuntu-only, skip it entirely on Debian.
+                + ('if echo "$OS_FAMILY" | grep -qiE "^debian"; then '
+                   '  apt-get install -y apache2; '
+                   'else '
+                   '  add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
+                   '  apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
+                   f'  (apt-get install -y --allow-downgrades apache2={ver}-* 2>/dev/null || apt-get install -y apache2); '
+                   'fi && ') +
                 'systemctl restart apache2'
             )
             ver_check_cmd = "apache2 -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
@@ -2859,8 +2885,15 @@ def save_module_settings(mod_id):
                 'rm -f /etc/apt/sources.list.d/nodesource.list '
                 '/etc/apt/sources.list.d/nodejs.list '
                 '/usr/share/keyrings/nodesource.gpg '
-                '/usr/share/keyrings/nodesource-repo.gpg && '
-                f'curl -fsSL --max-time 30 https://deb.nodesource.com/setup_{ver}.x | bash - && '
+                '/usr/share/keyrings/nodesource-repo.gpg '
+                '/etc/apt/keyrings/nodesource.gpg && '
+                'mkdir -p /etc/apt/keyrings && '
+                # Same fix as elsewhere: setup_XX.x scripts are officially
+                # deprecated per NodeSource's own GitHub. Using their current
+                # distro-agnostic 'nodistro' method instead.
+                f'curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && '
+                f'echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{ver}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && '
+                'apt-get update -qq && '
                 'apt-get install -y --allow-downgrades nodejs'
             )
             ver_check_cmd = f"node --version 2>/dev/null | tr -d 'v'"

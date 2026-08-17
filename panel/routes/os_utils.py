@@ -131,7 +131,15 @@ def nginx_install_script(channel='stable'):
         'true'
     )
     if os_info['family'] == 'debian':
-        repo = 'http://nginx.org/packages/ubuntu' if channel == 'stable' else 'http://nginx.org/packages/mainline/ubuntu'
+        # Same bug as mariadb_install_script: family='debian' groups genuine
+        # Debian and Ubuntu together, but nginx.org has a genuinely separate
+        # path for each - confirmed via nginx.org's own documentation. This
+        # hardcoded /ubuntu regardless, which is very likely the actual root
+        # cause behind issue #20's "ubuntu bookworm Release file not found"
+        # error, since this function overrides modules.py's install_tpl for
+        # the real Install button click.
+        distro_path = 'debian' if os_info.get('id') == 'debian' else 'ubuntu'
+        repo = f'http://nginx.org/packages/{distro_path}' if channel == 'stable' else f'http://nginx.org/packages/mainline/{distro_path}'
         return (
             f'rm -f /usr/share/keyrings/nginx-archive-keyring.gpg && curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --no-tty --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && '
             f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} {os_info["codename"]} nginx" > /etc/apt/sources.list.d/nginx.list && '
@@ -183,28 +191,46 @@ def php_install_script(ver):
         # (modules.py's /install route overrides install_tpl with this for
         # mod_id=='php' unconditionally) -- the install_tpl fallback logic
         # for ondrej/php never executed in practice. Same self-healing
-        # pattern as the mariadb/postgresql/redis fixes: ondrej/php has no
-        # release for a very new Ubuntu codename yet (confirmed: its own
-        # apt output names packages.sury.org as the canonical replacement
-        # for Ubuntu Resolute specifically), and add-apt-repository writes
-        # the broken PPA to disk regardless of what happens next, poisoning
-        # every future apt-get update system-wide unless cleaned up.
-        php_repo_setup = (
-            'add-apt-repository -y ppa:ondrej/php && '
-            f'if ! {pkg_update()} 2>/tmp/vp_php_repo_err.log; then '
-            f'  echo "[VortexPanel] ondrej/php has no release for {codename} yet -- removing it and trying packages.sury.org"; '
-            '  add-apt-repository --remove -y ppa:ondrej/php 2>/dev/null; '
-            '  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources 2>/dev/null; '
-            '  apt-get install -y ca-certificates apt-transport-https gnupg2 && '
-            '  curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
-            f'  echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ {codename} main" > /etc/apt/sources.list.d/php-sury.list && '
-            f'  if ! {pkg_update()} 2>/tmp/vp_php_sury_err.log; then '
-            f'    echo "[VortexPanel] packages.sury.org has no release for {codename} yet either -- falling back to noble (24.04) packages"; '
-            '    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ noble main" > /etc/apt/sources.list.d/php-sury.list && '
-            f'    {pkg_update()}; '
-            '  fi; '
-            'fi'
-        )
+        # pattern as the mariadb/postgresql/redis fixes.
+        is_debian = os_info.get('id') == 'debian'
+        if is_debian:
+            # ppa: syntax is a Launchpad/Ubuntu-specific mechanism with no
+            # Debian equivalent - going straight to the known-working
+            # packages.sury.org path rather than attempting a PPA that is
+            # guaranteed to fail (or may not even be recognized) on Debian.
+            php_repo_setup = (
+                'apt-get install -y ca-certificates apt-transport-https gnupg2 && '
+                'curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
+                f'echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ {codename} main" > /etc/apt/sources.list.d/php-sury.list && '
+                f'if ! {pkg_update()} 2>/tmp/vp_php_sury_err.log; then '
+                f'  echo "[VortexPanel] packages.sury.org has no release for {codename} yet -- falling back to bookworm packages"; '
+                '  echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/php-sury.list && '
+                f'  {pkg_update()}; '
+                'fi'
+            )
+        else:
+            # ondrej/php has no release for a very new Ubuntu codename yet
+            # (confirmed: its own apt output names packages.sury.org as the
+            # canonical replacement for Ubuntu Resolute specifically), and
+            # add-apt-repository writes the broken PPA to disk regardless of
+            # what happens next, poisoning every future apt-get update
+            # system-wide unless cleaned up.
+            php_repo_setup = (
+                'add-apt-repository -y ppa:ondrej/php && '
+                f'if ! {pkg_update()} 2>/tmp/vp_php_repo_err.log; then '
+                f'  echo "[VortexPanel] ondrej/php has no release for {codename} yet -- removing it and trying packages.sury.org"; '
+                '  add-apt-repository --remove -y ppa:ondrej/php 2>/dev/null; '
+                '  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources 2>/dev/null; '
+                '  apt-get install -y ca-certificates apt-transport-https gnupg2 && '
+                '  curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
+                f'  echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ {codename} main" > /etc/apt/sources.list.d/php-sury.list && '
+                f'  if ! {pkg_update()} 2>/tmp/vp_php_sury_err.log; then '
+                f'    echo "[VortexPanel] packages.sury.org has no release for {codename} yet either -- falling back to noble (24.04) packages"; '
+                '    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ noble main" > /etc/apt/sources.list.d/php-sury.list && '
+                f'    {pkg_update()}; '
+                '  fi; '
+                'fi'
+            )
         return (
             f'{php_repo_setup} && '
             f'{pkg_install(f"php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml php{ver}-curl php{ver}-mbstring php{ver}-zip php{ver}-gd php{ver}-bcmath php{ver}-intl php{ver}-soap php{ver}-redis")} && '
@@ -253,6 +279,14 @@ def mariadb_install_script(ver='11.7'):
     os_info = get_os()
     if os_info['family'] == 'debian':
         codename = os_info['codename']
+        # detect_os() groups genuine Debian (id='debian') into the same
+        # family='debian' bucket as Ubuntu (family is 'debian' for both) -
+        # confirmed this was hardcoding /ubuntu in the URI regardless, for
+        # the function that actually runs on the real Install button click.
+        # This is very likely the true root cause behind issue #20's "ubuntu
+        # bookworm Release file not found" error, since install_tpl-level
+        # fixes elsewhere never touch this separate, overriding path.
+        deb_path = 'debian' if os_info.get('id') == 'debian' else 'ubuntu'
         return (
             'mkdir -p /etc/apt/keyrings && '
             'rm -f /etc/apt/sources.list.d/mariadb.sources /etc/apt/sources.list.d/mariadb.list && '
@@ -266,7 +300,7 @@ def mariadb_install_script(ver='11.7'):
             'gpg --no-default-keyring --keyring /etc/apt/keyrings/mariadb-keyring.pgp '
             '--keyserver keyserver.ubuntu.com --recv-keys 0xF1656F24C74CD1D8 2>/dev/null; '
             'rm -f /tmp/mariadb.key; '
-            f'printf "Types: deb\nURIs: https://dlm.mariadb.com/repo/mariadb-server/{ver}/repo/ubuntu\nSuites: %s\nComponents: main main/debug\nSigned-By: /etc/apt/keyrings/mariadb-keyring.pgp\n" "{codename}" '
+            f'printf "Types: deb\\nURIs: https://dlm.mariadb.com/repo/mariadb-server/{ver}/repo/{deb_path}\\nSuites: %s\\nComponents: main main/debug\\nSigned-By: /etc/apt/keyrings/mariadb-keyring.pgp\\n" "{codename}" '
             '> /etc/apt/sources.list.d/mariadb.sources && '
             f'{pkg_update()} && '
             f'{pkg_install("mariadb-server mariadb-client")} && '
@@ -353,22 +387,31 @@ def mongodb_install_script(ver='8.0'):
     os_info = get_os()
     if os_info['family'] == 'debian':
         codename = os_info['codename']
+        # Same bug as nginx/mariadb: family='debian' groups genuine Debian
+        # and Ubuntu together, but MongoDB's own docs confirm a genuinely
+        # different path (/apt/debian vs /apt/ubuntu) AND component keyword
+        # (main vs multiverse) is required - not just a codename difference.
+        # Falling back to Ubuntu's noble codename on a genuine Debian system
+        # would still install Ubuntu-built packages with different
+        # dependency ABI expectations than Debian actually has.
+        is_debian = os_info.get('id') == 'debian'
+        deb_path = 'debian' if is_debian else 'ubuntu'
+        component = 'main' if is_debian else 'multiverse'
+        fallback_codename = 'bookworm' if is_debian else 'noble'
         return (
             f'rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
             f'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.asc && '
             f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.asc && '
-            f'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/ubuntu {codename}/mongodb-org/{ver} multiverse" > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
+            f'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/{deb_path} {codename}/mongodb-org/{ver} {component}" > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
             # If repo.mongodb.org has no release for this exact codename yet,
-            # try noble (24.04) -- confirmed directly from MongoDB's own
-            # build source (buildscripts/package_test.py in mongodb/mongo on
-            # GitHub): "ubuntu2404" is the newest Ubuntu target anywhere in
-            # their packaging test matrix, nothing for 24.10/25.04/25.10
-            # exists yet. Not a guess this time.
+            # fall back to the previous stable release for the SAME distro
+            # family (bookworm for Debian, noble for Ubuntu) rather than
+            # ever crossing between them.
             f'(if ! {pkg_update()} 2>/tmp/vp_mongo_repo_err.log; then '
-            f'  echo "[VortexPanel] repo.mongodb.org has no release for {codename} yet -- trying noble (24.04) packages instead"; '
-            f'  echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/{ver} multiverse" > /etc/apt/sources.list.d/mongodb-org-{ver}.list; '
-            f'  if ! {pkg_update()} 2>/tmp/vp_mongo_noble_err.log; then '
-            f'    echo "[VortexPanel] repo.mongodb.org has no release for noble either -- removing the broken repo entry so it does not block other installs"; '
+            f'  echo "[VortexPanel] repo.mongodb.org has no release for {codename} yet -- trying {fallback_codename} packages instead"; '
+            f'  echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/{deb_path} {fallback_codename}/mongodb-org/{ver} {component}" > /etc/apt/sources.list.d/mongodb-org-{ver}.list; '
+            f'  if ! {pkg_update()} 2>/tmp/vp_mongo_fallback_err.log; then '
+            f'    echo "[VortexPanel] repo.mongodb.org has no release for {fallback_codename} either -- removing the broken repo entry so it does not block other installs"; '
             f'    rm -f /etc/apt/sources.list.d/mongodb-org-{ver}.list; {pkg_update()}; exit 1; '
             f'  fi; '
             f'fi) && '
@@ -420,10 +463,30 @@ def docker_install_script():
     return 'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker'
 
 def nodejs_install_script(ver='24'):
-    """Node.js official install script for all distros"""
+    """Node.js official install script for all distros.
+
+    Debian-family uses NodeSource's current method (a distro-agnostic
+    'nodistro' codename with a direct source file) rather than the old
+    setup_XX.x scripts - confirmed via NodeSource's own GitHub that those
+    scripts are explicitly no longer supported, and via multiple real bug
+    reports (including a 404 specifically on Debian Bookworm) that the
+    deprecated approach genuinely fails. 'nodistro' also sidesteps the
+    Debian-vs-Ubuntu codename problem entirely, since there is no longer a
+    per-codename repo at all. RHEL-family keeps the rpm.nodesource.com
+    setup script, which was not confirmed deprecated on that side.
+    """
+    os_info = get_os()
+    if os_info['family'] == 'debian':
+        return (
+            'rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg '
+            '/usr/share/keyrings/nodesource-repo.gpg /etc/apt/keyrings/nodesource.gpg 2>/dev/null; '
+            'mkdir -p /etc/apt/keyrings && '
+            f'curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && '
+            f'echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{ver}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && '
+            f'{pkg_update()} && '
+            f'{pkg_install("nodejs")}'
+        )
     return (
-        f'rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg /usr/share/keyrings/nodesource-repo.gpg 2>/dev/null; '
-        f'curl -fsSL https://deb.nodesource.com/setup_{ver}.x | bash - 2>/dev/null || '
         f'curl -fsSL https://rpm.nodesource.com/setup_{ver}.x | bash - 2>/dev/null; '
         f'{pkg_install("nodejs")}'
     )
