@@ -110,9 +110,30 @@ def _php_sock(ver):
             return sock
     return f'/run/php/php{ver}-fpm.sock'
 
-def _available_php():
-    """Return list of installed PHP versions (7.4–8.5) with socket status."""
+def _available_php(webserver=None):
+    """Return list of installed PHP versions (7.4-8.5) with runtime status.
+
+    On OpenLiteSpeed, the only thing that matters is whether
+    /usr/local/lsws/lsphp<ver>/bin/lsphp actually exists -- OLS never talks
+    to php-fpm sockets or the generic `php` CLI at all. Checking only
+    php-fpm sockets / `which php{ver}` (as this used to do unconditionally)
+    reported PHP 8.2 as "available" on a live box that had a system-wide
+    php8.2 CLI package installed for unrelated reasons, while OpenLiteSpeed
+    itself only had lsphp83 installed. The panel let a WordPress site get
+    created with php_version=8.2 for OpenLiteSpeed, which wrote a vhost
+    pointing its LSAPI extprocessor at a lsphp82 binary that never existed
+    on disk -- LSAPI silently never started, and OLS fell back to (and then
+    refused) serving .php as a static file, 403ing every request. Confirmed
+    directly on that box: `ls /usr/local/lsws/lsphp82/bin/lsphp` -> No such
+    file or directory, while `ls /usr/local/lsws/` showed only lsphp83/.
+    """
     versions = []
+    if webserver == 'openlitespeed':
+        for v in ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4']:
+            lsphp_bin = f'/usr/local/lsws/lsphp{v.replace(".", "")}/bin/lsphp'
+            if os.path.exists(lsphp_bin):
+                versions.append({'version': v, 'sock': lsphp_bin, 'active': True})
+        return versions
     for v in ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4']:
         sock = _php_sock(v)
         if os.path.exists(sock) or shutil.which(f'php{v}'):
@@ -427,7 +448,7 @@ listener HTTP{
     return content, 'HTTP'
 
 
-def _register_ols_vhost(domain, vhost_dir):
+def _register_ols_vhost(domain, vhost_dir, site_path):
     """Register a vhost in the main OpenLiteSpeed httpd_config.conf.
 
     Writing conf/vhosts/<domain>/vhconf.conf alone is NOT enough for OLS to
@@ -445,20 +466,64 @@ def _register_ols_vhost(domain, vhost_dir):
         content = f.read()
 
     changed = False
+    vh_root = site_path.rstrip('/')
 
     # 1. virtualhost block
-    if f'virtualhost {domain} {{' not in content:
+    #
+    # vhRoot MUST be (an ancestor of) the site's real docRoot, NOT the
+    # /usr/local/lsws/conf/vhosts/<domain> config directory. And `restrained`
+    # MUST be off (0), not on (1) -- confirmed as a second, distinct
+    # restrained-related bug on top of the vhRoot one: even after vhRoot was
+    # corrected to point at the real docRoot, sites still 403'd, this time
+    # with OLS's error log showing
+    # `MIME type [application/x-httpd-php] for suffix '.php' does not allow
+    # serving as static file, access denied!` -- i.e. OLS was falling back
+    # to serving .php as a plain static file instead of routing it through
+    # the LSAPI PHP handler at all, even though the vhost's own
+    # scripthandler/extprocessor config was correct. The reason: with
+    # `restrained 1`, OLS confines the vhost to vhRoot for *all* filesystem
+    # access, not just docRoot -- and the LSAPI extprocessor's unix socket
+    # lives at /tmp/lshttpd/<domain>.sock (see the extprocessor block in
+    # _ols_vhost), a path this panel intentionally keeps outside vhRoot.
+    # Restrained blocked that socket from ever being opened, LSAPI silently
+    # never started, and OLS fell back to (and then refused) static
+    # serving. `restrained` is meant for genuinely self-contained,
+    # chroot-style site layouts; this panel's OLS sites deliberately keep
+    # logs, sockets, and config outside the docRoot, so it's simply not a
+    # fit here.
+    existing_block_m = re.search(r'(virtualhost\s+' + re.escape(domain) + r'\s*\{)(.*?)(\n\})', content, re.DOTALL)
+    if not existing_block_m:
         vh_block = f"""
 virtualhost {domain} {{
-  vhRoot                  {vhost_dir}/
+  vhRoot                  {vh_root}/
   configFile              {vhost_dir}/vhconf.conf
   allowSymbolLink         1
   enableScript            1
-  restrained              1
+  restrained              0
 }}
 """
         content = content.rstrip('\n') + '\n' + vh_block
         changed = True
+    else:
+        # Self-heal sites registered by an older, buggy version of this
+        # function before this fix -- otherwise this guard would silently
+        # leave their vhRoot/restrained wrong forever, since "already
+        # registered" short-circuited any further correction on every
+        # later call (including calls made after deploying earlier fixes).
+        body = existing_block_m.group(2)
+        vhroot_m = re.search(r'vhRoot\s+(\S+)', body)
+        current = vhroot_m.group(1).rstrip('/') if vhroot_m else None
+        if current != vh_root:
+            body = re.sub(r'vhRoot\s+\S+', f'vhRoot                  {vh_root}/', body, count=1) \
+                if vhroot_m else body + f'\n  vhRoot                  {vh_root}/'
+            changed = True
+        restrained_m = re.search(r'restrained\s+(\d)', body)
+        if not restrained_m or restrained_m.group(1) != '0':
+            body = re.sub(r'restrained\s+\d', 'restrained              0', body, count=1) \
+                if restrained_m else body + '\n  restrained              0'
+            changed = True
+        if changed:
+            content = content[:existing_block_m.start(2)] + body + content[existing_block_m.end(2):]
 
     # 2. make sure a listener actually bound to :80 exists
     content, listener_name = _ensure_ols_http_listener(content)
@@ -512,6 +577,43 @@ def _unregister_ols_vhost(domain):
         f.write(content)
 
 
+def _reload_ols():
+    """Actually apply new OpenLiteSpeed vhost config to the running server.
+
+    The previous command here was
+    `kill -USR1 $(cat /tmp/lshttpd.pid 2>/dev/null) 2>/dev/null || systemctl reload lsws 2>/dev/null`.
+    /tmp/lshttpd/ is where per-vhost LSAPI *sockets* live
+    (UDS://tmp/lshttpd/<domain>.sock, see the extprocessor block in
+    _ols_vhost) -- it was never OLS's PID file location, so `cat` always
+    failed, the `kill` target was always empty, and the command silently
+    fell through to `systemctl reload lsws`, which likely doesn't match the
+    real service/unit name on an aaPanel-managed OpenLiteSpeed install
+    either. Because sh() swallows all errors/exit codes and neither
+    _write_vhost nor _delete_vhost checked the outcome, every single site
+    create/delete "succeeded" while the running OLS process kept serving
+    its old configuration untouched -- vhconf.conf and httpd_config.conf on
+    disk were always 100% correct (confirmed directly on a live box: right
+    vhRoot, right map entry, right virtualhost block), OLS just never
+    reloaded them, so every new site 403'd as unregistered/default until a
+    manual Graceful Restart was done by hand through the WebAdmin UI.
+    lswsctrl is OpenLiteSpeed's own official control script -- it finds and
+    signals the real running process correctly regardless of how the
+    service happens to be supervised (systemd, aaPanel, init script, ...),
+    so it's used first; systemctl variants remain only as a last-resort
+    fallback for non-standard installs without lswsctrl.
+    """
+    for cmd in (
+        '/usr/local/lsws/bin/lswsctrl restart',
+        'systemctl restart lsws',
+        'systemctl restart lshttpd',
+        'systemctl reload lsws',
+    ):
+        out, err, rc = sh3(f'{cmd} 2>&1', t=30)
+        if rc == 0:
+            return True, out
+    return False, f'All OpenLiteSpeed restart methods failed. Last attempt: {cmd} -> {out}{err}'.strip()
+
+
 def _write_vhost(domain, path, php_ver, webserver):
     """Write vhost config for the given webserver and reload it."""
     ws = webserver or _detect_webserver()
@@ -549,17 +651,28 @@ def _write_vhost(domain, path, php_ver, webserver):
     elif ws == 'openlitespeed':
         vhost_dir = f'/usr/local/lsws/conf/vhosts/{domain}'
         os.makedirs(vhost_dir, exist_ok=True)
+        # vhconf.conf points its errorlog/accesslog directives at
+        # /var/log/openlitespeed/<domain>.{error,access}_log (see
+        # _ols_vhost below) but nothing ever created that directory --
+        # confirmed missing entirely on a live box (`ls /var/log/openlitespeed`
+        # -> "No such file or directory") despite every other part of the
+        # vhost config (vhRoot, docRoot, map entry, virtualhost block) being
+        # correct and OLS having been properly restarted. OLS refuses to
+        # activate a vhost whose log file can't be opened, which produced
+        # exactly this symptom: a fully correct config that 403s anyway,
+        # with the domain's own error log never even coming into existence.
+        os.makedirs('/var/log/openlitespeed', exist_ok=True)
         conf_path = f'{vhost_dir}/vhconf.conf'
         with open(conf_path, 'w') as f:
             f.write(_ols_vhost(domain, path, php_ver))
-        reg_ok, reg_msg = _register_ols_vhost(domain, vhost_dir)
+        reg_ok, reg_msg = _register_ols_vhost(domain, vhost_dir, path)
         if not reg_ok:
             return False, f'OpenLiteSpeed registration error: {reg_msg}'
         htaccess_path = os.path.join(path, '.htaccess')
         if not os.path.exists(htaccess_path):
             with open(htaccess_path, 'w') as f:
                 f.write(_apache_htaccess())
-        sh('kill -USR1 $(cat /tmp/lshttpd.pid 2>/dev/null) 2>/dev/null || systemctl reload lsws 2>/dev/null')
+        _reload_ols()
 
     elif ws == 'caddy':
         os.makedirs('/etc/caddy/sites', exist_ok=True)
@@ -598,7 +711,7 @@ def _delete_vhost(domain, webserver):
         try: shutil.rmtree(f'/usr/local/lsws/conf/vhosts/{domain}')
         except: pass
         _unregister_ols_vhost(domain)
-        sh('kill -USR1 $(cat /tmp/lshttpd.pid 2>/dev/null) 2>/dev/null || systemctl reload lsws 2>/dev/null')
+        _reload_ols()
     elif ws == 'caddy':
         try: os.unlink(f'/etc/caddy/sites/{domain}.caddy')
         except: pass
@@ -817,7 +930,7 @@ def list_sites():
         'sites': sites,
         'webservers': ['nginx', 'apache', 'openlitespeed', 'caddy'],
         'installed_webservers': _installed_webservers(),
-        'php_versions': _available_php(),
+        'php_versions': _available_php(_detect_webserver()),
         'db_engines': _available_db(),
         'wpcli_installed': _wp_installed(),
         'active_webserver': _detect_webserver(),
@@ -881,7 +994,13 @@ def install_wp():
     webroot = '/www/wwwroot'
     if not os.path.isdir(webroot):
         webroot = '/var/www/html'
-    path = d.get('path', f'{webroot}/{domain}').strip()
+    # `d.get('path', default)` only falls back to `default` when the key is
+    # *missing* -- the Install WordPress modal has no path field and always
+    # submits path:'' explicitly, so the key is always present with an empty
+    # string, the "default" here never actually applied, and os.makedirs('')
+    # failed immediately with "[Errno 2] No such file or directory: ''"
+    # before anything else in the install ever ran.
+    path = (d.get('path') or f'{webroot}/{domain}').strip()
 
     def run_install():
         import time as _t
@@ -1634,7 +1753,7 @@ def wp_versions():
 @wp_bp.route('/api/wp/php-versions')
 def php_versions():
     if not req(): return jsonify({'ok': False}), 401
-    return jsonify({'ok': True, 'versions': _available_php()})
+    return jsonify({'ok': True, 'versions': _available_php(_detect_webserver())})
 
 @wp_bp.route('/api/wp/db-engines')
 def db_engines():
