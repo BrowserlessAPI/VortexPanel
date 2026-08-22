@@ -841,7 +841,7 @@ apt-get autoremove -y 2>/dev/null || true''',
 done
 for v in 74 81 82 83 84 85; do
   systemctl stop php$v-php-fpm 2>/dev/null || true
-  dnf remove -y php$v\* 2>/dev/null || yum remove -y php$v\* 2>/dev/null || true
+  dnf remove -y "php${v}*" 2>/dev/null || yum remove -y "php${v}*" 2>/dev/null || true
 done
 apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
