@@ -1039,6 +1039,10 @@ def caddywaf_remove_blacklist():
     with open(path, 'w') as f:
         f.writelines(lines)
     return jsonify({'ok': True})
+
+
+@security_bp.route('/api/security/modsecurity')
+def modsec_status():
     if not req(): return jsonify({'ok':False}), 401
     installed = _modsec_installed()
     state     = _engine_state()

@@ -407,6 +407,10 @@ def disable_caddy_waf(domain):
     os.replace(tmp_path, fp)
     sh('systemctl reload caddy 2>/dev/null')
     return jsonify({'ok': True})
+
+
+@websites_bp.route('/api/websites/<domain>/config')
+def get_config(domain):
     if not req(): return jsonify({'ok':False}), 401
     fp, webserver = _find_site_config(domain)
     if fp:

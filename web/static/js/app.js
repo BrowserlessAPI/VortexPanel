@@ -10,8 +10,23 @@ let _editorCM = null;
 async function api(method, url, body) {
   const opts = { method, headers: {'Content-Type':'application/json'}, cache: 'no-store' };
   if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(url, opts);
-  return r.json();
+  try {
+    const r = await fetch(url, opts);
+    try {
+      return await r.json();
+    } catch (parseErr) {
+      // Server responded but not with JSON - happens during a brief restart
+      // window (deploy.sh) when a proxy serves its own error page instead
+      // of the app. Report this the same way a normal API error would look,
+      // rather than throwing an uncaught exception into whichever
+      // component's init() was awaiting this call.
+      return { ok: false, error: `Server returned an unexpected response (HTTP ${r.status})` };
+    }
+  } catch (networkErr) {
+    // The request never reached the server at all - also typical during a
+    // deploy restart. Same reasoning: fail gracefully instead of throwing.
+    return { ok: false, error: 'Network error — the server may be restarting, try again in a moment' };
+  }
 }
 const get  = url       => api('GET', url);
 const post = (url, b)  => api('POST', url, b);
@@ -3605,7 +3620,8 @@ function bandwidthPage() {
     async init() {
       await this.loadSummary();
       await this.loadDomains();
-      setInterval(()=>this.loadRealtime(), 3000);
+      if (this._rtInterval) clearInterval(this._rtInterval);
+      this._rtInterval = setInterval(()=>this.loadRealtime(), 3000);
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="bandwidth") { this.loadSummary(); this.loadDomains(); } });
     },
 
