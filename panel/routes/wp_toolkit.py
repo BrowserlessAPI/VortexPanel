@@ -861,6 +861,9 @@ def install_wp():
     # going to succeed.
     if not domain:
         return jsonify({'ok': False, 'error': 'Domain is required'}), 400
+    from panel.routes.websites_core import is_valid_domain
+    if not is_valid_domain(domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain name'}), 400
     if not webserver:
         return jsonify({'ok': False, 'error': 'No web server is installed. Install Nginx, Apache2, OpenLiteSpeed, or Caddy from the App Store first.'}), 400
     if webserver not in _installed_webservers():
@@ -1468,6 +1471,10 @@ def clone_site(domain):
     clone_type  = d.get('type', 'full')  # full | files | db
     php_ver     = d.get('php_version', '8.4')
     webserver   = d.get('webserver', '') or _detect_webserver()
+
+    from panel.routes.websites_core import is_valid_domain
+    if not is_valid_domain(domain) or not is_valid_domain(dest_domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain name'}), 400
 
     dest_path = os.path.join(os.path.dirname(src_path), dest_domain)
     os.makedirs(dest_path, exist_ok=True)

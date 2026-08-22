@@ -16,7 +16,11 @@ def monitor_stats_alias():
 def monitor_processes_alias():
     return processes()
 
-@monitoring_bp.route('/api/monitoring')
+# NOTE: '/api/monitoring' is served by monitoring_overview() below (the
+# aggregator the monitoring page actually calls). This alias previously also
+# registered '/api/monitoring' and, being registered first, SHADOWED the
+# overview handler — so the page only ever received a bare process list. Alias
+# kept for '/api/monitor/*' spellings only.
 def monitoring_root():
     return processes()
 

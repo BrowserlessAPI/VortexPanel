@@ -4,7 +4,7 @@ import os, sys, secrets
 from datetime import timedelta
 sys.path.insert(0, os.path.dirname(__file__))
 
-from flask import Flask, request, g
+from flask import Flask, request, g, jsonify
 try:
     from flask_compress import Compress
     _compress_available = True
@@ -99,7 +99,12 @@ def create_app():
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=24)
     app.config['SESSION_COOKIE_HTTPONLY']    = True
     app.config['SESSION_COOKIE_SAMESITE']    = 'Lax'
-    # Don't force Secure flag — panel may run HTTP; let admin configure HTTPS
+    # Set the Secure flag when the panel is served over HTTPS. Defaults to auto:
+    # honour the VORTEX_HTTPS env var (set by the installer/reverse proxy), so
+    # the session cookie is never sent in cleartext on HTTPS deployments while
+    # still allowing plain-HTTP setups. Explicit override: SESSION_COOKIE_SECURE=1/0.
+    _secure_env = os.environ.get('SESSION_COOKIE_SECURE', os.environ.get('VORTEX_HTTPS', ''))
+    app.config['SESSION_COOKIE_SECURE'] = _secure_env.lower() in ('1', 'true', 'yes', 'on')
 
     # -- Server-side sessions (survives gunicorn restarts / nginx reloads) -----
     # flask-session stores session data in files on disk; the cookie only holds
@@ -142,7 +147,11 @@ def create_app():
     # API call prevents use of a stolen session cookie from an unlisted IP.
     @app.before_request
     def enforce_ip_allowlist():
-        if not request.path.startswith('/api/'):
+        # Enforce on API calls AND the terminal WebSocket (/ws/…). The WS gives
+        # a full root shell, so it must be subject to the same IP allowlist as
+        # /api/ — previously only /api/ was checked, letting a stolen session
+        # cookie open the terminal from any IP.
+        if not (request.path.startswith('/api/') or request.path.startswith('/ws/')):
             return None   # Static files / HTML — not checked
         if request.path.startswith('/api/auth/'):
             return None   # Auth endpoints handle their own IP check

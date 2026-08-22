@@ -164,7 +164,14 @@ def start_update():
         return jsonify({'ok': False, 'error': 'Update already in progress'}), 400
 
     d      = request.get_json() or {}
-    target = d.get('version', '')  # tag name like v3.1.0
+    target = (d.get('version', '') or '').strip()  # tag name like v3.1.0
+    # `target` is interpolated into `git checkout {target}` (shell=True) below.
+    # Constrain it to the shape of a real version tag so it can never carry
+    # shell metacharacters (`;`, `|`, `$(...)`, backticks, spaces, …). Anything
+    # else is rejected outright rather than escaped.
+    import re as _re
+    if target and not _re.fullmatch(r'v?\d+(\.\d+){0,3}', target):
+        return jsonify({'ok': False, 'error': 'Invalid version tag'}), 400
 
     save_job('panel_update', {'running': True, 'lines': [], 'done': False, 'success': False, 'error': ''})
 

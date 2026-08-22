@@ -52,6 +52,24 @@ def get_nginx_dirs():
     return vortex_dir, vortex_dir
 
 
+import re as _re_dom
+def is_valid_domain(domain):
+    """Reject anything that isn't a plain hostname before it reaches a shell
+    command or a filesystem path. Allows letters, digits, dots and hyphens
+    only (labels 1-63 chars, total <=253, no leading/trailing dot or hyphen).
+    This blocks shell metacharacters, whitespace, slashes and path-traversal
+    sequences (`;`, `|`, `$(...)`, backticks, spaces, `../`, …) that would
+    otherwise be interpolated into the ~120 shell commands and vhost/DB paths
+    that thread the domain through — including domains parsed from imported
+    cPanel/aaPanel/Hestia archives (untrusted second-order input).
+    """
+    domain = (domain or '').strip().lower()
+    if not domain or len(domain) > 253:
+        return False
+    return bool(_re_dom.fullmatch(
+        r'(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)'
+        r'(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*', domain))
+
 def get_webroot():
     for p in [WEBROOT, '/var/www/html', '/var/www', '/srv/www', '/usr/share/nginx/html']:
         if os.path.isdir(p): return p
@@ -155,6 +173,8 @@ def create_site_core(domain, path=None, php='8.3'):
     path = (path or f'{get_webroot()}/{domain}').strip()
     if not domain:
         return False, {'error': 'Domain required'}
+    if not is_valid_domain(domain):
+        return False, {'error': 'Invalid domain name'}
 
     os.makedirs(path, exist_ok=True)
     idx = os.path.join(path, 'index.html')

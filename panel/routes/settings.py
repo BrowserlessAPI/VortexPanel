@@ -718,6 +718,7 @@ def reboot():
 
 @settings_bp.route('/api/settings/webroot')
 def get_webroot():
+    if not req(): return jsonify({'ok': False}), 401
     for p in ['/www/wwwroot','/var/www/html','/var/www','/srv/www']:
         if os.path.isdir(p): return jsonify({'ok':True,'path':p})
     os.makedirs('/www/wwwroot', exist_ok=True)

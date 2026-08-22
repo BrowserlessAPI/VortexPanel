@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, session
-import hashlib, os, json, secrets, time
+import hashlib, os, json, secrets, time, string
 from collections import defaultdict
 from datetime import datetime
 
@@ -196,8 +196,20 @@ def get_credentials():
             return data
         except Exception:
             pass
-    creds = {'username':'admin', 'password_hash': hashlib.sha256(b'admin123').hexdigest()}
+    # No credentials file found. NEVER fall back to a known default password
+    # (the old 'admin123' constant meant a missing/unreadable creds file left
+    # the panel logged-in-able by anyone). Generate a strong random password,
+    # persist it hashed, and drop the plaintext next to the installer's file so
+    # the operator can recover it locally. Nobody can log in without it.
+    gen = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20))
+    creds = {'username': 'admin', 'password_hash': _hash_password(gen)}
     save_credentials(creds)
+    try:
+        with open('/opt/vortexpanel/admin_password.txt', 'w') as f:
+            f.write(gen + '\n')
+        os.chmod('/opt/vortexpanel/admin_password.txt', 0o600)
+    except Exception:
+        pass
     return creds
 
 def save_credentials(creds):
