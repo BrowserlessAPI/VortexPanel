@@ -111,29 +111,45 @@ def extensions(version):
 @php_bp.route('/api/php/<version>/extensions/<ext>/install', methods=['POST'])
 def install_ext(version, ext):
     if not req(): return jsonify({'ok':False}), 401
-    # Try apt first, then pecl
-    pkg = f'php{version}-{ext}'
-    out = sh(f'apt-get install -y {pkg} 2>&1', t=120)
-    if 'Unable to locate' in out or 'has no installation candidate' in out:
+    # Debian/Ubuntu: php{ver}-{ext}. RHEL/Remi: php{VNODOT}-php-{ext}
+    # (e.g. php83-php-redis) with service php{VNODOT}-php-fpm. Fall back to pecl.
+    vnodot = version.replace('.', '')
+    if sh('command -v apt-get 2>/dev/null'):
+        out = sh(f'apt-get install -y php{version}-{ext} 2>&1', t=120)
+        reload_cmd = f'systemctl reload php{version}-fpm 2>/dev/null || true'
+    else:
+        out = sh(f'dnf install -y php{vnodot}-php-{ext} 2>&1 || yum install -y php{vnodot}-php-{ext} 2>&1', t=120)
+        reload_cmd = f'systemctl reload php{vnodot}-php-fpm 2>/dev/null || systemctl reload php-fpm 2>/dev/null || true'
+    if 'Unable to locate' in out or 'has no installation candidate' in out or 'No match' in out or 'Error:' in out:
         out = sh(f'pecl install {ext} 2>&1', t=120)
     installed = ext in get_installed_extensions(version)
-    sh(f'systemctl reload php{version}-fpm 2>/dev/null || true')
+    sh(reload_cmd)
     return jsonify({'ok':True, 'installed':installed, 'output':out[:500]})
 
 @php_bp.route('/api/php/<version>/extensions/<ext>/uninstall', methods=['POST'])
 def uninstall_ext(version, ext):
     if not req(): return jsonify({'ok':False}), 401
-    out = sh(f'apt-get remove -y php{version}-{ext} 2>&1', t=60)
-    sh(f'systemctl reload php{version}-fpm 2>/dev/null || true')
+    vnodot = version.replace('.', '')
+    if sh('command -v apt-get 2>/dev/null'):
+        out = sh(f'apt-get remove -y php{version}-{ext} 2>&1', t=60)
+        sh(f'systemctl reload php{version}-fpm 2>/dev/null || true')
+    else:
+        out = sh(f'dnf remove -y php{vnodot}-php-{ext} 2>&1 || yum remove -y php{vnodot}-php-{ext} 2>&1', t=60)
+        sh(f'systemctl reload php{vnodot}-php-fpm 2>/dev/null || systemctl reload php-fpm 2>/dev/null || true')
     return jsonify({'ok':True, 'output':out[:300]})
 
 @php_bp.route('/api/php/<version>/ini')
 def get_ini(version):
     if not req(): return jsonify({'ok':False}), 401
+    vnodot = version.replace('.', '')
     paths = [
         f'/etc/php/{version}/fpm/php.ini',
         f'/etc/php/{version}/cli/php.ini',
         f'/usr/local/etc/php/{version}/php.ini',
+        # RHEL / Remi
+        f'/etc/opt/remi/php{vnodot}/php.ini',
+        f'/opt/remi/php{vnodot}/root/etc/php.ini',
+        '/etc/php.ini',
     ]
     for p in paths:
         if os.path.exists(p):

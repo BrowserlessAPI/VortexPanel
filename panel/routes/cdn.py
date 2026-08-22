@@ -56,9 +56,6 @@ def save_cdn_config():
     # Don't overwrite masked values
     existing = cfg.get(provider, {})
     new_entry = {**existing}
-    for key in ['api_key','api_token','zone_id','email','pull_zone_id','pull_zone_name','account_id','region']:
-        if d.get(key) and d[d.get] != '***':
-            new_entry[key] = d[key]
     # Non-secret fields
     for key in ['provider','pull_zone_id','pull_zone_name','zone_id','account_id','region','email']:
         if key in d and d[key] != '***':

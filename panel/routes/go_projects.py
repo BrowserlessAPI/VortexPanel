@@ -15,6 +15,25 @@ Go version support (June 2026):
 """
 from flask import Blueprint, jsonify, request, session
 import subprocess, os, json, re, tempfile
+try:
+    from panel.routes.os_utils import get_webserver_user as _get_web_user
+except Exception:
+    try:
+        from os_utils import get_webserver_user as _get_web_user
+    except Exception:
+        def _get_web_user():
+            return 'www-data' if os.path.exists('/etc/debian_version') else 'nginx'
+def _default_svc_user():
+    """A service user that actually exists on this distro (www-data on
+    Debian/Ubuntu, nginx on RHEL) -- the old hardcoded 'www' default does
+    not exist on any supported distro, so systemd failed the unit with
+    'Failed to determine user credentials' and the app never started."""
+    try:
+        u=_get_web_user()
+        return u or 'www-data'
+    except Exception:
+        return 'www-data'
+
 
 go_bp = Blueprint('go', __name__)
 PROJECTS_FILE = '/opt/vortexpanel/go_projects.json'
@@ -467,7 +486,7 @@ def _build_unit_file(p):
     """Single source of truth for the systemd unit — used by both create and update
     so the two paths can never drift out of sync (they had 100% duplicated code before)."""
     name     = p['name']
-    user     = p.get('user', 'www')
+    user     = p.get('user') or _default_svc_user()
     cmd      = p.get('exec_cmd') or p['exec_file']
     run_dir  = os.path.dirname(p['exec_file'])
     port     = p.get('port', '')
@@ -512,7 +531,7 @@ def create_project():
     exec_file = d.get('exec_file','').strip()
     port      = str(d.get('port','')).strip()
     exec_cmd  = d.get('exec_cmd','').strip()
-    user      = d.get('user','www')
+    user      = d.get('user') or _default_svc_user()
     domain    = d.get('domain','').strip()
     env_raw   = d.get('env_vars','').strip()
     remark    = d.get('remark','').strip()
@@ -802,7 +821,7 @@ def project_ssl(pid):
     if ws not in ('nginx', 'apache2', 'openlitespeed'):
         return jsonify({'ok': False, 'error': 'No active webserver detected'})
 
-    if not sh('which certbot 2>/dev/null'):
+    if not sh('which certbot 2>/dev/null')[0]:
         sh(_pkg_install_certbot(ws), t=120)
 
     domain_args = ' '.join(f'-d {dm}' for dm in domain_lines)

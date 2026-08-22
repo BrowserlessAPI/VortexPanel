@@ -174,8 +174,8 @@ def list_dbs():
         dbs, err = pg_dbs()
         if err:
             return jsonify({'ok':False,'error':err,'databases':[],'engines':engines,'active_engine':engine})
-        ver_raw, _, _ = pg_cmd('SELECT version();')
-        ver = ver_raw.strip().split(' ')[1] if ver_raw else ''
+        ver_raw, _ = pg_cmd('SELECT version();')
+        ver = ver_raw.strip().split(' ')[1] if ver_raw and len(ver_raw.strip().split(' ')) > 1 else ''
         return jsonify({'ok':True,'databases':dbs,'engines':engines,'active_engine':engine,
             'info':{'version':ver,'connections':'N/A','total_size_mb':'N/A'}})
 
@@ -216,7 +216,7 @@ def create_db():
         return jsonify({'ok':True,'name':name})
 
     elif engine == 'mongodb':
-        out, err, rc = sh(f"mongosh --quiet --eval 'use {name}; db.createCollection(\"_init\"); db._init.drop();' 2>/dev/null")
+        out, err, rc = sh(f"mongosh --quiet --eval 'db.getSiblingDB(\"{name}\").createCollection(\"_init\"); db.getSiblingDB(\"{name}\")._init.drop();' 2>/dev/null")
         if rc != 0: return jsonify({'ok':False,'error':err or 'Failed to create MongoDB database'})
         return jsonify({'ok':True,'name':name})
 
@@ -231,7 +231,7 @@ def drop_db(name):
     elif engine == 'postgresql':
         sh(f"sudo -u postgres dropdb '{name}' 2>/dev/null")
     elif engine == 'mongodb':
-        sh(f"mongosh --quiet --eval 'use {name}; db.dropDatabase();' 2>/dev/null")
+        sh(f"mongosh --quiet --eval 'db.getSiblingDB(\"{name}\").dropDatabase();' 2>/dev/null")
     return jsonify({'ok':True})
 
 @databases_bp.route('/api/databases/<name>/export')

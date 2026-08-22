@@ -152,8 +152,8 @@ def create_sudo_user():
             return jsonify({'ok':False,'error':f'Failed to set password: {pw_proc.stderr.strip()}'}), 500
 
     # Add to sudo/wheel group
-    os_family = sh('. /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian')
-    sudo_group = 'wheel' if 'rhel' in os_family or 'fedora' in os_family else 'sudo'
+    os_family, _, _ = sh('. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian')
+    sudo_group = 'wheel' if any(x in os_family for x in ('rhel','fedora','centos','almalinux','rocky','ol','cloudlinux')) else 'sudo'
     sh(f'usermod -aG {sudo_group} {username} 2>/dev/null')
 
     # Add SSH public key
@@ -649,7 +649,7 @@ def _modsec_configtest():
     """Validate config for whichever webserver is active. Returns
     (ok, output)."""
     if _modsec_target() == 'apache':
-        out, err, rc = sh('apache2ctl configtest 2>&1')
+        out, err, rc = sh('apache2ctl configtest 2>&1 || apachectl configtest 2>&1 || httpd -t 2>&1')
         return rc == 0, (out or err)
     out, err, rc = sh('nginx -t 2>&1')
     return rc == 0, (out or err)
@@ -657,7 +657,7 @@ def _modsec_configtest():
 def _modsec_reload():
     """Reload whichever webserver is active."""
     if _modsec_target() == 'apache':
-        sh('systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null')
+        sh('systemctl reload apache2 2>/dev/null || systemctl reload httpd 2>/dev/null || service apache2 reload 2>/dev/null || apachectl graceful 2>/dev/null')
     else:
         sh('systemctl reload nginx 2>/dev/null')
 
@@ -1553,7 +1553,7 @@ def modsec_update_crs():
     tag = api_out.strip() if rc == 0 and api_out.strip().startswith('v') else 'v4.0.0'
     ver = tag.lstrip('v')
 
-    reload_cmd = 'apache2ctl configtest && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null)' \
+    reload_cmd = '(apache2ctl configtest 2>/dev/null || apachectl configtest 2>/dev/null || httpd -t 2>/dev/null) && (systemctl reload apache2 2>/dev/null || systemctl reload httpd 2>/dev/null)' \
         if _modsec_target() == 'apache' else 'nginx -t && systemctl reload nginx 2>/dev/null'
     out, err, rc = sh(
         f'wget -q https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz'

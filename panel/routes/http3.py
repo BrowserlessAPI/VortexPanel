@@ -283,9 +283,26 @@ def http3_toggle(domain):
         if re.search(r'listen\s+443\s+quic', content):
             _open_udp_443()
             return jsonify({'ok': True, 'message': 'HTTP/3 already enabled', 'enabled': True})
+        # `reuseport` may appear on only ONE listen directive per address:port
+        # across the whole nginx config. If any other site already owns it,
+        # adding a second makes `nginx -t` fail and HTTP/3 becomes un-enableable
+        # beyond the first site. Detect it and omit the keyword here if so.
+        reuseport_taken = False
+        try:
+            avail, _ = get_nginx_dirs()
+            import glob as _glob
+            for _cf in _glob.glob(os.path.join(avail, '*')) + _glob.glob('/etc/nginx/conf.d/*'):
+                try:
+                    if _cf != fp and 'quic reuseport' in open(_cf).read():
+                        reuseport_taken = True; break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        quic_listen = 'listen 443 quic;' if reuseport_taken else 'listen 443 quic reuseport;'
         content = re.sub(
             r'(listen\s+443\s+ssl;)',
-            r'\1\n    listen 443 quic reuseport;\n    http2 on;\n'
+            r'\1\n    ' + quic_listen + '\n    http2 on;\n'
             r'    add_header Alt-Svc \'h3=":443"; ma=86400\' always;',
             content, count=1
         )

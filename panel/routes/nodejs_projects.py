@@ -6,6 +6,25 @@ OS family: Debian/Ubuntu + RHEL/AlmaLinux/Rocky/CentOS/Oracle/Fedora
 """
 from flask import Blueprint, jsonify, request, session
 import subprocess, os, json, re, shutil
+try:
+    from panel.routes.os_utils import get_webserver_user as _get_web_user
+except Exception:
+    try:
+        from os_utils import get_webserver_user as _get_web_user
+    except Exception:
+        def _get_web_user():
+            return 'www-data' if os.path.exists('/etc/debian_version') else 'nginx'
+def _default_svc_user():
+    """A service user that actually exists on this distro (www-data on
+    Debian/Ubuntu, nginx on RHEL) -- the old hardcoded 'www' default does
+    not exist on any supported distro, so systemd failed the unit with
+    'Failed to determine user credentials' and the app never started."""
+    try:
+        u=_get_web_user()
+        return u or 'www-data'
+    except Exception:
+        return 'www-data'
+
 
 nodejs_bp = Blueprint('nodejs', __name__)
 PROJECTS_FILE = '/opt/vortexpanel/nodejs_projects.json'
@@ -421,7 +440,7 @@ After=network.target
 
 [Service]
 Type=simple
-User={p.get('user','www')}
+User={p.get('user') or _default_svc_user()}
 WorkingDirectory={p['path']}
 ExecStart={cmd}
 Restart=always
@@ -464,7 +483,7 @@ def create_project():
     path         = d.get('path','').strip()
     pm2_mode     = d.get('pm2', False)
     port         = d.get('port','')
-    user         = d.get('user','www')
+    user         = d.get('user') or _default_svc_user()
     node_ver     = d.get('node_version','')
     domain       = d.get('domain','').strip()
     startup_file = d.get('startup_file','').strip()

@@ -289,15 +289,23 @@ def container_action(cid):
     action = (request.get_json() or {}).get('action', '')
     if action not in ('start','stop','restart','remove','pause','unpause'):
         return jsonify({'ok': False, 'error': 'Invalid action'}), 400
+    # Resolve the container NAME before removal — the domain/proxy map is
+    # keyed by name, not id, so cleaning up after `docker rm` needs the name
+    # captured while the container still exists.
+    cname = ''
+    if action == 'remove':
+        cname, _, _ = sh(f'docker inspect -f "{{{{.Name}}}}" {cid}')
+        cname = (cname or '').lstrip('/').strip()
     cmd = f'docker rm -f {cid}' if action == 'remove' else f'docker {action} {cid}'
     _, err, rc = sh(cmd)
     if action == 'remove' and rc == 0:
-        # Clean up any domain/proxy config tied to this container name
+        # Clean up any domain/proxy config tied to this container (by name or id)
         domains = _load_docker_domains()
-        if cid in domains:
-            _remove_docker_proxy(cid)
-            domains.pop(cid, None)
-            _save_docker_domains(domains)
+        for key in (cname, cid):
+            if key and key in domains:
+                _remove_docker_proxy(key)
+                domains.pop(key, None)
+                _save_docker_domains(domains)
     return jsonify({'ok': rc == 0, 'error': err if rc != 0 else ''})
 
 @docker_bp.route('/api/docker/containers/<cid>/logs')

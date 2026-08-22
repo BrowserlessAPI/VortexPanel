@@ -133,6 +133,9 @@ def chat():
 def quick_action():
     """Pre-built quick actions for specific panel contexts"""
     if not req(): return jsonify({'ok': False}), 401
+    cfg = load_config()
+    if not cfg.get('enabled'):
+        return jsonify({'ok': False, 'error': 'AI assistant is disabled'}), 400
     d      = request.get_json() or {}
     action = d.get('action', '')
     data   = d.get('data', '')

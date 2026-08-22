@@ -202,11 +202,17 @@ def set_maintenance(domain):
     webroot = webroot_m.group(1).strip() if webroot_m else f'/www/wwwroot/{domain}'
     maint_file = f'{webroot}/maintenance.html'
 
+    with open(fp) as f: original = f.read()
+    content = original
+
     if enable:
         with open(maint_file,'w') as f:
             f.write(MAINTENANCE_HTML.format(message=message))
-        with open(fp) as f: content = f.read()
         if '#VP_MAINTENANCE' not in content:
+            # Explicit start/end markers so the removal below can excise the
+            # WHOLE block reliably. The previous non-greedy regex stopped at
+            # the block's own `location = /maintenance.html {` line, leaving an
+            # orphaned location + `}` behind and breaking the vhost.
             maint_block = f'''
     #VP_MAINTENANCE
     set $maintenance 1;
@@ -219,18 +225,30 @@ def set_maintenance(domain):
         root {webroot};
         internal;
     }}
+    #VP_MAINTENANCE_END
 '''
             content = re.sub(r'(server\s*\{[^\n]*\n)', r'\1' + maint_block, content, count=1)
-            with open(fp,'w') as f: f.write(content)
     else:
-        with open(fp) as f: content = f.read()
-        content = re.sub(r'\s*#VP_MAINTENANCE.*?(?=\n\s*location|\n\s*})', '', content, flags=re.DOTALL)
-        with open(fp,'w') as f: f.write(content)
+        # Prefer the marker-delimited block; fall back to matching the exact
+        # legacy block shape (start marker through the maintenance location's
+        # closing brace) for configs written before markers existed.
+        if '#VP_MAINTENANCE_END' in content:
+            content = re.sub(r'\n?\s*#VP_MAINTENANCE\b.*?#VP_MAINTENANCE_END[^\n]*\n?',
+                             '\n', content, flags=re.DOTALL)
+        else:
+            content = re.sub(
+                r'\n?\s*#VP_MAINTENANCE\b.*?location\s*=\s*/maintenance\.html\s*\{.*?\}\n?',
+                '\n', content, flags=re.DOTALL)
         try: os.unlink(maint_file)
         except: pass
 
+    with open(fp,'w') as f: f.write(content)
     test = sh('nginx -t 2>&1')
-    if 'failed' in test.lower(): return jsonify({'ok':False,'error':test}), 400
+    if 'failed' in test.lower() or 'error' in test.lower():
+        # Roll back to the known-good config so a bad edit never takes nginx
+        # down on the next reload.
+        with open(fp,'w') as f: f.write(original)
+        return jsonify({'ok':False,'error':test}), 400
     reload_nginx()
     return jsonify({'ok':True,'enabled':enable})
 

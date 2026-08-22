@@ -15,37 +15,37 @@ DEPLOY_APPS = {
         'cmd':'''wget -q https://wordpress.org/latest.tar.gz -O /tmp/wp.tar.gz && \
 tar -xzf /tmp/wp.tar.gz -C {path}/ --strip-components=1 && \
 cp {path}/wp-config-sample.php {path}/wp-config.php && \
-chown -R www-data:www-data {path}/ 2>/dev/null || true''',
+chown -R $(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx):$(getent group www-data >/dev/null 2>&1 && echo www-data || echo nginx) {path}/ 2>/dev/null || true''',
     },
     'drupal': {
         'name':'Drupal','version':'11.1','icon':'https://www.drupal.org/files/druplicon-small.png',
         'desc':'Enterprise-grade CMS trusted by governments & Fortune 500.',
         'cmd':'''wget -q https://ftp.drupal.org/files/projects/drupal-11.1.0.tar.gz -O /tmp/drupal.tar.gz && \
 tar -xzf /tmp/drupal.tar.gz -C {path}/ --strip-components=1 && \
-chown -R www-data:www-data {path}/ 2>/dev/null || true''',
+chown -R $(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx):$(getent group www-data >/dev/null 2>&1 && echo www-data || echo nginx) {path}/ 2>/dev/null || true''',
     },
     'joomla': {
         'name':'Joomla','version':'5.2','icon':'https://www.joomla.org/images/joomla_logo_black.png',
         'desc':'Flexible CMS for complex websites and web applications.',
         'cmd':'''wget -q https://github.com/joomla/joomla-cms/releases/download/5.2.6/Joomla_5.2.6-Stable-Full_Package.tar.gz -O /tmp/joomla.tar.gz && \
 tar -xzf /tmp/joomla.tar.gz -C {path}/ && \
-chown -R www-data:www-data {path}/ 2>/dev/null || true''',
+chown -R $(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx):$(getent group www-data >/dev/null 2>&1 && echo www-data || echo nginx) {path}/ 2>/dev/null || true''',
     },
     'laravel': {
         'name':'Laravel','version':'11.x','icon':'https://laravel.com/img/logomark.min.svg',
         'desc':'The PHP framework for web artisans. Elegant, expressive syntax.',
         'cmd':'''which composer 2>/dev/null || curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer && \
 composer create-project laravel/laravel {path} --prefer-dist -q && \
-chown -R www-data:www-data {path}/ 2>/dev/null || true''',
+chown -R $(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx):$(getent group www-data >/dev/null 2>&1 && echo www-data || echo nginx) {path}/ 2>/dev/null || true''',
     },
     'opencart': {
         'name':'OpenCart','version':'4.1.0','icon':'https://www.opencart.com/application/view/image/icon/opencart-logo.png',
         'desc':'Open source ecommerce solution — easy to use, feature-rich.',
         'cmd':'''wget -q https://github.com/opencart/opencart/releases/download/4.1.0.3/opencart-4.1.0.3.zip -O /tmp/oc.zip && \
-apt-get install -y unzip -qq && \
+(command -v unzip >/dev/null 2>&1 || apt-get install -y unzip 2>/dev/null || dnf install -y unzip 2>/dev/null || yum install -y unzip 2>/dev/null) && \
 unzip -q /tmp/oc.zip -d /tmp/oc_extract/ && \
 cp -r /tmp/oc_extract/upload/. {path}/ && \
-chown -R www-data:www-data {path}/ 2>/dev/null || true''',
+chown -R $(id -u www-data >/dev/null 2>&1 && echo www-data || echo nginx):$(getent group www-data >/dev/null 2>&1 && echo www-data || echo nginx) {path}/ 2>/dev/null || true''',
     },
 }
 

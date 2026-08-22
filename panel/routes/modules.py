@@ -7,6 +7,36 @@ except ImportError:
 
 modules_bp = Blueprint('modules', __name__)
 
+# Service unit names differ across distros (apache2<->httpd, supervisor<->
+# supervisord, mysql<->mysqld). The App Store catalog stores one logical name;
+# resolve it to whichever unit actually exists on THIS host so start/stop/
+# status/uninstall work on the RHEL family too, not just Debian/Ubuntu.
+_SVC_ALIASES = {
+    'apache2': ['apache2', 'httpd'], 'httpd': ['httpd', 'apache2'],
+    'mysql': ['mysql', 'mysqld'], 'mysqld': ['mysqld', 'mysql'],
+    'mariadb': ['mariadb', 'mysqld'],
+    'redis-server': ['redis-server', 'redis'], 'redis': ['redis', 'redis-server'],
+    'supervisor': ['supervisor', 'supervisord'], 'supervisord': ['supervisord', 'supervisor'],
+    'named': ['named', 'bind9', 'named-chroot'], 'bind9': ['bind9', 'named'],
+}
+
+def _resolve_svc(svc):
+    """Return the systemd unit name that actually exists on this host for a
+    logical service name, trying distro alternates."""
+    if not svc:
+        return svc
+    for c in _SVC_ALIASES.get(svc, [svc]):
+        try:
+            rc = subprocess.run(
+                f'systemctl list-unit-files {c}.service 2>/dev/null | grep -qi {c} '
+                f'|| systemctl cat {c} >/dev/null 2>&1',
+                shell=True, timeout=8).returncode
+            if rc == 0:
+                return c
+        except Exception:
+            pass
+    return _SVC_ALIASES.get(svc, [svc])[0]
+
 def os_cmd(apt_cmd):
     """Translate apt-get commands to the current OS package manager"""
     _os = get_os()
@@ -197,12 +227,16 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
   apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && \
   apt-get install -y nginx && systemctl enable --now nginx; \
 elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then \
+  if [ -n "$(rpm -E %fedora 2>/dev/null)" ]; then \
+    (dnf install -y nginx 2>/dev/null || yum install -y nginx) && systemctl enable --now nginx; \
+  else \
   RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && \
   REPO_PATH="rhel/$RHEL_VER" && \
   [ "{ver}" = "mainline" ] && REPO_PATH="mainline/rhel/$RHEL_VER" || true && \
   printf "[nginx]\nname=nginx repo\nbaseurl=http://nginx.org/packages/%s/\\$basearch/\ngpgcheck=1\nenabled=1\ngpgkey=https://nginx.org/keys/nginx_signing.key\nmodule_hotfixes=true\n" "$REPO_PATH" > /etc/yum.repos.d/nginx.repo && \
   (dnf install -y nginx 2>/dev/null || yum install -y nginx) && \
   systemctl enable --now nginx; \
+  fi; \
 fi''',
         'install':'(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y nginx && systemctl enable --now nginx',
         'uninstall':'systemctl stop nginx 2>/dev/null; systemctl disable nginx 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=\'--force-confdef\' -o Dpkg::Options::=\'--force-confold\' nginx nginx-common nginx-full nginx-core 2>/dev/null; dnf remove -y nginx 2>/dev/null; yum remove -y nginx 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -rf /etc/nginx /usr/share/keyrings/nginx-archive-keyring.gpg /etc/apt/sources.list.d/nginx.list /etc/apt/sources.list.d/nginx-mainline.list /etc/yum.repos.d/nginx.repo 2>/dev/null; apt-get update -qq 2>/dev/null; true',
@@ -217,25 +251,25 @@ fi''',
             {'label':'2.4.67 (Stable)',         'value':'2.4.67'},
         ],
         'install_tpl':(
-            'export DEBIAN_FRONTEND=noninteractive && '
-            # Same failure class already confirmed for ondrej/php: this PPA
-            # may not have a release for a very new Ubuntu codename yet, and
-            # add-apt-repository writes it to disk regardless of whether the
-            # following apt-get update ever succeeds -- silently poisoning
-            # every future apt-get update on the system, unrelated installs
-            # included, unless cleaned up here on failure.
-            'add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
-            'if ! apt-get update -qq 2>/tmp/vp_apache_repo_err.log; then '
-            '  echo "[VortexPanel] ondrej/apache2 has no release for {codename} yet -- removing it, using stock Ubuntu apache2 instead"; '
-            '  add-apt-repository --remove -y ppa:ondrej/apache2 2>/dev/null; '
-            '  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.list /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.sources 2>/dev/null; '
-            '  apt-get update -qq; '
-            'fi && '
-            'apt-get install -y apache2={ver}.* 2>/dev/null || apt-get install -y apache2 && '
-            'systemctl enable apache2 && systemctl start apache2'
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  export DEBIAN_FRONTEND=noninteractive; '
+            '  add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
+            '  if ! apt-get update -qq 2>/tmp/vp_apache_repo_err.log; then '
+            '    echo "[VortexPanel] ondrej/apache2 has no release for {codename} yet -- using stock apache2"; '
+            '    add-apt-repository --remove -y ppa:ondrej/apache2 2>/dev/null; '
+            '    rm -f /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.list /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.sources 2>/dev/null; '
+            '    apt-get update -qq; '
+            '  fi; '
+            '  (apt-get install -y apache2={ver}.* 2>/dev/null || apt-get install -y apache2) && '
+            '  systemctl enable apache2 && systemctl start apache2; '
+            'else '
+            '  (dnf install -y httpd mod_ssl 2>/dev/null || yum install -y httpd mod_ssl) && '
+            '  systemctl enable httpd && systemctl start httpd; '
+            'fi'
         ),
-        'install':'export DEBIAN_FRONTEND=noninteractive && apt-get install -y apache2 && systemctl enable apache2 && systemctl start apache2',
-        'uninstall':'systemctl stop apache2 2>/dev/null; systemctl disable apache2 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold apache2 apache2-utils apache2-bin && apt-get autoremove -y',
+        'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then export DEBIAN_FRONTEND=noninteractive && apt-get install -y apache2 && systemctl enable --now apache2; else (dnf install -y httpd mod_ssl 2>/dev/null || yum install -y httpd mod_ssl) && systemctl enable --now httpd; fi',
+        'uninstall':'systemctl stop apache2 httpd 2>/dev/null; systemctl disable apache2 httpd 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold apache2 apache2-utils apache2-bin 2>/dev/null; dnf remove -y httpd mod_ssl 2>/dev/null; yum remove -y httpd mod_ssl 2>/dev/null; apt-get autoremove -y 2>/dev/null; true',
         'service':'apache2', 'manage':True,
     },
     {
@@ -292,7 +326,7 @@ mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2
         'uninstall':(
             'systemctl stop lsws 2>/dev/null; systemctl disable lsws 2>/dev/null; '
             '/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; '
-            "apt-get remove -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' openlitespeed 2>/dev/null; "
+            "apt-get remove -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' openlitespeed 2>/dev/null; dnf remove -y openlitespeed 2>/dev/null; yum remove -y openlitespeed 2>/dev/null; "
             'rm -rf /usr/local/lsws; '
             # LiteSpeed's own ls_repo.sh (downloaded from repo.litespeed.sh)
             # writes the actual apt source file under a name that isn't
@@ -652,10 +686,10 @@ mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2
 bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" --skip-maxscale; \
 for f in /etc/apt/sources.list.d/*.sources; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then awk -v RS="" -v ORS="\n\n" \'tolower($0) !~ /maxscale/\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi; done; \
 for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then sed -i \'/[Mm]ax[Ss]cale/d\' "$f"; fi; done; \
-apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && \
+if command -v apt-get >/dev/null 2>&1; then apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server; else (dnf install -y MariaDB-server 2>/dev/null || yum install -y MariaDB-server 2>/dev/null || dnf install -y mariadb-server 2>/dev/null || yum install -y mariadb-server); fi && \
 systemctl enable --now mariadb''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && systemctl enable mariadb && systemctl start mariadb',
-        'uninstall':'systemctl stop mariadb 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common mysql-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop mariadb 2>/dev/null; dnf remove -y MariaDB-server MariaDB-client mariadb-server mariadb 2>/dev/null; yum remove -y MariaDB-server mariadb-server 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common mysql-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'mariadb', 'manage':True,
     },
     {
@@ -771,18 +805,29 @@ systemctl enable --now mariadb''',
             {'label':'8.1 (EOL — unpatched)',        'value':'8.1'},
             {'label':'7.4 (EOL — unpatched)',        'value':'7.4'},
         ],
-        'install_tpl':'''apt-get install -y software-properties-common && \
+        'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
+apt-get install -y software-properties-common && \
 add-apt-repository -y ppa:ondrej/php && apt-get update -q && \
 apt-get install -y php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml \
 php{ver}-curl php{ver}-gd php{ver}-mbstring php{ver}-zip php{ver}-bcmath php{ver}-intl \
 php{ver}-soap php{ver}-cli php{ver}-readline && \
 systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm && \
-WEB_USER=$(grep -oP '^user\\s+\\K\\S+' /etc/nginx/nginx.conf 2>/dev/null | tr -d ';' | head -1) && \
+WEB_USER=$(grep -oP \'^user\\s+\\K\\S+\' /etc/nginx/nginx.conf 2>/dev/null | tr -d \';\' | head -1) && \
 WEB_USER=${WEB_USER:-www-data} && \
 POOL=/etc/php/{ver}/fpm/pool.d/www.conf && \
-grep -q '^listen.owner' $POOL && sed -i "s|^listen.owner.*|listen.owner = $WEB_USER|" $POOL || echo "listen.owner = $WEB_USER" >> $POOL && \
-grep -q '^listen.group' $POOL && sed -i "s|^listen.group.*|listen.group = $WEB_USER|" $POOL || echo "listen.group = $WEB_USER" >> $POOL && \
-systemctl restart php{ver}-fpm''',
+grep -q \'^listen.owner\' $POOL && sed -i "s|^listen.owner.*|listen.owner = $WEB_USER|" $POOL || echo "listen.owner = $WEB_USER" >> $POOL && \
+grep -q \'^listen.group\' $POOL && sed -i "s|^listen.group.*|listen.group = $WEB_USER|" $POOL || echo "listen.group = $WEB_USER" >> $POOL && \
+systemctl restart php{ver}-fpm; \
+else \
+RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9); VNODOT=$(echo {ver} | tr -d .); \
+(dnf install -y https://rpms.remirepo.net/enterprise/remi-release-${RHEL_VER}.rpm 2>/dev/null || yum install -y https://rpms.remirepo.net/enterprise/remi-release-${RHEL_VER}.rpm 2>/dev/null || true) && \
+(command -v dnf >/dev/null 2>&1 && dnf install -y dnf-utils 2>/dev/null; true) && \
+(dnf install -y php${VNODOT} php${VNODOT}-php-fpm php${VNODOT}-php-mysqlnd php${VNODOT}-php-xml php${VNODOT}-php-gd php${VNODOT}-php-mbstring php${VNODOT}-php-zip php${VNODOT}-php-bcmath php${VNODOT}-php-intl php${VNODOT}-php-soap php${VNODOT}-php-cli 2>/dev/null || \
+ yum install -y php${VNODOT} php${VNODOT}-php-fpm php${VNODOT}-php-mysqlnd php${VNODOT}-php-xml php${VNODOT}-php-gd php${VNODOT}-php-mbstring php${VNODOT}-php-zip php${VNODOT}-php-bcmath php${VNODOT}-php-intl php${VNODOT}-php-soap php${VNODOT}-php-cli 2>/dev/null) && \
+POOL=/etc/opt/remi/php${VNODOT}/php-fpm.d/www.conf; WEB_USER=nginx; id nginx >/dev/null 2>&1 || WEB_USER=apache; \
+[ -f "$POOL" ] && sed -i "s|^listen.owner.*|listen.owner = $WEB_USER|; s|^listen.group.*|listen.group = $WEB_USER|" "$POOL"; \
+systemctl enable --now php${VNODOT}-php-fpm; \
+fi''',
         'install':'',
         'uninstall_tpl':'''systemctl stop php{ver}-fpm 2>/dev/null || true && \
 systemctl disable php{ver}-fpm 2>/dev/null || true && \
@@ -793,6 +838,10 @@ apt-get autoremove -y 2>/dev/null || true''',
         'uninstall':'''for ver in 7.4 8.1 8.2 8.3 8.4; do
   systemctl stop php$ver-fpm 2>/dev/null || true
   apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold php$ver php$ver-* 2>/dev/null || true
+done
+for v in 74 81 82 83 84 85; do
+  systemctl stop php$v-php-fpm 2>/dev/null || true
+  dnf remove -y php$v\* 2>/dev/null || yum remove -y php$v\* 2>/dev/null || true
 done
 apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
@@ -820,7 +869,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             'fi && '
             'systemctl enable pure-ftpd && systemctl start pure-ftpd'
         ),
-        'uninstall':'systemctl stop pure-ftpd 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pure-ftpd pure-ftpd-common && apt-get autoremove -y',
+        'uninstall':'systemctl stop pure-ftpd 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pure-ftpd pure-ftpd-common 2>/dev/null; dnf remove -y pure-ftpd 2>/dev/null; yum remove -y pure-ftpd 2>/dev/null; apt-get autoremove -y 2>/dev/null; true',
         'service':'pure-ftpd', 'manage':True,
     },
     # --- Admin Tools -----------------------------------------------------------
@@ -832,7 +881,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'5.2.2 (Latest)', 'value':'5.2.2'},
         ],
         'install':(
-            'DEBIAN_FRONTEND=noninteractive apt-get install -y wget && '
+            '(command -v wget >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y wget 2>/dev/null || dnf install -y wget 2>/dev/null || yum install -y wget 2>/dev/null) && '
             'wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.2/'
             'phpMyAdmin-5.2.2-all-languages.tar.gz -O /tmp/pma.tar.gz && '
             'mkdir -p /usr/share/phpmyadmin && '
@@ -963,7 +1012,7 @@ fi''',
             '  systemctl enable clamd@scan 2>/dev/null; systemctl start clamd@scan 2>/dev/null; '
             'fi; true'
         ),
-        'uninstall':'systemctl stop clamav-daemon clamav-freshclam 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold clamav clamav-daemon clamav-freshclam && apt-get autoremove -y',
+        'uninstall':'systemctl stop clamav-daemon clamav-freshclam 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold clamav clamav-daemon clamav-freshclam 2>/dev/null; dnf remove -y clamav clamd clamav-update 2>/dev/null; yum remove -y clamav clamd clamav-update 2>/dev/null; apt-get autoremove -y 2>/dev/null; true',
         'service':'clamav-daemon', 'manage':True,
     },
     # --- DNS -------------------------------------------------------------------
@@ -974,8 +1023,8 @@ fi''',
         'versions':[
             {'label':'Latest (apt)', 'value':'latest'},
         ],
-        'install':'apt-get install -y ddclient',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold ddclient && apt-get autoremove -y',
+        'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then apt-get install -y ddclient; else (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && (dnf install -y ddclient 2>/dev/null || yum install -y ddclient); fi',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold ddclient 2>/dev/null; dnf remove -y ddclient 2>/dev/null; yum remove -y ddclient 2>/dev/null; apt-get autoremove -y 2>/dev/null',
         'manage':False,
     },
         {
@@ -1049,17 +1098,17 @@ fi''',
             {'label':'v22 LTS — Maintenance (Jod)', 'value':'22'},
             {'label':'v26 Current (non-LTS)',       'value':'26'},
         ],
-        'install_tpl':'''mkdir -p /etc/apt/keyrings && \\
+        'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then mkdir -p /etc/apt/keyrings && \\
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{ver}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \\
 apt-get update -o APT::Update::Error-Mode=any && \\
-DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs''',
-        'install':'''mkdir -p /etc/apt/keyrings && \\
+DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; else curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - && (dnf install -y nodejs 2>/dev/null || yum install -y nodejs); fi''',
+        'install':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then mkdir -p /etc/apt/keyrings && \\
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \\
 apt-get update -o APT::Update::Error-Mode=any && \\
-DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs''',
-        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nodejs && apt-get autoremove -y && rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg /usr/share/keyrings/nodesource-repo.gpg /etc/apt/keyrings/nodesource.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; else curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - && (dnf install -y nodejs 2>/dev/null || yum install -y nodejs); fi''',
+        'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nodejs 2>/dev/null; dnf remove -y nodejs 2>/dev/null; yum remove -y nodejs 2>/dev/null; apt-get autoremove -y 2>/dev/null; true && rm -f /etc/apt/sources.list.d/nodesource.list /usr/share/keyrings/nodesource.gpg /usr/share/keyrings/nodesource-repo.gpg /etc/apt/keyrings/nodesource.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'manage':False,
     },
     {
@@ -1072,7 +1121,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs''',
             {'label':'3.12 (Active)',   'value':'3.12'},
             {'label':'3.13 (Latest)',   'value':'3.13'},
         ],
-        'install_tpl':'''apt-get install -y software-properties-common && \
+        'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
+apt-get install -y software-properties-common && \
 add-apt-repository -y ppa:deadsnakes/ppa && \
 if ! apt-get update -q 2>/tmp/vp_python_repo_err.log; then \
   echo "[VortexPanel] deadsnakes/ppa has no release for {codename} yet -- this specific Python version cannot be installed via PPA on this OS release. Removing the broken repo entry so it does not block other installs."; \
@@ -1082,7 +1132,11 @@ if ! apt-get update -q 2>/tmp/vp_python_repo_err.log; then \
   exit 1; \
 fi && \
 apt-get install -y python{ver} python{ver}-venv python{ver}-dev && \
-curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true''',
+curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true; \
+else \
+(dnf install -y python{ver} python{ver}-devel python{ver}-pip 2>/dev/null || yum install -y python{ver} python{ver}-devel 2>/dev/null) && \
+curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true; \
+fi''',
         'install':'apt-get install -y python3 python3-pip python3-venv python3-dev',
         'uninstall_tpl':'''apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python{ver} python{ver}-venv python{ver}-dev \
 python{ver}-distutils python{ver}-lib2to3 2>/dev/null || true && \
@@ -1090,6 +1144,7 @@ apt-get autoremove -y 2>/dev/null || true && \
 update-alternatives --remove python /usr/bin/python{ver} 2>/dev/null || true''',
         'uninstall':'''for ver in 3.10 3.11 3.12 3.13; do
   apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python$ver python$ver-* 2>/dev/null || true
+  dnf remove -y python$ver 2>/dev/null || yum remove -y python$ver 2>/dev/null || true
 done
 apt-get autoremove -y 2>/dev/null || true''',
         'manage':False,
@@ -1105,7 +1160,7 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'v29 CE (Latest)',  'value':'29'},
         ],
         'install':'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker',
-        'uninstall':'systemctl stop docker 2>/dev/null; systemctl disable docker 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && apt-get autoremove -y && rm -f /usr/share/keyrings/docker-archive-keyring.gpg /etc/apt/sources.list.d/docker.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop docker 2>/dev/null; systemctl disable docker 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; dnf remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; yum remove -y docker-ce docker-ce-cli containerd.io 2>/dev/null; apt-get autoremove -y 2>/dev/null; true && rm -f /usr/share/keyrings/docker-archive-keyring.gpg /etc/apt/sources.list.d/docker.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'docker', 'manage':True,
     },
     # --- Dev -------------------------------------------------------------------
@@ -1141,19 +1196,19 @@ apt-get autoremove -y 2>/dev/null || true''',
             {'label':'7.2.7 (Stable)', 'value':'7.2'},
             {'label':'8.0.2 (Latest)', 'value':'8.0'},
         ],
-        'install_tpl':'''rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+        'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_redis_repo_err.log; then \
   echo "[VortexPanel] packages.redis.io has no release for $(lsb_release -cs) yet -- removing it, using distro-packaged redis-server instead"; \
   rm -f /etc/apt/sources.list.d/redis.list; \
   apt-get update -qq; \
 fi; \
-apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
-        'install':'''rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server; else (dnf install -y redis 2>/dev/null || (dnf install -y epel-release 2>/dev/null; dnf install -y redis 2>/dev/null) || yum install -y redis) && systemctl enable --now redis; fi''',
+        'install':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
-apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server''',
-        'uninstall':'systemctl stop redis-server 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold redis-server redis-tools && apt-get autoremove -y && rm -f /usr/share/keyrings/redis-archive-keyring.gpg /etc/apt/sources.list.d/redis.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server; else (dnf install -y redis 2>/dev/null || (dnf install -y epel-release 2>/dev/null; dnf install -y redis 2>/dev/null) || yum install -y redis) && systemctl enable --now redis; fi''',
+        'uninstall':'systemctl stop redis-server redis 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold redis-server redis-tools 2>/dev/null; dnf remove -y redis 2>/dev/null; yum remove -y redis 2>/dev/null; apt-get autoremove -y 2>/dev/null && rm -f /usr/share/keyrings/redis-archive-keyring.gpg /etc/apt/sources.list.d/redis.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'redis-server', 'manage':True,
     },
     # --- Server Tools ----------------------------------------------------------
@@ -1165,13 +1220,19 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
             {'label':'4.3.0 (Latest Stable)', 'value':'latest'},
         ],
         'install_tpl':(
-            'export DEBIAN_FRONTEND=noninteractive && '
-            + ('apt-get install -y supervisor' if __import__("subprocess").run("which apt-get",shell=True,capture_output=True).returncode==0 else 'dnf install -y supervisor') +
-            ' && systemctl enable supervisord 2>/dev/null || systemctl enable supervisor && '
-            'systemctl start supervisord 2>/dev/null || systemctl start supervisor'
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  export DEBIAN_FRONTEND=noninteractive && apt-get install -y supervisor && '
+            '  (systemctl enable supervisord 2>/dev/null || systemctl enable supervisor) && '
+            '  (systemctl start supervisord 2>/dev/null || systemctl start supervisor); '
+            'else '
+            '  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && '
+            '  (dnf install -y supervisor 2>/dev/null || yum install -y supervisor) && '
+            '  systemctl enable --now supervisord; '
+            'fi'
         ),
-        'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable supervisor && systemctl start supervisor',
-        'uninstall':'systemctl stop supervisor 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold supervisor && apt-get autoremove -y',
+        'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable --now supervisor; else (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && (dnf install -y supervisor 2>/dev/null || yum install -y supervisor) && systemctl enable --now supervisord; fi',
+        'uninstall':'systemctl stop supervisor supervisord 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold supervisor 2>/dev/null; dnf remove -y supervisor 2>/dev/null; yum remove -y supervisor 2>/dev/null; apt-get autoremove -y 2>/dev/null',
         'service':'supervisor', 'manage':True,
     },
     {
@@ -1562,7 +1623,7 @@ def list_modules():
         svc_status  = ''
         installed_ver = ''
         if installed:
-            svc = m.get('service','')
+            svc = _resolve_svc(m.get('service',''))
             if svc:
                 r = subprocess.run(f'systemctl is-active {svc} 2>/dev/null',
                                    shell=True, capture_output=True, text=True)
@@ -1775,7 +1836,7 @@ def uninstall_module(mod_id):
         _job_append_line(job_id, f'[VortexPanel] Removing {mod["name"]} {ver}...')
 
         # Stop the service first to prevent dpkg from hanging on restart triggers
-        svc = mod.get('service', mod_id)
+        svc = _resolve_svc(mod.get('service', mod_id))
         if svc:
             _job_append_line(job_id, f'[VortexPanel] Stopping {svc} service...')
             subprocess.run(f'systemctl stop {svc} 2>/dev/null || true', shell=True, timeout=15)
@@ -1874,7 +1935,7 @@ def control_module(mod_id):
     action = (request.get_json() or {}).get('action','status')
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False}), 404
-    svc = mod.get('service','')
+    svc = _resolve_svc(mod.get('service',''))
     if svc and action in ('start','stop','restart','reload'):
         subprocess.run(f'systemctl {action} {svc} 2>&1', shell=True)
         time.sleep(0.8)
@@ -2735,7 +2796,7 @@ def get_module_settings(mod_id):
     # Generic fallback
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False,'error':'Module not found'}), 404
-    svc    = mod.get('service', mod_id)
+    svc    = _resolve_svc(mod.get('service', mod_id))
     status = sh('systemctl is-active ' + svc + ' 2>/dev/null') or 'inactive'
     version= sh(svc + ' --version 2>/dev/null | head -1') or ''
     return jsonify({'ok':True,'status':status,'version':version})

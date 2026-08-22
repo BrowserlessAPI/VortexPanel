@@ -39,15 +39,17 @@ def processes():
 def logs():
     if not req(): return jsonify({'ok':False}),401
     log = request.args.get('log','nginx_error')
-    paths = {
-        'nginx_error':  '/var/log/nginx/error.log',
-        'nginx_access': '/var/log/nginx/access.log',
-        'mysql':        '/var/log/mysql/error.log',
-        'syslog':       '/var/log/syslog',
-        'auth':         '/var/log/auth.log',
-        'mail':         '/var/log/mail.log',
-    }
-    path = paths.get(log,'/var/log/syslog')
+    # Each logical log maps to candidate paths (Debian first, RHEL second) —
+    # pick the first that exists. On RHEL: messages/secure/maillog/mysqld.log.
+    candidates = {
+        'nginx_error':  ['/var/log/nginx/error.log'],
+        'nginx_access': ['/var/log/nginx/access.log'],
+        'mysql':        ['/var/log/mysql/error.log', '/var/log/mariadb/mariadb.log', '/var/log/mysqld.log'],
+        'syslog':       ['/var/log/syslog', '/var/log/messages'],
+        'auth':         ['/var/log/auth.log', '/var/log/secure'],
+        'mail':         ['/var/log/mail.log', '/var/log/maillog'],
+    }.get(log, ['/var/log/syslog', '/var/log/messages'])
+    path = next((p for p in candidates if os.path.exists(p)), candidates[0])
     lines = int(request.args.get('lines', 100))
     content = sh(f'tail -n {lines} {path} 2>/dev/null')
     return jsonify({'ok':True,'content':content,'path':path})

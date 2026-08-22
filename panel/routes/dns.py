@@ -166,7 +166,14 @@ def add_record(domain):
         return jsonify({'ok':False,'error':'Zone not found'})
     import time as _time
     with open(zone_file) as f: content = f.read()
-    serial = str(int(_time.strftime('%Y%m%d')) * 100 + 1)
+    # Monotonic RFC-1912 serial: YYYYMMDDnn, but never go backwards. If the
+    # existing serial is today's (or somehow ahead), increment it by one so
+    # multiple edits in the same day each produce a strictly higher serial —
+    # otherwise secondaries never see the change and stop refreshing.
+    today = int(_time.strftime('%Y%m%d')) * 100
+    cur_m = re.search(r'(\d{10})\s*;\s*Serial', content)
+    cur = int(cur_m.group(1)) if cur_m else 0
+    serial = str(max(today + 1, cur + 1))
     content = re.sub(r'(\d{10})\s*;\s*Serial', serial + ' ; Serial', content)
     record_line = f'{host}\tIN\t{rtype}\t{value}\n'
     if ttl and ttl != '3600':

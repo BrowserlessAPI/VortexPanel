@@ -55,9 +55,11 @@ def update_cloudflare(domain_cfg, ip):
             current_ip = records[0]['content']
             if current_ip == ip:
                 return True, f'IP unchanged ({ip})'
-            # Update record
+            # Update record — preserve the record's existing proxied (orange
+            # cloud) state instead of force-disabling it on every DDNS update.
             r = req_lib.put(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record_id}',
-                headers=headers, json={'type':'A','name':domain,'content':ip,'ttl':120,'proxied':False}, timeout=10)
+                headers=headers, json={'type':'A','name':domain,'content':ip,'ttl':120,
+                                       'proxied':records[0].get('proxied', False)}, timeout=10)
             if r.json().get('success'):
                 return True, f'Updated {domain} → {ip}'
             return False, r.json().get('errors', 'Update failed')
@@ -102,12 +104,20 @@ def ddns_loop():
             continue
         if ip != last_ip:
             write_log(f'IP changed: {last_ip} → {ip}')
+            all_ok = True
             for d in cfg.get('domains', []):
                 provider = d.get('provider', 'cloudflare')
                 if provider == 'cloudflare':
                     ok, msg = update_cloudflare(d, ip)
+                    if not ok: all_ok = False
                     write_log(f'[{"OK" if ok else "ERR"}] {d.get("domain")}: {msg}')
-            last_ip = ip
+            # Only advance last_ip when every update succeeded; otherwise a
+            # transient API failure would be silently skipped until the public
+            # IP changes again, leaving stale DNS pointing at the old address.
+            if all_ok:
+                last_ip = ip
+            else:
+                write_log('One or more updates failed — will retry next cycle')
         time.sleep(cfg.get('interval', 300))
     write_log('DDNS service stopped')
 

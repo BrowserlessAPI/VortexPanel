@@ -124,6 +124,13 @@ server {{
     return True
 
 
+def _d_args(domain):
+    """certbot -d args. Add www. ONLY for apex (2-label) domains -- a
+    www.<subdomain> almost never has a DNS record and would fail the whole
+    certificate request for a subdomain like blog.example.com."""
+    return f'-d {domain}' + (f' -d www.{domain}' if domain.count('.') == 1 else '')
+
+
 def _issue_cert(domain, email):
     """Auto-detect HTTP-01 vs DNS-01 (Cloudflare) and issue cert. Returns (ok, output, method)."""
     token, proxied = cf_check_proxied(domain)
@@ -131,7 +138,7 @@ def _issue_cert(domain, email):
     if token and proxied:
         # DNS-01 via Cloudflare
         if not _ensure_dns_cloudflare_plugin():
-            out = sh(f'certbot --nginx -d {domain} -d www.{domain} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+            out = sh(f'certbot --nginx {_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1', t=120)
             ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
             return ok, out, 'http (dns-plugin install failed, fallback)'
 
@@ -139,7 +146,7 @@ def _issue_cert(domain, email):
         out = sh(
             f'certbot certonly --dns-cloudflare --dns-cloudflare-credentials {cred_path} '
             f'--dns-cloudflare-propagation-seconds 30 '
-            f'-d {domain} -d www.{domain} --non-interactive --agree-tos -m {email} 2>&1',
+            f'{_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1',
             t=180
         )
         ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
@@ -152,7 +159,7 @@ def _issue_cert(domain, email):
         return ok, out, 'dns-cloudflare'
 
     # HTTP-01 (default / not proxied / no token)
-    out = sh(f'certbot --nginx -d {domain} -d www.{domain} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+    out = sh(f'certbot --nginx {_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1', t=120)
     ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
     return ok, out, 'http'
 
