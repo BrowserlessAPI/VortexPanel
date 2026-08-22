@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, session
-import subprocess, re, os
+import subprocess, re, os, json
 from datetime import datetime, timedelta
 from panel.routes.os_utils import get_os
 
@@ -860,8 +860,185 @@ def _engine_state():
     if 'SecRuleEngine DetectionOnly' in content:  return 'DetectionOnly'
     return 'Off'
 
-@security_bp.route('/api/security/modsecurity')
-def modsec_status():
+@security_bp.route('/api/security/caddywaf')
+def caddywaf_status():
+    if not req(): return jsonify({'ok': False}), 401
+    modules_out, _, _ = sh('caddy list-modules 2>/dev/null')
+    installed = 'http.handlers.waf' in modules_out
+
+    settings_path = '/etc/caddy/waf/panel_settings.json'
+    settings = {'anomaly_threshold': 20, 'rate_limit_requests': 100, 'rate_limit_window': 10, 'rate_limit_paths': ''}
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path) as f:
+                settings.update(json.load(f))
+        except Exception:
+            pass
+
+    def _count_lines(path):
+        if not os.path.exists(path):
+            return 0
+        try:
+            with open(path) as f:
+                return sum(1 for line in f if line.strip())
+        except Exception:
+            return 0
+
+    ip_count = _count_lines('/etc/caddy/waf/ip_blacklist.txt')
+    dns_count = _count_lines('/etc/caddy/waf/dns_blacklist.txt')
+
+    # Sites currently running the WAF - scan Caddy's per-site config dir
+    # for the waf{} block, the same directory _find_site_config already
+    # uses for Caddy sites.
+    enabled_sites = []
+    sites_dir = '/etc/caddy/sites'
+    if os.path.isdir(sites_dir):
+        for fn in os.listdir(sites_dir):
+            if not fn.endswith('.conf'):
+                continue
+            try:
+                with open(os.path.join(sites_dir, fn)) as f:
+                    content = f.read()
+                if 'waf {' in content or 'waf{' in content:
+                    enabled_sites.append(fn[:-5])
+            except Exception:
+                pass
+
+    return jsonify({
+        'ok': True, 'installed': installed, 'settings': settings,
+        'ip_blacklist_count': ip_count, 'dns_blacklist_count': dns_count,
+        'enabled_sites': enabled_sites,
+    })
+
+
+@security_bp.route('/api/security/caddywaf/settings', methods=['POST'])
+def caddywaf_save_settings():
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+
+    settings = {
+        'anomaly_threshold': int(d.get('anomaly_threshold', 20)),
+        'rate_limit_requests': int(d.get('rate_limit_requests', 100)),
+        'rate_limit_window': int(d.get('rate_limit_window', 10)),
+        'rate_limit_paths': (d.get('rate_limit_paths') or '').strip(),
+    }
+    os.makedirs('/etc/caddy/waf', exist_ok=True)
+    with open('/etc/caddy/waf/panel_settings.json', 'w') as f:
+        json.dump(settings, f)
+
+    # Re-apply to every site currently running the WAF, so a settings
+    # change actually takes effect everywhere rather than only on the
+    # next fresh enable. Reuses the same real brace-matching already
+    # proven for the enable/disable toggle in websites_core.py.
+    from panel.routes.websites_core import _split_site_block
+    updated, failed = [], []
+    sites_dir = '/etc/caddy/sites'
+    if os.path.isdir(sites_dir):
+        for fn in os.listdir(sites_dir):
+            if not fn.endswith('.conf'):
+                continue
+            fp = os.path.join(sites_dir, fn)
+            domain = fn[:-5]
+            try:
+                with open(fp) as f:
+                    content = f.read()
+                if 'waf {' not in content and 'waf{' not in content:
+                    continue
+                header, inner, trailing = _split_site_block(content)
+                if header is None:
+                    failed.append(domain); continue
+                route_start = inner.find('route {')
+                if route_start == -1:
+                    failed.append(domain); continue
+                _, route_inner, route_trailing = _split_site_block(inner[route_start:])
+                waf_start = route_inner.find('waf {')
+                if waf_start == -1:
+                    failed.append(domain); continue
+                _, _, after_waf = _split_site_block(route_inner[waf_start:])
+
+                rate_limit_block = ''
+                if settings['rate_limit_requests'] > 0:
+                    paths_line = f'\n                paths            {settings["rate_limit_paths"]}' if settings['rate_limit_paths'] else ''
+                    rate_limit_block = (
+                        f'\n            rate_limit {{\n'
+                        f'                requests         {settings["rate_limit_requests"]}\n'
+                        f'                window           {settings["rate_limit_window"]}s{paths_line}\n'
+                        f'            }}'
+                    )
+                new_waf_block = (
+                    '\n    route {\n'
+                    '        waf {\n'
+                    '            metrics_endpoint   /waf_metrics\n'
+                    '            rule_file          /etc/caddy/waf/rules.json\n'
+                    '            ip_blacklist_file  /etc/caddy/waf/ip_blacklist.txt\n'
+                    '            dns_blacklist_file /etc/caddy/waf/dns_blacklist.txt\n'
+                    f'            anomaly_threshold  {settings["anomaly_threshold"]}'
+                    f'{rate_limit_block}\n'
+                    '        }\n'
+                    f'    {after_waf.lstrip("}").strip()}\n'
+                    '    }\n'
+                )
+                new_content = header + new_waf_block + trailing
+
+                tmp_path = fp + '.waf-test'
+                with open(tmp_path, 'w') as f:
+                    f.write(new_content)
+                validate_out, validate_err, _ = sh(f'caddy validate --config {tmp_path} --adapter caddyfile 2>&1')
+                test = validate_out + validate_err
+                if 'error' in test.lower() or 'invalid' in test.lower():
+                    os.remove(tmp_path)
+                    failed.append(domain)
+                    continue
+                os.replace(tmp_path, fp)
+                updated.append(domain)
+            except Exception:
+                failed.append(domain)
+
+    if updated:
+        sh('systemctl reload caddy 2>/dev/null')
+
+    return jsonify({'ok': True, 'settings': settings, 'updated_sites': updated, 'failed_sites': failed})
+
+
+@security_bp.route('/api/security/caddywaf/blacklist', methods=['POST'])
+def caddywaf_add_blacklist():
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+    kind = d.get('type')  # 'ip' or 'dns'
+    entry = (d.get('entry') or '').strip()
+    if kind not in ('ip', 'dns') or not entry:
+        return jsonify({'ok': False, 'error': 'type (ip/dns) and entry are required'}), 400
+
+    path = f'/etc/caddy/waf/{"ip_blacklist" if kind == "ip" else "dns_blacklist"}.txt'
+    os.makedirs('/etc/caddy/waf', exist_ok=True)
+    existing = set()
+    if os.path.exists(path):
+        with open(path) as f:
+            existing = {line.strip() for line in f if line.strip()}
+    if entry in existing:
+        return jsonify({'ok': True, 'message': 'Entry already present'})
+    with open(path, 'a') as f:
+        f.write(entry + '\n')
+    return jsonify({'ok': True})
+
+
+@security_bp.route('/api/security/caddywaf/blacklist', methods=['DELETE'])
+def caddywaf_remove_blacklist():
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+    kind = d.get('type')
+    entry = (d.get('entry') or '').strip()
+    if kind not in ('ip', 'dns') or not entry:
+        return jsonify({'ok': False, 'error': 'type (ip/dns) and entry are required'}), 400
+
+    path = f'/etc/caddy/waf/{"ip_blacklist" if kind == "ip" else "dns_blacklist"}.txt'
+    if not os.path.exists(path):
+        return jsonify({'ok': True, 'message': 'Nothing to remove'})
+    with open(path) as f:
+        lines = [l for l in f if l.strip() != entry]
+    with open(path, 'w') as f:
+        f.writelines(lines)
+    return jsonify({'ok': True})
     if not req(): return jsonify({'ok':False}), 401
     installed = _modsec_installed()
     state     = _engine_state()

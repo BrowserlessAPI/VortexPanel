@@ -284,8 +284,129 @@ def _find_site_config(domain):
     return None, None
 
 
-@websites_bp.route('/api/websites/<domain>/config')
-def get_config(domain):
+def _split_site_block(content):
+    """Split a Caddy site config into (header, inner_content, trailing) by
+    finding the FIRST '{' and its matching closing '}' via real brace
+    counting - a naive regex can't handle this correctly since the site's
+    own directives already contain nested braces (@notStatic{...},
+    @blocked{...}), and matching the wrong closing brace would silently
+    corrupt the config. Returns (None, None, None) if no balanced block found.
+    """
+    start = content.find('{')
+    if start == -1:
+        return None, None, None
+    depth = 0
+    for i in range(start, len(content)):
+        if content[i] == '{':
+            depth += 1
+        elif content[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return content[:start+1], content[start+1:i], content[i:]
+    return None, None, None
+
+
+@websites_bp.route('/api/websites/<domain>/waf', methods=['POST'])
+def enable_caddy_waf(domain):
+    if not req(): return jsonify({'ok': False}), 401
+    fp, webserver = _find_site_config(domain)
+    if not fp:
+        return jsonify({'ok': False, 'error': f'No config found for {domain}'}), 404
+    if webserver != 'caddy':
+        return jsonify({'ok': False, 'error': 'The Caddy WAF only applies to sites served by Caddy'}), 400
+
+    # Verify the WAF module is genuinely loadable by the CURRENT Caddy
+    # binary, not just that the caddy-waf app-store entry was clicked at
+    # some point - the module only exists if Caddy was actually rebuilt
+    # with it, matching the same real-verification discipline already
+    # applied to ModSecurity's connector.
+    modules = sh('caddy list-modules 2>/dev/null')
+    if 'http.handlers.waf' not in modules:
+        return jsonify({'ok': False, 'error': 'caddy-waf is not installed — install it from the App Store first (Security category)'}), 400
+
+    with open(fp) as f:
+        content = f.read()
+    if 'waf {' in content or 'waf{' in content:
+        return jsonify({'ok': True, 'message': 'WAF already enabled for this site'})
+
+    header, inner, trailing = _split_site_block(content)
+    if header is None:
+        return jsonify({'ok': False, 'error': 'Could not parse this site\'s config — no balanced site block found'}), 400
+
+    waf_block = (
+        '\n    route {\n'
+        '        waf {\n'
+        '            metrics_endpoint   /waf_metrics\n'
+        '            rule_file          /etc/caddy/waf/rules.json\n'
+        '            ip_blacklist_file  /etc/caddy/waf/ip_blacklist.txt\n'
+        '            dns_blacklist_file /etc/caddy/waf/dns_blacklist.txt\n'
+        '        }\n'
+        f'    {inner.strip()}\n'
+        '    }\n'
+    )
+    new_content = header + waf_block + trailing
+
+    # Write to a temp file for validation rather than relying on process
+    # substitution, which is not portable across every shell VortexPanel
+    # might invoke this under.
+    tmp_path = fp + '.waf-test'
+    with open(tmp_path, 'w') as f:
+        f.write(new_content)
+    test = sh(f'caddy validate --config {tmp_path} --adapter caddyfile 2>&1')
+    if 'error' in test.lower() or 'invalid' in test.lower():
+        os.remove(tmp_path)
+        return jsonify({'ok': False, 'error': f'Resulting config failed validation, WAF not enabled: {test[:300]}'}), 400
+
+    os.replace(tmp_path, fp)
+    sh('systemctl reload caddy 2>/dev/null')
+    return jsonify({'ok': True})
+
+
+@websites_bp.route('/api/websites/<domain>/waf', methods=['DELETE'])
+def disable_caddy_waf(domain):
+    if not req(): return jsonify({'ok': False}), 401
+    fp, webserver = _find_site_config(domain)
+    if not fp:
+        return jsonify({'ok': False, 'error': f'No config found for {domain}'}), 404
+    if webserver != 'caddy':
+        return jsonify({'ok': False, 'error': 'The Caddy WAF only applies to sites served by Caddy'}), 400
+
+    with open(fp) as f:
+        content = f.read()
+    if 'waf {' not in content and 'waf{' not in content:
+        return jsonify({'ok': True, 'message': 'WAF was not enabled for this site'})
+
+    header, inner, trailing = _split_site_block(content)
+    if header is None:
+        return jsonify({'ok': False, 'error': 'Could not parse this site\'s config'}), 400
+
+    # The inner content is currently "route { waf {...} <original> }" -
+    # find that inner route block and pull the original directives back out
+    # from underneath it, dropping the route/waf wrapper entirely.
+    route_start = inner.find('route {')
+    if route_start == -1:
+        return jsonify({'ok': False, 'error': 'Expected a route{} block containing the WAF but did not find one'}), 400
+    _, route_inner, route_trailing = _split_site_block(inner[route_start:])
+    # route_inner is "waf {...}\n    <original directives>" - strip the waf{} sub-block
+    waf_start = route_inner.find('waf {')
+    if waf_start == -1:
+        return jsonify({'ok': False, 'error': 'Could not locate the waf{} block to remove'}), 400
+    _, _, after_waf = _split_site_block(route_inner[waf_start:])
+    original_directives = after_waf.lstrip('}').strip()
+
+    new_content = header + '\n    ' + original_directives + '\n' + trailing
+
+    tmp_path = fp + '.waf-test'
+    with open(tmp_path, 'w') as f:
+        f.write(new_content)
+    test = sh(f'caddy validate --config {tmp_path} --adapter caddyfile 2>&1')
+    if 'error' in test.lower() or 'invalid' in test.lower():
+        os.remove(tmp_path)
+        return jsonify({'ok': False, 'error': f'Resulting config failed validation, WAF not removed: {test[:300]}'}), 400
+
+    os.replace(tmp_path, fp)
+    sh('systemctl reload caddy 2>/dev/null')
+    return jsonify({'ok': True})
     if not req(): return jsonify({'ok':False}), 401
     fp, webserver = _find_site_config(domain)
     if fp:

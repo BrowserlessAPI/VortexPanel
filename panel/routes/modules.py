@@ -1334,6 +1334,127 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
     },
     # --- Load Balancer ----------------------------------------------------------
     {
+        'id':'caddy-waf', 'name':'Caddy WAF', 'icon':'/static/icons/caddy.svg', 'category':'Security',
+        'desc':'fabriziosalmi/caddy-waf — regex rules, IP/DNS/GeoIP filtering, rate limiting, Tor blocking (Caddy only, requires rebuilding Caddy)',
+        # This is fundamentally different from every other App Store module:
+        # caddy-waf is a compile-time Go module, not an installable package -
+        # it only exists inside a Caddy binary that was built with it included
+        # via xcaddy. "Installed" therefore means the WAF module is genuinely
+        # loadable by the CURRENT running Caddy binary, not that some file
+        # exists on disk - matching the same false-green lesson already
+        # learned and fixed for ModSecurity's connector.
+        'check':'which caddy >/dev/null 2>&1 && caddy list-modules 2>/dev/null | grep -q "^http.handlers.waf" && echo found',
+        'versions':[
+            {'label':'Latest (main branch)', 'value':'latest'},
+        ],
+        'install_tpl':'''set -e
+if ! command -v caddy >/dev/null 2>&1; then
+  echo "[VortexPanel] Caddy is not installed. Install Caddy from the App Store first — caddy-waf only makes sense as an addition to an existing Caddy install."
+  exit 1
+fi
+
+# 1. Ensure a sufficient Go toolchain is present. caddy-waf's own go.mod
+# requires Go 1.25+, which is newer than every mainstream distro's own
+# package repo currently ships (confirmed: Ubuntu 24.04's own golang-go
+# is only 1.22) - so this checks the actual installed version rather than
+# assuming the distro package is new enough, and downloads Go's own
+# official binary release directly when it isn't.
+if ! command -v go >/dev/null 2>&1; then
+  (apt-get install -y golang-go 2>/dev/null || dnf install -y golang 2>/dev/null || yum install -y golang 2>/dev/null)
+fi
+export PATH="$PATH:$(go env GOPATH 2>/dev/null)/bin"
+
+# 2. Install xcaddy - the only supported way to add this module, since it
+# is explicitly not registered in Caddy's own official package registry
+# (confirmed: "caddy add-package ... will fail with HTTP 400").
+go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+# 3. Build a new Caddy binary WITH the WAF module, to a temporary location -
+# never touching the live binary until the new one is proven to work. This
+# is the step that protects every site on the server: if the build fails or
+# produces something broken, nothing about the running Caddy has changed yet.
+BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR"
+echo "[VortexPanel] Building Caddy with the caddy-waf module (this can take a few minutes)..."
+"$(go env GOPATH)/bin/xcaddy" build --with github.com/fabriziosalmi/caddy-waf --output ./caddy-new \\
+  > /tmp/caddy-waf-build.log 2>&1
+
+if [ ! -f ./caddy-new ]; then
+  echo "[ERROR] xcaddy build failed - see /tmp/caddy-waf-build.log on this server for details."
+  cd / && rm -rf "$BUILD_DIR"
+  exit 1
+fi
+
+# 4. Validate the new binary BEFORE going anywhere near the live one: it
+# must actually run, and it must actually contain the WAF module - a
+# binary that merely exists is not the same as one that works.
+if ! ./caddy-new version >/dev/null 2>&1; then
+  echo "[ERROR] The newly built Caddy binary does not even run - aborting without touching the live install."
+  cd / && rm -rf "$BUILD_DIR"
+  exit 1
+fi
+if ! ./caddy-new list-modules 2>/dev/null | grep -q "^http.handlers.waf"; then
+  echo "[ERROR] The newly built binary does not actually contain the waf module - aborting without touching the live install."
+  cd / && rm -rf "$BUILD_DIR"
+  exit 1
+fi
+
+# 5. Back up the current, known-working binary before replacing it.
+CADDY_BIN=$(command -v caddy)
+BACKUP_PATH="${CADDY_BIN}.pre-waf-backup-$(date +%Y%m%d%H%M%S)"
+cp "$CADDY_BIN" "$BACKUP_PATH"
+
+# 6. Atomic swap - mv on the same filesystem is atomic, so there is no
+# window where the binary is half-written or missing.
+chmod +x ./caddy-new
+mv ./caddy-new "$CADDY_BIN"
+cd / && rm -rf "$BUILD_DIR"
+
+# 7. Confirm the existing Caddyfile still validates with the new binary,
+# then restart - and if Caddy does not come back up cleanly, automatically
+# roll back to the backed-up binary and restart again, rather than leaving
+# every site on this server down because of a WAF install.
+mkdir -p /etc/caddy/waf
+curl -fsSL https://raw.githubusercontent.com/fabriziosalmi/caddy-waf/main/rules.json -o /etc/caddy/waf/rules.json 2>/dev/null || echo '[]' > /etc/caddy/waf/rules.json
+curl -fsSL https://raw.githubusercontent.com/fabriziosalmi/caddy-waf/main/ip_blacklist.txt -o /etc/caddy/waf/ip_blacklist.txt 2>/dev/null || touch /etc/caddy/waf/ip_blacklist.txt
+curl -fsSL https://raw.githubusercontent.com/fabriziosalmi/caddy-waf/main/dns_blacklist.txt -o /etc/caddy/waf/dns_blacklist.txt 2>/dev/null || touch /etc/caddy/waf/dns_blacklist.txt
+
+ROLLED_BACK=0
+if [ -f /etc/caddy/Caddyfile ] && ! caddy validate --config /etc/caddy/Caddyfile >/tmp/caddy-waf-validate.log 2>&1; then
+  echo "[ERROR] The existing Caddyfile does not validate against the new binary - see /tmp/caddy-waf-validate.log. Rolling back."
+  cp "$BACKUP_PATH" "$CADDY_BIN"
+  ROLLED_BACK=1
+fi
+
+if [ "$ROLLED_BACK" = "0" ]; then
+  systemctl restart caddy 2>/dev/null
+  sleep 2
+  if ! systemctl is-active --quiet caddy 2>/dev/null; then
+    echo "[ERROR] Caddy failed to come back up with the new binary - rolling back to the pre-WAF backup and restarting."
+    cp "$BACKUP_PATH" "$CADDY_BIN"
+    systemctl restart caddy 2>/dev/null
+    ROLLED_BACK=1
+  fi
+fi
+
+if [ "$ROLLED_BACK" = "1" ]; then
+  echo "[VortexPanel] Rolled back — Caddy is running on its previous binary, unmodified. The WAF module was NOT installed. Backup remains at ${BACKUP_PATH} for inspection."
+  exit 1
+fi
+
+echo "[VortexPanel] \u2713 caddy-waf installed — Caddy rebuilt, validated, and running with the WAF module. Previous binary backed up to ${BACKUP_PATH}."''',
+        'uninstall':(
+            'CADDY_BIN=$(command -v caddy); '
+            'LATEST_BACKUP=$(ls -t ${CADDY_BIN}.pre-waf-backup-* 2>/dev/null | head -1); '
+            'if [ -n "$LATEST_BACKUP" ]; then '
+            '  cp "$LATEST_BACKUP" "$CADDY_BIN" && systemctl restart caddy 2>/dev/null && '
+            '  echo "[VortexPanel] Restored the pre-WAF Caddy binary from backup."; '
+            'else '
+            '  echo "[VortexPanel] No pre-WAF backup found — reinstall Caddy from the App Store to get a clean binary without the WAF module."; '
+            'fi'
+        ),
+        'manage':True, 'service':'caddy',
+    },
+    {
         'id':'nginx-lb', 'name':'Nginx Load Balancer', 'icon':'/static/icons/nginx.svg', 'category':'Web Server',
         'desc':'Configure Nginx upstream load balancing (Round Robin, Least Conn, IP Hash)',
         'check':'test -f /etc/nginx/conf.d/loadbalancer.conf && echo found',

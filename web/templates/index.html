@@ -799,7 +799,20 @@
                 </div>
               </div>
 
-              <!-- -- SSL TAB -- -->
+              <!-- -- WAF TAB -- -->
+              <div x-show="drawer.tab==='waf'">
+                <div class="card">
+                  <div class="card-hd"><div><div class="card-title">🛡️ Caddy WAF</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">Regex rules, IP/DNS/GeoIP filtering, rate limiting, Tor blocking — Caddy sites only</div></div></div>
+                  <div style="padding:14px 16px">
+                    <p style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">
+                      Inspects and can block malicious requests before they reach your site — including PHP requests, since the WAF runs first in the request pipeline.
+                      Requires the <b>caddy-waf</b> module to be installed from the App Store (Security category) first.
+                    </p>
+                    <div x-show="drawer.wafMessage" :style="'font-size:12px;margin-bottom:12px;padding:10px 12px;border-radius:8px;' + (drawer.wafOk ? 'background:rgba(16,185,129,.08);color:#10b981' : 'background:#fef2f2;color:#991b1b')" x-text="drawer.wafMessage"></div>
+                    <button class="btn btn-primary btn-sm" @click="enableWaf()">Enable WAF for this site</button>
+                    <button class="btn btn-ghost btn-sm" style="margin-left:8px" @click="disableWaf()">Disable</button>
+                  </div>
+                </div>
               <div x-show="drawer.tab==='ssl'">
                 <!-- SSL info card -->
                 <div x-show="drawer.sslInfo" style="background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px" x-text="drawer.sslInfo"></div>
@@ -2112,7 +2125,6 @@
             <pre style="flex:1;overflow-y:auto;padding:16px;margin:0;background:#0d1117;color:#d1fae5;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap" x-text="logsModal.logs"></pre>
           </div>
         </div>
-        </template>
 
       </div>
       <!-- END NODE.JS PROJECTS PAGE -->
@@ -2426,7 +2438,7 @@
               <button @click="settingsModal.show=false" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">×</button>
             </div>
             <div style="display:flex;border-bottom:1px solid var(--border);padding:0 20px">
-              <template x-for="t in [{id:'service',label:'Service'},{id:'config',label:'Config'},{id:'domain',label:'Domain'},{id:'logs',label:'Project Logs'}]" :key="t.id">
+              <template x-for="t in [{id:'service',label:'Service'},{id:'config',label:'Config'},{id:'waf',label:'WAF'},{id:'domain',label:'Domain'},{id:'logs',label:'Project Logs'}]" :key="t.id">
                 <button @click="settingsModal.tab=t.id; if(t.id==='logs') showLogs(settingsModal.project)"
                         :style="settingsModal.tab===t.id?'border-bottom:2px solid var(--accent);color:var(--accent);font-weight:600':'color:var(--text-muted)'"
                         style="background:none;border:none;padding:10px 16px;cursor:pointer;font-size:13px" x-text="t.label"></button>
@@ -2565,7 +2577,6 @@
             </div>
           </div>
         </div>
-        </template>
 
         <!-- LOGS MODAL -->
 
@@ -5440,7 +5451,8 @@
         <div class="tabs">
           <div class="tab" :class="{active:tab==='ssh'}" @click="tab='ssh'">SSH</div>
           <div class="tab" :class="{active:tab==='fail2ban'}" @click="tab='fail2ban';loadFail2ban()">Fail2ban</div>
-          <div class="tab" :class="{active:tab==='modsec'}" @click="tab='modsec';loadModsec()">WAF</div>
+          <div class="tab" :class="{active:tab==='modsec'}" @click="tab='modsec';loadModsec()">ModSecurity</div>
+          <div class="tab" :class="{active:tab==='caddywaf'}" @click="tab='caddywaf';loadCaddyWaf()">Caddy WAF</div>
           <div class="tab" :class="{active:tab==='lb'}" @click="tab='lb';loadLB()">Load Balancer</div>
           <div class="tab" :class="{active:tab==='ports'}" @click="tab='ports';loadPorts()">Ports</div>
         </div>
@@ -5804,6 +5816,80 @@
             </div>
           </div>
 
+        </div>
+
+        <!-- CADDY WAF TAB -->
+        <div x-show="tab==='caddywaf'" style="margin-top:14px">
+          <div class="card" style="margin-bottom:12px">
+            <div class="card-hd">
+              <div class="card-title">🛡️ Caddy WAF</div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span x-show="caddywaf.installed" class="badge badge-green">● Installed</span>
+                <span x-show="!caddywaf.installed" class="badge badge-gray">Not Installed</span>
+                <button x-show="caddywaf.installed" class="btn btn-ghost btn-xs" @click="loadCaddyWaf()">Refresh</button>
+              </div>
+            </div>
+
+            <template x-if="!caddywaf.installed">
+              <div style="padding:12px 0;font-size:12px;color:var(--text-muted)">
+                Caddy WAF (fabriziosalmi/caddy-waf) is not installed. Install it from the <strong>App Store</strong> — Caddy only, requires rebuilding Caddy with the module compiled in.
+              </div>
+            </template>
+
+            <template x-if="caddywaf.installed">
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:14px" x-text="'Applied to ' + caddywaf.enabled_sites.length + ' site' + (caddywaf.enabled_sites.length===1?'':'s') + (caddywaf.enabled_sites.length ? ': ' + caddywaf.enabled_sites.join(', ') : ' — enable it from the WAF tab on a Caddy site')"></div>
+
+                <!-- Anomaly threshold + rate limit -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+                  <div class="form-group">
+                    <label class="form-label">Anomaly Threshold <span style="font-weight:400;color:var(--text-muted)">— lower is stricter</span></label>
+                    <input class="form-input" type="number" min="1" x-model.number="caddywaf.settings.anomaly_threshold">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Rate Limit — Requests</label>
+                    <input class="form-input" type="number" min="0" x-model.number="caddywaf.settings.rate_limit_requests" placeholder="0 to disable">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Rate Limit — Window (seconds)</label>
+                    <input class="form-input" type="number" min="1" x-model.number="caddywaf.settings.rate_limit_window">
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Rate Limit — Paths <span style="font-weight:400;color:var(--text-muted)">(space-separated regex, optional)</span></label>
+                    <input class="form-input" x-model="caddywaf.settings.rate_limit_paths" placeholder="/api/.* /admin/.*">
+                  </div>
+                </div>
+                <button class="btn btn-primary btn-sm" @click="saveCaddyWafSettings()" :disabled="caddywaf.saving">Save Settings</button>
+                <span x-show="caddywaf.saveMessage" style="margin-left:10px;font-size:11px;color:var(--text-muted)" x-text="caddywaf.saveMessage"></span>
+
+                <!-- Blacklists -->
+                <div style="margin-top:24px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
+                  <div>
+                    <div class="form-label" style="margin-bottom:8px" x-text="'IP Blacklist (' + caddywaf.ip_blacklist_count + ' entries)'"></div>
+                    <div style="display:flex;gap:6px;margin-bottom:8px">
+                      <input class="form-input" x-model="caddywaf.newIp" placeholder="1.2.3.4 or 1.2.3.0/24" style="flex:1">
+                      <button class="btn btn-ghost btn-sm" @click="addCaddyWafEntry('ip')">Add</button>
+                    </div>
+                    <div style="display:flex;gap:6px">
+                      <input class="form-input" x-model="caddywaf.removeIp" placeholder="Remove exact entry" style="flex:1">
+                      <button class="btn btn-ghost btn-sm" @click="removeCaddyWafEntry('ip')">Remove</button>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="form-label" style="margin-bottom:8px" x-text="'DNS Blacklist (' + caddywaf.dns_blacklist_count + ' entries)'"></div>
+                    <div style="display:flex;gap:6px;margin-bottom:8px">
+                      <input class="form-input" x-model="caddywaf.newDns" placeholder="bad-host.example.com" style="flex:1">
+                      <button class="btn btn-ghost btn-sm" @click="addCaddyWafEntry('dns')">Add</button>
+                    </div>
+                    <div style="display:flex;gap:6px">
+                      <input class="form-input" x-model="caddywaf.removeDns" placeholder="Remove exact entry" style="flex:1">
+                      <button class="btn btn-ghost btn-sm" @click="removeCaddyWafEntry('dns')">Remove</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
         </div>
         <div x-show="tab==='lb'" style="margin-top:14px">
 

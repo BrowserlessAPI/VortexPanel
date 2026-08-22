@@ -846,6 +846,16 @@ function websitesPage() {
       if (r.ok) { toast('Disabled','success'); await this.loadIntegrityStatus(); }
     },
     async saveConf(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/config',{content:this.drawer.confContent});toast(r.ok?'Saved':(r.error||'Failed'),r.ok?'success':'error');},
+    async enableWaf(){
+      const r=await post('/api/websites/'+this.drawer.site?.domain+'/waf',{});
+      this.drawer.wafOk = r.ok; this.drawer.wafMessage = r.ok ? (r.message || 'WAF enabled for this site') : (r.error || 'Failed to enable WAF');
+      toast(this.drawer.wafMessage, r.ok?'success':'error');
+    },
+    async disableWaf(){
+      const r=await del('/api/websites/'+this.drawer.site?.domain+'/waf');
+      this.drawer.wafOk = r.ok; this.drawer.wafMessage = r.ok ? (r.message || 'WAF disabled for this site') : (r.error || 'Failed to disable WAF');
+      toast(this.drawer.wafMessage, r.ok?'success':'error');
+    },
     async issueLetsEncrypt(){
       this.drawer.loading=true;
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/ssl/letsencrypt',{email:this.drawer.sslEmail});
@@ -1142,16 +1152,38 @@ function wpPage() {
       if (!this.installForm.domain) { toast('Domain required','error'); return; }
       if (!this.installForm.admin_email) { toast('Admin email required','error'); return; }
       this.installing = true; this.installLog = 'Starting WordPress installation…\n';
-      const r = await post('/api/wp/install', this.installForm);
-      this.installing = false;
-      if (r.ok) {
-        this.installResult = r;
-        this.installLog += `✓ WordPress installed at ${r.site_url}\n✓ Admin: ${r.admin_user} / ${r.admin_pass}\n✓ DB: ${r.db_name}`;
-        await this.load();
-      } else {
-        this.installLog += '✗ Failed: ' + (r.error || 'Unknown error');
-        toast('Installation failed: '+(r.error||''),'error');
+      const start = await post('/api/wp/install', this.installForm);
+      if (!start.ok) {
+        this.installing = false;
+        this.installLog += '✗ Failed: ' + (start.error || 'Unknown error');
+        toast('Installation failed: '+(start.error||''),'error');
+        return;
       }
+      const domain = this.installForm.domain;
+      let lastStep = '';
+      for (let i = 0; i < 150; i++) {
+        await new Promise(res => setTimeout(res, 2000));
+        const st = await get('/api/wp/install/status?domain=' + encodeURIComponent(domain));
+        if (st.step && st.step !== lastStep) {
+          lastStep = st.step;
+          this.installLog += st.step + '\n';
+        }
+        if (st.done) {
+          this.installing = false;
+          if (st.success) {
+            this.installResult = st;
+            this.installLog += `✓ WordPress installed at ${st.site_url}\n✓ Admin: ${st.admin_user} / ${st.admin_pass}\n✓ DB: ${st.db_name}`;
+            await this.load();
+          } else {
+            this.installLog += '✗ Failed: ' + (st.error || 'Unknown error');
+            toast('Installation failed: '+(st.error||''),'error');
+          }
+          return;
+        }
+      }
+      this.installing = false;
+      this.installLog += '✗ Timed out waiting for installation to finish — check the server manually.';
+      toast('Installation timed out','error');
     },
     async installWpCli() {
       const r = await post('/api/wp/install-wpcli', {});
@@ -3612,6 +3644,9 @@ function securityPage() {
     newUser: {username:'', password:'', pubkey:'', loading:false, result:'', ok:false},
     f2bJails: [], f2bAvailable: null, attempts: [], portsOutput: '',
     modsec: {installed:false, enabled:false, state:'Off', rules:0, crs_version:'', paranoia_level:1, custom_rules:'', site_overrides:{}, audit_log:false, auditEntries:[], updating:false},
+    caddywaf: {installed:false, settings:{anomaly_threshold:20, rate_limit_requests:100, rate_limit_window:10, rate_limit_paths:''},
+               ip_blacklist_count:0, dns_blacklist_count:0, enabled_sites:[],
+               newIp:'', removeIp:'', newDns:'', removeDns:'', saving:false, saveMessage:''},
     lb: {configured:false, method:'roundrobin', domain:'_', port:'80', cookie_name:'PHPSESSID',
          servers:[{address:'127.0.0.1:8001',weight:1},{address:'127.0.0.1:8002',weight:1}]},
     lbTab: 'http',
@@ -3749,6 +3784,54 @@ function securityPage() {
         const labels = {On:'WAF Blocking Mode ON', DetectionOnly:'WAF Detection Only (logging)', Off:'WAF Disabled'};
         toast(labels[state] || state, r.ok ? 'success' : 'error');
       } else toast(r.error || 'Failed', 'error');
+    },
+
+    async loadCaddyWaf() {
+      const r = await get('/api/security/caddywaf');
+      if (r.ok) {
+        this.caddywaf.installed = r.installed;
+        this.caddywaf.settings = r.settings;
+        this.caddywaf.ip_blacklist_count = r.ip_blacklist_count;
+        this.caddywaf.dns_blacklist_count = r.dns_blacklist_count;
+        this.caddywaf.enabled_sites = r.enabled_sites || [];
+      }
+    },
+
+    async saveCaddyWafSettings() {
+      this.caddywaf.saving = true; this.caddywaf.saveMessage = '';
+      const r = await post('/api/security/caddywaf/settings', this.caddywaf.settings);
+      this.caddywaf.saving = false;
+      if (r.ok) {
+        const upd = r.updated_sites || [], fail = r.failed_sites || [];
+        this.caddywaf.saveMessage = upd.length
+          ? `Applied to ${upd.length} site${upd.length===1?'':'s'}` + (fail.length ? `, ${fail.length} failed` : '')
+          : (fail.length ? `Saved, but could not apply to ${fail.length} site${fail.length===1?'':'s'}` : 'Saved');
+        toast(this.caddywaf.saveMessage, fail.length && !upd.length ? 'error' : 'success');
+      } else {
+        toast(r.error || 'Failed to save settings', 'error');
+      }
+    },
+
+    async addCaddyWafEntry(type) {
+      const entry = type === 'ip' ? this.caddywaf.newIp.trim() : this.caddywaf.newDns.trim();
+      if (!entry) return;
+      const r = await post('/api/security/caddywaf/blacklist', {type, entry});
+      if (r.ok) {
+        if (type === 'ip') { this.caddywaf.newIp = ''; this.caddywaf.ip_blacklist_count++; }
+        else { this.caddywaf.newDns = ''; this.caddywaf.dns_blacklist_count++; }
+        toast(r.message || 'Added', 'success');
+      } else toast(r.error || 'Failed to add', 'error');
+    },
+
+    async removeCaddyWafEntry(type) {
+      const entry = type === 'ip' ? this.caddywaf.removeIp.trim() : this.caddywaf.removeDns.trim();
+      if (!entry) return;
+      const r = await del('/api/security/caddywaf/blacklist', {type, entry});
+      if (r.ok) {
+        if (type === 'ip') { this.caddywaf.removeIp = ''; this.caddywaf.ip_blacklist_count = Math.max(0, this.caddywaf.ip_blacklist_count-1); }
+        else { this.caddywaf.removeDns = ''; this.caddywaf.dns_blacklist_count = Math.max(0, this.caddywaf.dns_blacklist_count-1); }
+        toast(r.message || 'Removed', 'success');
+      } else toast(r.error || 'Failed to remove', 'error');
     },
 
     async setParanoia(level) {
