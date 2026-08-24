@@ -1218,6 +1218,9 @@ def modsec_save_lists():
 
     _save_lists_json(incoming)
     _modsec_reload()
+    # Mirror the same lists to Caddy/Coraza when it's installed, so black/white
+    # list edits made here apply to Caddy sites too (no-op otherwise).
+    _coraza_sync()
     return jsonify({'ok':True, 'lists': incoming})
 
 
@@ -2262,3 +2265,1038 @@ def lb_status_data():
     if 'ip_hash'    in content: method = 'iphash'
     server_list = [{'address':s[0],'weight':int(s[1]) if s[1] else 1} for s in servers]
     return {'configured':True,'servers':server_list,'method':method}
+# ===============================================================================
+# WAF 2.0 — Phase 1: per-site engine mode + scoped rule exceptions
+# ===============================================================================
+# All state lives in vortex-exceptions.json and is compiled, in full, to
+# vortex-exceptions.conf on every change. The generated rules key on
+# SERVER_NAME, so per-site mode and scoped exceptions work identically on
+# nginx AND Apache (via ModSecurity's per-request ctl: action) without any
+# vhost surgery.
+import ipaddress as _ipaddr
+
+# Reserved SecRule id space — outside CRS (900000-999999) and the
+# vortex-lists.conf range (_LIST_ID_BASE, 1050000-1053999).
+_EXC_SITEMODE_BASE = 1820000
+_EXC_RULE_BASE     = 1830000
+
+_HTTP_METHODS = {'GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH', 'TRACE', 'CONNECT'}
+
+# Protocol-integrity rules that can NEVER be excepted (request smuggling /
+# splitting). Disabling these re-opens whole request-parsing attack classes,
+# so the builder refuses them even with force=true.
+_EXC_PROTECTED_RANGES = [(921000, 921999)]          # CRS: Protocol Attack
+def _rid_in_ranges(rid, ranges):
+    return any(lo <= rid <= hi for lo, hi in ranges)
+
+
+def _exc_json(): return os.path.join(_modsec_dir(), 'vortex-exceptions.json')
+
+
+def _exc_conf(): return os.path.join(_modsec_dir(), 'vortex-exceptions.conf')
+
+
+def _load_exceptions():
+    if not os.path.exists(_exc_json()):
+        return {}
+    try:
+        data = json.load(open(_exc_json()))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_exceptions(data):
+    os.makedirs(os.path.dirname(_exc_json()), exist_ok=True)
+    with open(_exc_json(), 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def _valid_ip_or_cidr(v):
+    try:
+        _ipaddr.ip_network(v.strip(), strict=False)
+        return True
+    except ValueError:
+        return False
+
+
+def _valid_hostname(h):
+    h = (h or '').strip().lower()
+    if not h or len(h) > 253:
+        return False
+    return bool(re.fullmatch(
+        r'(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)'
+        r'(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*', h))
+
+
+def _validate_exception(exc, force=False):
+    """Validate + normalize ONE exception. Returns (ok, normalized_dict|error_str)."""
+    url = (exc.get('url_prefix') or '').strip()
+    if not url or not url.startswith('/'):
+        return False, 'URL prefix must start with "/"'
+    if url == '/':
+        return False, 'A URL prefix of "/" disables the rule for the whole site — scope it to a real path'
+    if len(url) > 512 or '\n' in url or '\r' in url:
+        return False, 'URL prefix is invalid'
+
+    methods = exc.get('methods') or []
+    if not isinstance(methods, list):
+        return False, 'methods must be a list'
+    methods = [m.strip().upper() for m in methods if m and str(m).strip()]
+    for m in methods:
+        if m not in _HTTP_METHODS:
+            return False, f'Unknown HTTP method: {m}'
+
+    ips = exc.get('client_ips') or []
+    if not isinstance(ips, list):
+        return False, 'client_ips must be a list'
+    ips = [i.strip() for i in ips if i and str(i).strip()]
+    for i in ips:
+        if not _valid_ip_or_cidr(i):
+            return False, f'Invalid IP/CIDR: {i}'
+
+    raw_ids = exc.get('rule_ids') or []
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return False, 'At least one rule ID is required'
+    rule_ids = []
+    for r in raw_ids:
+        try:
+            rid = int(r)
+        except (ValueError, TypeError):
+            return False, f'Rule ID must be a number: {r}'
+        if not (900000 <= rid <= 999999):
+            return False, f'{rid} is not an OWASP CRS rule ID (expected 900000-999999)'
+        if _rid_in_ranges(rid, _EXC_PROTECTED_RANGES):
+            return False, f'Rule {rid} is a protected protocol-integrity rule and cannot be excepted'
+        if _rid_in_ranges(rid, _EXC_ALWAYS_BLOCK_RANGES) and not force:
+            return False, (f'Rule {rid} guards against SQLi/XSS. Excepting it needs an explicit '
+                           f'override — resubmit with force=true if you are certain.')
+        if rid not in rule_ids:
+            rule_ids.append(rid)
+
+    note = (exc.get('note') or '').strip()[:200]
+    return True, {'url_prefix': url, 'methods': methods, 'client_ips': ips,
+                  'rule_ids': rule_ids, 'note': note}
+
+
+def _compile_exceptions_text(model):
+    """PURE: turn the exceptions model into ModSecurity config text.
+
+    IDs are assigned sequentially from the reserved range at compile time —
+    they only need to be unique within this file (regenerated wholesale on
+    every change), so positional assignment is safe.
+
+    Chain semantics (important): a ModSecurity chain fires its actions only
+    when EVERY link matches. Non-disruptive actions attached to the chain
+    STARTER would run as soon as the starter matches, so the ctl:ruleRemoveById
+    actions are attached to the LAST link instead — they then execute only
+    when the full (domain + path [+ method] [+ ip]) condition is met. Phase 1
+    guarantees the removal lands before CRS evaluates in phase 2.
+    """
+    lines = ['# Auto-generated by VortexPanel WAF — DO NOT EDIT BY HAND.',
+             '# Per-site engine mode + scoped rule exceptions. Regenerated in full on every change.']
+    site_id = _EXC_SITEMODE_BASE
+    exc_id  = _EXC_RULE_BASE
+    for domain in sorted(model.keys()):
+        if not _valid_hostname(domain):
+            continue
+        entry = model[domain] or {}
+        dom = _modsec_str_escape(domain)
+
+        mode = (entry.get('site_mode') or 'enforce').lower()
+        if mode in ('detect', 'off'):
+            site_id += 1
+            ctl = 'ctl:ruleEngine=DetectionOnly' if mode == 'detect' else 'ctl:ruleEngine=Off'
+            lines.append(f'# {domain}: site engine mode = {mode}')
+            lines.append(f'SecRule SERVER_NAME "@streq {dom}" '
+                         f'"id:{site_id},phase:1,pass,nolog,{ctl}"')
+
+        for exc in entry.get('exceptions', []):
+            ok, norm = _validate_exception(exc, force=True)  # stored entries were validated on write
+            if not ok:
+                continue
+            exc_id += 1
+            ctls = ','.join(f'ctl:ruleRemoveById={rid}' for rid in norm['rule_ids'])
+            links = [('SERVER_NAME', f'@streq {dom}'),
+                     ('REQUEST_FILENAME', f'@beginsWith {_modsec_str_escape(norm["url_prefix"])}')]
+            if norm['methods']:
+                links.append(('REQUEST_METHOD', '@rx ^(' + '|'.join(norm['methods']) + ')$'))
+            if norm['client_ips']:
+                ipm = ','.join(_modsec_str_escape(i) for i in norm['client_ips'])
+                links.append(('REMOTE_ADDR', f'@ipMatch {ipm}'))
+
+            lines.append(f'# {domain}: skip {norm["rule_ids"]} on {norm["url_prefix"]}'
+                         + (f' ({norm["note"]})' if norm['note'] else ''))
+            n = len(links)
+            for idx, (var, op) in enumerate(links):
+                if idx == 0:
+                    action = f'id:{exc_id},phase:1,pass,nolog' + (f',{ctls}' if n == 1 else ',chain')
+                    lines.append(f'SecRule {var} "{op}" "{action}"')
+                elif idx == n - 1:
+                    lines.append(f'    SecRule {var} "{op}" "{ctls}"')
+                else:
+                    lines.append(f'    SecRule {var} "{op}" "chain"')
+    return '\n'.join(lines) + '\n'
+
+
+def _ensure_exceptions_included():
+    """Wire vortex-exceptions.conf into main.conf after modsecurity.conf and
+    before the CRS rules, so ctl:ruleRemoveById lands in phase 1 before CRS.
+    Idempotent. Apache auto-includes /etc/modsecurity/*.conf, so (like
+    vortex-lists.conf) it must NOT be explicitly included there or the rule
+    IDs load twice and Apache refuses to start."""
+    if _modsec_target() == 'apache':
+        return
+    if not os.path.exists(_modsec_main()):
+        return
+    main = open(_modsec_main()).read()
+    include_line = f'Include {_exc_conf()}'
+    if include_line in main:
+        return
+    base_include = f'Include {_modsec_conf()}'
+    if base_include in main:
+        main = main.replace(base_include, f'{base_include}\n{include_line}', 1)
+    else:
+        main = f'{include_line}\n{main}'
+    with open(_modsec_main(), 'w') as f:
+        f.write(main)
+
+
+def _write_exceptions(model):
+    """Compile → write conf → wire include → config-test → reload, on EVERY
+    web server present on this box. nginx/Apache share one generated file
+    (via _modsec_dir); Caddy gets the same text mirrored through Coraza. Each
+    engine validates and rolls back independently, so a bad edit can never
+    take any server down, and a Caddy-only box (no ModSecurity target) is
+    handled by simply skipping the nginx/Apache half. Returns (ok, error)."""
+    modsec_ok, modsec_err = True, ''
+    if _modsec_target() is not None:
+        os.makedirs(_modsec_dir(), exist_ok=True)
+        conf_path = _exc_conf()
+        prev = open(conf_path).read() if os.path.exists(conf_path) else None
+        with open(conf_path, 'w') as f:
+            f.write(_compile_exceptions_text(model))
+        _ensure_exceptions_included()
+        modsec_ok, modsec_err = _modsec_configtest()
+        if not modsec_ok:
+            if prev is not None:
+                with open(conf_path, 'w') as f:
+                    f.write(prev)
+            else:
+                try: os.unlink(conf_path)
+                except Exception: pass
+        else:
+            _modsec_reload()
+    caddy_ok, caddy_err = _coraza_sync()
+    return _combine_engine_results(modsec_ok, modsec_err, caddy_ok, caddy_err)
+
+
+def _combine_engine_results(modsec_ok, modsec_err, caddy_ok, caddy_err):
+    """Fail if any PRESENT engine failed; name which one so the user can tell
+    an nginx problem from a Caddy one. Because every engine regenerates
+    wholesale from the stored model on every change, a one-engine failure is
+    self-healing on the next successful save rather than permanent drift."""
+    if not modsec_ok:
+        return False, f'nginx/Apache: {modsec_err}'
+    if not caddy_ok:
+        return False, f'Caddy/Coraza: {caddy_err}'
+    return True, ''
+
+
+@security_bp.route('/api/security/waf/exceptions')
+def waf_exceptions_list():
+    if not req(): return jsonify({'ok': False}), 401
+    model  = _load_exceptions()
+    domain = request.args.get('domain', '').strip().lower()
+    if domain:
+        entry = model.get(domain, {})
+        return jsonify({'ok': True, 'domain': domain,
+                        'site_mode': entry.get('site_mode', 'enforce'),
+                        'exceptions': entry.get('exceptions', [])})
+    return jsonify({'ok': True, 'sites': model})
+
+
+@security_bp.route('/api/security/waf/exceptions', methods=['POST'])
+def waf_exceptions_add():
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+    domain = (d.get('domain') or '').strip().lower()
+    if not _valid_hostname(domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain'}), 400
+    ok, norm = _validate_exception(d, force=bool(d.get('force')))
+    if not ok:
+        return jsonify({'ok': False, 'error': norm}), 400
+    import secrets as _secrets
+    norm['id'] = 'exc_' + _secrets.token_hex(4)
+    norm['note'] = norm.get('note', '')
+    model = _load_exceptions()
+    entry = model.setdefault(domain, {'site_mode': 'enforce', 'exceptions': []})
+    entry.setdefault('exceptions', []).append(norm)
+    saved_ok, err = _write_exceptions(model)
+    if not saved_ok:
+        return jsonify({'ok': False, 'error': f'WAF config test failed, change reverted: {err}'}), 400
+    _save_exceptions(model)
+    return jsonify({'ok': True, 'exception': norm})
+
+
+@security_bp.route('/api/security/waf/exceptions/<exc_id>', methods=['DELETE'])
+def waf_exceptions_delete(exc_id):
+    if not req(): return jsonify({'ok': False}), 401
+    domain = (request.args.get('domain') or '').strip().lower()
+    model  = _load_exceptions()
+    removed = False
+    domains = [domain] if domain else list(model.keys())
+    for dom in domains:
+        entry = model.get(dom, {})
+        before = entry.get('exceptions', [])
+        after  = [e for e in before if e.get('id') != exc_id]
+        if len(after) != len(before):
+            entry['exceptions'] = after
+            removed = True
+    if not removed:
+        return jsonify({'ok': False, 'error': 'Exception not found'}), 404
+    saved_ok, err = _write_exceptions(model)
+    if not saved_ok:
+        return jsonify({'ok': False, 'error': f'WAF config test failed, change reverted: {err}'}), 400
+    _save_exceptions(model)
+    return jsonify({'ok': True})
+
+
+@security_bp.route('/api/security/waf/site-mode', methods=['POST'])
+def waf_site_mode():
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+    domain = (d.get('domain') or '').strip().lower()
+    mode   = (d.get('mode') or '').strip().lower()
+    if not _valid_hostname(domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain'}), 400
+    if mode not in ('enforce', 'detect', 'off'):
+        return jsonify({'ok': False, 'error': 'mode must be enforce, detect, or off'}), 400
+    model = _load_exceptions()
+    entry = model.setdefault(domain, {'site_mode': 'enforce', 'exceptions': []})
+    entry['site_mode'] = mode
+    saved_ok, err = _write_exceptions(model)
+    if not saved_ok:
+        return jsonify({'ok': False, 'error': f'WAF config test failed, change reverted: {err}'}), 400
+    _save_exceptions(model)
+    return jsonify({'ok': True, 'domain': domain, 'mode': mode})
+
+
+@security_bp.route('/api/security/waf/rule-catalog')
+def waf_rule_catalog():
+    """CRS category ranges + which are protected / always-block, so the UI can
+    label and grey-out rules in the exception picker. Also does a best-effort
+    scan of the installed CRS rules for id -> msg descriptions."""
+    if not req(): return jsonify({'ok': False}), 401
+    categories = [{'from': lo, 'to': hi, 'name': name} for lo, hi, name in CRS_CATEGORY_RANGES]
+    rules = {}
+    rules_dir = f'{_modsec_crs_dir()}/rules'
+    if os.path.isdir(rules_dir):
+        out, _, _ = sh(f'grep -rhoE "id:[0-9]{{6}}[^\\"]*msg:\'[^\']+\'" {rules_dir} 2>/dev/null | head -500')
+        for line in (out or '').split('\n'):
+            m = re.search(r"id:(\d{6}).*?msg:'([^']+)'", line)
+            if m:
+                rules.setdefault(m.group(1), m.group(2)[:120])
+    return jsonify({'ok': True, 'categories': categories, 'rules': rules,
+                    'protected': [{'from': lo, 'to': hi} for lo, hi in _EXC_PROTECTED_RANGES],
+                    'always_block': [{'from': lo, 'to': hi} for lo, hi in _EXC_ALWAYS_BLOCK_RANGES]})
+
+
+@security_bp.route('/api/security/waf/recent-hits')
+def waf_recent_hits():
+    """Recent WAF interceptions from the audit log, to power 'Add exception
+    from this hit'. Each hit carries the exact rule_id that fired + its path."""
+    if not req(): return jsonify({'ok': False}), 401
+    domain = (request.args.get('domain') or '').strip().lower()
+    if not os.path.exists(_modsec_audit()):
+        return jsonify({'ok': True, 'hits': [], 'exists': False})
+    out, _, _ = sh(f'tail -n 400 "{_modsec_audit()}" 2>/dev/null')
+    entries = _parse_modsec_entries(out)
+    hits, seen = [], set()
+    for e in reversed(entries):
+        rid = e.get('rule_id')
+        if not rid:
+            continue
+        dom = (e.get('domain') or '').split(':')[0].lower()
+        if domain and dom != domain:
+            continue
+        key = (dom, e.get('uri'), e.get('method'), rid)
+        if key in seen:
+            continue
+        seen.add(key)
+        hits.append({'domain': dom, 'uri': e.get('uri', ''), 'method': e.get('method', ''),
+                     'rule_id': rid, 'category': _categorize_rule(rid),
+                     'message': e.get('message', ''), 'ip': e.get('ip', ''),
+                     'timestamp': e.get('timestamp', '')})
+        if len(hits) >= 50:
+            break
+    return jsonify({'ok': True, 'hits': hits, 'exists': True})
+
+
+def _geo_json():  return os.path.join(_modsec_dir(), 'vortex-geo.json')
+
+
+def _geo_conf():  return os.path.join(_modsec_dir(), 'vortex-geo.conf')
+
+
+def _custom_json():return os.path.join(_modsec_dir(), 'vortex-custom.json')
+
+
+def _custom_conf():return os.path.join(_modsec_dir(), 'vortex-custom.conf')
+
+
+def _load_json_file(path, default):
+    if not os.path.exists(path): return default
+    try:
+        d = json.load(open(path)); return d if isinstance(d, type(default)) else default
+    except Exception: return default
+
+
+def _geo_db_present():
+    for p in ('/usr/share/GeoIP/GeoLite2-Country.mmdb', '/etc/nginx/modsec/GeoLite2-Country.mmdb',
+              '/usr/share/GeoIP/GeoIP.dat'):
+        if os.path.exists(p): return p
+    return ''
+
+
+def _validate_geo(rule):
+    cc = (rule.get('country') or '').strip().upper()
+    if not _ISO2_RE.match(cc):
+        return False, 'country must be a 2-letter ISO code (e.g. CN, RU)'
+    action = (rule.get('action') or 'block').lower()
+    if action not in ('block', 'allow'):
+        return False, 'action must be block or allow'
+    status = str(rule.get('status') or '403')
+    if status not in _WAF_STATUS_CODES:
+        return False, f'status must be one of {sorted(_WAF_STATUS_CODES)}'
+    return True, {'country': cc, 'action': action, 'status': status,
+                  'note': (rule.get('note') or '').strip()[:120]}
+
+
+def _compile_geo_text(rules):
+    lines = ['# Auto-generated by VortexPanel WAF (Region). DO NOT EDIT.']
+    db = _geo_db_present()
+    if db:
+        lines.append(f'SecGeoLookupDb {db}')
+    else:
+        lines.append('# WARNING: no GeoIP database found — region rules will not match until one is installed.')
+    rid = _GEO_ID_BASE
+    for r in rules:
+        ok, n = _validate_geo(r)
+        if not ok: continue
+        rid += 1
+        if n['action'] == 'allow':
+            act = 'pass,nolog,ctl:ruleEngine=Off'
+        else:
+            act = f"deny,status:{n['status']},log,msg:'VortexPanel Region block {n['country']}'"
+        lines.append(f'# {n["country"]}: {n["action"]}' + (f' ({n["note"]})' if n['note'] else ''))
+        lines.append(f'SecRule REMOTE_ADDR "@geoLookup" "id:{rid},phase:1,pass,nolog,chain"')
+        lines.append(f'    SecRule GEO:COUNTRY_CODE "@streq {n["country"]}" "{act}"')
+    return '\n'.join(lines) + '\n'
+
+
+def _validate_custom(rule):
+    name = (rule.get('name') or '').strip()[:60]
+    if not name:
+        return False, 'name required'
+    conds = rule.get('conditions') or []
+    if not isinstance(conds, list) or not conds:
+        return False, 'at least one condition required'
+    norm_conds = []
+    for c in conds:
+        f = (c.get('field') or '').lower()
+        if f not in _CUSTOM_FIELDS:
+            return False, f'unknown field: {f}'
+        val = (c.get('value') or '').strip()
+        if not val or '\n' in val or '\r' in val or len(val) > 512:
+            return False, f'invalid value for {f}'
+        if f == 'ip' and not all(_valid_ip_or_cidr(x) for x in val.split(',')):
+            return False, f'invalid IP/CIDR in condition: {val}'
+        if f == 'method' and val.upper() not in _HTTP_METHODS:
+            return False, f'invalid method: {val}'
+        if f == 'country' and not _ISO2_RE.match(val.upper()):
+            return False, f'invalid country code: {val}'
+        norm_conds.append({'field': f, 'value': val.upper() if f in ('method', 'country') else val})
+    action = (rule.get('action') or 'block').lower()
+    if action not in ('block', 'allow'):
+        return False, 'action must be block or allow'
+    status = str(rule.get('status') or '403')
+    if status not in _WAF_STATUS_CODES:
+        return False, 'invalid status code'
+    domain = (rule.get('domain') or '').strip().lower()
+    if domain and not _valid_hostname(domain):
+        return False, 'invalid domain'
+    return True, {'name': name, 'conditions': norm_conds, 'action': action,
+                  'status': status, 'domain': domain, 'enabled': rule.get('enabled', True)}
+
+
+def _compile_custom_text(rules):
+    lines = ['# Auto-generated by VortexPanel WAF (Custom Rules). DO NOT EDIT.']
+    rid = _CUSTOM_ID_BASE
+    needs_geo = any(c['field'] == 'country' for r in rules for c in (r.get('conditions') or []))
+    db = _geo_db_present()
+    if needs_geo and db:
+        lines.append(f'SecGeoLookupDb {db}')
+    for r in rules:
+        ok, n = _validate_custom(r)
+        if not ok or not n.get('enabled', True):
+            continue
+        rid += 1
+        links = []
+        if n['domain']:
+            links.append(('SERVER_NAME', f'@streq {_modsec_str_escape(n["domain"])}'))
+        # geoLookup must precede any GEO:COUNTRY_CODE check
+        if any(c['field'] == 'country' for c in n['conditions']):
+            links.append(('REMOTE_ADDR', '@geoLookup'))
+        for c in n['conditions']:
+            var, op = _CUSTOM_FIELDS[c['field']]
+            val = _modsec_str_escape(c['value'])
+            links.append((var, f'@{op} {val}'))
+        if n['action'] == 'allow':
+            act = 'pass,nolog,ctl:ruleEngine=Off'
+        else:
+            act = f"deny,status:{n['status']},log,msg:'VortexPanel Custom: {_modsec_str_escape(n['name'])}'"
+        lines.append(f'# custom rule: {n["name"]} -> {n["action"]}')
+        m = len(links)
+        for idx, (var, op) in enumerate(links):
+            if idx == 0:
+                # single condition → action goes on this line; multi → starter chains
+                a = f'id:{rid},phase:1,{act}' if m == 1 else f'id:{rid},phase:1,pass,nolog,chain'
+                lines.append(f'SecRule {var} "{op}" "{a}"')
+            elif idx == m - 1:
+                lines.append(f'    SecRule {var} "{op}" "{act}"')
+            else:
+                lines.append(f'    SecRule {var} "{op}" "chain"')
+    return '\n'.join(lines) + '\n'
+
+
+def _wire_extra_include(conf_path):
+    """Include an extra vortex conf into main.conf (nginx only; Apache
+    auto-includes /etc/modsecurity/*.conf). Idempotent."""
+    if _modsec_target() == 'apache' or not os.path.exists(_modsec_main()):
+        return
+    main = open(_modsec_main()).read()
+    line = f'Include {conf_path}'
+    if line in main:
+        return
+    base = f'Include {_modsec_conf()}'
+    main = main.replace(base, f'{base}\n{line}', 1) if base in main else f'{line}\n{main}'
+    with open(_modsec_main(), 'w') as f:
+        f.write(main)
+
+
+def _write_generated(conf_path, text):
+    """Write a generated conf (geo/custom) to nginx/Apache if present, then
+    mirror the whole model to Caddy/Coraza. Each engine configtests and rolls
+    back on its own. A Caddy-only box skips the nginx/Apache half."""
+    modsec_ok, modsec_err = True, ''
+    if _modsec_target() is not None:
+        os.makedirs(_modsec_dir(), exist_ok=True)
+        prev = open(conf_path).read() if os.path.exists(conf_path) else None
+        with open(conf_path, 'w') as f:
+            f.write(text)
+        _wire_extra_include(conf_path)
+        modsec_ok, modsec_err = _modsec_configtest()
+        if not modsec_ok:
+            if prev is not None: open(conf_path, 'w').write(prev)
+            else:
+                try: os.unlink(conf_path)
+                except Exception: pass
+        else:
+            _modsec_reload()
+    caddy_ok, caddy_err = _coraza_sync()
+    return _combine_engine_results(modsec_ok, modsec_err, caddy_ok, caddy_err)
+
+
+@security_bp.route('/api/security/waf/geo', methods=['GET', 'POST'])
+def waf_geo():
+    if not req(): return jsonify({'ok': False}), 401
+    rules = _load_json_file(_geo_json(), [])
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'rules': rules, 'geoip_installed': bool(_geo_db_present())})
+    ok, n = _validate_geo(request.get_json() or {})
+    if not ok: return jsonify({'ok': False, 'error': n}), 400
+    rules = [r for r in rules if (r.get('country') or '').upper() != n['country']]  # replace dup
+    rules.append(n)
+    saved, err = _write_generated(_geo_conf(), _compile_geo_text(rules))
+    if not saved: return jsonify({'ok': False, 'error': f'config test failed, reverted: {err}'}), 400
+    json.dump(rules, open(_geo_json(), 'w'), indent=2)
+    return jsonify({'ok': True, 'rules': rules})
+
+
+@security_bp.route('/api/security/waf/geo/<code>', methods=['DELETE'])
+def waf_geo_delete(code):
+    if not req(): return jsonify({'ok': False}), 401
+    code = code.strip().upper()
+    rules = [r for r in _load_json_file(_geo_json(), []) if (r.get('country') or '').upper() != code]
+    saved, err = _write_generated(_geo_conf(), _compile_geo_text(rules))
+    if not saved: return jsonify({'ok': False, 'error': err}), 400
+    json.dump(rules, open(_geo_json(), 'w'), indent=2)
+    return jsonify({'ok': True, 'rules': rules})
+
+
+@security_bp.route('/api/security/waf/custom-rules-builder', methods=['GET', 'POST'])
+def waf_custom_builder():
+    if not req(): return jsonify({'ok': False}), 401
+    rules = _load_json_file(_custom_json(), [])
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'rules': rules})
+    ok, n = _validate_custom(request.get_json() or {})
+    if not ok: return jsonify({'ok': False, 'error': n}), 400
+    import secrets as _s
+    n['id'] = 'cr_' + _s.token_hex(4)
+    rules.append(n)
+    saved, err = _write_generated(_custom_conf(), _compile_custom_text(rules))
+    if not saved: return jsonify({'ok': False, 'error': f'config test failed, reverted: {err}'}), 400
+    json.dump(rules, open(_custom_json(), 'w'), indent=2)
+    return jsonify({'ok': True, 'rule': n})
+
+
+@security_bp.route('/api/security/waf/custom-rules-builder/<rid>', methods=['DELETE'])
+def waf_custom_delete(rid):
+    if not req(): return jsonify({'ok': False}), 401
+    rules = [r for r in _load_json_file(_custom_json(), []) if r.get('id') != rid]
+    saved, err = _write_generated(_custom_conf(), _compile_custom_text(rules))
+    if not saved: return jsonify({'ok': False, 'error': err}), 400
+    json.dump(rules, open(_custom_json(), 'w'), indent=2)
+    return jsonify({'ok': True})
+
+
+@security_bp.route('/api/security/waf/lists/export')
+def waf_lists_export():
+    if not req(): return jsonify({'ok': False}), 401
+    return jsonify({'ok': True, 'lists': _load_lists()})
+
+
+@security_bp.route('/api/security/waf/lists/import', methods=['POST'])
+def waf_lists_import():
+    if not req(): return jsonify({'ok': False}), 401
+    d = request.get_json() or {}
+    incoming = d.get('lists') or {}
+    mode = d.get('mode', 'merge')
+    cur = _load_lists()
+    for k in ('ip_whitelist', 'ip_blacklist', 'ua_blacklist', 'url_blacklist'):
+        vals = [str(x).strip() for x in (incoming.get(k) or []) if str(x).strip()]
+        if mode == 'replace':
+            cur[k] = vals
+        else:
+            cur[k] = sorted(set((cur.get(k) or []) + vals))
+    _save_lists_json(cur)
+    modsec_ok, modsec_err = True, ''
+    if _modsec_target() is not None:
+        conf_path = _modsec_lists_conf()
+        prev = open(conf_path).read() if os.path.exists(conf_path) else None
+        open(conf_path, 'w').write(_render_lists_conf(cur))
+        _ensure_lists_included()
+        modsec_ok, modsec_err = _modsec_configtest()
+        if not modsec_ok:
+            if prev is not None: open(conf_path, 'w').write(prev)
+        else:
+            _modsec_reload()
+    caddy_ok, caddy_err = _coraza_sync()
+    ok, err = _combine_engine_results(modsec_ok, modsec_err, caddy_ok, caddy_err)
+    if not ok:
+        return jsonify({'ok': False, 'error': f'config test failed, reverted: {err}'}), 400
+    return jsonify({'ok': True, 'lists': cur})
+
+
+def _ratelimit_json(): return os.path.join(_modsec_dir(), 'vortex-ratelimit.json')
+
+
+def _validate_ratelimit(r):
+    name = re.sub(r'[^a-zA-Z0-9_]', '', (r.get('name') or ''))[:32]
+    if not name: return False, 'name required (letters/digits/underscore)'
+    url = (r.get('url') or '/').strip()
+    if not url.startswith('/'): return False, 'url must start with /'
+    rps_raw = r.get('rps', 10)
+    try: rps = int(rps_raw)
+    except (ValueError, TypeError): return False, 'rps must be a number'
+    if not (1 <= rps <= 100000): return False, 'rps out of range (1-100000)'
+    burst_raw = r.get('burst')
+    if burst_raw in (None, ''): burst_raw = rps * 2
+    try: burst = int(burst_raw)
+    except (ValueError, TypeError): return False, 'burst must be a number'
+    if not (0 <= burst <= 1000000): return False, 'burst out of range'
+    status = str(r.get('status') or '503')
+    if status not in _WAF_STATUS_CODES: return False, 'invalid status'
+    domain = (r.get('domain') or '').strip().lower()
+    if domain and not _valid_hostname(domain): return False, 'invalid domain'
+    return True, {'name': name, 'url': url, 'rps': rps, 'burst': burst, 'status': status,
+                  'domain': domain}
+
+
+def _compile_ratelimit_zones(rules):
+    """Generate the http-context limit_req_zone directives (safe in conf.d)."""
+    lines = ['# Auto-generated by VortexPanel WAF (Rate Limit). DO NOT EDIT.',
+             'limit_req_status 503;']
+    seen = set()
+    for r in rules:
+        ok, n = _validate_ratelimit(r)
+        if not ok or n['name'] in seen: continue
+        seen.add(n['name'])
+        lines.append(f'limit_req_zone $binary_remote_addr zone=vortex_{n["name"]}:10m rate={n["rps"]}r/s;')
+    return '\n'.join(lines) + '\n'
+
+
+def _ratelimit_location_snippet(n):
+    """The limit_req line a site's matching location block should carry."""
+    return f'limit_req zone=vortex_{n["name"]} burst={n["burst"]} nodelay;'
+
+
+@security_bp.route('/api/security/waf/ratelimit', methods=['GET', 'POST'])
+def waf_ratelimit():
+    if not req(): return jsonify({'ok': False}), 401
+    rules = _load_json_file(_ratelimit_json(), [])
+    if request.method == 'GET':
+        return jsonify({'ok': True, 'rules': rules})
+    ok, n = _validate_ratelimit(request.get_json() or {})
+    if not ok: return jsonify({'ok': False, 'error': n}), 400
+    import secrets as _s
+    n['id'] = 'rl_' + _s.token_hex(4)
+    n['snippet'] = _ratelimit_location_snippet(n)
+    rules = [r for r in rules if r.get('name') != n['name']] + [n]
+    prev = open(_RATELIMIT_CONF).read() if os.path.exists(_RATELIMIT_CONF) else None
+    os.makedirs('/etc/nginx/conf.d', exist_ok=True)
+    open(_RATELIMIT_CONF, 'w').write(_compile_ratelimit_zones(rules))
+    out, _, rc = sh('nginx -t 2>&1')
+    if rc != 0:
+        if prev is not None: open(_RATELIMIT_CONF, 'w').write(prev)
+        else:
+            try: os.unlink(_RATELIMIT_CONF)
+            except Exception: pass
+        return jsonify({'ok': False, 'error': f'nginx config test failed, reverted: {out}'}), 400
+    sh('systemctl reload nginx 2>/dev/null')
+    os.makedirs(_modsec_dir(), exist_ok=True)
+    json.dump(rules, open(_ratelimit_json(), 'w'), indent=2)
+    return jsonify({'ok': True, 'rules': rules})
+
+
+@security_bp.route('/api/security/waf/ratelimit/<rid>', methods=['DELETE'])
+def waf_ratelimit_delete(rid):
+    if not req(): return jsonify({'ok': False}), 401
+    rules = [r for r in _load_json_file(_ratelimit_json(), []) if r.get('id') != rid]
+    if os.path.exists(_RATELIMIT_CONF):
+        open(_RATELIMIT_CONF, 'w').write(_compile_ratelimit_zones(rules))
+        sh('nginx -t 2>&1 && systemctl reload nginx 2>/dev/null')
+    json.dump(rules, open(_ratelimit_json(), 'w'), indent=2)
+    return jsonify({'ok': True, 'rules': rules})
+
+
+def _aggregate_waf(entries):
+    """PURE: turn parsed ModSecurity entries into dashboard aggregates."""
+    from collections import Counter
+    total = len(entries)
+    by_ip, by_uri, by_cat, by_country, by_hour = Counter(), Counter(), Counter(), Counter(), Counter()
+    for e in entries:
+        ip = e.get('ip')
+        if ip: by_ip[ip] += 1
+        if e.get('uri'): by_uri[e['uri'][:120]] += 1
+        by_cat[_categorize_rule(e.get('rule_id'))] += 1
+        dt = _entry_datetime(e)
+        if dt: by_hour[dt.strftime('%H')] += 1
+    timeline = [{'hour': f'{h:02d}', 'count': by_hour.get(f'{h:02d}', 0)} for h in range(24)]
+    return {
+        'malicious': total,
+        'top_attackers': [{'ip': ip, 'count': c} for ip, c in by_ip.most_common(15)],
+        'top_uris':      [{'uri': u, 'count': c} for u, c in by_uri.most_common(10)],
+        'categories':    [{'name': n, 'count': c} for n, c in by_cat.most_common()],
+        'timeline':      timeline,
+    }
+
+
+@security_bp.route('/api/security/waf/overview')
+def waf_overview():
+    if not req(): return jsonify({'ok': False}), 401
+    if not os.path.exists(_modsec_audit()):
+        return jsonify({'ok': True, 'exists': False, 'malicious': 0, 'top_attackers': [],
+                        'top_uris': [], 'categories': [], 'timeline': [], 'engine': _engine_state()})
+    out, _, _ = sh(f'tail -n 2000 "{_modsec_audit()}" 2>/dev/null')
+    agg = _aggregate_waf(_parse_modsec_entries(out))
+    agg.update({'ok': True, 'exists': True, 'engine': _engine_state(),
+                'paranoia': _paranoia_level() if _modsec_installed() else 0,
+                'geoip_installed': bool(_geo_db_present())})
+    return jsonify(agg)
+
+
+def _coraza_conf_paths():
+    """The four generated SecLang files Caddy's Coraza directives Include.
+    Same content as the nginx/Apache copies — regenerated from the same model."""
+    return {
+        'lists':      os.path.join(CORAZA_DIR, 'vortex-lists.conf'),
+        'geo':        os.path.join(CORAZA_DIR, 'vortex-geo.conf'),
+        'custom':     os.path.join(CORAZA_DIR, 'vortex-custom.conf'),
+        'exceptions': os.path.join(CORAZA_DIR, 'vortex-exceptions.conf'),
+    }
+
+
+def _coraza_present():
+    """True only when a Caddy binary that genuinely loads coraza_waf is the
+    running binary. The marker is written by the App Store build after it has
+    validated the module against the new binary, so this is authoritative even
+    though `caddy list-modules` cannot distinguish coraza from the old
+    caddy-waf (both are http.handlers.waf)."""
+    if not os.path.exists(CORAZA_MARKER):
+        return False
+    out, _, _ = sh('caddy list-modules 2>/dev/null')
+    return 'http.handlers.waf' in out
+
+
+def _coraza_directives_block():
+    """The per-site coraza_waf block, identical for every site — per-site
+    behaviour is already baked into the rules (keyed on SERVER_NAME), so the
+    wiring never has to differ between sites. CRS itself is loaded from
+    Coraza's own embedded copy via load_owasp_crs; only the VortexPanel files
+    are Included from disk. Order mirrors the nginx/Apache main.conf exactly:
+    lists (whitelist ruleEngine=Off first) → region/custom → exceptions
+    (ctl:ruleRemoveById in phase 1) → CRS setup → CRS rules → engine on."""
+    p = _coraza_conf_paths()
+    return (
+        '    coraza_waf {\n'
+        '        load_owasp_crs\n'
+        '        directives `\n'
+        '        Include @coraza.conf-recommended\n'
+        f'        Include {p["lists"]}\n'
+        f'        Include {p["geo"]}\n'
+        f'        Include {p["custom"]}\n'
+        f'        Include {p["exceptions"]}\n'
+        '        Include @crs-setup.conf.example\n'
+        '        Include @owasp_crs/*.conf\n'
+        '        SecRuleEngine On\n'
+        '        `\n'
+        '    }\n'
+    )
+
+
+def _coraza_compile_all():
+    """PURE-ish: build the four files' text from the CURRENT stored model,
+    reusing the exact same compile functions the nginx/Apache path uses. No
+    rule logic lives here — this is only which model feeds which file."""
+    return {
+        'lists':      _render_lists_conf(_load_lists()),
+        'geo':        _compile_geo_text(_load_json_file(_geo_json(), [])),
+        'custom':     _compile_custom_text(_load_json_file(_custom_json(), [])),
+        'exceptions': _compile_exceptions_text(_load_exceptions()),
+    }
+
+
+def _caddy_configtest():
+    """Validate the whole Caddyfile against the running binary. Returns (ok, out)."""
+    if not os.path.exists(CADDYFILE):
+        return True, ''   # nothing to break yet
+    out, err, rc = sh(f'caddy validate --config {CADDYFILE} --adapter caddyfile 2>&1')
+    blob = (out or '') + (err or '')
+    ok = rc == 0 and 'error' not in blob.lower() and 'invalid' not in blob.lower()
+    return ok, blob
+
+
+def _coraza_sync():
+    """Regenerate every Caddy WAF file from the shared model, validate, and
+    reload — rolling every file back on a failed validate so a bad change can
+    never take Caddy's sites down. No-op (success) when Coraza isn't installed,
+    so callers can invoke it unconditionally. Returns (ok, error)."""
+    if not _coraza_present():
+        return True, ''
+    os.makedirs(CORAZA_DIR, exist_ok=True)
+    paths   = _coraza_conf_paths()
+    text    = _coraza_compile_all()
+    backups = {}
+    for key, path in paths.items():
+        backups[path] = open(path).read() if os.path.exists(path) else None
+        with open(path, 'w') as f:
+            f.write(text[key])
+    ok, out = _caddy_configtest()
+    if not ok:
+        for path, prev in backups.items():
+            if prev is not None:
+                with open(path, 'w') as f:
+                    f.write(prev)
+            else:
+                try: os.unlink(path)
+                except Exception: pass
+        return False, out
+    sh('systemctl reload caddy 2>/dev/null')
+    return True, ''
+
+
+def _split_caddy_block(content):
+    """Split at the FIRST '{' and its real matching '}' via brace counting —
+    the same discipline websites_core._split_site_block uses, kept local so
+    this module has no import cycle. Returns (header, inner, trailing) or
+    (None, None, None)."""
+    start = content.find('{')
+    if start == -1:
+        return None, None, None
+    depth = 0
+    for i in range(start, len(content)):
+        if content[i] == '{':
+            depth += 1
+        elif content[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return content[:start+1], content[start+1:i], content[i:]
+    return None, None, None
+
+
+def _caddyfile_has_global_block(content):
+    """True if the file opens with a global options block (a bare '{' before
+    any site address), rather than a site block (address then '{')."""
+    stripped = re.sub(r'(?m)^\s*#.*$', '', content).strip()
+    return stripped.startswith('{')
+
+
+def _ensure_coraza_global_order(content):
+    """PURE: guarantee `order coraza_waf first` is present in the global
+    options block, adding the block if the Caddyfile has none. Idempotent."""
+    if re.search(r'order\s+coraza_waf\s+first', content):
+        return content
+    if _caddyfile_has_global_block(content):
+        header, inner, trailing = _split_caddy_block(content)
+        if header is not None:
+            return header + '\n    order coraza_waf first' + inner + trailing
+    # No global block — prepend one.
+    return '{\n    order coraza_waf first\n}\n\n' + content
+
+
+def _site_has_coraza(content):
+    return bool(re.search(r'\bcoraza_waf\s*\{', content))
+
+
+def _wire_coraza_into_site(content):
+    """PURE: insert the coraza_waf block as the first directive inside a Caddy
+    site block. Returns (new_content, error). Idempotent — returns the content
+    unchanged if the site already has a coraza_waf block."""
+    if _site_has_coraza(content):
+        return content, ''
+    header, inner, trailing = _split_caddy_block(content)
+    if header is None:
+        return None, 'no balanced site block found'
+    return header + '\n' + _coraza_directives_block() + inner + trailing, ''
+
+
+def _unwire_coraza_from_site(content):
+    """PURE: remove a coraza_waf { ... } block from a site config, brace-safe.
+    Returns (new_content, changed)."""
+    m = re.search(r'[ \t]*coraza_waf\s*\{', content)
+    if not m:
+        return content, False
+    start = content.find('{', m.start())
+    depth = 0
+    for i in range(start, len(content)):
+        if content[i] == '{':
+            depth += 1
+        elif content[i] == '}':
+            depth -= 1
+            if depth == 0:
+                # swallow one trailing newline for tidiness
+                end = i + 1
+                if end < len(content) and content[end] == '\n':
+                    end += 1
+                return content[:m.start()] + content[end:], True
+    return content, False
+
+
+@security_bp.route('/api/security/waf/caddy/status')
+def waf_caddy_status():
+    """Whether Coraza is the live Caddy engine, which sites carry it, and
+    whether Caddy's generated config currently matches the shared model."""
+    if not req(): return jsonify({'ok': False}), 401
+    present = _coraza_present()
+    wired_sites = []
+    if os.path.isdir(CADDY_SITES):
+        for fn in os.listdir(CADDY_SITES):
+            if not fn.endswith('.conf'): continue
+            try:
+                if _site_has_coraza(open(os.path.join(CADDY_SITES, fn)).read()):
+                    wired_sites.append(fn[:-5])
+            except Exception:
+                pass
+    in_sync = True
+    if present:
+        want = _coraza_compile_all()
+        for key, path in _coraza_conf_paths().items():
+            have = open(path).read() if os.path.exists(path) else ''
+            if have != want[key]:
+                in_sync = False
+                break
+    return jsonify({
+        'ok': True, 'installed': present, 'engine': 'coraza',
+        'wired_sites': wired_sites, 'in_sync': in_sync,
+        'shares_model_with': ['nginx', 'apache'],
+        'geoip_note': 'Region rules need a Coraza binary built with GeoIP support; '
+                      'exceptions, per-site mode, custom rules and lists apply fully.',
+    })
+
+
+@security_bp.route('/api/security/waf/caddy/sync', methods=['POST'])
+def waf_caddy_sync():
+    """Regenerate Caddy's WAF config from the shared model on demand."""
+    if not req(): return jsonify({'ok': False}), 401
+    if not _coraza_present():
+        return jsonify({'ok': False, 'error': 'Coraza engine is not installed — add it from the App Store (Security → Caddy WAF / Coraza).'}), 400
+    ok, err = _coraza_sync()
+    if not ok:
+        return jsonify({'ok': False, 'error': f'Caddy config test failed, reverted: {err}'}), 400
+    return jsonify({'ok': True})
+
+
+@security_bp.route('/api/security/waf/caddy/site', methods=['POST'])
+def waf_caddy_enable_site():
+    """Turn the unified WAF on for one Caddy site: ensure the global order
+    directive, wire the coraza_waf block in, sync config, validate, reload."""
+    if not req(): return jsonify({'ok': False}), 401
+    if not _coraza_present():
+        return jsonify({'ok': False, 'error': 'Coraza engine is not installed.'}), 400
+    domain = ((request.get_json() or {}).get('domain') or '').strip().lower()
+    if not _valid_hostname(domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain'}), 400
+    fp = os.path.join(CADDY_SITES, f'{domain}.conf')
+    if not os.path.exists(fp):
+        return jsonify({'ok': False, 'error': f'No Caddy site config found for {domain}'}), 404
+    # Make sure the generated files exist before a site references them.
+    ok, err = _coraza_sync()
+    if not ok:
+        return jsonify({'ok': False, 'error': f'Config sync failed, reverted: {err}'}), 400
+    original = open(fp).read()
+    new_site, werr = _wire_coraza_into_site(original)
+    if new_site is None:
+        return jsonify({'ok': False, 'error': werr}), 400
+    prev_caddyfile = open(CADDYFILE).read() if os.path.exists(CADDYFILE) else None
+    if prev_caddyfile is not None:
+        with open(CADDYFILE, 'w') as f:
+            f.write(_ensure_coraza_global_order(prev_caddyfile))
+    with open(fp, 'w') as f:
+        f.write(new_site)
+    ok, out = _caddy_configtest()
+    if not ok:
+        with open(fp, 'w') as f:
+            f.write(original)
+        if prev_caddyfile is not None:
+            with open(CADDYFILE, 'w') as f:
+                f.write(prev_caddyfile)
+        return jsonify({'ok': False, 'error': f'Caddy validation failed, reverted: {out}'}), 400
+    sh('systemctl reload caddy 2>/dev/null')
+    return jsonify({'ok': True, 'domain': domain})
+
+
+@security_bp.route('/api/security/waf/caddy/site', methods=['DELETE'])
+def waf_caddy_disable_site():
+    if not req(): return jsonify({'ok': False}), 401
+    domain = (request.args.get('domain') or '').strip().lower()
+    if not _valid_hostname(domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain'}), 400
+    fp = os.path.join(CADDY_SITES, f'{domain}.conf')
+    if not os.path.exists(fp):
+        return jsonify({'ok': False, 'error': f'No Caddy site config found for {domain}'}), 404
+    original = open(fp).read()
+    new_site, changed = _unwire_coraza_from_site(original)
+    if not changed:
+        return jsonify({'ok': True, 'message': 'Site was not running the unified WAF'})
+    with open(fp, 'w') as f:
+        f.write(new_site)
+    ok, out = _caddy_configtest()
+    if not ok:
+        with open(fp, 'w') as f:
+            f.write(original)
+        return jsonify({'ok': False, 'error': f'Caddy validation failed, reverted: {out}'}), 400
+    sh('systemctl reload caddy 2>/dev/null')
+    return jsonify({'ok': True, 'domain': domain})
