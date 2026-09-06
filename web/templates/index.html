@@ -3198,6 +3198,10 @@
       <div x-show="page==='modules'" x-data="modulesPage()">
         <div class="page-header">
           <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software</div></div>
+          <button class="btn btn-ghost btn-sm" @click="refreshCatalog()" :disabled="catalogRefreshing">
+            <span x-show="!catalogRefreshing">Update App List</span>
+            <span x-show="catalogRefreshing">Updating…</span>
+          </button>
         </div>
 
         <!-- Category filter tabs -->
@@ -3244,6 +3248,9 @@
                       <span x-show="m.installedVer"
                             style="font-size:11px;font-family:var(--font-mono);background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2);padding:1px 7px;border-radius:8px;font-weight:600;display:inline-block"
                             x-text="'v'+m.installedVer"></span>
+                      <span x-show="m.hasUpdate" :title="'Newer version available on this track: v'+m.latestSameTrack"
+                            style="font-size:11px;background:rgba(245,158,11,.12);color:#d97706;border:1px solid rgba(245,158,11,.25);padding:1px 7px;border-radius:8px;font-weight:600;display:inline-block;cursor:default"
+                            x-text="'Update available → v'+m.latestSameTrack"></span>
                       <!-- Service status -->
                       <div x-show="m.manage" style="display:flex;align-items:center;gap:5px">
                         <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus?'red':'gray')" style="flex-shrink:0"></span>

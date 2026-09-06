@@ -1,0 +1,534 @@
+{
+  "catalog_version": 1,
+  "apps": {
+    "nginx": {
+      "name": "Nginx",
+      "desc": "High-performance HTTP & reverse proxy server",
+      "versions": [
+        {
+          "label": "1.30.4 (Stable \u2014 security)",
+          "value": "stable"
+        },
+        {
+          "label": "1.31.5 (Mainline)",
+          "value": "mainline"
+        }
+      ]
+    },
+    "apache2": {
+      "name": "Apache2",
+      "desc": "Apache HTTP Server \u2014 widely-used web server",
+      "versions": [
+        {
+          "label": "2.4.68 (Latest Stable)",
+          "value": "2.4.68"
+        },
+        {
+          "label": "2.4.67 (Stable)",
+          "value": "2.4.67"
+        }
+      ]
+    },
+    "openlitespeed": {
+      "name": "OpenLiteSpeed",
+      "desc": "LiteSpeed open source web server",
+      "versions": [
+        {
+          "label": "1.9.x (Latest - Apr 2026)",
+          "value": "1.9"
+        },
+        {
+          "label": "1.8.5 (Stable - Jan 2026)",
+          "value": "1.8.5"
+        },
+        {
+          "label": "1.8.4 (Stable)",
+          "value": "1.8.4"
+        }
+      ]
+    },
+    "caddy": {
+      "name": "Caddy",
+      "desc": "Auto-HTTPS web server \u2014 HTTP/3, zero-config TLS via Lets Encrypt",
+      "versions": [
+        {
+          "label": "v2.11.4 (Latest \u2014 security)",
+          "value": "2.11.4"
+        },
+        {
+          "label": "v2.11.3 (Stable \u2014 security)",
+          "value": "2.11.3"
+        }
+      ]
+    },
+    "mysql": {
+      "name": "MySQL",
+      "desc": "The world\\",
+      "versions": [
+        {
+          "label": "Innovation (rolling \u2014 currently 26.7.0, latest quarterly release)",
+          "value": "innovation"
+        },
+        {
+          "label": "9.7.2 (LTS)",
+          "value": "9.7"
+        },
+        {
+          "label": "8.4.11 (LTS)",
+          "value": "8.4"
+        },
+        {
+          "label": "8.0.46 (EOL since Apr 2026 \u2014 no security patches, not recommended)",
+          "value": "8.0"
+        }
+      ]
+    },
+    "mariadb": {
+      "name": "MariaDB",
+      "desc": "Community-developed MySQL fork by MariaDB Foundation",
+      "versions": [
+        {
+          "label": "12.3.3 (Latest Stable)",
+          "value": "12.3"
+        },
+        {
+          "label": "11.8.9",
+          "value": "11.8"
+        },
+        {
+          "label": "11.4.13 (LTS)",
+          "value": "11.4"
+        },
+        {
+          "label": "10.11.19 (LTS)",
+          "value": "10.11"
+        }
+      ]
+    },
+    "mongodb": {
+      "name": "MongoDB",
+      "desc": "Document-oriented NoSQL database",
+      "versions": [
+        {
+          "label": "7.0 (LTS)",
+          "value": "7.0"
+        },
+        {
+          "label": "8.0 (Stable)",
+          "value": "8.0"
+        },
+        {
+          "label": "8.2 (Latest)",
+          "value": "8.2"
+        }
+      ]
+    },
+    "postgresql": {
+      "name": "PostgreSQL",
+      "desc": "Advanced open source relational database",
+      "versions": [
+        {
+          "label": "15 (Stable)",
+          "value": "15"
+        },
+        {
+          "label": "16 (Stable)",
+          "value": "16"
+        },
+        {
+          "label": "17 (Stable)",
+          "value": "17"
+        },
+        {
+          "label": "18 (Latest)",
+          "value": "18"
+        }
+      ]
+    },
+    "php": {
+      "name": "PHP",
+      "desc": "PHP-FPM \u2014 multiple versions supported side by side",
+      "versions": [
+        {
+          "label": "8.5 (Latest \u2014 active)",
+          "value": "8.5"
+        },
+        {
+          "label": "8.4 (Active)",
+          "value": "8.4"
+        },
+        {
+          "label": "8.3 (Security only)",
+          "value": "8.3"
+        },
+        {
+          "label": "8.2 (Security only \u2014 EOL Dec 2026)",
+          "value": "8.2"
+        },
+        {
+          "label": "8.1 (EOL \u2014 unpatched)",
+          "value": "8.1"
+        },
+        {
+          "label": "7.4 (EOL \u2014 unpatched)",
+          "value": "7.4"
+        }
+      ]
+    },
+    "pure-ftpd": {
+      "name": "Pure-FTPd",
+      "desc": "Simple, fast and secure FTP server",
+      "versions": [
+        {
+          "label": "1.0.54 (Latest Stable)",
+          "value": "latest"
+        }
+      ]
+    },
+    "phpmyadmin": {
+      "name": "phpMyAdmin",
+      "desc": "Web-based MySQL/MariaDB admin \u2014 auto-configured at port 8082",
+      "versions": [
+        {
+          "label": "5.2.3 (Latest)",
+          "value": "5.2.2"
+        }
+      ]
+    },
+    "fail2ban": {
+      "name": "Fail2ban",
+      "desc": "Intrusion prevention & brute-force protection",
+      "versions": [
+        {
+          "label": "1.1.1 (Latest Stable)",
+          "value": "latest"
+        }
+      ]
+    },
+    "clamav": {
+      "name": "ClamAV",
+      "desc": "Open source antivirus engine for mail gateways",
+      "versions": [
+        {
+          "label": "Distro-provided (Ubuntu security-maintained)",
+          "value": "latest"
+        }
+      ]
+    },
+    "ddns": {
+      "name": "DDNS Manager",
+      "desc": "Dynamic DNS \u2014 automatic IP update service via ddclient (Cloudflare, DynDNS and more)",
+      "versions": [
+        {
+          "label": "Latest (apt)",
+          "value": "latest"
+        },
+        {
+          "label": "9.18.x (ESV/LTS - Ubuntu repo)",
+          "value": "9.18"
+        },
+        {
+          "label": "9.20.x (Stable - ISC official)",
+          "value": "9.20"
+        }
+      ]
+    },
+    "nodejs": {
+      "name": "Node.js",
+      "desc": "JavaScript runtime built on Chrome V8 engine",
+      "versions": [
+        {
+          "label": "v24 LTS \u2014 Active (Krypton)",
+          "value": "24"
+        },
+        {
+          "label": "v22 LTS \u2014 Maintenance (Jod)",
+          "value": "22"
+        },
+        {
+          "label": "v26 Current (non-LTS)",
+          "value": "26"
+        }
+      ]
+    },
+    "python": {
+      "name": "Python Manager",
+      "desc": "Python 3 runtime + pip + venv",
+      "versions": [
+        {
+          "label": "3.10 (Security)",
+          "value": "3.10"
+        },
+        {
+          "label": "3.11 (Security)",
+          "value": "3.11"
+        },
+        {
+          "label": "3.12 (Active)",
+          "value": "3.12"
+        },
+        {
+          "label": "3.13 (Active)",
+          "value": "3.13"
+        },
+        {
+          "label": "3.14 (Latest)",
+          "value": "3.14"
+        }
+      ]
+    },
+    "docker": {
+      "name": "Docker",
+      "desc": "Container platform \u2014 build, ship, run anywhere",
+      "versions": [
+        {
+          "label": "v27 CE (Stable)",
+          "value": "27"
+        },
+        {
+          "label": "v28 CE (Stable)",
+          "value": "28"
+        },
+        {
+          "label": "v29 CE (Latest)",
+          "value": "29"
+        }
+      ]
+    },
+    "composer": {
+      "name": "Composer",
+      "desc": "PHP dependency & package manager",
+      "versions": [
+        {
+          "label": "2.10 (Latest Stable)",
+          "value": "2"
+        }
+      ]
+    },
+    "redis": {
+      "name": "Redis",
+      "desc": "In-memory data store, cache & message broker",
+      "versions": [
+        {
+          "label": "7.2.7 (Stable)",
+          "value": "7.2"
+        },
+        {
+          "label": "8.8.0 (Latest)",
+          "value": "8.0"
+        }
+      ]
+    },
+    "supervisor": {
+      "name": "Supervisor",
+      "desc": "Process control \u2014 keep programs running",
+      "versions": [
+        {
+          "label": "4.3.0 (Latest Stable)",
+          "value": "latest"
+        }
+      ]
+    },
+    "memcached": {
+      "name": "Memcached",
+      "desc": "Memcached is a high performance distributed memory object caching system",
+      "versions": [
+        {
+          "label": "Latest (distro-packaged)",
+          "value": "latest"
+        }
+      ]
+    },
+    "ffmpeg": {
+      "name": "ffmpeg manager",
+      "desc": "Supports installation and management of versions 7.1, 8.1, and nightly master. It is an open source computer program used to record, convert and stream audio and video.",
+      "versions": []
+    },
+    "roundcube": {
+      "name": "Roundcube",
+      "desc": "Modern web-based IMAP email client",
+      "versions": [
+        {
+          "label": "1.6.18 (LTS)",
+          "value": "1.6.16"
+        },
+        {
+          "label": "1.7.3  (Latest)",
+          "value": "1.7.1"
+        }
+      ]
+    },
+    "modsecurity": {
+      "name": "ModSecurity WAF",
+      "desc": "OWASP CRS v4 Web Application Firewall \u2014 Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)",
+      "versions": [
+        {
+          "label": "v3 + OWASP CRS v4 (Recommended)",
+          "value": "3"
+        },
+        {
+          "label": "v2 + OWASP CRS v4 (Apache legacy)",
+          "value": "2"
+        }
+      ]
+    },
+    "caddy-waf": {
+      "name": "Caddy WAF",
+      "desc": "fabriziosalmi/caddy-waf \u2014 regex rules, IP/DNS/GeoIP filtering, rate limiting, Tor blocking (Caddy only, requires rebuilding Caddy)",
+      "versions": [
+        {
+          "label": "Latest (main branch)",
+          "value": "latest"
+        }
+      ]
+    },
+    "nginx-lb": {
+      "name": "Nginx Load Balancer",
+      "desc": "Configure Nginx upstream load balancing (Round Robin, Least Conn, IP Hash)",
+      "versions": [
+        {
+          "label": "Round Robin (Default)",
+          "value": "roundrobin"
+        },
+        {
+          "label": "Least Connections",
+          "value": "leastconn"
+        },
+        {
+          "label": "IP Hash (Sticky)",
+          "value": "iphash"
+        }
+      ]
+    },
+    "cdn": {
+      "name": "CDN Manager",
+      "desc": "Connect Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN, StackPath, Google CDN, Sucuri",
+      "versions": [
+        {
+          "label": "Built-in",
+          "value": "builtin"
+        },
+        {
+          "label": "1.30.4 (Stable \u2014 security)",
+          "value": "stable"
+        },
+        {
+          "label": "1.31.5 (Mainline)",
+          "value": "mainline"
+        },
+        {
+          "label": "1.8.3",
+          "value": "1.8.3"
+        },
+        {
+          "label": "1.8.4",
+          "value": "1.8.4"
+        },
+        {
+          "label": "1.8.5 (Latest)",
+          "value": "1.8.5"
+        },
+        {
+          "label": "9.3 (Latest)",
+          "value": "9.3"
+        },
+        {
+          "label": "8.4 (LTS)",
+          "value": "8.4"
+        },
+        {
+          "label": "8.0 (LTS)",
+          "value": "8.0"
+        },
+        {
+          "label": "12.3 (Latest)",
+          "value": "12.3"
+        },
+        {
+          "label": "11.8",
+          "value": "11.8"
+        },
+        {
+          "label": "11.7",
+          "value": "11.7"
+        },
+        {
+          "label": "11.4 (LTS)",
+          "value": "11.4"
+        },
+        {
+          "label": "10.11 (LTS)",
+          "value": "10.11"
+        },
+        {
+          "label": "10.6 (LTS)",
+          "value": "10.6"
+        },
+        {
+          "label": "Redis 7.2 (Stable)",
+          "value": "7.2"
+        },
+        {
+          "label": "Redis 8.0 (Latest)",
+          "value": "8.0"
+        },
+        {
+          "label": "1.0.49 (Stable)",
+          "value": "1.0.49"
+        },
+        {
+          "label": "1.0.54 (Latest)",
+          "value": "1.0.52"
+        },
+        {
+          "label": "18 (Latest)",
+          "value": "18"
+        },
+        {
+          "label": "17 (Stable)",
+          "value": "17"
+        },
+        {
+          "label": "16 (Stable)",
+          "value": "16"
+        },
+        {
+          "label": "15 (Stable)",
+          "value": "15"
+        },
+        {
+          "label": "8.0 (Latest)",
+          "value": "8.0"
+        },
+        {
+          "label": "7.0 (Stable)",
+          "value": "7.0"
+        },
+        {
+          "label": "6.0 (LTS)",
+          "value": "6.0"
+        },
+        {
+          "label": "v24 LTS \u2014 Active (Krypton)",
+          "value": "24"
+        },
+        {
+          "label": "v22 LTS \u2014 Maintenance (Jod)",
+          "value": "22"
+        },
+        {
+          "label": "v26 Current (non-LTS)",
+          "value": "26"
+        },
+        {
+          "label": "9.20.x (Stable - ISC)",
+          "value": "9.20"
+        },
+        {
+          "label": "9.18.x (ESV/LTS - Ubuntu)",
+          "value": "9.18"
+        }
+      ]
+    }
+  }
+}

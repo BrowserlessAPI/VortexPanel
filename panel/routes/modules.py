@@ -1589,8 +1589,58 @@ nginx -t && systemctl reload nginx''',
     },
 ]
 
+# --- App catalog override -------------------------------------------------------
+# Lets version labels/descriptions be refreshed independently of a full panel
+# update (which requires a git pull + service restart for even a one-line
+# version bump). This ONLY ever supplies cosmetic/display metadata - name,
+# desc, and the versions list shown in the UI. install_tpl, check commands,
+# service names, and everything that actually executes on the system always
+# comes from this file's own MODULES list, reviewed and shipped with the
+# panel itself. A stale or malformed override can only ever show wrong text
+# in the UI - it can never change what an install/uninstall/switch-version
+# action actually does.
+_CATALOG_OVERRIDE_PATH = '/opt/vortexpanel/data/app_catalog_override.json'
+
+def _load_catalog_override():
+    try:
+        with open(_CATALOG_OVERRIDE_PATH) as f:
+            data = json.load(f)
+        apps = data.get('apps', {})
+        if not isinstance(apps, dict):
+            return {}
+        return apps
+    except Exception:
+        return {}
+
 def _get_mod(mod_id):
-    return next((m for m in MODULES if m['id'] == mod_id), None)
+    m = next((mod for mod in MODULES if mod['id'] == mod_id), None)
+    if not m:
+        return None
+    override = _load_catalog_override().get(mod_id)
+    if not override:
+        return m
+    # Return a shallow copy with only display fields overridden - never
+    # mutate the original MODULES entry, and never let the override supply
+    # install_tpl/check/service/uninstall, even if a malformed or malicious
+    # file included those keys.
+    merged = dict(m)
+    if isinstance(override.get('desc'), str):
+        merged['desc'] = override['desc']
+    if isinstance(override.get('versions'), list):
+        base_values = {v.get('value') for v in m.get('versions', [])}
+        override_by_value = {
+            v['value']: v['label']
+            for v in override['versions']
+            if isinstance(v, dict) and isinstance(v.get('label'), str) and isinstance(v.get('value'), str)
+        }
+        # Relabel in place, preserving the base list's own values and order -
+        # this can only ever change the TEXT shown for a version the panel
+        # already knows how to install, never add one it doesn't.
+        merged['versions'] = [
+            {'label': override_by_value.get(v.get('value'), v.get('label')), 'value': v.get('value')}
+            for v in m.get('versions', [])
+        ]
+    return merged
 
 
 # --- Conflict groups — only one from each group can be installed ---------------
@@ -1612,16 +1662,103 @@ def get_conflict(mod_id):
                 return group, member
     return None, None
 
+def _parse_ver_tuple(s):
+    """Extract a comparable (major, minor, patch, ...) tuple from the start
+    of a version string. Returns None if nothing numeric is found."""
+    m = re.match(r'^(\d+(?:\.\d+)*)', s.strip())
+    if not m:
+        return None
+    return tuple(int(x) for x in m.group(1).split('.'))
+
+def _check_update_available(installed_ver, versions):
+    """Given an installed version string and the module's versions list,
+    find the catalog entry on the SAME major.minor track and report whether
+    it's a newer patch. Comparing against the single highest-listed version
+    would be wrong for apps with genuinely separate tracks (nginx stable vs
+    mainline) that a user picked intentionally - this only ever suggests an
+    update within the track already running, never a track switch."""
+    inst = _parse_ver_tuple(installed_ver) if installed_ver else None
+    if not inst:
+        return False, ''
+    best_same_track = None
+    for v in versions:
+        cat = _parse_ver_tuple(v.get('label', ''))
+        if not cat:
+            continue
+        if cat[:2] == inst[:2] and cat > inst:
+            if best_same_track is None or cat > best_same_track:
+                best_same_track = cat
+    if best_same_track:
+        return True, '.'.join(str(x) for x in best_same_track)
+    return False, ''
+
+
+@modules_bp.route('/api/modules/catalog/refresh', methods=['POST'])
+def refresh_catalog():
+    if not req(): return jsonify({'ok': False}), 401
+    import urllib.request
+    url = 'https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/app_catalog.json'
+    try:
+        req_obj = urllib.request.Request(url)
+        req_obj.add_header('User-Agent', 'VortexPanel/3.0')
+        with urllib.request.urlopen(req_obj, timeout=10) as resp:
+            raw = resp.read().decode()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Could not reach GitHub: {e}'}), 502
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return jsonify({'ok': False, 'error': 'Fetched file was not valid JSON'}), 502
+
+    if not isinstance(data, dict) or not isinstance(data.get('apps'), dict):
+        return jsonify({'ok': False, 'error': 'Fetched file did not have the expected {apps: {...}} shape'}), 502
+
+    # Strict validation before ever writing to disk - only well-formed
+    # entries survive, matching exactly what _get_mod()'s merge logic
+    # already expects and safely ignores anything else.
+    clean_apps = {}
+    known_ids = {m['id'] for m in MODULES}
+    skipped = []
+    for app_id, entry in data['apps'].items():
+        if app_id not in known_ids:
+            skipped.append(app_id)  # catalog can be ahead of this panel version - fine, just ignored until an update
+            continue
+        if not isinstance(entry, dict):
+            continue
+        clean = {}
+        if isinstance(entry.get('desc'), str):
+            clean['desc'] = entry['desc']
+        if isinstance(entry.get('versions'), list):
+            clean['versions'] = [
+                {'label': v['label'], 'value': v['value']}
+                for v in entry['versions']
+                if isinstance(v, dict) and isinstance(v.get('label'), str) and isinstance(v.get('value'), str)
+            ]
+        if clean:
+            clean_apps[app_id] = clean
+
+    os.makedirs(os.path.dirname(_CATALOG_OVERRIDE_PATH), exist_ok=True)
+    with open(_CATALOG_OVERRIDE_PATH, 'w') as f:
+        json.dump({'catalog_version': data.get('catalog_version', 1), 'apps': clean_apps}, f)
+
+    panel_cache.invalidate('modules_list')
+    return jsonify({'ok': True, 'updated_apps': len(clean_apps), 'skipped_unknown': skipped})
+
+
 @modules_bp.route('/api/modules')
 def list_modules():
     if not req(): return jsonify({'ok':False}), 401
     cached = panel_cache.get('modules_list')
     if cached: return jsonify(cached)
     result = []
-    for m in MODULES:
+    for base_m in MODULES:
+        m = _get_mod(base_m['id'])  # merged with any catalog override
         installed   = is_installed(m['check'])
         svc_status  = ''
         installed_ver = ''
+        has_update = False
+        latest_same_track = ''
         if installed:
             svc = _resolve_svc(m.get('service',''))
             if svc:
@@ -1629,11 +1766,13 @@ def list_modules():
                                    shell=True, capture_output=True, text=True)
                 svc_status = r.stdout.strip()
             installed_ver = get_version(m['id'])
+            has_update, latest_same_track = _check_update_available(installed_ver, m.get('versions', []))
         result.append({
             'id': m['id'], 'name': m['name'], 'icon': m['icon'],
             'category': m['category'], 'desc': m['desc'],
             'installed': installed, 'svcStatus': svc_status,
             'installedVer': installed_ver,
+            'hasUpdate': has_update, 'latestSameTrack': latest_same_track,
             'versions': m.get('versions', []),
             'manage': m.get('manage', False),
             'builtin': m.get('builtin', False),

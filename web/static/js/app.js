@@ -2359,6 +2359,19 @@ function modulesPage() {
     f2bServerForm:  {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600},
     async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
 
+    catalogRefreshing: false,
+    async refreshCatalog() {
+      this.catalogRefreshing = true;
+      const r = await post('/api/modules/catalog/refresh', {});
+      this.catalogRefreshing = false;
+      if (r.ok) {
+        toast(`App list updated (${r.updated_apps} app${r.updated_apps===1?'':'s'})`, 'success');
+        await this.load();
+      } else {
+        toast(r.error || 'Failed to update app list', 'error');
+      }
+    },
+
     async load() {
       const r = await get('/api/modules');
       if (r.ok) this.modules = r.modules.map(m=>({
