@@ -303,3 +303,46 @@ def job_logs(vid):
     meta = load_meta()
     info = meta.get(vid, {})
     return jsonify({'ok':True,'log':info.get('last_log',''),'last_run':info.get('last_run',''),'last_exit':info.get('last_exit','')})
+
+# ---------------------------------------------------------------------------
+# /api/cron/test  — validate a cron expression and return next N run times
+# ---------------------------------------------------------------------------
+@cron_bp.route('/api/cron/test', methods=['POST'])
+def test_schedule():
+    if not req(): return jsonify({'ok': False}), 401
+    d        = request.get_json() or {}
+    schedule = d.get('schedule', '').strip()
+    count    = min(int(d.get('count', 5)), 10)  # max 10 preview times
+
+    if not schedule:
+        return jsonify({'ok': False, 'error': 'Schedule expression required'}), 400
+
+    parts = schedule.split()
+    if len(parts) != 5:
+        return jsonify({'ok': False, 'error':
+            f'Invalid cron expression: expected 5 fields (minute hour day month weekday), got {len(parts)}'}), 400
+
+    try:
+        from croniter import croniter, CroniterBadCronError, CroniterBadDateError
+    except ImportError:
+        return jsonify({'ok': False, 'error': 'croniter library not installed on server'}), 500
+
+    try:
+        now  = time.time()
+        itr  = croniter(schedule, now)
+        runs = []
+        for _ in range(count):
+            ts   = itr.get_next(float)
+            runs.append({
+                'ts':      int(ts),
+                'human':   time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts)),
+                'weekday': time.strftime('%A', time.localtime(ts)),
+            })
+        return jsonify({
+            'ok':      True,
+            'valid':   True,
+            'human':   human_schedule(schedule),
+            'next':    runs,
+        })
+    except (CroniterBadCronError, CroniterBadDateError, Exception) as exc:
+        return jsonify({'ok': False, 'error': f'Invalid expression: {exc}'}), 400
