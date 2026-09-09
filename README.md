@@ -1,3 +1,4 @@
+<!-- Reviewed by the NeonCodex agent. -->
 <div align="center">
 
 <img src="https://img.shields.io/badge/VortexPanel-v3.5.0-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.5.0">
