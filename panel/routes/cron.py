@@ -1,5 +1,11 @@
 from flask import Blueprint, jsonify, request, session
 import subprocess, re, os, time, json, uuid, threading
+from datetime import datetime
+try:
+    from croniter import croniter as _croniter, CroniterBadCronError as _CroniterBadCronError
+    _CRONITER_AVAILABLE = True
+except ImportError:
+    _CRONITER_AVAILABLE = False
 
 cron_bp = Blueprint('cron', __name__)
 def req(): return 'user' in session
@@ -147,6 +153,55 @@ TASK_TEMPLATES = [
 def get_presets():
     if not req(): return jsonify({'ok':False}), 401
     return jsonify({'ok':True, 'schedules':SCHEDULE_PRESETS, 'templates':TASK_TEMPLATES})
+
+@cron_bp.route('/api/cron/validate', methods=['POST'])
+def validate_schedule():
+    """Validate a cron expression and return next N upcoming run times."""
+    if not req(): return jsonify({'ok': False}), 401
+    d        = request.get_json() or {}
+    schedule = d.get('schedule', '').strip()
+    count    = min(int(d.get('count', 5)), 10)  # cap at 10
+
+    if not schedule:
+        return jsonify({'ok': False, 'valid': False, 'error': 'No schedule provided'}), 400
+
+    parts = schedule.split()
+    if len(parts) != 5:
+        return jsonify({
+            'ok': True, 'valid': False,
+            'error': 'A cron expression must have exactly 5 fields: minute hour day month weekday',
+            'next_runs': [], 'human': schedule,
+        })
+
+    if not _CRONITER_AVAILABLE:
+        # Fallback: basic range validation without croniter
+        return jsonify({'ok': True, 'valid': True, 'next_runs': [], 'human': human_schedule(schedule),
+                        'note': 'Install croniter for full validation and run-time preview'})
+
+    try:
+        it = _croniter(schedule, datetime.now())
+        next_runs = [it.get_next(datetime).strftime('%a, %d %b %Y  %H:%M') for _ in range(count)]
+        return jsonify({
+            'ok': True, 'valid': True,
+            'next_runs': next_runs,
+            'human': human_schedule(schedule),
+        })
+    except _CroniterBadCronError as e:
+        # Provide a friendly per-field hint when possible
+        msg = str(e)
+        friendly = msg
+        field_map = {'minute': 0, 'hour': 1, 'day of month': 2, 'month': 3, 'day of week': 4}
+        field_labels = ['Minute (0-59)', 'Hour (0-23)', 'Day-of-month (1-31)', 'Month (1-12)', 'Weekday (0-7)']
+        for field, idx in field_map.items():
+            if field in msg.lower():
+                friendly = f'Invalid {field_labels[idx]} field — {parts[idx]!r} is out of range'
+                break
+        if 'out of range' in msg and friendly == msg:
+            friendly = f'Schedule "{schedule}" contains an out-of-range value. '                        f'Fields: min(0-59) hour(0-23) day(1-31) month(1-12) weekday(0-7)'
+        return jsonify({'ok': True, 'valid': False, 'error': friendly, 'next_runs': [], 'human': schedule})
+    except Exception as e:
+        return jsonify({'ok': True, 'valid': False, 'error': f'Invalid expression: {e}', 'next_runs': [], 'human': schedule})
+
 
 @cron_bp.route('/api/cron/jobs')
 def list_jobs():
