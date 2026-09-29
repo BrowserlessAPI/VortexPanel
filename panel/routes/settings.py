@@ -130,17 +130,34 @@ def _ssl_status():
     }
 
 def _gen_selfsigned(domain=''):
+    """Self-signed certificate for the panel, valid for the domain (if given)
+    and the server's IP, so browsers show one clear warning rather than a
+    name-mismatch error on top of it."""
+    import ipaddress
     os.makedirs(SSL_DIR, exist_ok=True)
-    ip = sh("hostname -I 2>/dev/null | awk '{print $1}'") or 'localhost'
-    cn = domain or ip
+    ip = (sh("hostname -I 2>/dev/null | awk '{print $1}'") or '').strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        ip = ''
+    domain = (domain or '').strip().lower()
+    if domain and not re.fullmatch(r'[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+', domain):
+        return False, 'Invalid domain name'
+    san = ([f'DNS:{domain}'] if domain else []) + ([f'IP:{ip}'] if ip else []) or ['DNS:localhost']
+    cn = domain or ip or 'localhost'
     out, err, rc = sh3(
         f'openssl req -x509 -nodes -days 3650 -newkey rsa:2048 '
-        f'-keyout {SSL_DIR}/panel.key -out {SSL_DIR}/panel.crt '
+        f'-keyout {SSL_DIR}/panel.key.new -out {SSL_DIR}/panel.crt.new '
         f'-subj "/CN={cn}/O=VortexPanel/OU=Panel" '
-        f'-addext "subjectAltName=DNS:{cn},IP:{ip}" 2>&1',
+        f'-addext "subjectAltName={",".join(san)}" 2>&1',
         t=30
     )
-    return rc == 0, err if rc != 0 else ''
+    if rc != 0:
+        return False, (out or err)[-300:]
+    os.chmod(f'{SSL_DIR}/panel.key.new', 0o600)
+    os.replace(f'{SSL_DIR}/panel.key.new', f'{SSL_DIR}/panel.key')
+    os.replace(f'{SSL_DIR}/panel.crt.new', f'{SSL_DIR}/panel.crt')
+    return True, ''
 
 
 # ===============================================================================
@@ -230,22 +247,150 @@ def ssl_status():
     return jsonify({'ok':True, **_ssl_status()})
 
 
-def _enable_https(domain=''):
-    """Enable HTTPS directly on gunicorn. No webserver dependency."""
+INSTALL_DIR = '/opt/vortexpanel'
+SSL_APPLY_DIR = os.path.join(INSTALL_DIR, 'data')
+SSL_APPLY_STATE = os.path.join(SSL_APPLY_DIR, 'ssl_apply.json')
+
+# Runs detached (outside the panel's own process/cgroup) so it survives the
+# restart it performs. Restarts the panel on the new scheme, waits for it to
+# answer, and if it doesn't, puts the previous unit file + config back and
+# restarts again - the panel can never be left down by an HTTPS change.
+_SSL_APPLY_HELPER = r"""
+import json, os, subprocess, sys, time
+state_path, apply_id, scheme, port, unit, unit_bak, cfg, cfg_bak = sys.argv[1:9]
+def save(d):
+    tmp = state_path + '.tmp'
+    json.dump(d, open(tmp, 'w')); os.replace(tmp, state_path)
+def healthy(sch, tries):
+    for _ in range(tries):
+        time.sleep(1)
+        r = subprocess.run(['curl', '-sk', '--noproxy', '*', '-o', '/dev/null', '-w', '%{http_code}',
+                            '--max-time', '3', f'{sch}://127.0.0.1:{port}/'], capture_output=True, text=True)
+        if r.stdout.strip() in ('200', '301', '302', '401', '403'):
+            return True
+    return False
+time.sleep(2)
+subprocess.run('systemctl daemon-reload; systemctl restart vortexpanel', shell=True)
+if healthy(scheme, 20):
+    save({'id': apply_id, 'status': 'ok', 'scheme': scheme, 'port': port, 'finished': time.time()})
+    sys.exit(0)
+log = subprocess.run('journalctl -u vortexpanel -n 25 --no-pager 2>/dev/null', shell=True,
+                     capture_output=True, text=True).stdout[-1500:]
+os.replace(unit_bak, unit); os.replace(cfg_bak, cfg)
+subprocess.run('systemctl daemon-reload; systemctl restart vortexpanel', shell=True)
+old = 'http' if scheme == 'https' else 'https'
+back = healthy(old, 20)
+save({'id': apply_id, 'status': 'failed', 'scheme': scheme, 'port': port, 'finished': time.time(),
+      'rolled_back': back,
+      'error': f'The panel did not come back on {scheme.upper()}, so the previous settings were restored.',
+      'log': log})
+"""
+
+
+def _free_port():
+    import socket
+    with socket.socket() as so:
+        so.bind(('127.0.0.1', 0))
+        return so.getsockname()[1]
+
+
+def _pretest_tls(cert_path, key_path):
+    """Start a throwaway copy of the panel on a spare localhost port with
+    these certificate files and check it answers over HTTPS, BEFORE the
+    real service is touched. Catches bad/mismatched cert+key pairs, key
+    permission problems and TLS start-up errors with zero downtime."""
+    import ssl as _ssl
+    try:
+        ctx = _ssl.create_default_context(_ssl.Purpose.CLIENT_AUTH)
+        ctx.load_cert_chain(cert_path, key_path)
+    except Exception as e:
+        return False, f'Certificate and key do not form a valid pair: {e}'
+    gunicorn = os.path.join(INSTALL_DIR, 'venv/bin/gunicorn')
+    if not os.path.exists(gunicorn):
+        return True, ''   # non-standard install: rely on the rollback helper
+    port = _free_port()
+    proc = subprocess.Popen([gunicorn, '--bind', f'127.0.0.1:{port}', '--workers', '1',
+                             '--certfile', cert_path, '--keyfile', key_path, 'app:app'],
+                            cwd=INSTALL_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, text=True)
+    ok = False
+    try:
+        for _ in range(20):
+            time.sleep(0.5)
+            if proc.poll() is not None:
+                break
+            code = sh(f"curl -sk --noproxy '*' -o /dev/null -w '%{{http_code}}' --max-time 2 https://127.0.0.1:{port}/")
+            if code in ('200', '301', '302', '401', '403'):
+                ok = True
+                break
+    finally:
+        proc.kill()
+        try: out = proc.communicate(timeout=5)[0] or ''
+        except Exception: out = ''
+    return (True, '') if ok else (False, 'A test start of the panel with this certificate failed: ' + out.strip()[-600:])
+
+
+def _switch_panel_scheme(https, domain=''):
+    """Point the panel service at HTTPS (https=True) or plain HTTP, then
+    restart it through a detached helper that verifies the result and rolls
+    back automatically. Returns (ok, error, apply_id)."""
     cfg = load_config()
     port = cfg.get('port', PANEL_PORT)
-    cert_path = f'{SSL_DIR}/panel.crt'
-    key_path  = f'{SSL_DIR}/panel.key'
-    if not os.path.exists(cert_path) or not os.path.exists(key_path):
-        return False, 'SSL certificate files not found'
-    ok, err = _set_gunicorn_bind('0.0.0.0', port, certfile=cert_path, keyfile=key_path)
+    cert_path, key_path = f'{SSL_DIR}/panel.crt', f'{SSL_DIR}/panel.key'
+    if https:
+        if not (os.path.exists(cert_path) and os.path.exists(key_path)):
+            return False, 'SSL certificate files not found', None
+        ok, err = _pretest_tls(cert_path, key_path)
+        if not ok:
+            return False, err, None
+    if not os.path.exists(SERVICE_FILE):
+        return False, 'systemd service file not found', None
+    os.makedirs(SSL_APPLY_DIR, exist_ok=True)
+    unit_bak = os.path.join(SSL_APPLY_DIR, 'ssl_apply_unit.bak')
+    cfg_bak = os.path.join(SSL_APPLY_DIR, 'ssl_apply_config.bak')
+    with open(SERVICE_FILE) as f: open(unit_bak, 'w').write(f.read())
+    json.dump(cfg, open(cfg_bak, 'w'))
+
+    ok, err = (_set_gunicorn_bind('0.0.0.0', port, certfile=cert_path, keyfile=key_path) if https
+               else _set_gunicorn_bind('0.0.0.0', port))
     if not ok:
-        return False, f'Failed to update panel service: {err}'
-    cfg['ssl_enabled'] = True
+        return False, err, None
+    cfg['ssl_enabled'] = bool(https)
     if domain: cfg['panel_domain'] = domain
     save_config(cfg)
-    _safe_restart_panel()
-    return True, ''
+
+    apply_id = f'{int(time.time() * 1000)}'
+    scheme = 'https' if https else 'http'
+    json.dump({'id': apply_id, 'status': 'pending', 'scheme': scheme, 'port': port, 'started': time.time()},
+              open(SSL_APPLY_STATE, 'w'))
+    helper = os.path.join(SSL_APPLY_DIR, 'panel_ssl_apply.py')
+    open(helper, 'w').write(_SSL_APPLY_HELPER)
+    import shlex, sys as _sys
+    args = ' '.join(shlex.quote(a) for a in [_sys.executable if os.path.exists(_sys.executable) else 'python3', helper,
+                                             SSL_APPLY_STATE, apply_id, scheme, str(port),
+                                             SERVICE_FILE, unit_bak, CONFIG_FILE, cfg_bak])
+    if sh('which systemd-run 2>/dev/null'):
+        sh(f'systemd-run --no-block --collect --unit=vortexpanel-ssl-{apply_id} {args} 2>/dev/null')
+    else:
+        sh(f'setsid {args} >/dev/null 2>&1 < /dev/null &')
+    return True, '', apply_id
+
+
+def _enable_https(domain=''):
+    ok, err, _ = _switch_panel_scheme(True, domain)
+    return ok, err
+
+
+@settings_bp.route('/api/settings/ssl/apply-log')
+def ssl_apply_log():
+    """Result of the last HTTPS/HTTP switch (written by the detached helper).
+    Readable over whichever scheme the panel ends up on - after a rollback
+    that is the old one, so the page that started the switch can show why."""
+    if not req(): return jsonify({'ok':False}), 401
+    try:
+        return jsonify({'ok': True, **json.load(open(SSL_APPLY_STATE))})
+    except Exception:
+        return jsonify({'ok': True, 'status': 'none'})
 
 
 @settings_bp.route('/api/settings/ssl/self-signed', methods=['POST'])
@@ -255,12 +400,12 @@ def ssl_self_signed():
     ok, err = _gen_selfsigned(domain)
     if not ok:
         return jsonify({'ok':False,'error':f'Certificate generation failed: {err}'}), 500
-    ok2, err2 = _enable_https(domain)
+    ok2, err2, apply_id = _switch_panel_scheme(True, domain)
     if not ok2:
         return jsonify({'ok':False,'error':err2}), 500
     cfg = load_config()
-    return jsonify({'ok':True, 'type':'self-signed', 'port':cfg.get('port'),
-                    'message':f'HTTPS enabled on port {cfg.get("port")}'})
+    return jsonify({'ok':True, 'type':'self-signed', 'port':cfg.get('port'), 'apply_id':apply_id,
+                    'message':f'Switching the panel to HTTPS on port {cfg.get("port")}'})
 
 
 @settings_bp.route('/api/settings/ssl/letsencrypt', methods=['POST'])
@@ -289,31 +434,28 @@ def ssl_letsencrypt():
     sh(f'cp /etc/letsencrypt/live/{domain}/fullchain.pem {SSL_DIR}/panel.crt')
     sh(f'cp /etc/letsencrypt/live/{domain}/privkey.pem {SSL_DIR}/panel.key')
 
-    ok2, err2 = _enable_https(domain)
+    ok2, err2, apply_id = _switch_panel_scheme(True, domain)
     if not ok2:
         return jsonify({'ok':False,'error':err2}), 500
     cfg = load_config()
-    return jsonify({'ok':True,'type':'letsencrypt','domain':domain,'port':cfg.get('port'),
+    return jsonify({'ok':True,'type':'letsencrypt','domain':domain,'port':cfg.get('port'),'apply_id':apply_id,
                     'message':f"Let's Encrypt cert issued. HTTPS active on port {cfg.get('port')}"})
 
 
 @settings_bp.route('/api/settings/ssl/disable', methods=['POST'])
 def ssl_disable():
     if not req(): return jsonify({'ok':False}), 401
-    cfg  = load_config()
-    port = cfg.get('port', PANEL_PORT)
-    ok, err = _set_gunicorn_bind('0.0.0.0', port)
-    if not ok:
-        return jsonify({'ok':False,'error':err}), 500
-    # Clean up old nginx SSL config if it exists
+    # Clean up an old nginx-fronted HTTPS config from earlier versions
     nginx_ssl = '/etc/nginx/conf.d/vortexpanel-https.conf'
     if os.path.exists(nginx_ssl):
         os.remove(nginx_ssl)
         sh('nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true')
-    cfg['ssl_enabled'] = False
-    save_config(cfg)
-    _safe_restart_panel()
-    return jsonify({'ok':True, 'message': f'HTTPS disabled. Reconnect at http://<ip>:{port} in a few seconds.'})
+    ok, err, apply_id = _switch_panel_scheme(False)
+    if not ok:
+        return jsonify({'ok':False,'error':err}), 500
+    port = load_config().get('port', PANEL_PORT)
+    return jsonify({'ok':True, 'apply_id':apply_id,
+                    'message': f'Switching the panel back to HTTP on port {port}'})
 
 
 
@@ -326,7 +468,7 @@ WEBSHELL_PATTERNS = [
     (r'eval\s*\(\s*str_rot13\s*\(',        'CRITICAL', 'eval(str_rot13()) — obfuscated execution'),
     (r'eval\s*\(\s*\$[a-zA-Z_]\w*\s*\)',  'HIGH',     'eval($variable) — dynamic code execution'),
     # System command execution via user input
-    (r'(?:system|exec|passthru|shell_exec|popen)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)', 'CRITICAL', 'Shell exec with user input — remote command execution'),
+    (r'(?<![\w$>:])(?:system|exec|passthru|shell_exec|popen)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)', 'CRITICAL', 'Shell exec with user input — remote command execution'),
     # Hardcoded (no $_GET/$_POST/any variable at all) calls to these same
     # functions were confirmed, via direct reproduction, to produce ZERO
     # detections above -- a webshell doesn't need to read its command from
@@ -337,23 +479,23 @@ WEBSHELL_PATTERNS = [
     # confidence instead: CRITICAL when the hardcoded string also contains a
     # known reverse-shell indicator, MEDIUM (manual review) for any other
     # hardcoded call to these functions.
-    (r'(?:exec|shell_exec|passthru|popen|proc_open)\s*\([^)]{0,10}["\'][\s\S]{0,300}(?:/dev/tcp/|/dev/udp/|\bnc\s+-e\b|\bmkfifo\b|bash\s+-i\b|sh\s+-i\b|0>&1|>&\s*/dev/tcp)', 'CRITICAL', 'Hardcoded shell exec containing a reverse-shell indicator (e.g. /dev/tcp, bash -i, mkfifo) — this bypasses detection based on user-input patterns alone, since the command needs no input at all'),
-    (r'(?:exec|shell_exec|passthru|popen|proc_open)\s*\(\s*["\'][^"\')]+', 'MEDIUM', 'Hardcoded shell exec — may be legitimate (build tools, image/video processing, deploy scripts), but review manually since these functions can also run a baked-in payload with no user input at all'),
+    (r'(?<![\w$>:])(?:exec|shell_exec|passthru|popen|proc_open)\s*\([^)]{0,10}["\'][\s\S]{0,300}(?:/dev/tcp/|/dev/udp/|\bnc\s+-e\b|\bmkfifo\b|bash\s+-i\b|sh\s+-i\b|0>&1|>&\s*/dev/tcp)', 'CRITICAL', 'Hardcoded shell exec containing a reverse-shell indicator (e.g. /dev/tcp, bash -i, mkfifo) — this bypasses detection based on user-input patterns alone, since the command needs no input at all'),
+    (r'(?<![\w$>:])(?:exec|shell_exec|passthru|popen|proc_open)\s*\(\s*["\'][^"\')]+', 'MEDIUM', 'Hardcoded shell exec — may be legitimate (build tools, image/video processing, deploy scripts), but review manually since these functions can also run a baked-in payload with no user input at all'),
     # PHP function code injection
     (r'preg_replace\s*\(\s*[\'"].*\/e[\'"]', 'CRITICAL', 'preg_replace /e modifier — code execution via regex'),
     (r'assert\s*\(\s*\$_(?:GET|POST|REQUEST)', 'CRITICAL', 'assert() with user input — code injection'),
     # Reverse shells
-    (r'fsockopen.*(?:exec|shell_exec)',    'CRITICAL', 'fsockopen + exec — potential reverse shell'),
-    (r'socket_create.*(?:exec|shell_exec)','CRITICAL', 'socket_create + exec — potential reverse shell'),
+    (r'\bfsockopen\s*\(.*(?<![\w$>:])(?:exec|shell_exec|system|passthru|proc_open)\s*\(',    'CRITICAL', 'fsockopen + exec — potential reverse shell'),
+    (r'\bsocket_create\s*\(.*(?<![\w$>:])(?:exec|shell_exec|system|passthru|proc_open)\s*\(','CRITICAL', 'socket_create + exec — potential reverse shell'),
     # Dynamic function execution
-    (r'\$[a-zA-Z_]\w*\s*\(\s*\$_(?:GET|POST|REQUEST)', 'HIGH', 'Dynamic function call with user input'),
+    (r'\$(?!_(?:GET|POST|REQUEST|COOKIE|SERVER|FILES|ENV|SESSION)\b)[a-zA-Z_]\w*\s*\(\s*\$_(?:GET|POST|REQUEST)', 'HIGH', 'Dynamic function call with user input'),
     (r'call_user_func\s*\(\s*\$_(?:GET|POST|REQUEST)', 'HIGH', 'call_user_func with user input'),
     (r'create_function\s*\(',             'HIGH',     'create_function() — deprecated, often used in webshells'),
     # File write from user input
     (r'file_put_contents\s*\(\s*.*\$_(?:GET|POST|REQUEST)', 'HIGH', 'file_put_contents with user input — file upload via webshell'),
     # Backtick shell-exec operator -- functionally identical to shell_exec()
     # but a different syntax the earlier pattern list did not cover at all.
-    (r'`[^`]*\$_(?:GET|POST|REQUEST|COOKIE)[^`]*`', 'CRITICAL', 'Backtick shell-exec operator with user input — remote command execution'),
+    (r'(?m)^(?![ \t]*(?:\*|//|#|/\*)).*?(?:[=(,]|\becho\b|\bprint\b|\breturn\b)\s*`[^`\n]*\$_(?:GET|POST|REQUEST|COOKIE)[^`\n]*`', 'CRITICAL', 'Backtick shell-exec operator with user input — remote command execution'),
     # Process-execution functions absent from the earlier list -- confirmed
     # by direct testing that shell_exec/system/exec/passthru/popen coverage
     # did not extend to these.
@@ -366,104 +508,143 @@ WEBSHELL_PATTERNS = [
     (r'register_shutdown_function\s*\(\s*\$_(?:GET|POST|REQUEST)', 'CRITICAL', 'register_shutdown_function with user-controlled callback — delayed code execution'),
     (r'(?:array_map|array_filter|array_walk|usort|uasort|uksort|call_user_func|call_user_func_array)\s*\(\s*\$_(?:GET|POST|REQUEST)', 'CRITICAL', 'Higher-order function with user-controlled callback — indirect code execution'),
     # Heavy obfuscation markers
-    (r'\\x[0-9a-fA-F]{2}\\x[0-9a-fA-F]{2}\\x[0-9a-fA-F]{2}\\x[0-9a-fA-F]{2}', 'MEDIUM', 'Heavy hex encoding — possible obfuscation'),
+    (r'(?:\\x[0-9a-fA-F]{2}){40,}', 'MEDIUM', 'Long hex-escaped string (40+ bytes) — possible obfuscated payload'),
     (r'chr\(\d+\)\s*\.\s*chr\(\d+\)\s*\.\s*chr\(\d+\)', 'MEDIUM', 'chr() string assembly — obfuscation technique'),
 ]
 
+_SCAN_JOB = 'webshell_scan'
+_SCAN_EXTS = ('.php', '.phtml', '.php3', '.php4', '.php5', '.php7', '.pht', '.phar')
+_SCAN_SKIP_DIRS = {'node_modules', '.git', '.svn', 'vendor'}
+_SCAN_MAX_FILES = 100000
+_SCAN_MAX_BYTES = 2 * 1024 * 1024      # read at most 2 MB of any one file
+_SCAN_TIME_LIMIT = 30 * 60
+
+
+def _scan_php_file(fp, content):
+    """All findings for one file (same rules as before, now reusable)."""
+    findings = []
+    for pattern, severity, desc in WEBSHELL_PATTERNS:
+        m = re.search(pattern, content, re.IGNORECASE)
+        if m:
+            line_no = content[:m.start()].count('\n') + 1
+            snippet = content[max(0, m.start()-20):m.end()+40].strip().replace('\n', ' ')[:120]
+            findings.append({'file': fp, 'line': line_no, 'severity': severity, 'pattern': desc, 'snippet': snippet})
+            if severity == 'CRITICAL':
+                break
+    # Whole-file heuristic for the split decode-and-write evasion (lower
+    # confidence than the direct patterns above, and labelled as such).
+    has_decode_from_input = re.search(
+        r'(?:base64_decode|gzinflate|gzuncompress|str_rot13)\s*\([^)]*\$_(?:GET|POST|REQUEST|COOKIE)', content, re.IGNORECASE)
+    has_var_file_write = re.search(
+        r'(?:file_put_contents|fwrite|fputs)\s*\(\s*[^,)]+,\s*\$[a-zA-Z_]\w*\s*[,)]', content, re.IGNORECASE)
+    if has_decode_from_input and has_var_file_write and not any(f['severity'] == 'CRITICAL' for f in findings):
+        line_no = content[:has_var_file_write.start()].count('\n') + 1
+        snippet = content[max(0, has_var_file_write.start()-20):has_var_file_write.end()+40].strip().replace('\n', ' ')[:120]
+        findings.append({'file': fp, 'line': line_no, 'severity': 'MEDIUM',
+                         'pattern': 'Possible split decode-and-write (user input decoded on one line, written to a file on another) — heuristic, not a direct match; verify manually',
+                         'snippet': snippet})
+    return findings
+
+
+def _scan_state():
+    from panel.routes.job_state import load_job, save_job
+    st = load_job(_SCAN_JOB, {'running': False, 'done': False})
+    if st.get('running') and time.time() - (st.get('heartbeat') or 0) > 120:
+        st.update({'running': False, 'done': True, 'error': 'The scan stopped (the panel restarted while it was running). Start it again.'})
+        save_job(_SCAN_JOB, st)
+    return st
+
+
 @settings_bp.route('/api/settings/webshell-scan', methods=['POST'])
 def webshell_scan():
-    """Scan PHP files in webroot for known webshell patterns."""
+    """Start a background scan of PHP files under a directory. It used to
+    run inside the request, so any real site (thousands of PHP files)
+    outlived the worker timeout and the scan silently returned nothing."""
     if not req(): return jsonify({'ok':False}), 401
-    d     = request.get_json() or {}
-    path  = d.get('path', '/www/wwwroot').strip()
+    from panel.routes.job_state import save_job
+    path = os.path.realpath((request.get_json() or {}).get('path', '/www/wwwroot').strip() or '/www/wwwroot')
     if not os.path.isdir(path):
         return jsonify({'ok':False,'error':f'Directory not found: {path}'}), 404
+    if _scan_state().get('running'):
+        return jsonify({'ok':False,'error':'A scan is already running'}), 409
 
-    findings = []
-    scanned  = 0
-    errors   = []
-    max_files = 5000  # safety limit
+    import threading
+    state = {'running': True, 'done': False, 'path': path, 'scanned': 0, 'current': '', 'started': time.time(),
+             'heartbeat': time.time(), 'findings': [], 'total': 0, 'critical': 0, 'high': 0, 'medium': 0,
+             'errors': [], 'truncated': False}
+    save_job(_SCAN_JOB, state)
 
-    for root, dirs, files in os.walk(path):
-        # Skip common safe dirs
-        dirs[:] = [d for d in dirs if d not in ('node_modules','.git','.svn','vendor')]
-        for fn in files:
-            if not fn.lower().endswith(('.php', '.phtml', '.php3', '.php4', '.php5', '.php7', '.pht', '.phar')): continue
-            if scanned >= max_files: break
-            fp = os.path.join(root, fn)
-            scanned += 1
-            try:
-                content = open(fp, 'r', errors='replace').read()
-                for pattern, severity, desc in WEBSHELL_PATTERNS:
-                    m = re.search(pattern, content, re.IGNORECASE)
-                    if m:
-                        # Get line number
-                        line_no = content[:m.start()].count('\n') + 1
-                        # Get snippet
-                        snippet = content[max(0,m.start()-20):m.end()+40].strip().replace('\n',' ')[:120]
-                        findings.append({
-                            'file':     fp,
-                            'line':     line_no,
-                            'severity': severity,
-                            'pattern':  desc,
-                            'snippet':  snippet,
-                        })
-                        # Only report first match per file (don't spam)
-                        if severity == 'CRITICAL': break
+    def run():
+        findings, errors, scanned, last = [], [], 0, 0.0
+        t0 = time.time()
+        truncated = False
+        try:
+            for root, dirs, files in os.walk(path):
+                dirs[:] = [d for d in dirs if d not in _SCAN_SKIP_DIRS]
+                for fn in files:
+                    if not fn.lower().endswith(_SCAN_EXTS):
+                        continue
+                    if scanned >= _SCAN_MAX_FILES or time.time() - t0 > _SCAN_TIME_LIMIT:
+                        truncated = True
+                        break
+                    fp = os.path.join(root, fn)
+                    if os.path.islink(fp):
+                        continue
+                    scanned += 1
+                    try:
+                        with open(fp, 'r', errors='replace') as fh:
+                            content = fh.read(_SCAN_MAX_BYTES)
+                        findings.extend(_scan_php_file(fp, content))
+                    except Exception:
+                        errors.append(fp)
+                    now = time.time()
+                    if now - last > 1.0:
+                        state.update({'scanned': scanned, 'current': root, 'heartbeat': now,
+                                      'total': len(findings)})
+                        save_job(_SCAN_JOB, state); last = now
+                if truncated:
+                    break
+        except Exception as e:
+            errors.append(f'scan aborted: {e}')
+        findings.sort(key=lambda x: {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2}.get(x['severity'], 3))
+        state.update({'running': False, 'done': True, 'scanned': scanned, 'current': '', 'heartbeat': time.time(),
+                      'finished': time.time(), 'duration': round(time.time() - t0, 1),
+                      'total': len(findings),
+                      'critical': sum(1 for f in findings if f['severity'] == 'CRITICAL'),
+                      'high': sum(1 for f in findings if f['severity'] == 'HIGH'),
+                      'medium': sum(1 for f in findings if f['severity'] == 'MEDIUM'),
+                      'findings': findings[:500], 'errors': errors[:20], 'truncated': truncated})
+        save_job(_SCAN_JOB, state)
 
-                # Whole-file heuristic for the intermediate-variable evasion:
-                # decode-and-write split across two lines evades every single
-                # regex above, since none of them can see $_POST if it never
-                # appears literally inside the file_put_contents() call.
-                # This cannot prove actual data flow between the two lines
-                # without a real PHP parser -- it flags suspicious
-                # co-occurrence in the same file, at lower confidence than
-                # the direct-match patterns above, and says so.
-                has_decode_from_input = re.search(
-                    r'(?:base64_decode|gzinflate|gzuncompress|str_rot13)\s*\([^)]*\$_(?:GET|POST|REQUEST|COOKIE)',
-                    content, re.IGNORECASE)
-                has_var_file_write = re.search(
-                    r'(?:file_put_contents|fwrite|fputs)\s*\(\s*[^,)]+,\s*\$[a-zA-Z_]\w*\s*[,)]',
-                    content, re.IGNORECASE)
-                if has_decode_from_input and has_var_file_write and not any(
-                        f['file'] == fp and f['severity'] == 'CRITICAL' for f in findings):
-                    line_no = content[:has_var_file_write.start()].count('\n') + 1
-                    snippet = content[max(0,has_var_file_write.start()-20):has_var_file_write.end()+40].strip().replace('\n',' ')[:120]
-                    findings.append({
-                        'file':     fp,
-                        'line':     line_no,
-                        'severity': 'MEDIUM',
-                        'pattern':  'Possible split decode-and-write (user input decoded on one line, written to a file on another) — heuristic, not a direct match; verify manually',
-                        'snippet':  snippet,
-                    })
-            except Exception as e:
-                errors.append(str(fp))
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({'ok': True, 'running': True, 'path': path})
 
-    findings.sort(key=lambda x: {'CRITICAL':0,'HIGH':1,'MEDIUM':2}.get(x['severity'],3))
-    critical = sum(1 for f in findings if f['severity']=='CRITICAL')
-    high     = sum(1 for f in findings if f['severity']=='HIGH')
-    medium   = sum(1 for f in findings if f['severity']=='MEDIUM')
 
-    return jsonify({
-        'ok':      True,
-        'scanned': scanned,
-        'total':   len(findings),
-        'critical':critical,
-        'high':    high,
-        'medium':  medium,
-        'findings':findings[:200],  # cap at 200 results
-        'errors':  errors[:10],
-        'path':    path,
-    })
+@settings_bp.route('/api/settings/webshell-scan/status')
+def webshell_scan_status():
+    if not req(): return jsonify({'ok':False}), 401
+    return jsonify({'ok': True, **_scan_state()})
 
 
 @settings_bp.route('/api/settings/webshell-scan/paths')
 def webshell_scan_paths():
-    """Return list of scannable paths (webroots + installed sites)."""
+    """Scannable locations: the web root (all sites) first, then each site."""
     if not req(): return jsonify({'ok':False}), 401
     paths = []
-    for p in ['/www/wwwroot','/var/www/html','/var/www','/home','/srv/www']:
-        if os.path.isdir(p): paths.append(p)
+    try:
+        from panel.routes.websites_core import get_webroot, list_sites
+        root = get_webroot()
+        if os.path.isdir(root):
+            paths.append({'path': root, 'label': f'{root} (all sites)'})
+        for s in sorted(list_sites(), key=lambda x: x['domain']):
+            p = s.get('path')
+            if p and os.path.isdir(p) and not any(x['path'] == p for x in paths):
+                paths.append({'path': p, 'label': f'{s["domain"]}  ({p})'})
+    except Exception:
+        pass
+    for p in ['/www/wwwroot', '/var/www/html', '/var/www']:
+        if os.path.isdir(p) and not any(x['path'] == p for x in paths):
+            paths.append({'path': p, 'label': p})
     return jsonify({'ok':True,'paths':paths})
 
 
@@ -549,135 +730,172 @@ def _pending_vendor_updates():
     return vendor
 
 
-@settings_bp.route('/api/settings/security-updates')
-def check_security_updates():
-    """Read-only check for PENDING security updates specifically, using
-    each distro's own continuously-maintained security metadata rather
-    than a hardcoded CVE/version lookup table baked into VortexPanel's
-    source -- that kind of table goes stale the moment a new critical
-    CVE appears that isn't in it, giving false reassurance. This defers
-    entirely to apt's/dnf's own live, current security tagging instead."""
-    if not req(): return jsonify({'ok':False}), 401
-    from panel.routes.job_state import load_job, save_job
-    CACHE_TTL_SECONDS = 4 * 3600  # security posture doesn't need minute-level freshness
+_SEC_JOB = 'security_update'
+_SEC_CHECK = 'security_updates_check'
+_SEC_STALE_AFTER = 45 * 60   # a job still "running" after this is a dead thread
+_APT_ENV = ('DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 '
+            'APT_LISTCHANGES_FRONTEND=none ')
+_APT_OPTS = ('-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold '
+             '-o DPkg::Lock::Timeout=300 ')
 
-    force = request.args.get('refresh') == '1'
-    cached = load_job('security_updates_check', {})
-    if not force and cached and (time.time() - cached.get('checked_at', 0)) < CACHE_TTL_SECONDS:
-        resp = dict(cached)
-        resp['cached'] = True
-        return jsonify(resp)
 
-    packages = _pending_security_packages()
-    critical = sum(1 for p in packages if p['severity'] in ('Critical', 'Important', 'Security'))
-    vendor = []
-    os_family = sh(". /etc/os-release 2>/dev/null && echo \"$ID $ID_LIKE\" || echo debian")
-    if not re.search(r'rhel|fedora|centos', os_family, re.I):
-        vendor = _pending_vendor_updates()
-
+def _reboot_state():
     reboot_required = os.path.exists('/var/run/reboot-required')
     reboot_pkgs = []
     if reboot_required:
         try:
             with open('/var/run/reboot-required.pkgs') as f:
-                reboot_pkgs = [l.strip() for l in f if l.strip()]
+                reboot_pkgs = sorted({l.strip() for l in f if l.strip()})
         except Exception:
             pass
+    return reboot_required, reboot_pkgs
 
-    result = {'ok': True, 'total': len(packages), 'critical': critical,
-              'packages': packages[:50], 'vendor': vendor[:50], 'vendor_total': len(vendor),
-              'checked_at': time.time(), 'cached': False,
-              'reboot_required': reboot_required, 'reboot_pkgs': reboot_pkgs}
-    save_job('security_updates_check', result)
+
+def _is_rhel():
+    return bool(re.search(r'rhel|fedora|centos', sh(". /etc/os-release 2>/dev/null && echo \"$ID $ID_LIKE\""), re.I))
+
+
+def _build_security_check(refresh=True):
+    """Fresh pending-security snapshot, in the exact shape the check
+    endpoint returns and caches."""
+    packages = _pending_security_packages(refresh=refresh)
+    vendor = [] if _is_rhel() else _pending_vendor_updates()
+    reboot_required, reboot_pkgs = _reboot_state()
+    return {'ok': True, 'total': len(packages),
+            'critical': sum(1 for p in packages if p['severity'] in ('Critical', 'Important', 'Security')),
+            'packages': packages[:50], 'vendor': vendor[:50], 'vendor_total': len(vendor),
+            'checked_at': time.time(), 'cached': False,
+            'reboot_required': reboot_required, 'reboot_pkgs': reboot_pkgs}
+
+
+def _sec_job_state():
+    """Current apply-job state, with a thread that died mid-run (panel
+    restarted, worker killed) reported as finished instead of 'running'
+    forever - that stuck state used to freeze the card on "Applying" and
+    make every later Apply click fail with 'already in progress'."""
+    from panel.routes.job_state import load_job, save_job
+    st = load_job(_SEC_JOB, {'running': False, 'done': False, 'success': None, 'output': '', 'started': None})
+    if st.get('running') and time.time() - (st.get('heartbeat') or st.get('started') or 0) > _SEC_STALE_AFTER:
+        st.update({'running': False, 'done': True, 'success': False, 'stale': True,
+                   'output': (st.get('output') or '') + '\n\nThe previous run stopped responding (the panel was '
+                             'probably restarted while it was running). Check again, then apply.'})
+        save_job(_SEC_JOB, st)
+    return st
+
+
+@settings_bp.route('/api/settings/security-updates')
+def check_security_updates():
+    """Read-only check for PENDING security updates specifically, using
+    each distro's own continuously-maintained security metadata rather
+    than a hardcoded CVE/version lookup table baked into VortexPanel's
+    source. Cached for 4 hours; ?refresh=1 forces a live check, and an
+    apply run always refreshes the cache when it finishes."""
+    if not req(): return jsonify({'ok':False}), 401
+    from panel.routes.job_state import load_job, save_job
+    CACHE_TTL_SECONDS = 4 * 3600
+
+    force = request.args.get('refresh') == '1'
+    cached = load_job(_SEC_CHECK, {})
+    if not force and cached and (time.time() - cached.get('checked_at', 0)) < CACHE_TTL_SECONDS:
+        resp = dict(cached)
+        resp['cached'] = True
+        return jsonify(resp)
+    result = _build_security_check(refresh=True)
+    save_job(_SEC_CHECK, result)
     return jsonify(result)
+
+
+def _run_streaming(cmd, job, timeout=900):
+    """Run a command, appending its output to the job state as it arrives
+    (so the card shows real progress instead of a silent spinner).
+    Returns (combined_output, returncode)."""
+    from panel.routes.job_state import save_job
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, text=True, bufsize=1)
+    lines, last_save, t0 = [], 0.0, time.time()
+    try:
+        for line in proc.stdout:
+            lines.append(line.rstrip('\n'))
+            now = time.time()
+            if now - last_save > 1.0:
+                job['output'] = '\n'.join(lines[-400:]); job['heartbeat'] = now
+                save_job(_SEC_JOB, job); last_save = now
+            if now - t0 > timeout:
+                proc.kill(); lines.append(f'[VortexPanel] Timed out after {timeout // 60} minutes - stopped.')
+                break
+        rc = proc.wait(timeout=30)
+    except Exception as e:
+        proc.kill(); lines.append(f'[VortexPanel] {e}'); rc = 1
+    return '\n'.join(lines), rc
 
 
 @settings_bp.route('/api/settings/security-updates/apply', methods=['POST'])
 def apply_security_updates():
-    """Applies ONLY the packages flagged as security updates -- distinct
-    from the existing /api/settings/update button, which blindly upgrades
-    everything with no way to scope it. On Debian/Ubuntu this means
-    passing the exact package list to --only-upgrade rather than a
-    generic dist-upgrade, so nothing outside the flagged security set
-    gets touched. On RHEL-family, dnf's own --security flag does this
-    natively -- no need to enumerate packages ourselves there."""
-    from panel.routes.job_state import save_job, load_job
+    """Applies ONLY the packages flagged as security updates (plus pending
+    vendor-repo upgrades, which carry no distro security tag), fully
+    non-interactive, streaming output to the card, and refreshing the
+    cached check when done so the card reflects the real result."""
+    from panel.routes.job_state import save_job
     if not req(): return jsonify({'ok':False}), 401
-    existing = load_job('security_update', {'running': False})
-    if existing.get('running'):
+    if _sec_job_state().get('running'):
         return jsonify({'ok': False, 'error': 'A security update is already in progress'}), 409
 
-    import threading, time as _time
+    import threading
+    job = {'running': True, 'done': False, 'success': None, 'output': 'Checking what is pending…',
+           'started': time.time(), 'heartbeat': time.time()}
+    save_job(_SEC_JOB, job)
+
     def do_apply():
-        save_job('security_update', {'running': True, 'done': False, 'success': None, 'output': '', 'started': _time.time()})
-        os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
-        before = _pending_security_packages()
-        vendor_before = [] if re.search(r'rhel|fedora|centos', os_family, re.I) else _pending_vendor_updates()
-
-        if re.search(r'rhel|fedora|centos', os_family, re.I):
-            out, err, rc = sh3('dnf update --security -y 2>&1 || yum update --security -y 2>&1', t=600)
-            combined = out or err
-        else:
-            # Vendor-repo packages are included deliberately: they carry no
-            # distro security tag, so if they were left out, a critical
-            # vendor CVE (e.g. nginx CVE-2026-42533) could be displayed as
-            # pending but never actually be fixable from this panel.
-            pkgs = [p['package'] for p in before] + [v['package'] for v in vendor_before]
-            pkgs = list(dict.fromkeys(pkgs))  # de-dupe, preserve order
-            if not pkgs:
-                combined, rc = 'Nothing pending (it may have changed since the last check — try refreshing).', 0
+        combined, rc = '', 1
+        try:
+            rhel = _is_rhel()
+            before = _pending_security_packages()
+            vendor_before = [] if rhel else _pending_vendor_updates()
+            if rhel:
+                combined, rc = _run_streaming('dnf update --security -y 2>&1 || yum update --security -y 2>&1', job)
             else:
-                # NOT --only-upgrade. That flag refuses to install any new
-                # dependency, so a package whose upgrade pulls one in is
-                # silently skipped while apt still exits 0 -- confirmed in
-                # testing ("0 upgraded ... N not upgraded"), which is
-                # exactly why packages kept reappearing as pending after a
-                # reported-successful apply. Naming only already-installed
-                # packages means apt resolves precisely the dependencies
-                # those upgrades need and nothing unrelated.
-                out, err, rc = sh3('apt-get install -y ' + ' '.join(pkgs) + ' 2>&1', t=600)
-                combined = out or err
+                pkgs = list(dict.fromkeys([p['package'] for p in before] + [v['package'] for v in vendor_before]))
+                if not pkgs:
+                    combined, rc = 'Nothing pending (it may have changed since the last check).', 0
+                else:
+                    # Not --only-upgrade: that refuses new dependencies and
+                    # silently skips the package while apt exits 0. Naming
+                    # installed packages resolves exactly what they need.
+                    # Non-interactive + needrestart auto mode: an interactive
+                    # conffile or "restart services?" prompt with no terminal
+                    # otherwise hangs the job until the timeout.
+                    job['output'] = 'Upgrading: ' + ', '.join(pkgs) + '\n'
+                    save_job(_SEC_JOB, job)
+                    combined, rc = _run_streaming(_APT_ENV + 'apt-get install -y ' + _APT_OPTS + ' '.join(pkgs) + ' 2>&1', job)
+                    combined = job['output'].split('\n')[0] + '\n' + combined
 
-        # Verify against reality rather than trusting the exit code alone --
-        # apt can exit 0 having genuinely changed nothing.
-        after = _pending_security_packages()
-        vendor_after = [] if re.search(r'rhel|fedora|centos', os_family, re.I) else _pending_vendor_updates()
-        remaining = len(after) + len(vendor_after)
-        total_before = len(before) + len(vendor_before)
-        applied = max(0, total_before - remaining)
-        success = (rc == 0 and remaining == 0)
+            check = _build_security_check(refresh=False)   # apt metadata was refreshed moments ago
+            save_job(_SEC_CHECK, check)                   # card + dashboard now show the real state
+            remaining = check['total'] + check['vendor_total']
+            total_before = len(before) + len(vendor_before)
+            applied = max(0, total_before - remaining)
+            reboot_required, reboot_pkgs = check['reboot_required'], check['reboot_pkgs']
+            success = (rc == 0 and remaining == 0)
 
-        reboot_required = os.path.exists('/var/run/reboot-required')
-        reboot_pkgs = []
-        if reboot_required:
-            try:
-                with open('/var/run/reboot-required.pkgs') as f:
-                    reboot_pkgs = [l.strip() for l in f if l.strip()]
-            except Exception:
-                pass
-
-        summary = f'\n\n── Result ──\nApplied: {applied}   Still pending: {remaining}'
-        if reboot_required:
-            summary += (f'\n\n\u26a0 A reboot is required to finish applying '
-                        f'{"these updates" if not reboot_pkgs else ", ".join(reboot_pkgs)}. '
-                        f'This is normal for kernel and firmware packages -- apt has already '
-                        f'installed the new version, but the currently running kernel/module '
-                        f'stays active in memory until reboot. Re-checking before rebooting will '
-                        f'keep showing this as pending even though nothing further needs to be '
-                        f'applied; reboot from the Settings page to clear it.')
-        elif remaining:
-            names = ', '.join([p['package'] for p in after[:6]] + [v['package'] for v in vendor_after[:6]])
-            summary += (f'\nStill pending: {names}'
-                        f'\n\nThese did not upgrade. Most often that means they are held back by the '
-                        f'distribution (a phased rollout, or a dependency conflict apt will not resolve '
-                        f'automatically). Running "apt-get dist-upgrade" manually over SSH will show the '
-                        f'specific reason for each one.')
-
-        save_job('security_update', {'running': False, 'done': True,
-                                      'success': success or reboot_required,
-                                      'output': combined + summary,
-                                      'applied': applied, 'remaining': remaining,
-                                      'reboot_required': reboot_required, 'reboot_pkgs': reboot_pkgs})
+            summary = f'\n\n-- Result --\nApplied: {applied}   Still pending: {remaining}'
+            if reboot_required:
+                summary += (f'\n\nA reboot is required to finish applying '
+                            f'{"these updates" if not reboot_pkgs else ", ".join(reboot_pkgs)}. '
+                            f'The new versions are installed; the running kernel/libraries stay in '
+                            f'memory until you reboot (Settings -> Reboot).')
+            if remaining:
+                names = ', '.join([p['package'] for p in check['packages'][:6]] + [v['package'] for v in check['vendor'][:6]])
+                summary += (f'\nStill pending: {names}\n\nThese did not upgrade - usually held back by the '
+                            f'distribution (phased rollout or a dependency apt will not resolve on its own). '
+                            f'Running "apt-get dist-upgrade" over SSH shows the reason for each one.')
+            save_job(_SEC_JOB, {'running': False, 'done': True, 'success': success,
+                                'output': combined + summary, 'applied': applied, 'remaining': remaining,
+                                'reboot_required': reboot_required, 'reboot_pkgs': reboot_pkgs,
+                                'finished': time.time()})
+        except Exception as e:
+            save_job(_SEC_JOB, {'running': False, 'done': True, 'success': False,
+                                'output': (combined or job.get('output', '')) + f'\n\n[VortexPanel] Update job failed: {e}',
+                                'applied': 0, 'remaining': None, 'finished': time.time()})
 
     threading.Thread(target=do_apply, daemon=True).start()
     return jsonify({'ok': True, 'message': 'Applying security updates in background'})
@@ -685,10 +903,8 @@ def apply_security_updates():
 
 @settings_bp.route('/api/settings/security-updates/status')
 def security_update_status():
-    from panel.routes.job_state import load_job
     if not req(): return jsonify({'ok':False}), 401
-    state = load_job('security_update', {'running': False, 'done': False, 'success': None, 'output': '', 'started': None})
-    return jsonify({'ok': True, **state})
+    return jsonify({'ok': True, **_sec_job_state()})
 
 
 @settings_bp.route('/api/settings/sync-time', methods=['POST'])

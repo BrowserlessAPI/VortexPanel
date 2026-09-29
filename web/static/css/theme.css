@@ -112,8 +112,28 @@ a{color:inherit;text-decoration:none}
 .data-table th{padding:8px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);border-bottom:1px solid var(--border)}
 .data-table td{padding:10px 12px;font-size:13px;color:var(--text-secondary);border-bottom:1px solid var(--border-light)}
 .data-table tr:last-child td{border-bottom:none}
+.data-table td{transition:background .12s ease}
 .data-table tr:hover td{background:var(--bg-hover)}
 .data-table td:first-child{color:var(--text-primary);font-weight:500}
+/* Dense list row (Websites, App Store, etc.) - a compact per-row layout with
+   an icon-button rail, modeled after aaPanel's website list density. */
+.icon-btn{width:26px;height:26px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-secondary);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:.12s;flex-shrink:0}
+.icon-btn:hover{background:var(--bg-hover);color:var(--text-primary);border-color:var(--border-light)}
+.icon-btn:disabled{opacity:.4;cursor:not-allowed}
+.icon-btn svg{width:14px;height:14px}
+.row-domain{font-weight:600;color:var(--text-primary);font-size:13px;display:block}
+.row-path{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+/* Site modification drawer - fade+scale open/close instead of an instant
+   pop, and a quick fade when switching tabs inside it. */
+.drawer-fade-enter{transition:opacity .16s ease,transform .16s ease}
+.drawer-fade-enter-start{opacity:0}
+.drawer-fade-enter-end{opacity:1}
+.drawer-fade-leave{transition:opacity .12s ease}
+.drawer-fade-leave-start{opacity:1}
+.drawer-fade-leave-end{opacity:0}
+.drawer-tab-fade-enter{transition:opacity .14s ease}
+.drawer-tab-fade-enter-start{opacity:0}
+.drawer-tab-fade-enter-end{opacity:1}
 /* BUTTONS */
 .btn{padding:7px 14px;border-radius:var(--radius);border:none;font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .12s}
 .btn-primary{background:var(--accent);color:#fff}
@@ -371,3 +391,19 @@ textarea.form-input{resize:vertical;min-height:80px;font-family:var(--font-mono)
 /* ── Chart containers ────────────────────────────────────────────────────── */
 .chart-card { position: relative; height: 220px; }
 .chart-card canvas { max-height: 100%; }
+
+/* Line icons (replace emoji everywhere) */
+.vp-ic{width:1em;height:1em;vertical-align:-0.14em;flex-shrink:0;display:inline-block}
+/* Site run/stop toggle (Websites list) */
+.site-toggle{display:inline-flex;align-items:center;gap:7px;padding:3px 10px 3px 4px;border-radius:20px;border:1px solid var(--border);background:var(--bg-raised);color:var(--text-muted);font-size:11px;font-weight:600;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.site-toggle .site-toggle-knob{width:14px;height:14px;border-radius:50%;background:var(--text-muted);transition:background .15s,transform .15s}
+.site-toggle.on{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.35);color:var(--green)}
+.site-toggle.on .site-toggle-knob{background:var(--green)}
+.site-toggle:hover{border-color:var(--accent)}
+.site-toggle:disabled{opacity:.6;cursor:wait}
+/* Site modification drawer - left tab list. Static styles live in a class
+   because Alpine's string :style binding replaces the inline style attribute,
+   which was silently dropping the padding. */
+.drawer-nav-item{padding:9px 18px;font-size:13px;cursor:pointer;border-left:3px solid transparent;white-space:nowrap;color:var(--text-secondary);transition:background .12s,color .12s,border-color .12s}
+.drawer-nav-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.drawer-nav-item.active{border-left-color:var(--accent);color:var(--accent);font-weight:600;background:rgba(88,101,242,.08)}

@@ -1479,7 +1479,7 @@ def modsec_repair():
                 'SecAuditEngine RelevantOnly\nSecAuditLog /var/log/modsec_audit.log\n'
             )
             conf_ok = True
-            log.append(f'⚠ Download failed ({err[:150]}) — wrote minimal fallback config so the engine is still usable')
+            log.append(f'Download failed ({err[:150]}) — wrote minimal fallback config so the engine is still usable')
     else:
         log.append('✓ modsecurity.conf already present')
 
@@ -1503,7 +1503,7 @@ def modsec_repair():
             crs_ok = True
             log.append(f'✓ OWASP CRS {tag} downloaded')
         else:
-            log.append(f'⚠ CRS download failed ({err[:150]}) — engine will work but with no ruleset loaded. Try Repair again later.')
+            log.append(f'CRS download failed ({err[:150]}) — engine will work but with no ruleset loaded. Try Repair again later.')
     else:
         log.append('✓ OWASP CRS already present')
 

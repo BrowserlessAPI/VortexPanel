@@ -213,8 +213,8 @@ MODULES = [
         'desc':'High-performance HTTP & reverse proxy server',
         'check':'which nginx 2>/dev/null',
         'versions':[
-            {'label':'1.30.4 (Stable — security)',   'value':'stable'},
-            {'label':'1.31.3 (Mainline — security)', 'value':'mainline'},
+            {'label':'1.30.5 (Stable - security fix)', 'value':'stable'},
+            {'label':'1.31.6 (Mainline - security fix)', 'value':'mainline'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -277,9 +277,9 @@ fi''',
         'desc':'LiteSpeed open source web server',
         'check':'test -f /usr/local/lsws/bin/lshttpd && echo found',
         'versions':[
-            {'label':'1.9.x (Latest - Apr 2026)', 'value':'1.9'},
-            {'label':'1.8.5 (Stable - Jan 2026)', 'value':'1.8.5'},
-            {'label':'1.8.4 (Stable)',               'value':'1.8.4'},
+            {'label':'1.9.2 (Latest)', 'value':'1.9'},
+            {'label':'1.8.5 (Stable)', 'value':'1.8.5'},
+            {'label':'1.8.4 (Stable)', 'value':'1.8.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -677,10 +677,11 @@ mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2
         'desc':'Community-developed MySQL fork by MariaDB Foundation',
         'check':'systemctl is-active mariadb 2>/dev/null | grep -q "^active" && echo found || (which mariadbd 2>/dev/null && mariadbd --version 2>/dev/null | grep -c MariaDB)',
         'versions':[
-            {'label':'12.3.2 (Latest Stable)', 'value':'12.3'},
-            {'label':'11.8.8',                 'value':'11.8'},
-            {'label':'11.4.5 (LTS)',           'value':'11.4'},
-            {'label':'10.11.11 (LTS)',         'value':'10.11'},
+            {'label':'13.0.2 (Latest Stable)', 'value':'13.0'},
+            {'label':'12.3.3 (Stable)', 'value':'12.3'},
+            {'label':'11.8.9 (LTS)', 'value':'11.8'},
+            {'label':'11.4.13 (LTS)', 'value':'11.4'},
+            {'label':'10.11.19 (LTS)', 'value':'10.11'},
         ],
         'install_tpl':'''curl -fLsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
 bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" --skip-maxscale; \
@@ -697,8 +698,9 @@ systemctl enable --now mariadb''',
         'desc':'Document-oriented NoSQL database',
         'check':'which mongod 2>/dev/null',
         'versions':[
-            {'label':'7.0 (LTS)',    'value':'7.0'},
-            {'label':'8.0 (Latest)', 'value':'8.0'},
+            {'label':'8.0.32 (LTS)', 'value':'8.0'},
+            {'label':'8.2.12 (Latest minor release)', 'value':'8.2'},
+            {'label':'7.0.43 (LTS)', 'value':'7.0'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -742,9 +744,10 @@ systemctl enable --now mariadb''',
         'desc':'Advanced open source relational database',
         'check':'which psql 2>/dev/null',
         'versions':[
-            {'label':'15 (Stable)', 'value':'15'},
-            {'label':'16 (Stable)', 'value':'16'},
-            {'label':'17 (Latest)', 'value':'17'},
+            {'label':'18.6 (Latest)', 'value':'18'},
+            {'label':'17.11 (Stable)', 'value':'17'},
+            {'label':'16.15 (Stable)', 'value':'16'},
+            {'label':'15.19 (Stable)', 'value':'15'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -798,12 +801,12 @@ systemctl enable --now mariadb''',
         'desc':'PHP-FPM — multiple versions supported side by side',
         'check':'which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 2>/dev/null | head -1',
         'versions':[
-            {'label':'8.5 (Latest — active)',        'value':'8.5'},
-            {'label':'8.4 (Active)',                 'value':'8.4'},
-            {'label':'8.3 (Security only)',          'value':'8.3'},
-            {'label':'8.2 (Security only — EOL Dec 2026)', 'value':'8.2'},
-            {'label':'8.1 (EOL — unpatched)',        'value':'8.1'},
-            {'label':'7.4 (EOL — unpatched)',        'value':'7.4'},
+            {'label':'8.5.11 (Latest - security release)', 'value':'8.5'},
+            {'label':'8.4.26 (Active support)', 'value':'8.4'},
+            {'label':'8.3.35 (Security fixes only)', 'value':'8.3'},
+            {'label':'8.2.34 (Security fixes only - EOL Dec 2026)', 'value':'8.2'},
+            {'label':'8.1.34 (EOL - unpatched)', 'value':'8.1'},
+            {'label':'7.4.33 (EOL - unpatched)', 'value':'7.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
 apt-get install -y software-properties-common && \
@@ -852,7 +855,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'Simple, fast and secure FTP server',
         'check':'which pure-ftpd 2>/dev/null',
         'versions':[
-            {'label':'1.0.52 (Latest Stable)', 'value':'latest'},
+            {'label':'Latest (distro-packaged; upstream 1.0.54)', 'value':'latest'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -878,12 +881,12 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'Web-based MySQL/MariaDB admin — auto-configured at port 8082',
         'check':'test -f /usr/share/phpmyadmin/config.inc.php && echo found',
         'versions':[
-            {'label':'5.2.2 (Latest)', 'value':'5.2.2'},
+            {'label':'5.2.3 (Latest)', 'value':'5.2.3'},
         ],
         'install':(
             '(command -v wget >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y wget 2>/dev/null || dnf install -y wget 2>/dev/null || yum install -y wget 2>/dev/null) && '
-            'wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.2/'
-            'phpMyAdmin-5.2.2-all-languages.tar.gz -O /tmp/pma.tar.gz && '
+            'wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.3/'
+            'phpMyAdmin-5.2.3-all-languages.tar.gz -O /tmp/pma.tar.gz && '
             'mkdir -p /usr/share/phpmyadmin && '
             'tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 && '
             'cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php && '
@@ -956,7 +959,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'Intrusion prevention & brute-force protection',
         'check':'which fail2ban-client 2>/dev/null',
         'versions':[
-            {'label':'1.1.0 (Latest Stable)', 'value':'latest'},
+            {'label':'1.1.1 (Latest Stable)', 'value':'latest'},
         ],
         'install':r'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -989,7 +992,7 @@ fi''',
         'desc':'Open source antivirus engine for mail gateways',
         'check':'which clamscan 2>/dev/null',
         'versions':[
-            {'label':'Distro-provided (Ubuntu security-maintained)', 'value':'latest'},
+            {'label':'Distro-provided (upstream 1.5.4 stable / 1.4.6 LTS)', 'value':'latest'},
         ],
         'install':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -1032,8 +1035,8 @@ fi''',
         'desc':'Industry standard authoritative DNS server',
         'check':'which named 2>/dev/null',
         'versions':[
-            {'label':'9.18.x (ESV/LTS - Ubuntu repo)', 'value':'9.18'},
-            {'label':'9.20.x (Stable - ISC official)',  'value':'9.20'},
+            {'label':'9.20.x (Stable - ISC official)', 'value':'9.20'},
+            {'label':'9.18.x (Ubuntu repo - upstream EOL Jun 2026)', 'value':'9.18'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && '
@@ -1094,9 +1097,9 @@ fi''',
         'desc':'JavaScript runtime built on Chrome V8 engine',
         'check':'which node 2>/dev/null || which nodejs 2>/dev/null',
         'versions':[
-            {'label':'v24 LTS — Active (Krypton)', 'value':'24'},
-            {'label':'v22 LTS — Maintenance (Jod)', 'value':'22'},
-            {'label':'v26 Current (non-LTS)',       'value':'26'},
+            {'label':'v24 LTS - Active (Krypton, 24.21)', 'value':'24'},
+            {'label':'v22 LTS - Maintenance (Jod, 22.23)', 'value':'22'},
+            {'label':'v26 Current (26.10, LTS from Oct 2026)', 'value':'26'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then mkdir -p /etc/apt/keyrings && \\
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\
@@ -1116,10 +1119,11 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; else curl -fsSL https:
         'desc':'Python 3 runtime + pip + venv',
         'check':'which python3 2>/dev/null',
         'versions':[
-            {'label':'3.10 (Security)', 'value':'3.10'},
+            {'label':'3.14 (Latest)', 'value':'3.14'},
+            {'label':'3.13 (Stable)', 'value':'3.13'},
+            {'label':'3.12 (Security)', 'value':'3.12'},
             {'label':'3.11 (Security)', 'value':'3.11'},
-            {'label':'3.12 (Active)',   'value':'3.12'},
-            {'label':'3.13 (Latest)',   'value':'3.13'},
+            {'label':'3.10 (Security - EOL Oct 2026)', 'value':'3.10'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
 apt-get install -y software-properties-common && \
@@ -1155,9 +1159,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'Container platform — build, ship, run anywhere',
         'check':'which docker 2>/dev/null',
         'versions':[
-            {'label':'v27 CE (Stable)',  'value':'27'},
-            {'label':'v28 CE (Stable)',  'value':'28'},
-            {'label':'v29 CE (Latest)',  'value':'29'},
+            {'label':'29.8.1 (Latest - only supported release)', 'value':'29'},
         ],
         'install':'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker',
         'uninstall':'systemctl stop docker 2>/dev/null; systemctl disable docker 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; dnf remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; yum remove -y docker-ce docker-ce-cli containerd.io 2>/dev/null; apt-get autoremove -y 2>/dev/null; true && rm -f /usr/share/keyrings/docker-archive-keyring.gpg /etc/apt/sources.list.d/docker.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
@@ -1169,7 +1171,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'PHP dependency & package manager',
         'check':'which composer 2>/dev/null',
         'versions':[
-            {'label':'2.8 (Latest Stable)', 'value':'2'},
+            {'label':'2.10 (Latest Stable)', 'value':'2'},
         ],
         'install_tpl':(
             'curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php && '
@@ -1193,8 +1195,9 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'In-memory data store, cache & message broker',
         'check':'which redis-server 2>/dev/null',
         'versions':[
-            {'label':'7.2.7 (Stable)', 'value':'7.2'},
-            {'label':'8.0.2 (Latest)', 'value':'8.0'},
+            {'label':'8.10.2 (Latest - security release)', 'value':'8.10'},
+            {'label':'8.8.3 (Stable - security release)', 'value':'8.8'},
+            {'label':'7.4.11 (Legacy - security release)', 'value':'7.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
@@ -1242,7 +1245,7 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         # no custom keyring/repo dance needed, unlike Redis/nginx/etc.
         'check':'which memcached 2>/dev/null',
         'versions':[
-            {'label':'Latest (distro-packaged)', 'value':'latest'},
+            {'label':'Latest (distro-packaged; upstream 1.6.45)', 'value':'latest'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -1279,8 +1282,8 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'desc':'Modern web-based IMAP email client',
         'check':'test -d /var/www/roundcube && echo found',
         'versions':[
-            {'label':'1.6.16 (LTS)',    'value':'1.6.16'},
-            {'label':'1.7.1  (Latest)', 'value':'1.7.1'},
+            {'label':'1.7.4 (Latest)', 'value':'1.7.4'},
+            {'label':'1.6.19 (LTS)', 'value':'1.6.19'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -1926,7 +1929,7 @@ def install_module(mod_id):
             _job_append_line(job_id, line.rstrip())
             if _time.time() - start > MAX_SECONDS:
                 proc.kill()
-                _job_append_line(job_id, '[VortexPanel] ⚠ Timed out after 10 minutes. Process killed.')
+                _job_append_line(job_id, '[VortexPanel] Timed out after 10 minutes. Process killed.')
                 break
         proc.wait()
 
@@ -1937,7 +1940,7 @@ def install_module(mod_id):
             _job_append_line(job_id, '[VortexPanel] The install command itself reported an error (see output above) even though something matching the check command was found on the system — treating this as failed rather than silently reporting success.')
         inst_ver      = get_version(mod['id'], ver) if installed else ''
         _job_append_line(job_id,
-            f'[VortexPanel] {"✓ Installed successfully! Version: "+inst_ver if installed else "⚠ Installation may have failed — check output above."}'
+            f'[VortexPanel] {"✓ Installed successfully! Version: "+inst_ver if installed else "Installation may have failed — check output above."}'
         )
         _job_finish(job_id, success=installed, installed=installed, inst_ver=inst_ver)
         panel_cache.invalidate('modules_list')
@@ -1996,7 +1999,7 @@ def uninstall_module(mod_id):
             _job_append_line(job_id, line.rstrip())
             if _time.time() - start > MAX_SECONDS:
                 proc.kill()
-                _job_append_line(job_id, '[VortexPanel] ⚠ Timed out after 5 minutes. Process killed.')
+                _job_append_line(job_id, '[VortexPanel] Timed out after 5 minutes. Process killed.')
                 break
         proc.wait()
 
@@ -2012,7 +2015,7 @@ def uninstall_module(mod_id):
         else:
             _job_finish(job_id, success=removed, installed=still_installed)
         _job_append_line(job_id,
-            f'[VortexPanel] {"✓ Removed successfully!" if removed else "⚠ May not be fully removed — check output above."}'
+            f'[VortexPanel] {"✓ Removed successfully!" if removed else "May not be fully removed — check output above."}'
         )
         panel_cache.invalidate('modules_list')
 
@@ -2383,9 +2386,9 @@ def get_module_settings(mod_id):
             'gzipCompressLevel': lsget('gzipCompressLevel') or '6',
         }
         versions = [
-            {'label':'1.8.3','value':'1.8.3'},
+            {'label':'1.9.2 (Latest)','value':'1.9.2'},
+            {'label':'1.8.5','value':'1.8.5'},
             {'label':'1.8.4','value':'1.8.4'},
-            {'label':'1.8.5 (Latest)','value':'1.8.5'},
         ]
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,
@@ -2476,7 +2479,7 @@ def get_module_settings(mod_id):
             'logs':logs,'log_path':log_path,
             'port':port,'datadir':datadir,
             'current_status':current_status,'optimization':optimization,'slow_log':slow_log,
-            'versions':[{'label':'12.3 (Latest)','value':'12.3'},{'label':'11.8','value':'11.8'},{'label':'11.7','value':'11.7'},{'label':'11.4 (LTS)','value':'11.4'},{'label':'10.11 (LTS)','value':'10.11'},{'label':'10.6 (LTS)','value':'10.6'}]})
+            'versions':[{'label':'13.0 (Latest)','value':'13.0'},{'label':'12.3','value':'12.3'},{'label':'11.8 (LTS)','value':'11.8'},{'label':'11.4 (LTS)','value':'11.4'},{'label':'10.11 (LTS)','value':'10.11'},{'label':'10.6 (LTS)','value':'10.6'}]})
 
     elif mod_id == 'redis':
         status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis') or 'inactive'
@@ -2527,7 +2530,7 @@ def get_module_settings(mod_id):
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,
             'current_status':current_status,'optimization':optimization,'persistence':persistence,
-            'versions':[{'label':'Redis 7.2 (Stable)','value':'7.2'},{'label':'Redis 8.0 (Latest)','value':'8.0'}]})
+            'versions':[{'label':'Redis 8.10.2 (Latest)','value':'8.10'},{'label':'Redis 8.8.3','value':'8.8'},{'label':'Redis 7.4.11 (Legacy)','value':'7.4'}]})
 
     elif mod_id == 'memcached':
         status  = sh('systemctl is-active memcached 2>/dev/null') or 'inactive'
@@ -2709,7 +2712,7 @@ def get_module_settings(mod_id):
             'conf_path':conf_path,'conf_content':conf_content,
             'port':port,'users':users,'logs':logs,
             'ftp_addr':'ftp://' + ftp_addr + ':' + port,
-            'versions':[{'label':'1.0.49 (Stable)','value':'1.0.49'},{'label':'1.0.52 (Latest)','value':'1.0.52'}]})
+            'versions':[{'label':'Latest (distro-packaged)','value':'latest'}]})
 
     elif mod_id == 'fail2ban':
         status  = sh('systemctl is-active fail2ban') or 'inactive'
@@ -3351,13 +3354,13 @@ def save_module_settings(mod_id):
                 _job_append_line(job_id, line.rstrip())
                 if _time.time() - start > MAX_SECONDS:
                     proc.kill()
-                    _job_append_line(job_id, '[VortexPanel] ⚠ Timed out after 8 minutes. Operation killed.')
+                    _job_append_line(job_id, '[VortexPanel] Timed out after 8 minutes. Operation killed.')
                     break
             proc.wait()
             success = proc.returncode == 0
             new_ver = sh(ver_check_cmd) if ver_check_cmd else ver
             _job_append_line(job_id,
-                f'[VortexPanel] {"✓ Switched to " + new_ver + " successfully!" if success else "⚠ Switch failed — check output above."}'
+                f'[VortexPanel] {"✓ Switched to " + new_ver + " successfully!" if success else "Switch failed — check output above."}'
             )
             _job_finish(job_id, success=success, installed=True, inst_ver=new_ver)
             panel_cache.invalidate('modules_list')

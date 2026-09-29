@@ -185,21 +185,21 @@ def start_update():
             save_job('panel_update', state)
 
         try:
-            log('🔍 Checking system prerequisites...')
+            log('Checking system prerequisites...')
 
             # 1. Ensure git is installed
             _, _, rc = sh('which git 2>/dev/null', t=5)
             if rc != 0:
-                log('📦 Installing git...')
+                log('Installing git...')
                 sh('apt-get install -y git 2>&1')
 
             # 2. Clone or pull repo
             if os.path.isdir(os.path.join(REPO_DIR, '.git')):
-                log(f'📥 Fetching latest code from GitHub...')
+                log(f'Fetching latest code from GitHub...')
                 out, err, rc = sh(f'cd {REPO_DIR} && git fetch --all && git reset --hard origin/main 2>&1')
                 log(out or err)
             else:
-                log(f'📥 Cloning repository...')
+                log(f'Cloning repository...')
                 sh(f'rm -rf {REPO_DIR}')
                 out, err, rc = sh(f'git clone https://github.com/{GITHUB_REPO}.git {REPO_DIR} 2>&1')
                 log(out or err)
@@ -207,13 +207,13 @@ def start_update():
                     raise Exception(f'Git clone failed: {err}')
 
             if target:
-                log(f'🏷 Checking out version {target}...')
+                log(f'Checking out version {target}...')
                 _, cerr, crc = sh(f'cd {REPO_DIR} && git checkout {target} 2>&1')
                 if crc != 0:
                     # Not fatal — the reset above already put us on latest main,
                     # this just means no formal tag exists yet for this version
                     # (e.g. detected via the raw VERSION file ahead of tagging).
-                    log(f'ℹ No tag "{target}" on GitHub yet — already on latest main branch, continuing')
+                    log(f'No tag "{target}" on GitHub yet — already on latest main branch, continuing')
                 else:
                     # Re-attach main to this exact commit rather than leaving
                     # HEAD detached. A tag checkout on its own detaches HEAD --
@@ -229,14 +229,14 @@ def start_update():
                     log(f'✓ Checked out {target}')
 
             # 3. Copy new files
-            log('📋 Copying updated files to installation directory...')
+            log('Copying updated files to installation directory...')
             os.makedirs(INSTALL_DIR, exist_ok=True)
             for folder in ['panel', 'web']:
                 src = os.path.join(REPO_DIR, folder)
                 if os.path.isdir(src):
                     out, err, rc = sh(f'cp -r {src} {INSTALL_DIR}/')
                     if rc != 0:
-                        log(f'⚠ Warning copying {folder}: {err}')
+                        log(f'Warning copying {folder}: {err}')
                     else:
                         log(f'✓ Updated {folder}/')
 
@@ -250,7 +250,7 @@ def start_update():
             # 4. Install any new Python dependencies
             req_file = os.path.join(INSTALL_DIR, 'requirements.txt')
             if os.path.exists(req_file):
-                log('📦 Installing Python dependencies...')
+                log('Installing Python dependencies...')
                 out, err, _ = sh(f'pip3 install -r {req_file} --quiet 2>&1', t=120)
                 if out: log(out[-500:])
 
@@ -268,10 +268,10 @@ def start_update():
             # to happen on every single successful update, not just
             # occasionally depending on gunicorn's worker routing.
             log('')
-            log('✅ VortexPanel updated successfully!')
+            log('VortexPanel updated successfully!')
             log(f'   New version: {target or "latest"}')
             log('   Reload this page to see the latest version.')
-            log('🔄 Restarting VortexPanel service...')
+            log('Restarting VortexPanel service...')
             save_job('panel_update', {'running': False, 'lines': lines, 'done': True, 'success': True, 'error': ''})
 
             _, _, rc = sh('systemctl restart vortexpanel 2>&1')

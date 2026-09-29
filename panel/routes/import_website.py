@@ -150,7 +150,7 @@ def _detect_cpanel(extract_dir):
             info['doc_root'] = homedir
             info['notes'].append('No public_html found — using homedir root as doc root')
     else:
-        info['notes'].append('⚠ No homedir/ found — cPanel structure not recognized')
+        info['notes'].append('No homedir/ found — cPanel structure not recognized')
 
     # Domain from userdata/main (YAML: "main_domain: example.com")
     userdata_main = _find_first(extract_dir, 'userdata/main', 'userdata')
@@ -180,7 +180,7 @@ def _detect_cpanel(extract_dir):
                 pass
 
     if not info['domain']:
-        info['notes'].append('⚠ Could not auto-detect domain — please enter it manually')
+        info['notes'].append('Could not auto-detect domain — please enter it manually')
 
     # Databases: mysql/{name}.sql (one file per db) is the modern cpmove format
     mysql_dir = _find_first(extract_dir, 'mysql')
@@ -233,7 +233,7 @@ def _detect_aapanel(extract_dir):
     else:
         # No domain-shaped folder — assume the archive root itself IS the site files
         info['doc_root'] = extract_dir
-        info['notes'].append('⚠ No domain-named folder found — assuming archive root is the site files. Please verify the domain name manually.')
+        info['notes'].append('No domain-named folder found — assuming archive root is the site files. Please verify the domain name manually.')
 
     # Database dumps: aaPanel typically exports these as separate .sql/.sql.gz
     # files, sometimes bundled in the same archive, sometimes not at all.
@@ -277,13 +277,13 @@ def _detect_hestia(extract_dir):
                         info['notes'].append(f'Detected domain from Hestia web/ structure: {parent}')
                     break
         else:
-            info['notes'].append(f'⚠ Failed to extract web.tar: {err}')
+            info['notes'].append(f'Failed to extract web.tar: {err}')
     else:
-        info['notes'].append('⚠ No web.tar found inside backup — Hestia structure not recognized')
+        info['notes'].append('No web.tar found inside backup — Hestia structure not recognized')
         info['doc_root'] = extract_dir
 
     if not info['domain']:
-        info['notes'].append('⚠ Could not auto-detect domain — please enter it manually')
+        info['notes'].append('Could not auto-detect domain — please enter it manually')
 
     # Databases: mysql.tar containing per-db .sql files, OR a mysql/ folder directly
     mysql_tar = _find_first(extract_dir, 'mysql.tar')
@@ -295,7 +295,7 @@ def _detect_hestia(extract_dir):
             mysql_dir = mysql_extract_dir
             info['notes'].append('Extracted inner mysql.tar')
         else:
-            info['notes'].append(f'⚠ Failed to extract mysql.tar: {err}')
+            info['notes'].append(f'Failed to extract mysql.tar: {err}')
     else:
         mysql_dir = _find_first(extract_dir, 'mysql')
 
@@ -355,9 +355,9 @@ def _detect_cyberpanel(extract_dir):
                     f'({", ".join(info["child_domains"][:5])}{"..." if len(info["child_domains"]) > 5 else ""}) '
                     '-- only the master domain is imported by this wizard; import addon domains separately if needed.')
         except Exception as e:
-            info['notes'].append(f'⚠ Found meta.xml but could not parse it ({e}) — falling back to folder-name detection')
+            info['notes'].append(f'Found meta.xml but could not parse it ({e}) — falling back to folder-name detection')
     else:
-        info['notes'].append('⚠ No meta.xml found — this may not be a CyberPanel backup, or is from a version old enough to predate it')
+        info['notes'].append('No meta.xml found — this may not be a CyberPanel backup, or is from a version old enough to predate it')
 
     # Site files: try the v2.0+ plain-folder layout first, then the older
     # pre-2.0 tarball layout.
@@ -374,11 +374,11 @@ def _detect_cyberpanel(extract_dir):
                 info['doc_root'] = ph_extract
                 info['notes'].append('Extracted public_html.tar.gz (pre-2.0 CyberPanel backup format)')
             else:
-                info['notes'].append(f'⚠ Found public_html.tar.gz but failed to extract it: {err}')
+                info['notes'].append(f'Found public_html.tar.gz but failed to extract it: {err}')
                 info['doc_root'] = extract_dir
         else:
             info['doc_root'] = extract_dir
-            info['notes'].append('⚠ No public_html/ or public_html.tar.gz found — assuming archive root is the site files. Please verify.')
+            info['notes'].append('No public_html/ or public_html.tar.gz found — assuming archive root is the site files. Please verify.')
 
     if not info['domain']:
         # Fall back to the same domain-shaped-folder-name heuristic the
@@ -392,7 +392,7 @@ def _detect_cyberpanel(extract_dir):
         except OSError:
             pass
         if not info['domain']:
-            info['notes'].append('⚠ Could not auto-detect domain — please enter it manually')
+            info['notes'].append('Could not auto-detect domain — please enter it manually')
 
     # Databases: no confirmed dump-naming convention to rely on, so scan
     # honestly rather than assume one, matching the aaPanel detector's approach.

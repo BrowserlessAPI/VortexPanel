@@ -93,6 +93,110 @@ def ensure_web_ownership(path):
         pass
 
 
+# --- nginx vhost editing helpers ------------------------------------------------
+# Shared by site stop/start and SSL enable/disable. Every change goes through
+# _nginx_apply(): write -> `nginx -t` -> reload, restoring the original file if
+# the test fails, so a bad edit can never take down the other sites on the
+# server at the next reload.
+
+STOP_BEGIN = '# VORTEX-STOPPED-BEGIN'
+STOP_END = '# VORTEX-STOPPED-END'
+SSL_BEGIN = '# VORTEX-SSL-BEGIN'
+SSL_END = '# VORTEX-SSL-END'
+SSL_REDIRECT_TAG = '# VORTEX-SSL-REDIRECT'
+
+
+def nginx_server_blocks(content):
+    """Return [(start, end)] spans of top-level `server { ... }` blocks using
+    real brace counting (skipping comments and quoted strings)."""
+    blocks, i, n, depth, start = [], 0, len(content), 0, None
+    while i < n:
+        c = content[i]
+        if c == '#':
+            j = content.find('\n', i)
+            i = n if j == -1 else j
+            continue
+        if c in ('"', "'"):
+            j = i + 1
+            while j < n and content[j] != c:
+                j += 2 if content[j] == '\\' else 1
+            i = j + 1
+            continue
+        if depth == 0 and content.startswith('server', i) and (i == 0 or not (content[i-1].isalnum() or content[i-1] == '_')):
+            k = i + 6
+            while k < n and content[k] in ' \t\r\n':
+                k += 1
+            if k < n and content[k] == '{':
+                start, depth, i = i, 1, k + 1
+                continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                blocks.append((start, i + 1))
+                start = None
+        i += 1
+    return blocks
+
+
+def nginx_test():
+    out = sh('nginx -t 2>&1')
+    ok = ('test is successful' in out) or ('syntax is ok' in out and 'failed' not in out.lower())
+    return ok, out
+
+
+def _nginx_apply(conf_path, new_content):
+    """Write new_content, validate with nginx -t, reload. Restores the
+    previous file and returns (False, error) if validation fails."""
+    with open(conf_path) as f:
+        old = f.read()
+    if new_content == old:
+        return True, ''
+    with open(conf_path, 'w') as f:
+        f.write(new_content)
+    ok, out = nginx_test()
+    if not ok:
+        with open(conf_path, 'w') as f:
+            f.write(old)
+        return False, 'nginx rejected the change (restored previous config): ' + out.strip()[-600:]
+    reload_nginx()
+    return True, ''
+
+
+_STOP_PAGE = ("<!doctype html><html><head><meta charset=utf-8><title>Site stopped</title></head>"
+              "<body style=font-family:system-ui,sans-serif;text-align:center;padding-top:18vh;color:#444>"
+              "<h1 style=font-weight:600>This site has been stopped</h1>"
+              "<p>The administrator has temporarily disabled this website.</p></body></html>")
+
+
+def nginx_site_stopped(content):
+    return STOP_BEGIN in content
+
+
+def nginx_set_stopped(content, stopped):
+    """Add/remove a server-level `return 503` stop page in every server block.
+    The vhost itself stays in place (aaPanel-style) so the domain keeps
+    answering with a clear page instead of falling through to whatever
+    default_server happens to be - which could be a different site."""
+    # always start from a clean state
+    content = re.sub(r'\n[ \t]*' + re.escape(STOP_BEGIN) + r'.*?' + re.escape(STOP_END) + r'[^\n]*', '', content, flags=re.S)
+    if not stopped:
+        return content
+    out, last = [], 0
+    for s, e in nginx_server_blocks(content):
+        block = content[s:e]
+        m = re.search(r'\n([ \t]*)server_name[^;]*;[^\n]*', block)
+        if m:
+            ind = m.group(1) or '    '
+            ins = (f'\n{ind}{STOP_BEGIN}\n{ind}default_type text/html;\n'
+                   f"{ind}return 503 '{_STOP_PAGE}';\n{ind}{STOP_END}")
+            block = block[:m.end()] + ins + block[m.end():]
+        out.append(content[last:s]); out.append(block); last = e
+    out.append(content[last:])
+    return ''.join(out)
+
+
 def list_sites():
     sites = []
     avail, enabled = get_nginx_dirs()
@@ -109,7 +213,7 @@ def list_sites():
             php_m  = re.search(r'fastcgi_pass.*php(\d+[\.\d]*).*fpm', content)
             php_v  = php_m.group(1) if php_m else 'Static'
             enabled_path = os.path.join(enabled, f)
-            is_enabled = os.path.exists(enabled_path) or avail == enabled
+            is_enabled = (os.path.exists(enabled_path) or avail == enabled) and not nginx_site_stopped(content)
             path_m = re.search(r'root\s+([^;]+);', content)
             path   = path_m.group(1).strip() if path_m else f'{get_webroot()}/{domain}'
             ssl_days = None
@@ -123,7 +227,12 @@ def list_sites():
                                 ssl_days = (end_dt - datetime.utcnow()).days
                             except: pass
                         break
-            sites.append({'domain':domain,'ssl':ssl,'ssl_days':ssl_days,'php':php_v,'enabled':is_enabled,'path':path,'conf_file':f})
+            # Cheap, content-only check (no extra shell calls) - same marker
+            # enable_caddy_waf()/disable_caddy_waf() already use to detect
+            # whether this site's config currently wraps its handlers in a
+            # Caddy WAF route{waf{...}} block.
+            waf_enabled = ('waf {' in content or 'waf{' in content)
+            sites.append({'domain':domain,'ssl':ssl,'ssl_days':ssl_days,'php':php_v,'enabled':is_enabled,'path':path,'conf_file':f,'waf_enabled':waf_enabled})
     except: pass
     return sites
 
@@ -152,6 +261,28 @@ def get_php_versions():
 def get_sites():
     if not req(): return jsonify({'ok':False}), 401
     return jsonify({'ok':True, 'sites':list_sites(), 'webroot':get_webroot()})
+
+
+@websites_bp.route('/api/websites/<domain>/status', methods=['POST'])
+def set_site_status(domain):
+    """Stop / start a site. Stopping keeps the vhost but answers every
+    request with a 503 "site stopped" page; starting removes it again."""
+    if not req(): return jsonify({'ok':False}), 401
+    if not is_valid_domain(domain):
+        return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    enabled = bool((request.get_json() or {}).get('enabled'))
+    fp, webserver = _find_site_config(domain)
+    if not fp:
+        return jsonify({'ok':False,'error':f'No config found for {domain}'}), 404
+    if webserver != 'nginx':
+        return jsonify({'ok':False,'error':f'Stopping a site is currently supported for nginx sites only (this site uses {webserver})'}), 400
+    with open(fp) as f:
+        content = f.read()
+    new = nginx_set_stopped(content, stopped=not enabled)
+    ok, err = _nginx_apply(fp, new)
+    if not ok:
+        return jsonify({'ok':False,'error':err}), 500
+    return jsonify({'ok':True,'enabled':enabled})
 
 
 def create_site_core(domain, path=None, php='8.3'):

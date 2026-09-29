@@ -20,23 +20,23 @@ def detect_engines():
     if mariadb_active:
         ver, _, _ = sh('mariadbd --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
         if not ver: ver, _, _ = sh('mariadb --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
-        engines.append({'id':'mariadb','name':'MariaDB','icon':'🦭','version':ver,'active':True})
+        engines.append({'id':'mariadb','name':'MariaDB','icon':'database','version':ver,'active':True})
     # MySQL — only if MariaDB is NOT active (avoid double detection)
     if not mariadb_active:
         out, _, rc = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null')
         if rc == 0 and out.strip() == 'active':
             ver, _, _ = sh('mysql --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
-            engines.append({'id':'mysql','name':'MySQL','icon':'🐬','version':ver,'active':True})
+            engines.append({'id':'mysql','name':'MySQL','icon':'database','version':ver,'active':True})
     # PostgreSQL
     out, _, rc = sh('systemctl is-active postgresql 2>/dev/null')
     if rc == 0 and out.strip() == 'active':
         ver, _, _ = sh('psql --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+" | head -1')
-        engines.append({'id':'postgresql','name':'PostgreSQL','icon':'🐘','version':ver,'active':True})
+        engines.append({'id':'postgresql','name':'PostgreSQL','icon':'database','version':ver,'active':True})
     # MongoDB
     out, _, rc = sh('systemctl is-active mongod 2>/dev/null')
     if rc == 0 and out.strip() == 'active':
         ver, _, _ = sh('mongod --version 2>/dev/null | grep -oP "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1')
-        engines.append({'id':'mongodb','name':'MongoDB','icon':'🍃','version':ver,'active':True})
+        engines.append({'id':'mongodb','name':'MongoDB','icon':'database','version':ver,'active':True})
     return engines
 
 def _sql_escape(v):
@@ -221,6 +221,206 @@ def create_db():
         return jsonify({'ok':True,'name':name})
 
     return jsonify({'ok':False,'error':'Unknown engine'})
+
+_IDENT_RE = re.compile(r'^[A-Za-z0-9_$]+$')
+
+def _valid_ident(s):
+    """MySQL/MariaDB identifier used inside backticks in a query we build
+    ourselves (SHOW TABLE STATUS FROM, REPAIR/OPTIMIZE/ALTER TABLE). This
+    isn't a general SQL-injection fix for the whole file (drop_db/export_db
+    already interpolate `name` unescaped, matching this admin-only panel's
+    existing threat model), but the per-table toolbox builds a query with
+    the table name spliced directly into an ALTER TABLE ... ENGINE=
+    statement, where a stray backtick would matter more, so it gets a real
+    identifier check rather than none at all."""
+    return bool(s) and bool(_IDENT_RE.match(s)) and len(s) <= 64
+
+
+_MONGO_NAME_RE = re.compile(r'^[A-Za-z0-9_.-]+$')
+
+def _valid_mongo_name(s):
+    return bool(s) and bool(_MONGO_NAME_RE.match(s)) and len(s) <= 120 and not s.startswith('system.')
+
+
+def _pg_rows(query, db):
+    """Run a query with unaligned, tuples-only output and split rows on '|'.
+    Same temp-file approach as pg_cmd (query never passes through the shell)."""
+    import tempfile as _tmp
+    tf = _tmp.NamedTemporaryFile(mode='w', suffix='.sql', delete=False)
+    tf.write(query + '\n'); tf.flush(); tf.close()
+    os.chmod(tf.name, 0o644)
+    out, err, rc = sh(f'sudo -u postgres psql -d {db} -t -A -v ON_ERROR_STOP=1 -f {tf.name}', timeout=120)
+    os.unlink(tf.name)
+    if rc != 0:
+        return None, (err or 'PostgreSQL error').strip()[:400]
+    return [l.split('|') for l in out.split('\n') if l.strip()], None
+
+
+def _mongo_js(js, timeout=120):
+    """Run a mongosh script from a temp file (no shell quoting of names)."""
+    import tempfile as _tmp, shutil as _sh
+    tf = _tmp.NamedTemporaryFile(mode='w', suffix='.js', delete=False)
+    tf.write(js); tf.flush(); tf.close()
+    bin_ = 'mongosh' if _sh.which('mongosh') else 'mongo'
+    out, err, rc = sh(f'{bin_} --quiet {tf.name}', timeout)
+    os.unlink(tf.name)
+    if rc != 0:
+        return None, (err or out or 'MongoDB error').strip()[:400]
+    return out, None
+
+
+def _pg_tables(name):
+    rows, err = _pg_rows(
+        "SELECT schemaname, relname, n_live_tup, pg_total_relation_size(relid) "
+        "FROM pg_stat_user_tables ORDER BY schemaname, relname;", name)
+    if err: return None, err
+    tables = []
+    for r in rows:
+        if len(r) < 4: continue
+        try: rows_n = int(r[2] or 0)
+        except ValueError: rows_n = 0
+        try: size = int(r[3] or 0)
+        except ValueError: size = 0
+        full = r[1] if r[0] == 'public' else f'{r[0]}.{r[1]}'
+        tables.append({'name': full, 'engine': 'PostgreSQL', 'collation': r[0],
+                       'rows': rows_n, 'size_bytes': size})
+    return tables, None
+
+
+def _mongo_tables(name):
+    import json as _json
+    js = (
+        "const d = db.getSiblingDB(%s);\n"
+        "d.getCollectionInfos({type:'collection'}).forEach(ci => {\n"
+        "  const c = ci.name; if (c.startsWith('system.')) return;\n"
+        "  let n = 0, sz = 0;\n"
+        "  try { const s = d.getCollection(c).aggregate([{$collStats:{storageStats:{}}}]).next().storageStats;\n"
+        "        n = s.count || 0; sz = (s.storageSize || 0) + (s.totalIndexSize || 0); } catch (e) {}\n"
+        "  print(JSON.stringify({name:c, rows:n, size_bytes:sz}));\n"
+        "});\n") % _json.dumps(name)
+    out, err = _mongo_js(js)
+    if err: return None, err
+    tables = []
+    for line in out.split('\n'):
+        line = line.strip()
+        if not line.startswith('{'): continue
+        try: t = _json.loads(line)
+        except ValueError: continue
+        tables.append({'name': t['name'], 'engine': 'WiredTiger', 'collation': 'collection',
+                       'rows': int(t.get('rows') or 0), 'size_bytes': int(t.get('size_bytes') or 0)})
+    return tables, None
+
+
+@databases_bp.route('/api/databases/<name>/tables')
+def list_tables(name):
+    if not req(): return jsonify({'ok':False}), 401
+    engine = request.args.get('engine', 'mysql')
+    if engine == 'postgresql':
+        if not _valid_ident(name):
+            return jsonify({'ok':False,'error':'Invalid database name'}), 400
+        tables, err = _pg_tables(name)
+        return jsonify({'ok':False,'error':err}) if err else jsonify({'ok':True,'tables':tables})
+    if engine == 'mongodb':
+        if not _valid_mongo_name(name):
+            return jsonify({'ok':False,'error':'Invalid database name'}), 400
+        tables, err = _mongo_tables(name)
+        return jsonify({'ok':False,'error':err}) if err else jsonify({'ok':True,'tables':tables})
+    if not _valid_ident(name):
+        return jsonify({'ok':False,'error':'Invalid database name'}), 400
+    raw, err = mysql_cmd(f'SHOW TABLE STATUS FROM `{name}`;')
+    if err:
+        return jsonify({'ok':False,'error':err})
+    lines = [l for l in raw.split('\n') if l.strip()]
+    if not lines:
+        return jsonify({'ok':True,'tables':[]})
+    header = lines[0].split('\t')
+    idx = {h:i for i,h in enumerate(header)}
+    def col(parts, key, default=''):
+        i = idx.get(key)
+        if i is None or i >= len(parts): return default
+        v = parts[i]
+        return default if v in ('NULL', '') else v
+    tables = []
+    for line in lines[1:]:
+        parts = line.split('\t')
+        if not parts or not parts[0]: continue
+        try:
+            data_len = int(col(parts, 'Data_length', '0') or 0)
+            index_len = int(col(parts, 'Index_length', '0') or 0)
+        except ValueError:
+            data_len = index_len = 0
+        try:
+            rows = int(col(parts, 'Rows', '0') or 0)
+        except ValueError:
+            rows = 0
+        tables.append({
+            'name': col(parts, 'Name'),
+            'engine': col(parts, 'Engine', '—'),
+            'collation': col(parts, 'Collation', '—'),
+            'rows': rows,
+            'size_bytes': data_len + index_len,
+        })
+    return jsonify({'ok':True,'tables':tables})
+
+
+@databases_bp.route('/api/databases/<name>/tables/<table>/action', methods=['POST'])
+def table_action(name, table):
+    if not req(): return jsonify({'ok':False}), 401
+    engine = request.args.get('engine', 'mysql')
+    action = (request.get_json() or {}).get('action', '')
+    if engine == 'postgresql':
+        parts = table.split('.')
+        if not _valid_ident(name) or len(parts) > 2 or not all(_valid_ident(p) for p in parts):
+            return jsonify({'ok':False,'error':'Invalid database or table name'}), 400
+        qualified = '.'.join(f'"{p}"' for p in parts)
+        if action == 'vacuum':
+            q = f'VACUUM (ANALYZE) {qualified};'
+        elif action == 'reindex':
+            q = f'REINDEX TABLE {qualified};'
+        elif action == 'analyze':
+            q = f'ANALYZE {qualified};'
+        else:
+            return jsonify({'ok':False,'error':'Unknown action'}), 400
+        rows, err = _pg_rows(q, name)
+        return jsonify({'ok':False,'error':err}) if err else jsonify({'ok':True,'output':'done'})
+    if engine == 'mongodb':
+        import json as _json
+        if not _valid_mongo_name(name) or not _valid_mongo_name(table):
+            return jsonify({'ok':False,'error':'Invalid database or collection name'}), 400
+        if action == 'compact':
+            cmd = '{compact: %s}' % _json.dumps(table)
+        elif action == 'validate':
+            cmd = '{validate: %s, full: true}' % _json.dumps(table)
+        else:
+            return jsonify({'ok':False,'error':'Unknown action'}), 400
+        out, err = _mongo_js('const r = db.getSiblingDB(%s).runCommand(%s);\n'
+                             'print(JSON.stringify({ok: r.ok, valid: r.valid, errmsg: r.errmsg || ""}));\n'
+                             % (_json.dumps(name), cmd), timeout=600)
+        if err: return jsonify({'ok':False,'error':err})
+        try:
+            res = _json.loads([l for l in out.split('\n') if l.strip().startswith('{')][-1])
+        except (IndexError, ValueError):
+            return jsonify({'ok':False,'error':'Unexpected MongoDB response'})
+        if not res.get('ok'):
+            return jsonify({'ok':False,'error':res.get('errmsg') or 'Command failed'})
+        if action == 'validate' and res.get('valid') is False:
+            return jsonify({'ok':False,'error':'Validation found problems in this collection - check the mongod log'})
+        return jsonify({'ok':True,'output':'done'})
+    if not _valid_ident(name) or not _valid_ident(table):
+        return jsonify({'ok':False,'error':'Invalid database or table name'}), 400
+    if action == 'repair':
+        out, err = mysql_cmd(f'REPAIR TABLE `{table}`;', db=name)
+    elif action == 'optimize':
+        out, err = mysql_cmd(f'OPTIMIZE TABLE `{table}`;', db=name)
+    elif action in ('innodb', 'myisam'):
+        engine = 'InnoDB' if action == 'innodb' else 'MyISAM'
+        out, err = mysql_cmd(f'ALTER TABLE `{table}` ENGINE={engine};', db=name)
+    else:
+        return jsonify({'ok':False,'error':'Unknown action'}), 400
+    if err:
+        return jsonify({'ok':False,'error':err})
+    return jsonify({'ok':True,'output':out})
+
 
 @databases_bp.route('/api/databases/<name>', methods=['DELETE'])
 def drop_db(name):

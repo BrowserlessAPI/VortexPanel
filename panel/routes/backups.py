@@ -191,7 +191,7 @@ def create_backup():
                     client.upload_file(dest, cfg['bucket'], prefix+name)
                     _jobs[job_id]['lines'].append('✓ Uploaded to cloud storage')
             except Exception as _e:
-                _jobs[job_id]['lines'].append(f'⚠ Cloud upload failed: {_e}')
+                _jobs[job_id]['lines'].append(f'Cloud upload failed: {_e}')
 
         except Exception as e:
             _jobs[job_id].update({'done':True,'error':str(e)})

@@ -336,7 +336,7 @@ CDN_PROVIDERS = [
     {
         'id': 'cloudflare',
         'name': 'Cloudflare',
-        'icon': '🔶',
+        'icon': 'square',
         'color': '#F6821F',
         'desc': 'World largest CDN with DDoS protection, WAF, DNS and free SSL',
         'free_plan': True,
@@ -355,7 +355,7 @@ CDN_PROVIDERS = [
     {
         'id': 'bunnycdn',
         'name': 'BunnyCDN (bunny.net)',
-        'icon': '🐰',
+        'icon': 'package',
         'color': '#FF7F00',
         'desc': 'Affordable, high-performance global CDN with 114+ PoPs',
         'free_plan': False,
@@ -373,7 +373,7 @@ CDN_PROVIDERS = [
     {
         'id': 'keycdn',
         'name': 'KeyCDN',
-        'icon': '🔑',
+        'icon': 'key',
         'color': '#29ABE2',
         'desc': 'High-performance CDN focused on speed and low cost',
         'free_plan': False,
@@ -390,7 +390,7 @@ CDN_PROVIDERS = [
     {
         'id': 'akamai',
         'name': 'Akamai',
-        'icon': '🌊',
+        'icon': 'wind',
         'color': '#009BDE',
         'desc': 'Enterprise-grade CDN and security platform (Linode/Akamai Cloud)',
         'free_plan': False,
@@ -408,7 +408,7 @@ CDN_PROVIDERS = [
     {
         'id': 'cloudfront',
         'name': 'Amazon CloudFront',
-        'icon': '☁',
+        'icon': 'cloud',
         'color': '#FF9900',
         'desc': 'AWS global CDN integrated with S3, EC2 and Lambda@Edge',
         'free_plan': True,
@@ -427,7 +427,7 @@ CDN_PROVIDERS = [
     {
         'id': 'stackpath',
         'name': 'StackPath',
-        'icon': '📦',
+        'icon': 'package',
         'color': '#00A8E0',
         'desc': 'Edge computing and CDN platform with WAF',
         'free_plan': False,
@@ -445,7 +445,7 @@ CDN_PROVIDERS = [
     {
         'id': 'google_cdn',
         'name': 'Google Cloud CDN',
-        'icon': '🔵',
+        'icon': 'dot',
         'color': '#4285F4',
         'desc': 'Google global CDN integrated with GCP load balancing',
         'free_plan': False,
@@ -462,7 +462,7 @@ CDN_PROVIDERS = [
     {
         'id': 'sucuri',
         'name': 'Sucuri',
-        'icon': '🛡',
+        'icon': 'shield',
         'color': '#1B7FC4',
         'desc': 'CDN + Website security, malware scanning and WAF',
         'free_plan': False,

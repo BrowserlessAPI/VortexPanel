@@ -179,10 +179,10 @@ p{{color:#94a3b8;font-size:15px;line-height:1.6}}
 .badge{{display:inline-block;background:rgba(245,158,11,.12);color:#f59e0b;border:1px solid rgba(245,158,11,.2);padding:6px 18px;border-radius:20px;font-size:13px;font-weight:600;margin-top:20px}}
 </style></head>
 <body><div class="box">
-<div class="logo">⚡</div>
+<div class="logo"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
 <h1>Under Maintenance</h1>
 <p>{message}</p>
-<div class="badge">🔧 We\'ll be back shortly</div>
+<div class="badge">We\'ll be back shortly</div>
 </div></body></html>'''
 
 

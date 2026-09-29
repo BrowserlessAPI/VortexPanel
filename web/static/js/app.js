@@ -1,3 +1,16 @@
+// Line-icon set used instead of emoji across the UI (Feather-style paths).
+const VP_ICONS = {"grid": "<rect x=\"3\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\"/>", "globe": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>", "lock": "<rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/>", "key": "<circle cx=\"7.5\" cy=\"15.5\" r=\"5.5\"/><path d=\"M11.4 11.6L21 2m-5 5l3 3m-6-6l3 3\"/>", "shield": "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>", "alert": "<path d=\"M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z\"/><line x1=\"12\" y1=\"9\" x2=\"12\" y2=\"13\"/><line x1=\"12\" y1=\"17\" x2=\"12.01\" y2=\"17\"/>", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" y1=\"16\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12.01\" y2=\"8\"/>", "zap": "<polygon points=\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\"/>", "check": "<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\"/><polyline points=\"22 4 12 14.01 9 11.01\"/>", "x-circle": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/>", "ban": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"4.93\" y1=\"4.93\" x2=\"19.07\" y2=\"19.07\"/>", "search": "<circle cx=\"11\" cy=\"11\" r=\"8\"/><line x1=\"21\" y1=\"21\" x2=\"16.65\" y2=\"16.65\"/>", "folder": "<path d=\"M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z\"/>", "file": "<path d=\"M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z\"/><polyline points=\"13 2 13 9 20 9\"/>", "file-text": "<path d=\"M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z\"/><polyline points=\"13 2 13 9 20 9\"/><line x1=\"16\" y1=\"13\" x2=\"8\" y2=\"13\"/><line x1=\"16\" y1=\"17\" x2=\"8\" y2=\"17\"/>", "file-code": "<path d=\"M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z\"/><polyline points=\"13 2 13 9 20 9\"/><polyline points=\"10 12.5 8 15 10 17.5\"/><polyline points=\"14 12.5 16 15 14 17.5\"/>", "image": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><circle cx=\"8.5\" cy=\"8.5\" r=\"1.5\"/><polyline points=\"21 15 16 10 5 21\"/>", "archive": "<polyline points=\"21 8 21 21 3 21 3 8\"/><rect x=\"1\" y=\"3\" width=\"22\" height=\"5\"/><line x1=\"10\" y1=\"12\" x2=\"14\" y2=\"12\"/>", "package": "<path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"/><polyline points=\"3.27 6.96 12 12.01 20.73 6.96\"/><line x1=\"12\" y1=\"22.08\" x2=\"12\" y2=\"12\"/>", "external": "<path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\"/><polyline points=\"15 3 21 3 21 9\"/><line x1=\"10\" y1=\"14\" x2=\"21\" y2=\"3\"/>", "hard-drive": "<line x1=\"22\" y1=\"12\" x2=\"2\" y2=\"12\"/><path d=\"M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\"/><line x1=\"6\" y1=\"16\" x2=\"6.01\" y2=\"16\"/><line x1=\"10\" y1=\"16\" x2=\"10.01\" y2=\"16\"/>", "settings": "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/>", "database": "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\"/><path d=\"M21 12c0 1.66-4 3-9 3s-9-1.34-9-3\"/><path d=\"M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5\"/>", "shuffle": "<polyline points=\"16 3 21 3 21 8\"/><line x1=\"4\" y1=\"20\" x2=\"21\" y2=\"3\"/><polyline points=\"21 16 21 21 16 21\"/><line x1=\"15\" y1=\"15\" x2=\"21\" y2=\"21\"/><line x1=\"4\" y1=\"4\" x2=\"9\" y2=\"9\"/>", "link": "<path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\"/>", "clipboard": "<path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\"/><rect x=\"8\" y=\"2\" width=\"8\" height=\"4\" rx=\"1\"/>", "trash": "<polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><polyline points=\"12 6 12 12 16 14\"/>", "tool": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\"/>", "play": "<polygon points=\"6 3 20 12 6 21 6 3\"/>", "cloud": "<path d=\"M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z\"/>", "redirect": "<polyline points=\"15 10 20 15 15 20\"/><path d=\"M4 4v7a4 4 0 0 0 4 4h12\"/>", "book": "<path d=\"M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z\"/><path d=\"M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z\"/>", "monitor": "<rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\"/><line x1=\"8\" y1=\"21\" x2=\"16\" y2=\"21\"/><line x1=\"12\" y1=\"17\" x2=\"12\" y2=\"21\"/>", "cpu": "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"2\"/><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\"/><line x1=\"9\" y1=\"1\" x2=\"9\" y2=\"4\"/><line x1=\"15\" y1=\"1\" x2=\"15\" y2=\"4\"/><line x1=\"9\" y1=\"20\" x2=\"9\" y2=\"23\"/><line x1=\"15\" y1=\"20\" x2=\"15\" y2=\"23\"/><line x1=\"20\" y1=\"9\" x2=\"23\" y2=\"9\"/><line x1=\"20\" y1=\"14\" x2=\"23\" y2=\"14\"/><line x1=\"1\" y1=\"9\" x2=\"4\" y2=\"9\"/><line x1=\"1\" y1=\"14\" x2=\"4\" y2=\"14\"/>", "send": "<line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/>", "arrow-up": "<line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"5\"/><polyline points=\"5 12 12 5 19 12\"/>", "upload": "<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"17 8 12 3 7 8\"/><line x1=\"12\" y1=\"3\" x2=\"12\" y2=\"15\"/>", "download": "<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/>", "circle": "<circle cx=\"12\" cy=\"12\" r=\"9\"/>", "dot": "<circle cx=\"12\" cy=\"12\" r=\"5\" fill=\"currentColor\" stroke=\"none\"/>", "edit": "<path d=\"M12 20h9\"/><path d=\"M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z\"/>", "scissors": "<circle cx=\"6\" cy=\"6\" r=\"3\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><line x1=\"20\" y1=\"4\" x2=\"8.12\" y2=\"15.88\"/><line x1=\"14.47\" y1=\"14.48\" x2=\"20\" y2=\"20\"/><line x1=\"8.12\" y1=\"8.12\" x2=\"12\" y2=\"12\"/>", "pin": "<path d=\"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z\"/><circle cx=\"12\" cy=\"10\" r=\"3\"/>", "mail": "<path d=\"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z\"/><polyline points=\"22,6 12,13 2,6\"/>", "activity": "<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>", "sliders": "<line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"/><line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"/><line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"/><line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"/><line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"/><line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"/><line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\"/>", "power": "<path d=\"M18.36 6.64a9 9 0 1 1-12.73 0\"/><line x1=\"12\" y1=\"2\" x2=\"12\" y2=\"12\"/>", "bar-chart": "<line x1=\"12\" y1=\"20\" x2=\"12\" y2=\"10\"/><line x1=\"18\" y1=\"20\" x2=\"18\" y2=\"4\"/><line x1=\"6\" y1=\"20\" x2=\"6\" y2=\"16\"/>", "trending-up": "<polyline points=\"23 6 13.5 15.5 8.5 10.5 1 18\"/><polyline points=\"17 6 23 6 23 12\"/>", "trending-down": "<polyline points=\"23 18 13.5 8.5 8.5 13.5 1 6\"/><polyline points=\"17 18 23 18 23 12\"/>", "droplet": "<path d=\"M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z\"/>", "code": "<polyline points=\"16 18 22 12 16 6\"/><polyline points=\"8 6 2 12 8 18\"/>", "terminal": "<polyline points=\"4 17 10 11 4 5\"/><line x1=\"12\" y1=\"19\" x2=\"20\" y2=\"19\"/>", "refresh": "<polyline points=\"23 4 23 10 17 10\"/><polyline points=\"1 20 1 14 7 14\"/><path d=\"M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15\"/>", "repeat": "<polyline points=\"17 1 21 5 17 9\"/><path d=\"M3 11V9a4 4 0 0 1 4-4h14\"/><polyline points=\"7 23 3 19 7 15\"/><path d=\"M21 13v2a4 4 0 0 1-4 4H3\"/>", "film": "<rect x=\"2\" y=\"2\" width=\"20\" height=\"20\" rx=\"2.18\"/><line x1=\"7\" y1=\"2\" x2=\"7\" y2=\"22\"/><line x1=\"17\" y1=\"2\" x2=\"17\" y2=\"22\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/>", "music": "<path d=\"M9 18V5l12-2v13\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><circle cx=\"18\" cy=\"16\" r=\"3\"/>", "wifi": "<path d=\"M5 12.55a11 11 0 0 1 14.08 0\"/><path d=\"M1.42 9a16 16 0 0 1 21.16 0\"/><path d=\"M8.53 16.11a6 6 0 0 1 6.95 0\"/><line x1=\"12\" y1=\"20\" x2=\"12.01\" y2=\"20\"/>", "cart": "<circle cx=\"9\" cy=\"21\" r=\"1\"/><circle cx=\"20\" cy=\"21\" r=\"1\"/><path d=\"M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6\"/>", "eye": "<path d=\"M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>", "tag": "<path d=\"M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z\"/><line x1=\"7\" y1=\"7\" x2=\"7.01\" y2=\"7\"/>", "heart": "<path d=\"M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z\"/>", "server": "<rect x=\"2\" y=\"2\" width=\"20\" height=\"8\" rx=\"2\"/><rect x=\"2\" y=\"14\" width=\"20\" height=\"8\" rx=\"2\"/><line x1=\"6\" y1=\"6\" x2=\"6.01\" y2=\"6\"/><line x1=\"6\" y1=\"18\" x2=\"6.01\" y2=\"18\"/>", "layers": "<polygon points=\"12 2 2 7 12 12 22 7 12 2\"/><polyline points=\"2 17 12 22 22 17\"/><polyline points=\"2 12 12 17 22 12\"/>", "square": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/>", "wind": "<path d=\"M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2\"/>", "bug": "<circle cx=\"12\" cy=\"12\" r=\"5\"/><path d=\"M12 2v5M12 17v5M2 12h5M17 12h5M4.9 4.9l3.5 3.5M15.6 15.6l3.5 3.5M4.9 19.1l3.5-3.5M15.6 8.4l3.5-3.5\"/>", "home": "<path d=\"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><polyline points=\"9 22 9 12 15 12 15 22\"/>", "users": "<path d=\"M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/><path d=\"M23 21v-2a4 4 0 0 0-3-3.87\"/><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"/>", "compass": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><polygon points=\"16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76\"/>", "puzzle": "<path d=\"M19.4 11H18V7a2 2 0 0 0-2-2h-4V3.6a2.6 2.6 0 0 0-5.2 0V5H3v5h1.4a2.6 2.6 0 0 1 0 5.2H3V21h5.8v-1.4a2.6 2.6 0 0 1 5.2 0V21H18v-4h1.4a2.6 2.6 0 0 0 0-5.2z\"/>", "bot": "<rect x=\"3\" y=\"8\" width=\"18\" height=\"12\" rx=\"2\"/><path d=\"M12 8V4\"/><circle cx=\"12\" cy=\"3\" r=\"1\"/><line x1=\"9\" y1=\"14\" x2=\"9.01\" y2=\"14\"/><line x1=\"15\" y1=\"14\" x2=\"15.01\" y2=\"14\"/>", "flame": "<path d=\"M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z\"/>", "bulb": "<path d=\"M9 18h6\"/><path d=\"M10 22h4\"/><path d=\"M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z\"/>", "disc": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>", "bucket": "<path d=\"M4 7h16l-2 14H6z\"/><ellipse cx=\"12\" cy=\"7\" rx=\"8\" ry=\"2\"/>", "feather": "<path d=\"M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z\"/><line x1=\"16\" y1=\"8\" x2=\"2\" y2=\"22\"/><line x1=\"17.5\" y1=\"15\" x2=\"9\" y2=\"15\"/>", "hole": "<ellipse cx=\"12\" cy=\"14\" rx=\"9\" ry=\"4\"/><path d=\"M3 14V8\"/><path d=\"M21 14V8\"/>", "coffee": "<path d=\"M18 8h1a4 4 0 0 1 0 8h-1\"/><path d=\"M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z\"/><line x1=\"6\" y1=\"1\" x2=\"6\" y2=\"4\"/><line x1=\"10\" y1=\"1\" x2=\"10\" y2=\"4\"/><line x1=\"14\" y1=\"1\" x2=\"14\" y2=\"4\"/>"};
+function vpEsc(t){ return String(t==null?'':t).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function vpIcon(n){
+  if(!n) return '';
+  n = String(n);
+  if(n.startsWith('<svg')) return n;
+  const p = VP_ICONS[n];
+  if(p) return '<svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
+  return vpEsc(n);
+}
+window.vpIcon = vpIcon; window.vpEsc = vpEsc;
+
 // --- UTILITIES ------------------------------------------------------------------
 // CodeMirror instance kept OUTSIDE Alpine's reactive data on purpose: Alpine
 // deep-proxies object properties, and CodeMirror's internal closures hold
@@ -83,7 +96,7 @@ function toast(msg, type='info') {
   const c = document.getElementById('toast-container');
   const d = document.createElement('div');
   d.className = `toast toast-${type}`;
-  d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'ℹ ') + msg;
+  d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'') + msg;
   c.appendChild(d);
   setTimeout(() => d.remove(), 3500);
 }
@@ -314,35 +327,35 @@ function rootApp() {
     },
     nav: [
       { group: 'Overview', items: [
-        { id:'dashboard',    icon:'▦', label:'Dashboard',        color:'#2563eb', colorBg:'#dbeafe' },
-        { id:'websites',     icon:'🌐', label:'Websites',        color:'#16a34a', colorBg:'#dcfce7' },
-        { id:'wp',           icon:'🔷', label:'WP Toolkit',      color:'#2563eb', colorBg:'#dbeafe' },
-        { id:'node-projects',icon:'💚', label:'Node.js Projects',color:'#16a34a', colorBg:'#dcfce7' },
-        { id:'go-projects',  icon:'🔵', label:'Go Projects',     color:'#0369a1', colorBg:'#e0f2fe' },
-        { id:'databases',    icon:'🗄', label:'Databases',       color:'#d97706', colorBg:'#fef3c7' },
-        { id:'files',        icon:'📁', label:'File Manager',    color:'#db2777', colorBg:'#fce7f3' },
+        { id:'dashboard',    icon:'grid', label:'Dashboard',        color:'#2563eb', colorBg:'#dbeafe' },
+        { id:'websites',     icon:'globe', label:'Websites',        color:'#16a34a', colorBg:'#dcfce7' },
+        { id:'wp',           icon:'layers', label:'WP Toolkit',      color:'#2563eb', colorBg:'#dbeafe' },
+        { id:'node-projects',icon:'code', label:'Node.js Projects',color:'#16a34a', colorBg:'#dcfce7' },
+        { id:'go-projects',  icon:'dot', label:'Go Projects',     color:'#0369a1', colorBg:'#e0f2fe' },
+        { id:'databases',    icon:'database', label:'Databases',       color:'#d97706', colorBg:'#fef3c7' },
+        { id:'files',        icon:'folder', label:'File Manager',    color:'#db2777', colorBg:'#fce7f3' },
       ]},
       { group: 'Server', items: [
-        { id:'services',  icon:'⚙', label:'Services',    color:'#7c3aed', colorBg:'#ede9fe' },
-        { id:'modules',   icon:'📦', label:'App Store',   color:'#0891b2', colorBg:'#cffafe' },
-        { id:'docker',    icon:'🐋', label:'Docker',      color:'#0369a1', colorBg:'#e0f2fe' },
-        { id:'firewall',  icon:'🛡', label:'Firewall',    color:'#dc2626', colorBg:'#fee2e2' },
-        { id:'terminal',  icon:'⌨', label:'Terminal',    color:'#374151', colorBg:'#f3f4f6' },
-        { id:'backups',   icon:'💾', label:'Backups',     color:'#059669', colorBg:'#d1fae5' },
+        { id:'services',  icon:'settings', label:'Services',    color:'#7c3aed', colorBg:'#ede9fe' },
+        { id:'modules',   icon:'package', label:'App Store',   color:'#0891b2', colorBg:'#cffafe' },
+        { id:'docker',    icon:'package', label:'Docker',      color:'#0369a1', colorBg:'#e0f2fe' },
+        { id:'firewall',  icon:'shield', label:'Firewall',    color:'#dc2626', colorBg:'#fee2e2' },
+        { id:'terminal',  icon:'terminal', label:'Terminal',    color:'#374151', colorBg:'#f3f4f6' },
+        { id:'backups',   icon:'hard-drive', label:'Backups',     color:'#059669', colorBg:'#d1fae5' },
       ]},
       { group: 'Network', items: [
-        { id:'mail',  icon:'📧', label:'Mail Server', color:'#c2410c', colorBg:'#ffedd5' },
-        { id:'ftp',   icon:'📂', label:'FTP / SFTP',  color:'#0e7490', colorBg:'#cffafe' },
-        { id:'cdn',   icon:'⚡', label:'CDN Manager', color:'#a16207', colorBg:'#fef9c3' },
+        { id:'mail',  icon:'mail', label:'Mail Server', color:'#c2410c', colorBg:'#ffedd5' },
+        { id:'ftp',   icon:'folder', label:'FTP / SFTP',  color:'#0e7490', colorBg:'#cffafe' },
+        { id:'cdn',   icon:'zap', label:'CDN Manager', color:'#a16207', colorBg:'#fef9c3' },
       ]},
       { group: 'System', items: [
-        { id:'cron',       icon:'⏱', label:'Cron Jobs',  color:'#6d28d9', colorBg:'#ede9fe' },
-        { id:'monitoring', icon:'📊', label:'Monitoring', color:'#0f766e', colorBg:'#ccfbf1' },
-        { id:'logs',       icon:'📋', label:'Log Viewer', color:'#374151', colorBg:'#f3f4f6' },
-        { id:'bandwidth',  icon:'📈', label:'Bandwidth',  color:'#0369a1', colorBg:'#e0f2fe' },
-        { id:'security',   icon:'🔐', label:'Security',   color:'#b91c1c', colorBg:'#fee2e2' },
-        { id:'waf',        icon:'🛡', label:'WAF',        color:'#9333ea', colorBg:'#f3e8ff' },
-        { id:'settings',   icon:'⚙', label:'Settings',   color:'#374151', colorBg:'#f3f4f6' },
+        { id:'cron',       icon:'clock', label:'Cron Jobs',  color:'#6d28d9', colorBg:'#ede9fe' },
+        { id:'monitoring', icon:'bar-chart', label:'Monitoring', color:'#0f766e', colorBg:'#ccfbf1' },
+        { id:'logs',       icon:'clipboard', label:'Log Viewer', color:'#374151', colorBg:'#f3f4f6' },
+        { id:'bandwidth',  icon:'trending-up', label:'Bandwidth',  color:'#0369a1', colorBg:'#e0f2fe' },
+        { id:'security',   icon:'lock', label:'Security',   color:'#b91c1c', colorBg:'#fee2e2' },
+        { id:'waf',        icon:'shield', label:'WAF',        color:'#9333ea', colorBg:'#f3e8ff' },
+        { id:'settings',   icon:'settings', label:'Settings',   color:'#374151', colorBg:'#f3f4f6' },
       ]},
     ],
 
@@ -509,12 +522,12 @@ function dashboardPage() {
     stats:{cpu:0,ram:0,disk:0,uptime:'',load:'',ramTotal:'',diskTotal:'',network:''},
     wsConflict:{conflict:false, active:[], message:''},
     services:[], quickActions:[
-      {icon:'🌐',label:'Manage Websites',page:'websites'},
-      {icon:'🗄',label:'Manage Databases',page:'databases'},
-      {icon:'📁',label:'File Manager',page:'files'},
-      {icon:'⌨',label:'Terminal',page:'terminal'},
-      {icon:'💾',label:'Create Backup',page:'backups'},
-      {icon:'📦',label:'Install Modules',page:'modules'},
+      {icon:'globe',label:'Manage Websites',page:'websites'},
+      {icon:'database',label:'Manage Databases',page:'databases'},
+      {icon:'folder',label:'File Manager',page:'files'},
+      {icon:'terminal',label:'Terminal',page:'terminal'},
+      {icon:'hard-drive',label:'Create Backup',page:'backups'},
+      {icon:'package',label:'Install Modules',page:'modules'},
     ],
     loading: true,
     sslAlerts: [],
@@ -670,12 +683,13 @@ function dashboardPage() {
 function websitesPage() {
   return {
     sites:[], phpVersions:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
+    backupCounts:{}, requestCounts:{},
     form:{domain:'',path:'',php:'8.3',type:'PHP',createDb:false,createFtp:false,path_edited:false},
     batchDomains:'', deployApps:[], deployApp:'', deployDomain:'',
     drawer:{
       show:false,site:null,tab:'config',
       confContent:'',confPath:'',
-      sslTab:'le',sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',
+      sslTab:'le',sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',sslSummary:null,
       http3Enabled:false, http3Capable:false, http3NginxVersion:'',
       http3Webserver:'nginx', http3Support:'manual', http3Message:'',
       http3UdpOpen:false, http3UpgradeNeeded:false, http3Upgrading:false,
@@ -700,22 +714,22 @@ function websitesPage() {
       limitRules: [], limitForm: {name:'', path:'/admin', user:'', pass:''},
     },
     drawerTabs:[
-      {id:'domains',label:'🌐 Domain Manager'},
-      {id:'directory',label:'📁 Directory'},
-      {id:'config',label:'⚙ Config'},
-      {id:'ssl',label:'🔒 SSL'},
-      {id:'php',label:'🐘 PHP Version'},
-      {id:'rewrite',label:'🔁 URL Rewrite'},
-      {id:'proxy',label:'🔀 Reverse Proxy'},
-      {id:'redirect',label:'↪ Redirect'},
-      {id:'defaultdoc',label:'📄 Default Doc'},
-      {id:'limit',label:'🔐 Limit Access'},
-      {id:'hotlink',label:'🛡 Hotlink'},
-      {id:'nodejs',label:'🚀 App Runner'},
-      {id:'maintenance',label:'🔧 Maintenance'},
-      {id:'composer',label:'🎼 Composer'},
-      {id:'logs',label:'📋 Response Log'},
-      {id:'integrity',label:'🛡 Tamper-proof'},
+      {id:'domains',label:'Domain Manager'},
+      {id:'directory',label:'Directory'},
+      {id:'config',label:'Config'},
+      {id:'ssl',label:'SSL'},
+      {id:'php',label:'PHP Version'},
+      {id:'rewrite',label:'URL Rewrite'},
+      {id:'proxy',label:'Reverse Proxy'},
+      {id:'redirect',label:'Redirect'},
+      {id:'defaultdoc',label:'Default Doc'},
+      {id:'limit',label:'Limit Access'},
+      {id:'hotlink',label:'Hotlink'},
+      {id:'nodejs',label:'App Runner'},
+      {id:'maintenance',label:'Maintenance'},
+      {id:'composer',label:'Composer'},
+      {id:'logs',label:'Response Log'},
+      {id:'integrity',label:'Tamper-proof'},
     ],
     async init() {
       const wr=await get('/api/websites/webroot').catch(()=>({ok:false}));
@@ -733,7 +747,57 @@ function websitesPage() {
       await this.refreshPhpVersions();
       this.showAdd = true;
     },
-    async load() { const r=await get('/api/websites'); if(r.ok) this.sites=r.sites; },
+    async load() {
+      const r=await get('/api/websites');
+      if(r.ok) this.sites=r.sites;
+      // Backup counts and today's request counts are fetched separately from
+      // their own endpoints (backups.py / bandwidth.py) rather than baked
+      // into /api/websites, so a slow log scan or backup listing never
+      // blocks the site list itself from rendering.
+      this.loadBackupCounts();
+      this.loadRequestCounts();
+    },
+    async loadBackupCounts() {
+      const r=await get('/api/backups').catch(()=>({ok:false}));
+      if(!r.ok || !Array.isArray(r.backups)) return;
+      const counts={};
+      for(const b of r.backups){
+        const d=b.domain || (b.name && b.name.match(/^website_(.+?)_\d+/)||[])[1];
+        if(!d) continue;
+        counts[d]=(counts[d]||0)+1;
+      }
+      this.backupCounts=counts;
+    },
+    async loadRequestCounts() {
+      const r=await get('/api/bandwidth/domains').catch(()=>({ok:false}));
+      if(!r.ok || !Array.isArray(r.domains)) return;
+      const counts={};
+      for(const d of r.domains) counts[d.domain]=d.requests||0;
+      this.requestCounts=counts;
+    },
+    siteBackupCount(domain) { return this.backupCounts[domain]||0; },
+    siteRequests(domain) { return this.requestCounts[domain]||0; },
+    formatRequests(n) {
+      if(!n) return '0 today';
+      if(n>=1000000) return (n/1000000).toFixed(1)+'M today';
+      if(n>=1000) return (n/1000).toFixed(1)+'K today';
+      return n+' today';
+    },
+    async toggleSite(s) {
+      const start = !s.enabled;
+      if(!start && !confirm('Stop '+s.domain+'?\n\nVisitors will see a "site stopped" page until you start it again.')) return;
+      s._busy = true;
+      const r = await post('/api/websites/'+s.domain+'/status', {enabled:start});
+      s._busy = false;
+      if(r.ok){ s.enabled = start; toast(s.domain+(start?' started':' stopped'),'success'); }
+      else toast(r.error||'Failed','error');
+    },
+    async quickBackup(domain) {
+      toast('Backing up '+domain+'…','info');
+      const r=await post('/api/backups/create',{domain});
+      if(r.ok){ toast('Backup started for '+domain,'success'); setTimeout(()=>this.loadBackupCounts(),3000); }
+      else toast(r.error||'Backup failed','error');
+    },
     async create() {
       const r=await post('/api/websites',this.form);
       if(r.ok){toast('Site created: '+r.domain,'success');this.showAdd=false;await this.load();}
@@ -747,8 +811,8 @@ function websitesPage() {
     async loadDeployApps() {
       const r=await get('/api/websites/deploy-apps');
       if(r.ok){
-        const emojis={wordpress:'📝',drupal:'🔵',joomla:'🔴',laravel:'🔶',opencart:'🛒'};
-        this.deployApps=r.apps.map(a=>({...a,emoji:emojis[a.id]||'📦'}));
+        const emojis={wordpress:'edit',drupal:'dot',joomla:'dot',laravel:'square',opencart:'cart'};
+        this.deployApps=r.apps.map(a=>({...a,emoji:emojis[a.id]||'package'}));
         if(!this.deployApp&&this.deployApps.length) this.deployApp=this.deployApps[0].id;
       }
     },
@@ -767,7 +831,7 @@ function websitesPage() {
         redirectForm:{target:'',mode:'301',keep_uri:'true'},
         nodejsEnabled:false,nodejsForm:{app_path:s.path||'',startup:'index.js',port:'3000',runtime:'node'},
         maintEnabled:false,maintMessage:'We are performing scheduled maintenance.',
-        sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',
+        sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',sslSummary:null,
         directory: {path:'', antixss:false, accesslog:false},
         hotlink: {enabled:false, suffixes:'jpg,jpeg,gif,png,js,css', domains:'', response:'404'},
         limitRules: [], limitForm: {name:'', path:'/admin', user:'', pass:''},
@@ -784,7 +848,12 @@ function websitesPage() {
       }
       else if(d.tab==='ssl'){
         const r=await get('/api/websites/'+domain+'/ssl/info');
-        if(r.ok)d.sslInfo=r.info;
+        if(r.ok){
+          d.sslInfo=r.info;
+          d.sslSummary={brand:r.brand,expiresOn:r.expires_on,daysLeft:r.days_left};
+        } else {
+          d.sslInfo=''; d.sslSummary=null;
+        }
         const r2=await get('/api/websites/'+domain+'/http3');
         if(r2.ok){
           d.http3Enabled        = r2.enabled;
@@ -876,6 +945,16 @@ function websitesPage() {
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/ssl/letsencrypt',{email:this.drawer.sslEmail});
       this.drawer.loading=false; this.drawer.sslOutput=r.output||'';
       toast(r.ok?'SSL issued!':'Failed',r.ok?'success':'error');
+      if(r.ok){ this.loadDrawerTab(); this.load(); }
+    },
+    async disableSSL(){
+      const domain=this.drawer.site?.domain; if(!domain) return;
+      if(!confirm('Disable SSL for '+domain+'?\n\nThe site will be served over plain HTTP only. The certificate files stay on the server, so you can turn SSL back on later.')) return;
+      this.drawer.loading=true;
+      const r=await post('/api/websites/'+domain+'/ssl/disable',{});
+      this.drawer.loading=false;
+      toast(r.ok?'SSL disabled for '+domain:(r.error||'Failed to disable SSL'), r.ok?'success':'error');
+      if(r.ok){ this.drawer.sslSummary=null; this.drawer.sslInfo=''; this.loadDrawerTab(); this.load(); }
     },
     async saveManualSSL(){
       if(!this.drawer.sslKey||!this.drawer.sslCert){toast('Key and cert required','error');return;}
@@ -883,6 +962,7 @@ function websitesPage() {
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/ssl/manual',{key:this.drawer.sslKey,cert:this.drawer.sslCert});
       this.drawer.loading=false;
       toast(r.ok?'SSL installed!':r.error||'Failed',r.ok?'success':'error');
+      if(r.ok){ this.loadDrawerTab(); this.load(); }
     },
     async toggleHttp3(enable){
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/http3',{enable});
@@ -1222,6 +1302,7 @@ function databasesPage() {
     selUser:null, showUserDetail:false, newPass:'', grantDb:'',
     importFile:null, importTargetDb:'', showImport:false,
     searchQuery:'',
+    tableToolbox:{show:false,db:'',tables:[],loading:false},
     get filteredDbs(){ return this.dbs.filter(d=>d.name.toLowerCase().includes(this.searchQuery.toLowerCase())); },
     get combined(){
       const systemUsers=['mysql','mariadb.sys','postgres','admin'];
@@ -1288,6 +1369,50 @@ function databasesPage() {
       if(r.ok){toast('Dropped','success');await this.load();}
     },
     exportDb(name){ window.open('/api/databases/'+name+'/export?engine='+this.activeEngine,'_blank'); },
+    toolboxTitle() {
+      return this.isMongo ? 'MongoDB Toolbox' : (this.isPg ? 'PostgreSQL Toolbox' : 'MySQL Toolbox');
+    },
+    tableActions(t) {
+      if(this.isPg) return [{id:'reindex',label:'Reindex'},{id:'vacuum',label:'Vacuum'},{id:'analyze',label:'Analyze'}];
+      if(this.isMongo) return [{id:'validate',label:'Validate'},{id:'compact',label:'Compact'}];
+      return [{id:'repair',label:'Repair'},{id:'optimize',label:'Optimize'},
+              t.engine==='InnoDB' ? {id:'myisam',label:'Convert to MyISAM'} : {id:'innodb',label:'Convert to InnoDB'}];
+    },
+    toolboxHelp() {
+      if(this.isPg) return ['Reindex: rebuilds the table\'s indexes (fixes index bloat or corruption).',
+                            'Vacuum: reclaims space from deleted rows and refreshes planner statistics.',
+                            'Analyze: refreshes planner statistics only (fast).'];
+      if(this.isMongo) return ['Validate: full integrity check of the collection and its indexes.',
+                               'Compact: rewrites the collection to release unused disk space; can be slow on large collections.'];
+      return ['Repair: attempts to fix a damaged table (best-effort - not a substitute for restoring from backup).',
+              'Optimize: reclaims unused disk space; safe to run periodically.',
+              'Convert: changes the table\'s storage engine; InnoDB is recommended for most workloads.'];
+    },
+    async openTableToolbox(db) {
+      this.tableToolbox = {show:true, db, tables:[], loading:true};
+      const r = await get('/api/databases/'+encodeURIComponent(db)+'/tables?engine='+this.activeEngine).catch(()=>({ok:false}));
+      this.tableToolbox.loading = false;
+      if(r.ok) this.tableToolbox.tables = r.tables||[];
+      else toast(r.error||'Could not load tables','error');
+    },
+    async runTableAction(table, action) {
+      const labels = {repair:'Repairing',optimize:'Optimizing',innodb:'Converting to InnoDB',myisam:'Converting to MyISAM',
+                      reindex:'Reindexing',vacuum:'Vacuuming',analyze:'Analyzing',validate:'Validating',compact:'Compacting'};
+      toast((labels[action]||'Working on')+' '+table.name+'…','info');
+      const r = await post('/api/databases/'+encodeURIComponent(this.tableToolbox.db)+'/tables/'+encodeURIComponent(table.name)+'/action?engine='+this.activeEngine, {action});
+      if(r.ok){
+        toast(table.name+': done','success');
+        await this.openTableToolbox(this.tableToolbox.db);
+      } else {
+        toast(r.error||'Action failed','error');
+      }
+    },
+    formatBytes(n) {
+      if(!n) return '0 B';
+      const units=['B','KB','MB','GB','TB']; let i=0;
+      while(n>=1024 && i<units.length-1){ n/=1024; i++; }
+      return n.toFixed(i===0?0:2)+' '+units[i];
+    },
     async doImport(){
       if(!this.importFile||!this.importTargetDb){toast('Select file and database','error');return;}
       const fd=new FormData(); fd.append('file',this.importFile);
@@ -1444,21 +1569,21 @@ function filesPage() {
     getIcon(name) {
       const ext = name.split('.').pop().toLowerCase();
       const icons = {
-        php:'🐘', js:'🟨', ts:'🔷', jsx:'⚛', tsx:'⚛',
-        html:'🌐', htm:'🌐', css:'🎨', scss:'🎨', sass:'🎨',
-        json:'📋', xml:'📋', yaml:'📋', yml:'📋', toml:'📋',
-        py:'🐍', rb:'💎', go:'🔵', rs:'🦀', java:'☕',
-        sh:'⌨', bash:'⌨', zsh:'⌨',
-        md:'📝', txt:'📝', log:'📋',
-        jpg:'🖼', jpeg:'🖼', png:'🖼', gif:'🖼', svg:'🖼', webp:'🖼',
-        zip:'📦', gz:'📦', tar:'📦', rar:'📦',
-        sql:'🗄', db:'🗄',
-        pdf:'📕', doc:'📘', docx:'📘', xls:'📗', xlsx:'📗',
-        env:'🔐', htaccess:'⚙', htpasswd:'🔐',
-        conf:'⚙', config:'⚙', ini:'⚙', cfg:'⚙',
-        mp4:'🎬', mp3:'🎵', wav:'🎵',
+        php:'database', js:'square', ts:'layers', jsx:'code', tsx:'code',
+        html:'globe', htm:'globe', css:'droplet', scss:'droplet', sass:'droplet',
+        json:'clipboard', xml:'clipboard', yaml:'clipboard', yml:'clipboard', toml:'clipboard',
+        py:'code', rb:'package', go:'dot', rs:'code', java:'coffee',
+        sh:'terminal', bash:'terminal', zsh:'terminal',
+        md:'edit', txt:'edit', log:'clipboard',
+        jpg:'image', jpeg:'image', png:'image', gif:'image', svg:'image', webp:'image',
+        zip:'package', gz:'package', tar:'package', rar:'package',
+        sql:'database', db:'database',
+        pdf:'book', doc:'book', docx:'book', xls:'book', xlsx:'book',
+        env:'lock', htaccess:'settings', htpasswd:'lock',
+        conf:'settings', config:'settings', ini:'settings', cfg:'settings',
+        mp4:'film', mp3:'music', wav:'music',
       };
-      return icons[ext] || '📄';
+      return icons[ext] || 'file-text';
     },
 
     getLangIcon(name) {
@@ -1696,7 +1821,7 @@ function filesPage() {
         this.lintErrors = r.errors;
         this.showLintPanel = r.errors.length > 0;
         if (r.clean) toast('✓ No syntax errors', 'success');
-        else toast('⚠ ' + r.errors.length + ' error(s) found', 'error');
+        else toast('' + r.errors.length + ' error(s) found', 'error');
       }
     },
 
@@ -2022,19 +2147,19 @@ function aiAssistant() {
     activeContexts: [],
 
     quickActions: [
-      { icon:'🔍', label:'Diagnose server',    action:'diagnose',     prompt:'Check my server health and identify any issues. Give me a quick overview.' },
-      { icon:'🔐', label:'Security tips',      action:'security',     prompt:'Give me the top 5 server hardening tips for a VPS running Nginx + PHP.' },
-      { icon:'⚙',  label:'Nginx config',       action:'nginx',        prompt:'Generate a production Nginx server block for a PHP WordPress site with SSL, gzip, and security headers.' },
-      { icon:'🐘', label:'PHP optimize',       action:'php',          prompt:'What are the optimal php.ini settings for a production WordPress site with 2GB RAM?' },
-      { icon:'🗄',  label:'MySQL tune',         action:'mysql',        prompt:'Give me MySQL/MariaDB performance tuning settings for a server with 4GB RAM.' },
-      { icon:'📋', label:'Cron examples',      action:'cron',         prompt:'Show me common cron job examples for a web server: SSL renewal, backup, log rotation, WordPress cron.' },
+      { icon:'search', label:'Diagnose server',    action:'diagnose',     prompt:'Check my server health and identify any issues. Give me a quick overview.' },
+      { icon:'lock', label:'Security tips',      action:'security',     prompt:'Give me the top 5 server hardening tips for a VPS running Nginx + PHP.' },
+      { icon:'settings',  label:'Nginx config',       action:'nginx',        prompt:'Generate a production Nginx server block for a PHP WordPress site with SSL, gzip, and security headers.' },
+      { icon:'database', label:'PHP optimize',       action:'php',          prompt:'What are the optimal php.ini settings for a production WordPress site with 2GB RAM?' },
+      { icon:'database',  label:'MySQL tune',         action:'mysql',        prompt:'Give me MySQL/MariaDB performance tuning settings for a server with 4GB RAM.' },
+      { icon:'clipboard', label:'Cron examples',      action:'cron',         prompt:'Show me common cron job examples for a web server: SSL renewal, backup, log rotation, WordPress cron.' },
     ],
 
     contextOptions: [
-      { id:'server',   icon:'🖥', label:'Server Info' },
-      { id:'nginx',    icon:'🌐', label:'Nginx Logs' },
-      { id:'php',      icon:'🐘', label:'PHP Errors' },
-      { id:'mysql',    icon:'🗄', label:'MySQL Status' },
+      { id:'server',   icon:'monitor', label:'Server Info' },
+      { id:'nginx',    icon:'globe', label:'Nginx Logs' },
+      { id:'php',      icon:'database', label:'PHP Errors' },
+      { id:'mysql',    icon:'database', label:'MySQL Status' },
     ],
 
     async init() {
@@ -2137,11 +2262,11 @@ function aiAssistant() {
           this.messages.push({ role: 'assistant', content: r.content });
           if (!this.open) this.unread++;
         } else {
-          this.messages.push({ role: 'assistant', content: '⚠ Error: ' + (r.error || 'Failed to get response.') });
+          this.messages.push({ role: 'assistant', content: 'Error: ' + (r.error || 'Failed to get response.') });
         }
       } catch (e) {
         this.thinking = false;
-        this.messages.push({ role: 'assistant', content: '⚠ Network error: ' + e.message });
+        this.messages.push({ role: 'assistant', content: 'Network error: ' + e.message });
       }
 
       this.$nextTick(() => {
@@ -2324,9 +2449,9 @@ function servicesPage() {
 
     async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="services") this.load(); }); },
     serviceIcon(name) {
-      const m = {nginx:'🌐',apache2:'🌐',caddy:'🌐',mysql:'🗄️',mariadb:'🗄️',postgresql:'🐘',mongodb:'🍃',redis:'⚡',docker:'🐳',supervisor:'👁️',ufw:'🛡️',fail2ban:'🔒',clamav:'🦠',bind9:'📡',ssh:'🔑',sshd:'🔑',php:'🐘',vortexpanel:'🌀'};
+      const m = {nginx:'globe',apache2:'globe',caddy:'globe',mysql:'database',mariadb:'database',postgresql:'database',mongodb:'database',redis:'zap',docker:'package',supervisor:'eye',ufw:'shield',fail2ban:'lock',clamav:'bug',bind9:'wifi',ssh:'key',sshd:'key',php:'database',vortexpanel:'refresh'};
       for(const[k,v]of Object.entries(m)){if(name.toLowerCase().includes(k))return v;}
-      return '⚙️';
+      return 'settings';
     },
 
     async load() {
@@ -2873,20 +2998,20 @@ function modulesPage() {
         modsec_status:'Status',
       };
       const icons = {
-        service:'🔧', config:'📄', optimization:'⚡', logs:'📋',
-        php_version:'🐘', security:'🔒', info:'ℹ️', storage:'💾',
-        port:'🔌', current_status:'📊', slow_log:'🐢',
-        switch_version:'🔄', persistence:'💿', extensions:'🧩',
-        ini:'⚙️', fpm:'🖥️', phpinfo:'📑',
-        caddyfile:'📄', global_opts:'🌐', auto_https:'🔐',
-        ddns_domains:'🌍', ddns_server:'🖥️', ddns_log:'📋',
-        dns_zones:'🗂️', dns_records:'📝', dns_config:'⚙️', dns_private:'🔏',
-        upload_limit:'📤', timeout_limit:'⏱️', disabled_functions:'🚫',
-        load_average:'📈', session_config:'🔑', users:'👥', rc_overview:'🌐', rc_config:'📧', rc_php:'🐘', rc_logs:'📋',
-        website_protection:'🛡️', server_protection:'🔰',
-        black_ip:'⛔', white_ip:'✅', modsec_status:'',
+        service:'tool', config:'file-text', optimization:'zap', logs:'clipboard',
+        php_version:'database', security:'lock', info:'info', storage:'hard-drive',
+        port:'power', current_status:'bar-chart', slow_log:'clock',
+        switch_version:'refresh', persistence:'disc', extensions:'puzzle',
+        ini:'settings', fpm:'monitor', phpinfo:'file-text',
+        caddyfile:'file-text', global_opts:'globe', auto_https:'lock',
+        ddns_domains:'globe', ddns_server:'monitor', ddns_log:'clipboard',
+        dns_zones:'folder', dns_records:'edit', dns_config:'settings', dns_private:'lock',
+        upload_limit:'upload', timeout_limit:'clock', disabled_functions:'ban',
+        load_average:'trending-up', session_config:'key', users:'users', rc_overview:'globe', rc_config:'mail', rc_php:'database', rc_logs:'clipboard',
+        website_protection:'shield', server_protection:'shield',
+        black_ip:'ban', white_ip:'check', modsec_status:'',
       };
-      return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'⚙️'}));
+      return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'settings'}));
     },
   };
 }
@@ -3343,9 +3468,9 @@ function settingsPage() {
     sslDomain: '',
     newPort: '',
     newHostname: '',
-    scanPath: '/www/wwwroot',
-    scanPaths: ['/www/wwwroot'],
-    scanner: {loading:false, done:false, scanned:0, total:0, critical:0, high:0, medium:0, findings:[]},
+    scanPath: '',
+    scanPaths: [],
+    scanner: {loading:false, done:false, scanned:0, total:0, critical:0, high:0, medium:0, findings:[], current:''}, _scanTimer:null,
     aiConfig: {enabled:true, api_key:'', base_url:'https://neoncodex.io/api/v1', model:'neoncodex-default', max_tokens:2048},
     aiModels: [], showApiKey: false,
     aiTesting: false, aiTestResult: '', aiTestOk: false,
@@ -3361,16 +3486,24 @@ function settingsPage() {
       const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
       if (sc.ok) { s.allowlistText=(sc.allowed_ips||[]).join('\n'); s.sessionHours=sc.session_hours||24; }
       const sp = await get('/api/settings/webshell-scan/paths').catch(()=>({ok:false}));
-      if (sp.ok) this.scanPaths = sp.paths||['/www/wwwroot'];
-      if (this.scanPaths.length) this.scanPath = this.scanPaths[0];
+      if (sp.ok) this.scanPaths = (sp.paths||[]).map(p => typeof p === 'string' ? {path:p, label:p} : p);
+      if (this.scanPaths.length && !this.scanPath) this.scanPath = this.scanPaths[0].path;
+      const ss = await get('/api/settings/webshell-scan/status').catch(()=>({ok:false}));
+      if (ss.ok && (ss.running || ss.done)) { this.applyScanState(ss); if (ss.running) this.pollWebshellScan(); }
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); this.loadSecurityUpdates(); } });
     },
 
-    async loadSecurityUpdates() {
+    async loadSecurityUpdates(force) {
       this.securityUpdates.loading = true;
-      const r = await get('/api/settings/security-updates').catch(()=>({ok:false}));
-      if (r.ok) this.securityUpdates = {total:r.total, critical:r.critical, packages:r.packages||[], checked:true, loading:false};
+      const r = await get('/api/settings/security-updates'+(force?'?refresh=1':'')).catch(()=>({ok:false}));
+      if (r.ok) this.securityUpdates = {total:r.total, critical:r.critical, packages:r.packages||[], checked:true, loading:false,
+                                        vendor_total:r.vendor_total||0, reboot_required:!!r.reboot_required};
       else this.securityUpdates.loading = false;
+      // Resume progress if an apply is already running (page reload, other tab)
+      if (!this.applyingSecurityUpdates) {
+        const st = await get('/api/settings/security-updates/status').catch(()=>({ok:false}));
+        if (st.ok && st.running) { this.applyingSecurityUpdates = true; this.securityUpdateOutput = st.output||''; this.pollSecurityUpdates(); }
+      }
     },
 
     async applySecurityUpdates() {
@@ -3383,6 +3516,11 @@ function settingsPage() {
         this.applyingSecurityUpdates = false;
         return;
       }
+      this.pollSecurityUpdates();
+    },
+
+    pollSecurityUpdates() {
+      clearInterval(this.securityUpdatePollTimer);
       this.securityUpdatePollTimer = setInterval(async () => {
         const s = await get('/api/settings/security-updates/status').catch(()=>({ok:false}));
         if (!s.ok) return;
@@ -3454,93 +3592,90 @@ function settingsPage() {
 
     // --- SSL --------------------------------------------------------------------
     async genSelfSigned() {
-      this.ssl.loading=true; this.ssl.type_loading='selfsigned'; this.ssl.msg='Applying changes — this takes about 5-10 seconds…';
+      this.ssl.loading=true; this.ssl.type_loading='selfsigned'; this.ssl.ok=true;
+      this.ssl.msg='Generating the certificate and test-starting the panel with it…';
       const r = await post('/api/settings/ssl/self-signed', {domain:this.sslDomain});
-      if (!r.ok) {
-        this.ssl.loading=false; this.ssl.ok=false; this.ssl.msg=r.error||'Failed';
-        toast('Failed: '+(r.error||''), 'error');
-        return;
-      }
-      await this.pollSslApply('self-signed', 'https');
+      if (!r.ok) { this.ssl.loading=false; this.ssl.ok=false; this.ssl.msg=r.error||'Failed'; toast('Failed: '+(r.error||''), 'error'); return; }
+      await this.pollSslApply(r.apply_id, 'https', true);
     },
 
     async issueLetsEncrypt() {
       if (!this.sslDomain) { toast('Domain required for Let\'s Encrypt','error'); return; }
-      this.ssl.loading=true; this.ssl.type_loading='le'; this.ssl.msg='Issuing certificate and applying changes…';
+      this.ssl.loading=true; this.ssl.type_loading='le'; this.ssl.ok=true; this.ssl.msg='Issuing certificate and applying changes…';
       const r = await post('/api/settings/ssl/letsencrypt', {domain:this.sslDomain});
-      if (!r.ok) {
-        this.ssl.loading=false; this.ssl.ok=false; this.ssl.msg=r.error||'Failed';
-        toast('Failed: '+(r.error||''), 'error');
-        return;
-      }
-      await this.pollSslApply('letsencrypt', 'https');
+      if (!r.ok) { this.ssl.loading=false; this.ssl.ok=false; this.ssl.msg=r.error||'Failed'; toast('Failed: '+(r.error||''), 'error'); return; }
+      await this.pollSslApply(r.apply_id, 'https', false);
     },
 
-    async pollSslApply(type, targetScheme) {
-      // IMPORTANT: once the cutover actually completes, this page's AJAX
-      // calls (made over the OLD protocol) start failing — that's not a
-      // bug, it's the entire point of the switch. So we can only use
-      // polling to catch FAST failures (e.g. nginx config rejected before
-      // any switch happens, in which case the old protocol keeps working
-      // fine and polling still succeeds). Once we stop getting a definitive
-      // answer, we assume the switch is in progress and navigate the
-      // browser for real — a stale AJAX-only refresh can never recover the
-      // UI from here, only a fresh page load over the correct protocol can.
-      let definitiveResult = null;
-      for (let i=0; i<4; i++) {
-        await new Promise(r=>setTimeout(r,1000));
-        const log = await get('/api/settings/ssl/apply-log').catch(()=>({ok:false}));
-        if (log.ok && log.done) {
-          definitiveResult = log;
-          break;
-        }
-      }
-
+    // The panel restarts on the other scheme on the SAME port, so once the
+    // switch succeeds this tab can no longer reach it. A detached helper on
+    // the server verifies the switch and rolls back if the panel doesn't
+    // come up - in that case the old scheme answers again and apply-log
+    // says why, which is the only failure this page can observe.
+    async pollSslApply(applyId, targetScheme, selfSigned) {
       const port = this.cfg.port || 8888;
-      const host = window.location.hostname;
-      const targetUrl = `${targetScheme}://${host}:${port}/#settings`;
-
-      if (definitiveResult) {
-        const success = (definitiveResult.log||'').includes('vortexpanel=active') &&
-                        (definitiveResult.log||'').includes('nginx=active');
-        if (!success) {
-          // Caught a fast, definitive failure — nothing changed, stay put and show it.
-          this.ssl.loading=false;
-          this.ssl.ok=false;
-          this.ssl.msg='Failed to apply: '+definitiveResult.log;
-          toast('HTTPS setup failed — see details below','error');
+      const targetUrl = `${targetScheme}://${window.location.hostname}:${port}/#settings`;
+      this.ssl.msg = `Restarting the panel on ${targetScheme.toUpperCase()}…`;
+      let wentDown = 0;
+      for (let i = 0; i < 40; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        // Hard timeout: once the port speaks the other scheme, a request
+        // over the old one doesn't fail - it hangs (TLS vs plain HTTP).
+        let log = null;
+        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 2500);
+        try { log = await (await fetch('/api/settings/ssl/apply-log', {cache:'no-store', signal:ctl.signal})).json(); } catch (e) { log = null; }
+        clearTimeout(tm);
+        if (!log) { wentDown++; if (wentDown >= 5) break; continue; }   // ~7s unreachable: switched
+        if (log.id === applyId && log.status === 'failed') {
+          this.ssl.loading=false; this.ssl.ok=false;
+          this.ssl.msg = (log.error||'Switch failed') + (log.log ? '\n\n' + log.log : '');
+          toast('The panel could not start on ' + targetScheme.toUpperCase() + ' - previous settings restored', 'error');
+          this.loadSettings();
           return;
         }
-        // Fast success is rare (cutover usually isn't done in <4s) but handle it too.
       }
-
-      // Either we got fast confirmation of success, or (far more likely) the
-      // switch is mid-flight and this tab can no longer talk to the server
-      // at all. Either way, the only reliable next step is a real navigation.
-      this.ssl.msg = `Switching to ${targetScheme.toUpperCase()} — redirecting in 3 seconds…`;
+      this.ssl.msg = `Switched to ${targetScheme.toUpperCase()} - redirecting…` +
+        (selfSigned ? ' Your browser will warn that the certificate is self-signed; choose Advanced -> Proceed.' : '');
       toast(`Reconnecting over ${targetScheme.toUpperCase()}…`, 'success');
-      await new Promise(r=>setTimeout(r,3000));
+      await new Promise(r => setTimeout(r, selfSigned ? 3500 : 1500));
       window.location.href = targetUrl;
     },
 
     async disableSSL() {
+      if (!confirm('Switch the panel back to plain HTTP?')) return;
       const r = await post('/api/settings/ssl/disable', {});
       if (!r.ok) { toast('Failed: '+(r.error||''),'error'); return; }
-      this.ssl.loading=true; this.ssl.msg='Reverting to plain HTTP…';
-      await this.pollSslApply('none', 'http');
+      this.ssl.loading=true; this.ssl.ok=true; this.ssl.msg='Reverting to plain HTTP…';
+      await this.pollSslApply(r.apply_id, 'http', false);
     },
 
     // --- Webshell scanner -------------------------------------------------------
     async runWebshellScan() {
-      this.scanner.loading=true; this.scanner.done=false;
-      const r = await post('/api/settings/webshell-scan', {path:this.scanPath});
-      this.scanner.loading=false;
-      if (r.ok) {
-        this.scanner = {...this.scanner, ...r, done:true, loading:false};
-        if (r.critical>0) toast(`⚠ ${r.critical} critical threats found!`,'error');
-        else if (r.total>0) toast(`${r.total} suspicious files found`,'warning');
-        else toast(`✓ Clean — ${r.scanned} files scanned`,'success');
-      } else toast(r.error||'Scan failed','error');
+      if (!this.scanPath) { toast('Choose a folder to scan','error'); return; }
+      this.scanner = {...this.scanner, loading:true, done:false, scanned:0, current:'', findings:[], total:0, critical:0, high:0, medium:0};
+      const r = await post('/api/settings/webshell-scan', {path:this.scanPath}).catch(()=>({ok:false}));
+      if (!r.ok) { this.scanner.loading=false; toast(r.error||'Scan failed','error'); return; }
+      this.pollWebshellScan();
+    },
+
+    applyScanState(st) {
+      this.scanner = {...this.scanner, ...st, loading: !!st.running, done: !!st.done && !st.running};
+    },
+
+    pollWebshellScan() {
+      clearInterval(this._scanTimer);
+      this._scanTimer = setInterval(async () => {
+        const st = await get('/api/settings/webshell-scan/status').catch(()=>({ok:false}));
+        if (!st.ok) return;
+        this.applyScanState(st);
+        if (!st.running) {
+          clearInterval(this._scanTimer);
+          if (st.error) toast(st.error, 'error');
+          else if (st.critical>0) toast(`${st.critical} critical threat${st.critical===1?'':'s'} found`,'error');
+          else if (st.total>0) toast(`${st.total} suspicious file${st.total===1?'':'s'} to review`,'warning');
+          else toast(`Clean - ${st.scanned} PHP files scanned`,'success');
+        }
+      }, 1500);
     },
 
     // --- AI ---------------------------------------------------------------------
@@ -4005,55 +4140,55 @@ function securityPage() {
 // --- DOCKER ---------------------------------------------------------------------
 // --- DOCKER CATALOG -------------------------------------------------------------
 const DOCKER_CATALOG = [
-  {id:'nginx', icon:'🌐', name:'Nginx', hardened:false, image:'nginx', tag:'latest', cat:'Web Server',
+  {id:'nginx', icon:'globe', name:'Nginx', hardened:false, image:'nginx', tag:'latest', cat:'Web Server',
    desc:'High-performance web server and reverse proxy.',
    ports:[{host:'8080', container:'80'}], envs:[], volumes:[{host:'/opt/vortexpanel/docker-data/nginx', container:'/usr/share/nginx/html'}],
    cmd:'', docs:'https://hub.docker.com/_/nginx'},
 
-  {id:'httpd', icon:'🪶', name:'Apache HTTPD', hardened:false, image:'httpd', tag:'latest', cat:'Web Server',
+  {id:'httpd', icon:'feather', name:'Apache HTTPD', hardened:false, image:'httpd', tag:'latest', cat:'Web Server',
    desc:'The Apache HTTP Server, widely used and battle-tested.',
    ports:[{host:'8081', container:'80'}], envs:[], volumes:[{host:'/opt/vortexpanel/docker-data/httpd', container:'/usr/local/apache2/htdocs'}],
    cmd:'', docs:'https://hub.docker.com/_/httpd'},
 
-  {id:'mysql', icon:'🐬', name:'MySQL', hardened:false, image:'mysql', tag:'8.0', cat:'Database',
+  {id:'mysql', icon:'database', name:'MySQL', hardened:false, image:'mysql', tag:'8.0', cat:'Database',
    desc:'Popular open-source relational database server.',
    ports:[{host:'3306', container:'3306'}],
    envs:[{key:'MYSQL_ROOT_PASSWORD', value:'', placeholder:'set a strong password'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/mysql', container:'/var/lib/mysql'}],
    cmd:'', docs:'https://hub.docker.com/_/mysql'},
 
-  {id:'postgres', icon:'🐘', name:'PostgreSQL', hardened:false, image:'postgres', tag:'16', cat:'Database',
+  {id:'postgres', icon:'database', name:'PostgreSQL', hardened:false, image:'postgres', tag:'16', cat:'Database',
    desc:'Advanced open-source relational database.',
    ports:[{host:'5432', container:'5432'}],
    envs:[{key:'POSTGRES_PASSWORD', value:'', placeholder:'set a strong password'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/postgres', container:'/var/lib/postgresql/data'}],
    cmd:'', docs:'https://hub.docker.com/_/postgres'},
 
-  {id:'mariadb', icon:'🦭', name:'MariaDB', hardened:false, image:'mariadb', tag:'11', cat:'Database',
+  {id:'mariadb', icon:'database', name:'MariaDB', hardened:false, image:'mariadb', tag:'11', cat:'Database',
    desc:'Community-developed MySQL fork.',
    ports:[{host:'3307', container:'3306'}],
    envs:[{key:'MARIADB_ROOT_PASSWORD', value:'', placeholder:'set a strong password'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/mariadb', container:'/var/lib/mysql'}],
    cmd:'', docs:'https://hub.docker.com/_/mariadb'},
 
-  {id:'mongo', icon:'🍃', name:'MongoDB', hardened:false, image:'mongo', tag:'7', cat:'Database',
+  {id:'mongo', icon:'database', name:'MongoDB', hardened:false, image:'mongo', tag:'7', cat:'Database',
    desc:'Document-oriented NoSQL database.',
    ports:[{host:'27017', container:'27017'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/mongo', container:'/data/db'}],
    cmd:'', docs:'https://hub.docker.com/_/mongo'},
 
-  {id:'redis', icon:'⚡', name:'Redis', hardened:false, image:'redis', tag:'7-alpine', cat:'Cache',
+  {id:'redis', icon:'zap', name:'Redis', hardened:false, image:'redis', tag:'7-alpine', cat:'Cache',
    desc:'In-memory key-value store, cache and message broker.',
    ports:[{host:'6379', container:'6379'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/redis', container:'/data'}],
    cmd:'', docs:'https://hub.docker.com/_/redis'},
 
-  {id:'memcached', icon:'💾', name:'Memcached', hardened:false, image:'memcached', tag:'alpine', cat:'Cache',
+  {id:'memcached', icon:'hard-drive', name:'Memcached', hardened:false, image:'memcached', tag:'alpine', cat:'Cache',
    desc:'Distributed memory object caching system.',
    ports:[{host:'11211', container:'11211'}], envs:[], volumes:[],
    cmd:'', docs:'https://hub.docker.com/_/memcached'},
 
-  {id:'wordpress', icon:'📝', name:'WordPress', hardened:false, image:'wordpress', tag:'latest', cat:'CMS',
+  {id:'wordpress', icon:'edit', name:'WordPress', hardened:false, image:'wordpress', tag:'latest', cat:'CMS',
    desc:"The world's most popular CMS, ready to run.",
    ports:[{host:'8082', container:'80'}],
    envs:[
@@ -4065,7 +4200,7 @@ const DOCKER_CATALOG = [
    volumes:[{host:'/opt/vortexpanel/docker-data/wordpress', container:'/var/www/html'}],
    cmd:'', docs:'https://hub.docker.com/_/wordpress'},
 
-  {id:'portainer', icon:'🐳', name:'Portainer', hardened:false, image:'portainer/portainer-ce', tag:'latest', cat:'Management',
+  {id:'portainer', icon:'package', name:'Portainer', hardened:false, image:'portainer/portainer-ce', tag:'latest', cat:'Management',
    desc:'Web UI for managing Docker containers, images and volumes.',
    ports:[{host:'9000', container:'9000'}], envs:[],
    volumes:[
@@ -4074,214 +4209,214 @@ const DOCKER_CATALOG = [
    ],
    cmd:'', docs:'https://hub.docker.com/r/portainer/portainer-ce'},
 
-  {id:'adminer', icon:'🛠', name:'Adminer', hardened:false, image:'adminer', tag:'latest', cat:'Database Tools',
+  {id:'adminer', icon:'tool', name:'Adminer', hardened:false, image:'adminer', tag:'latest', cat:'Database Tools',
    desc:'Lightweight database management UI for MySQL/Postgres/SQLite.',
    ports:[{host:'8083', container:'8080'}], envs:[], volumes:[],
    cmd:'', docs:'https://hub.docker.com/_/adminer'},
 
-  {id:'phpmyadmin', icon:'🐘', name:'phpMyAdmin', hardened:false, image:'phpmyadmin/phpmyadmin', tag:'latest', cat:'Database Tools',
+  {id:'phpmyadmin', icon:'database', name:'phpMyAdmin', hardened:false, image:'phpmyadmin/phpmyadmin', tag:'latest', cat:'Database Tools',
    desc:'Web UI for managing MySQL/MariaDB databases.',
    ports:[{host:'8084', container:'80'}],
    envs:[{key:'PMA_HOST', value:'', placeholder:'db-container-name'}],
    volumes:[], cmd:'', docs:'https://hub.docker.com/r/phpmyadmin/phpmyadmin'},
 
-  {id:'grafana', icon:'📊', name:'Grafana', hardened:false, image:'grafana/grafana', tag:'latest', cat:'Monitoring',
+  {id:'grafana', icon:'bar-chart', name:'Grafana', hardened:false, image:'grafana/grafana', tag:'latest', cat:'Monitoring',
    desc:'Dashboards and visualization for metrics and logs.',
    ports:[{host:'3001', container:'3000'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/grafana', container:'/var/lib/grafana'}],
    cmd:'', docs:'https://hub.docker.com/r/grafana/grafana'},
 
-  {id:'prometheus', icon:'🔥', name:'Prometheus', hardened:false, image:'prom/prometheus', tag:'latest', cat:'Monitoring',
+  {id:'prometheus', icon:'flame', name:'Prometheus', hardened:false, image:'prom/prometheus', tag:'latest', cat:'Monitoring',
    desc:'Metrics collection and alerting toolkit.',
    ports:[{host:'9090', container:'9090'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/prometheus', container:'/prometheus'}],
    cmd:'', docs:'https://hub.docker.com/r/prom/prometheus'},
 
-  {id:'rabbitmq', icon:'🐰', name:'RabbitMQ', hardened:false, image:'rabbitmq', tag:'3-management', cat:'Messaging',
+  {id:'rabbitmq', icon:'package', name:'RabbitMQ', hardened:false, image:'rabbitmq', tag:'3-management', cat:'Messaging',
    desc:'Message broker with web management console.',
    ports:[{host:'5672', container:'5672'},{host:'15672', container:'15672'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/rabbitmq', container:'/var/lib/rabbitmq'}],
    cmd:'', docs:'https://hub.docker.com/_/rabbitmq'},
 
-  {id:'vaultwarden', icon:'🔐', name:'Vaultwarden', hardened:false, image:'vaultwarden/server', tag:'latest', cat:'Security',
+  {id:'vaultwarden', icon:'lock', name:'Vaultwarden', hardened:false, image:'vaultwarden/server', tag:'latest', cat:'Security',
    desc:'Lightweight self-hosted Bitwarden-compatible password server.',
    ports:[{host:'8085', container:'80'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/vaultwarden', container:'/data'}],
    cmd:'', docs:'https://hub.docker.com/r/vaultwarden/server'},
 
-  {id:'uptime-kuma', icon:'🟢', name:'Uptime Kuma', hardened:false, image:'louislam/uptime-kuma', tag:'1', cat:'Monitoring',
+  {id:'uptime-kuma', icon:'dot', name:'Uptime Kuma', hardened:false, image:'louislam/uptime-kuma', tag:'1', cat:'Monitoring',
    desc:'Self-hosted uptime monitoring tool with notifications.',
    ports:[{host:'3002', container:'3001'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/uptime-kuma', container:'/app/data'}],
    cmd:'', docs:'https://hub.docker.com/r/louislam/uptime-kuma'},
-  {id:'traefik', icon:'🔀', name:'Traefik', hardened:false, image:'traefik', tag:'v3.0', cat:'Web Server',
+  {id:'traefik', icon:'shuffle', name:'Traefik', hardened:false, image:'traefik', tag:'v3.0', cat:'Web Server',
    desc:'Modern reverse proxy and load balancer with automatic Let\'s Encrypt SSL.',
    ports:[{host:'8079', container:'8080'}], envs:[],
    volumes:[{host:'/var/run/docker.sock', container:'/var/run/docker.sock'},{host:'/opt/vortexpanel/docker-data/traefik', container:'/etc/traefik'}],
    cmd:'', docs:'https://hub.docker.com/_/traefik'},
 
-  {id:'nginx-proxy-manager', icon:'🔁', name:'Nginx Proxy Manager', hardened:false, image:'jc21/nginx-proxy-manager', tag:'latest', cat:'Web Server',
+  {id:'nginx-proxy-manager', icon:'repeat', name:'Nginx Proxy Manager', hardened:false, image:'jc21/nginx-proxy-manager', tag:'latest', cat:'Web Server',
    desc:'Manage reverse proxy hosts and free SSL certificates via a web UI.',
    ports:[{host:'8180', container:'81'},{host:'8880', container:'80'},{host:'8843', container:'443'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/npm/data', container:'/data'},{host:'/opt/vortexpanel/docker-data/npm/letsencrypt', container:'/etc/letsencrypt'}],
    cmd:'', docs:'https://hub.docker.com/r/jc21/nginx-proxy-manager'},
 
-  {id:'wireguard', icon:'🔒', name:'WireGuard VPN', hardened:false, image:'linuxserver/wireguard', tag:'latest', cat:'Networking',
+  {id:'wireguard', icon:'lock', name:'WireGuard VPN', hardened:false, image:'linuxserver/wireguard', tag:'latest', cat:'Networking',
    desc:'Fast, modern VPN server for secure remote access to your server.',
    ports:[{host:'51820', container:'51820/udp'}],
    envs:[{key:'SERVERURL', value:'', placeholder:'your-server-ip-or-domain'},{key:'PEERS', value:'1', placeholder:'number of client configs'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/wireguard', container:'/config'}],
    cmd:'', docs:'https://hub.docker.com/r/linuxserver/wireguard'},
 
-  {id:'pihole', icon:'🕳', name:'Pi-hole', hardened:false, image:'pihole/pihole', tag:'latest', cat:'Networking',
+  {id:'pihole', icon:'hole', name:'Pi-hole', hardened:false, image:'pihole/pihole', tag:'latest', cat:'Networking',
    desc:'Network-wide ad blocker and local DNS server.',
    ports:[{host:'53', container:'53'},{host:'8090', container:'80'}],
    envs:[{key:'TZ', value:'UTC', placeholder:'e.g. Asia/Kolkata'},{key:'WEBPASSWORD', value:'', placeholder:'admin password'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/pihole/etc-pihole', container:'/etc/pihole'},{host:'/opt/vortexpanel/docker-data/pihole/etc-dnsmasq', container:'/etc/dnsmasq.d'}],
    cmd:'', docs:'https://hub.docker.com/r/pihole/pihole'},
 
-  {id:'netdata', icon:'📈', name:'Netdata', hardened:false, image:'netdata/netdata', tag:'latest', cat:'Monitoring',
+  {id:'netdata', icon:'trending-up', name:'Netdata', hardened:false, image:'netdata/netdata', tag:'latest', cat:'Monitoring',
    desc:'Real-time, per-second performance and health monitoring for your server.',
    ports:[{host:'19999', container:'19999'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/netdata', container:'/etc/netdata'}],
    cmd:'', docs:'https://hub.docker.com/r/netdata/netdata'},
 
-  {id:'gitea', icon:'🍵', name:'Gitea', hardened:false, image:'gitea/gitea', tag:'latest', cat:'Dev Tools',
+  {id:'gitea', icon:'coffee', name:'Gitea', hardened:false, image:'gitea/gitea', tag:'latest', cat:'Dev Tools',
    desc:'Lightweight self-hosted Git service with a web UI, like a mini GitHub.',
    ports:[{host:'3003', container:'3000'},{host:'2222', container:'22'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/gitea', container:'/data'}],
    cmd:'', docs:'https://hub.docker.com/r/gitea/gitea'},
 
-  {id:'code-server', icon:'💻', name:'Code Server', hardened:false, image:'codercom/code-server', tag:'latest', cat:'Dev Tools',
+  {id:'code-server', icon:'monitor', name:'Code Server', hardened:false, image:'codercom/code-server', tag:'latest', cat:'Dev Tools',
    desc:'VS Code running in the browser, accessible from anywhere.',
    ports:[{host:'8443', container:'8080'}],
    envs:[{key:'PASSWORD', value:'', placeholder:'set an access password'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/code-server', container:'/home/coder/project'}],
    cmd:'', docs:'https://hub.docker.com/r/codercom/code-server'},
 
-  {id:'n8n', icon:'🔗', name:'n8n', hardened:false, image:'n8nio/n8n', tag:'latest', cat:'Automation',
+  {id:'n8n', icon:'link', name:'n8n', hardened:false, image:'n8nio/n8n', tag:'latest', cat:'Automation',
    desc:'Workflow automation tool to visually connect apps and APIs.',
    ports:[{host:'5678', container:'5678'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/n8n', container:'/home/node/.n8n'}],
    cmd:'', docs:'https://hub.docker.com/r/n8nio/n8n'},
 
-  {id:'nextcloud', icon:'☁', name:'Nextcloud', hardened:false, image:'nextcloud', tag:'latest', cat:'File Storage',
+  {id:'nextcloud', icon:'cloud', name:'Nextcloud', hardened:false, image:'nextcloud', tag:'latest', cat:'File Storage',
    desc:'Self-hosted file sync, share and collaboration platform.',
    ports:[{host:'8086', container:'80'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/nextcloud', container:'/var/www/html'}],
    cmd:'', docs:'https://hub.docker.com/_/nextcloud'},
 
-  {id:'minio', icon:'🪣', name:'MinIO', hardened:false, image:'minio/minio', tag:'latest', cat:'File Storage',
+  {id:'minio', icon:'bucket', name:'MinIO', hardened:false, image:'minio/minio', tag:'latest', cat:'File Storage',
    desc:'S3-compatible object storage server for backups and apps.',
    ports:[{host:'9091', container:'9000'},{host:'9092', container:'9001'}],
    envs:[{key:'MINIO_ROOT_USER', value:'admin', placeholder:'admin'},{key:'MINIO_ROOT_PASSWORD', value:'', placeholder:'set a strong password'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/minio', container:'/data'}],
    cmd:'server /data --console-address ":9001"', docs:'https://hub.docker.com/r/minio/minio'},
 
-  {id:'meilisearch', icon:'🔍', name:'Meilisearch', hardened:false, image:'getmeili/meilisearch', tag:'latest', cat:'Search',
+  {id:'meilisearch', icon:'search', name:'Meilisearch', hardened:false, image:'getmeili/meilisearch', tag:'latest', cat:'Search',
    desc:'Lightning-fast open-source search engine for websites and apps.',
    ports:[{host:'7700', container:'7700'}],
    envs:[{key:'MEILI_MASTER_KEY', value:'', placeholder:'set a master key'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/meilisearch', container:'/meili_data'}],
    cmd:'', docs:'https://hub.docker.com/r/getmeili/meilisearch'},
 
-  {id:'influxdb', icon:'📉', name:'InfluxDB', hardened:false, image:'influxdb', tag:'2', cat:'Database',
+  {id:'influxdb', icon:'trending-down', name:'InfluxDB', hardened:false, image:'influxdb', tag:'2', cat:'Database',
    desc:'Time-series database for metrics, IoT and analytics.',
    ports:[{host:'8089', container:'8086'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/influxdb', container:'/var/lib/influxdb2'}],
    cmd:'', docs:'https://hub.docker.com/_/influxdb'},
 
-  {id:'ghost', icon:'👻', name:'Ghost', hardened:false, image:'ghost', tag:'latest', cat:'CMS',
+  {id:'ghost', icon:'eye', name:'Ghost', hardened:false, image:'ghost', tag:'latest', cat:'CMS',
    desc:'Modern, professional publishing platform for blogs and newsletters.',
    ports:[{host:'2368', container:'2368'}],
    envs:[{key:'url', value:'', placeholder:'http://your-domain.com'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/ghost', container:'/var/lib/ghost/content'}],
    cmd:'', docs:'https://hub.docker.com/_/ghost'},
 
-  {id:'jellyfin', icon:'🎬', name:'Jellyfin', hardened:false, image:'jellyfin/jellyfin', tag:'latest', cat:'Media Server',
+  {id:'jellyfin', icon:'film', name:'Jellyfin', hardened:false, image:'jellyfin/jellyfin', tag:'latest', cat:'Media Server',
    desc:'Free media server for streaming movies, shows and music.',
    ports:[{host:'8096', container:'8096'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/jellyfin/config', container:'/config'},{host:'/opt/vortexpanel/docker-data/jellyfin/media', container:'/media'}],
    cmd:'', docs:'https://hub.docker.com/r/jellyfin/jellyfin'},
 
-  {id:'duplicati', icon:'🗄', name:'Duplicati', hardened:false, image:'duplicati/duplicati', tag:'latest', cat:'Backup',
+  {id:'duplicati', icon:'database', name:'Duplicati', hardened:false, image:'duplicati/duplicati', tag:'latest', cat:'Backup',
    desc:'Encrypted, scheduled backups to local storage or the cloud.',
    ports:[{host:'8200', container:'8200'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/duplicati/config', container:'/config'},{host:'/opt/vortexpanel/backups', container:'/source'}],
    cmd:'', docs:'https://hub.docker.com/r/duplicati/duplicati'},
 
-  {id:'filebrowser', icon:'📁', name:'File Browser', hardened:false, image:'filebrowser/filebrowser', tag:'latest', cat:'File Storage',
+  {id:'filebrowser', icon:'folder', name:'File Browser', hardened:false, image:'filebrowser/filebrowser', tag:'latest', cat:'File Storage',
    desc:'Simple web file manager for browsing and uploading server files.',
    ports:[{host:'8088', container:'80'}], envs:[],
    volumes:[{host:'/opt/vortexpanel', container:'/srv'}],
    cmd:'', docs:'https://hub.docker.com/r/filebrowser/filebrowser'},
 
-  {id:'node', icon:'🟢', name:'Node.js', hardened:false, image:'node', tag:'lts-alpine', cat:'Runtime',
+  {id:'node', icon:'dot', name:'Node.js', hardened:false, image:'node', tag:'lts-alpine', cat:'Runtime',
    desc:'Run custom Node.js applications in an isolated container.',
    ports:[{host:'3010', container:'3000'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/node-app', container:'/app'}],
    cmd:'node /app/index.js', docs:'https://hub.docker.com/_/node'},
 
-  {id:'python', icon:'🐍', name:'Python', hardened:false, image:'python', tag:'3.12-slim', cat:'Runtime',
+  {id:'python', icon:'code', name:'Python', hardened:false, image:'python', tag:'3.12-slim', cat:'Runtime',
    desc:'Run custom Python applications in an isolated container.',
    ports:[{host:'8001', container:'8000'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/python-app', container:'/app'}],
    cmd:'python /app/main.py', docs:'https://hub.docker.com/_/python'},
-  {id:'ollama', icon:'🦙', name:'Ollama', hardened:false, image:'ollama/ollama', tag:'latest', cat:'AI / LLM',
+  {id:'ollama', icon:'bot', name:'Ollama', hardened:false, image:'ollama/ollama', tag:'latest', cat:'AI / LLM',
    desc:'Run open-source LLMs (Llama, Mistral, Phi, etc.) locally via a simple API.',
    ports:[{host:'11434', container:'11434'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/ollama', container:'/root/.ollama'}],
    cmd:'', docs:'https://hub.docker.com/r/ollama/ollama'},
 
-  {id:'open-webui', icon:'🤖', name:'Open WebUI', hardened:false, image:'ghcr.io/open-webui/open-webui', tag:'main', cat:'AI / LLM',
+  {id:'open-webui', icon:'bot', name:'Open WebUI', hardened:false, image:'ghcr.io/open-webui/open-webui', tag:'main', cat:'AI / LLM',
    desc:'ChatGPT-style web interface for Ollama and OpenAI-compatible APIs.',
    ports:[{host:'3011', container:'8080'}],
    envs:[{key:'OLLAMA_BASE_URL', value:'', placeholder:'http://ollama-container:11434'}],
    volumes:[{host:'/opt/vortexpanel/docker-data/open-webui', container:'/app/backend/data'}],
    cmd:'', docs:'https://github.com/open-webui/open-webui'},
 
-  {id:'qdrant', icon:'🧭', name:'Qdrant', hardened:false, image:'qdrant/qdrant', tag:'latest', cat:'AI / LLM',
+  {id:'qdrant', icon:'compass', name:'Qdrant', hardened:false, image:'qdrant/qdrant', tag:'latest', cat:'AI / LLM',
    desc:'High-performance vector database for AI search and RAG applications.',
    ports:[{host:'6333', container:'6333'},{host:'6334', container:'6334'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/qdrant', container:'/qdrant/storage'}],
    cmd:'', docs:'https://hub.docker.com/r/qdrant/qdrant'},
 
-  {id:'localai', icon:'🧠', name:'LocalAI', hardened:false, image:'localai/localai', tag:'latest-cpu', cat:'AI / LLM',
+  {id:'localai', icon:'cpu', name:'LocalAI', hardened:false, image:'localai/localai', tag:'latest-cpu', cat:'AI / LLM',
    desc:'Drop-in OpenAI-compatible API for running local AI models, CPU-friendly.',
    ports:[{host:'8002', container:'8080'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/localai/models', container:'/models'}],
    cmd:'', docs:'https://hub.docker.com/r/localai/localai'},
 
-  {id:'flowise', icon:'🌊', name:'Flowise', hardened:false, image:'flowiseai/flowise', tag:'latest', cat:'AI / LLM',
+  {id:'flowise', icon:'wind', name:'Flowise', hardened:false, image:'flowiseai/flowise', tag:'latest', cat:'AI / LLM',
    desc:'Drag-and-drop UI to build AI agents and chatbot workflows with LLMs.',
    ports:[{host:'3007', container:'3000'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/flowise', container:'/root/.flowise'}],
    cmd:'', docs:'https://hub.docker.com/r/flowiseai/flowise'},
-  {id:'mosquitto', icon:'📡', name:'Eclipse Mosquitto', hardened:false, image:'eclipse-mosquitto', tag:'latest', cat:'IoT / Home Automation',
+  {id:'mosquitto', icon:'wifi', name:'Eclipse Mosquitto', hardened:false, image:'eclipse-mosquitto', tag:'latest', cat:'IoT / Home Automation',
    desc:'Lightweight open-source MQTT broker for IoT messaging.',
    ports:[{host:'1883', container:'1883'},{host:'9001', container:'9001'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/mosquitto/config', container:'/mosquitto/config'},{host:'/opt/vortexpanel/docker-data/mosquitto/data', container:'/mosquitto/data'}],
    cmd:'', docs:'https://hub.docker.com/_/eclipse-mosquitto'},
 
-  {id:'node-red', icon:'🔴', name:'Node-RED', hardened:false, image:'nodered/node-red', tag:'latest', cat:'IoT / Home Automation',
+  {id:'node-red', icon:'dot', name:'Node-RED', hardened:false, image:'nodered/node-red', tag:'latest', cat:'IoT / Home Automation',
    desc:'Flow-based visual programming for wiring together IoT devices and APIs.',
    ports:[{host:'1880', container:'1880'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/node-red', container:'/data'}],
    cmd:'', docs:'https://hub.docker.com/r/nodered/node-red'},
 
-  {id:'home-assistant', icon:'🏠', name:'Home Assistant', hardened:false, image:'ghcr.io/home-assistant/home-assistant', tag:'stable', cat:'IoT / Home Automation',
+  {id:'home-assistant', icon:'home', name:'Home Assistant', hardened:false, image:'ghcr.io/home-assistant/home-assistant', tag:'stable', cat:'IoT / Home Automation',
    desc:'Open-source home automation platform to control smart devices.',
    ports:[{host:'8123', container:'8123'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/home-assistant', container:'/config'}],
    cmd:'', docs:'https://github.com/home-assistant/core'},
 
-  {id:'jenkins', icon:'⚙', name:'Jenkins', hardened:false, image:'jenkins/jenkins', tag:'lts', cat:'Dev Tools',
+  {id:'jenkins', icon:'settings', name:'Jenkins', hardened:false, image:'jenkins/jenkins', tag:'lts', cat:'Dev Tools',
    desc:'Automation server for building, testing and deploying code (CI/CD).',
    ports:[{host:'8095', container:'8080'},{host:'50000', container:'50000'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/jenkins', container:'/var/jenkins_home'}],
    cmd:'', docs:'https://hub.docker.com/r/jenkins/jenkins'},
 
-  {id:'verdaccio', icon:'📦', name:'Verdaccio', hardened:false, image:'verdaccio/verdaccio', tag:'latest', cat:'Dev Tools',
+  {id:'verdaccio', icon:'package', name:'Verdaccio', hardened:false, image:'verdaccio/verdaccio', tag:'latest', cat:'Dev Tools',
    desc:'Lightweight private npm registry for hosting your own packages.',
    ports:[{host:'4873', container:'4873'}], envs:[],
    volumes:[{host:'/opt/vortexpanel/docker-data/verdaccio', container:'/verdaccio/storage'}],
@@ -4596,8 +4731,8 @@ function cronPage() {
     _pollTimer: null,
 
     typeIcon(t) {
-      return {shell:'⌨',php:'🐘',python:'🐍',node:'🟢',url:'🌐',
-              backup:'💾',db_backup:'🗄',certbot:'🔒',log_clear:'🧹',custom:'⚙'}[t]||'⚙';
+      return {shell:'terminal',php:'database',python:'code',node:'dot',url:'globe',
+              backup:'hard-drive',db_backup:'database',certbot:'lock',log_clear:'trash',custom:'settings'}[t]||'settings';
     },
 
     async init() {
@@ -4952,7 +5087,7 @@ function updateModalData() {
     async startUpdate() {
       const version = this.latest || '';
       this.updating=true; this.updateDone=false; this.updateSuccess=false;
-      this.updateLines=[`🚀 Starting update to ${version}…`]; this.updateProgress=5;
+      this.updateLines=[`Starting update to ${version}…`]; this.updateProgress=5;
       const r = await post('/api/update/start', {version});
       if (!r.ok) { this.updateLines.push('✗ Failed: '+(r.error||'')); this.updateDone=true; this.updateSuccess=false; return; }
       this._pollTimer = setInterval(async ()=>{
