@@ -303,3 +303,84 @@ def job_logs(vid):
     meta = load_meta()
     info = meta.get(vid, {})
     return jsonify({'ok':True,'log':info.get('last_log',''),'last_run':info.get('last_run',''),'last_exit':info.get('last_exit','')})
+
+# ---------------------------------------------------------------------------
+# Schedule validation / "test cron schedule" endpoint
+# ---------------------------------------------------------------------------
+@cron_bp.route('/api/cron/validate', methods=['POST'])
+def validate_schedule():
+    """
+    Validate a cron expression and return the next N scheduled run times.
+
+    Request JSON:
+        {
+            "schedule": "*/15 * * * *",   # required – 5-field cron expression
+            "count":    5                  # optional – how many next runs to show (1–20, default 5)
+        }
+
+    Success response:
+        {
+            "ok": true,
+            "valid": true,
+            "schedule": "*/15 * * * *",
+            "human": "Every 15 minutes",
+            "next_runs": [
+                "2026-09-09 15:45:00",
+                ...
+            ]
+        }
+
+    Error response:
+        {
+            "ok": false,
+            "valid": false,
+            "error": "<reason>"
+        }
+    """
+    if not req():
+        return jsonify({'ok': False}), 401
+
+    try:
+        from croniter import croniter, CroniterBadCronError
+    except ImportError:
+        return jsonify({'ok': False, 'error': 'croniter library not installed on server'}), 500
+
+    d = request.get_json() or {}
+    schedule = d.get('schedule', '').strip()
+    try:
+        count = max(1, min(20, int(d.get('count', 5))))
+    except (TypeError, ValueError):
+        count = 5
+
+    if not schedule:
+        return jsonify({'ok': False, 'valid': False, 'error': 'schedule is required'}), 400
+
+    parts = schedule.split()
+    if len(parts) != 5:
+        return jsonify({
+            'ok': False,
+            'valid': False,
+            'error': f'Invalid cron expression: expected 5 fields (min hour day month weekday), got {len(parts)}'
+        }), 400
+
+    if not croniter.is_valid(schedule):
+        return jsonify({
+            'ok': False,
+            'valid': False,
+            'error': 'Invalid cron expression: one or more fields are out of range'
+        }), 400
+
+    from datetime import datetime as _dt
+    try:
+        it = croniter(schedule, _dt.now())
+        next_runs = [it.get_next(_dt).strftime('%Y-%m-%d %H:%M:%S') for _ in range(count)]
+    except CroniterBadCronError as exc:
+        return jsonify({'ok': False, 'valid': False, 'error': str(exc)}), 400
+
+    return jsonify({
+        'ok':       True,
+        'valid':    True,
+        'schedule': schedule,
+        'human':    human_schedule(schedule),
+        'next_runs': next_runs,
+    })
