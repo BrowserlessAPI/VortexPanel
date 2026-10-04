@@ -57,8 +57,9 @@ def os_cmd(apt_cmd):
     cmd = cmd.replace('apt-get remove -y --purge', 'dnf remove -y')
     cmd = cmd.replace('apt-get remove -y', 'dnf remove -y')
     cmd = cmd.replace('apt-get autoremove -y', 'dnf autoremove -y')
-    cmd = cmd.replace('add-apt-repository -y', 'true #')
-    cmd = cmd.replace('add-apt-repository', 'true #')
+    # 'true', not 'true #': most templates are ONE line, so a '#' commented
+    # out everything after it -- including their own RHEL branch.
+    cmd = cmd.replace('add-apt-repository', 'true')
     cmd = cmd.replace('apt-get -y install', 'dnf install -y')
     # Package name differences
     cmd = cmd.replace('software-properties-common', 'dnf-plugins-core')
@@ -78,37 +79,70 @@ def req(): return 'user' in session
 
 # --- Job store: JSONL append-only files shared across all gunicorn workers ----
 # Each job = one .jsonl file where every line is a complete JSON object.
-# Appending one JSON line is atomic for small writes — no read-modify-write,
+# Appending one JSON line is atomic for small writes -- no read-modify-write,
 # no corruption, no locks needed between workers.
 # Format per line:
-#   {"line": "apt-get output..."}          — progress output line
-#   {"done": true, "success": true/false,  — final status (last line)
-#    "installed": true, "installedVer": "x.y.z"}
+#   {"line": "apt-get output..."}          -- progress output line
+#   {"done": true, "success": true/false,  -- final status (last line)
+#    "installed": true, "installedVer": "x.y.z", "message": "..."}
+# Job files are kept after completion (so a browser that lost its stream can
+# still fetch the result) and cleaned up after 24 hours.
 _JOBS_DIR = '/tmp/vortex_jobs'
 os.makedirs(_JOBS_DIR, exist_ok=True)
+_JOB_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+_finished_jobs = set()
 
 def _job_path(job_id):
+    if not _JOB_ID_RE.match(str(job_id or '')):
+        return os.path.join(_JOBS_DIR, '__invalid__.jsonl')
     return os.path.join(_JOBS_DIR, f'{job_id}.jsonl')
+
+def _job_cleanup_old(max_age=86400):
+    try:
+        now = time.time()
+        for name in os.listdir(_JOBS_DIR):
+            fp = os.path.join(_JOBS_DIR, name)
+            try:
+                if name.endswith('.jsonl') and now - os.path.getmtime(fp) > max_age:
+                    os.remove(fp)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 def _job_create(job_id, **_):
     """Create empty job file so SSE stream knows it exists."""
-    open(_job_path(job_id), 'w').close()
+    os.makedirs(_JOBS_DIR, exist_ok=True)
+    _job_cleanup_old()
+    # Record which panel worker runs the job, so a job orphaned by a panel
+    # restart is reported as such instead of leaving the browser waiting.
+    with open(_job_path(job_id), 'w') as f:
+        f.write(json.dumps({'meta': {'pid': os.getpid(), 'started': time.time()}}) + '\n')
 
 def _job_append_line(job_id, line):
     """Append one output line. Atomic for small writes."""
     try:
         with open(_job_path(job_id), 'a') as f:
             f.write(json.dumps({'line': line}) + '\n')
-    except Exception as e:
+    except Exception:
         pass  # non-fatal; best-effort streaming
 
-def _job_finish(job_id, success, installed, inst_ver=''):
-    """Append final status line to job file."""
+def _job_finish(job_id, success, installed, inst_ver='', message=''):
+    """Append the final status line. The human-readable result message is
+    written as a normal output line FIRST, so it is always streamed before
+    the browser sees "done" and closes the stream (previously the result
+    line was appended after "done" and never reached the browser)."""
+    if job_id in _finished_jobs:
+        return
+    _finished_jobs.add(job_id)
+    if message:
+        _job_append_line(job_id, f'[VortexPanel] {message}')
     try:
         with open(_job_path(job_id), 'a') as f:
             f.write(json.dumps({
-                'done': True, 'success': success,
-                'installed': installed, 'installedVer': inst_ver,
+                'done': True, 'success': bool(success),
+                'installed': bool(installed), 'installedVer': inst_ver or '',
+                'message': message or '',
             }) + '\n')
     except Exception:
         pass
@@ -123,6 +157,8 @@ def _job_get(job_id):
     success = False
     installed = True
     inst_ver = ''
+    message = ''
+    owner = 0
     try:
         with open(path) as f:
             for raw in f:
@@ -135,20 +171,378 @@ def _job_get(job_id):
                     continue
                 if 'line' in obj:
                     lines.append(obj['line'])
+                elif 'meta' in obj:
+                    owner = (obj.get('meta') or {}).get('pid') or 0
                 elif obj.get('done'):
                     done = True
                     success = obj.get('success', False)
                     installed = obj.get('installed', True)
                     inst_ver = obj.get('installedVer', '')
+                    message = obj.get('message', '')
     except Exception:
         pass
+    if not done and owner and not _job_owner_alive(owner):
+        done, success = True, False
+        message = ('The panel was restarted while this job was running, so its result is unknown. '
+                   'Package operations it started may still be finishing -- refresh the App Store in a minute to see the current state.')
     return {'lines': lines, 'done': done, 'success': success,
-            'installed': installed, 'installedVer': inst_ver}
+            'installed': installed, 'installedVer': inst_ver, 'message': message}
+
+def _job_owner_alive(pid):
+    """True if the panel worker that started the job is still running."""
+    try:
+        pid = int(pid)
+        if pid == os.getpid():
+            return True
+        with open(f'/proc/{pid}/cmdline', 'rb') as f:
+            cmd = f.read().replace(b'\0', b' ').decode(errors='replace')
+        return ('gunicorn' in cmd) or ('app.py' in cmd) or ('python' in cmd and 'flask' in cmd)
+    except Exception:
+        return False
 
 # Shim so existing _jobs[job_id] reads still work (used nowhere new, but safe)
 class _JobsShim:
     def get(self, job_id, default=None): return _job_get(job_id) or default
 _jobs = _JobsShim()
+
+
+# --- Package-manager wrappers ---------------------------------------------------
+# Every App Store job (install, uninstall, version switch) runs with these
+# wrappers first on PATH. They fix three real, confirmed failure modes:
+#   1. Another apt/dpkg process holding the lock (the panel's own Security
+#      Updates check, unattended-upgrades, a second install) made apt-get fail
+#      instantly. Reproduced exactly for the "Can't uninstall Caddy" report:
+#      apt-get remove failed in under a second and nothing was removed.
+#      The wrapper waits for the lock (up to 10 minutes), says who holds it,
+#      and retries, streaming output live the whole time.
+#   2. The App Store commands run apt-get with 2>/dev/null, so when apt failed
+#      the error text was thrown away and the job window stayed empty. If the
+#      caller discarded stderr, the wrapper sends it to stdout instead, so the
+#      real reason is always visible. (Deliberate redirects to a log file are
+#      left alone.)
+#   3. "apt-get remove a b c" aborts entirely when ANY listed package is
+#      unknown, so one stale name in an uninstall list removed nothing at all.
+#      For remove/purge the wrapper drops names that are not installed.
+# It also repairs the "dpkg was interrupted, you must manually run
+# dpkg --configure -a" state once, automatically, and retries.
+_PKG_WRAP_DIR = '/var/lib/vortexpanel/pkgwrap'
+
+_APT_WRAPPER = r"""#!/bin/bash
+# Generated by VortexPanel -- package-manager wrapper for App Store jobs.
+REAL="__REAL__"
+DPKG_QUERY="$(PATH=/usr/sbin:/usr/bin:/sbin:/bin command -v dpkg-query)"
+DPKG="$(PATH=/usr/sbin:/usr/bin:/sbin:/bin command -v dpkg)"
+if [ "$(readlink -f /proc/$$/fd/2 2>/dev/null)" = "/dev/null" ]; then exec 2>&1; fi
+args=("$@")
+sub=""; skip=0
+for a in "$@"; do
+  if [ $skip = 1 ]; then skip=0; continue; fi
+  case "$a" in -o|-c|-t|--option|--config-file|--target-release) skip=1;; -*) ;; *) sub="$a"; break;; esac
+done
+if [ "$sub" = "remove" ] || [ "$sub" = "purge" ]; then
+  new=(); skip=0; seen=0; kept=0; dropped=""
+  for a in "${args[@]}"; do
+    if [ $skip = 1 ]; then new+=("$a"); skip=0; continue; fi
+    case "$a" in -o|-c|-t|--option|--config-file|--target-release) new+=("$a"); skip=1; continue;; -*) new+=("$a"); continue;; esac
+    if [ $seen = 0 ]; then new+=("$a"); seen=1; continue; fi
+    if [ -n "$DPKG_QUERY" ] && "$DPKG_QUERY" -W -f='${db:Status-Abbrev}\n' "$a" 2>/dev/null | grep -q '^.[^n]'; then
+      new+=("$a"); kept=$((kept+1))
+    else
+      dropped="$dropped $a"
+    fi
+  done
+  if [ $kept = 0 ]; then
+    echo "[VortexPanel] apt-get $sub: none of the listed packages are installed --$dropped -- nothing to remove."
+    exit 0
+  fi
+  args=("${new[@]}")
+fi
+max=${VP_LOCK_WAIT:-600}; t0=$SECONDS; repaired=0
+# Once one apt-get in this job has given up on the lock, the rest of the job's
+# apt-get calls fail at once instead of each waiting the full time again.
+if [ -n "$VP_LOCK_FLAG" ] && [ -f "$VP_LOCK_FLAG" ]; then
+  echo "[VortexPanel] Skipped: apt-get $sub (the package manager is still locked)"
+  exit 100
+fi
+# Who holds the apt/dpkg locks right now (never ourselves or an ancestor --
+# a maintainer script of our own apt run must not wait on its parent).
+is_ancestor() { local p=$$; while [ -n "$p" ] && [ "$p" -gt 1 ]; do [ "$p" = "$1" ] && return 0; p=$(awk '/^PPid:/{print $2}' /proc/$p/status 2>/dev/null); done; return 1; }
+lock_holders() {
+  command -v lslocks >/dev/null 2>&1 || return 0
+  for p in $(lslocks -n -o PID,PATH 2>/dev/null | awk '$2 ~ /^\/var\/lib\/(dpkg\/lock(-frontend)?|apt\/lists\/lock|apt\/archives\/lock)$/ {print $1}' | sort -u); do
+    is_ancestor "$p" && continue
+    printf "%s (pid %s) " "$(ps -o comm= -p "$p" 2>/dev/null)" "$p"
+  done
+}
+last=-100
+while :; do
+  h=$(lock_holders)
+  [ -z "$h" ] && break
+  w=$((SECONDS-t0))
+  if [ $w -ge $max ]; then
+    echo "[VortexPanel] Gave up after ${w}s: the package manager is still locked by ${h}. Try again when it has finished."
+    [ -n "$VP_LOCK_FLAG" ] && : > "$VP_LOCK_FLAG"
+    exit 100
+  fi
+  if [ $((w-last)) -ge 15 ]; then
+    echo "[VortexPanel] The package manager is busy: ${h}-- waiting for it to finish... (${w}s of ${max}s)"
+    last=$w
+  fi
+  sleep 3
+done
+log=$(mktemp 2>/dev/null || echo /tmp/vp_apt_$$.log)
+while :; do
+  "$REAL" -o DPkg::Lock::Timeout=60 "${args[@]}" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  [ "$rc" -eq 0 ] && break
+  if grep -qE "Could not get lock|Unable to lock|Unable to acquire the dpkg frontend lock|is locked by another process|is held by process" "$log"; then
+    waited=$((SECONDS-t0))
+    holder=$(lock_holders)
+    if [ $waited -ge $max ]; then
+      echo "[VortexPanel] Gave up after ${waited}s: the package manager is still locked by: ${holder:-another process}. Try again when it has finished."
+      [ -n "$VP_LOCK_FLAG" ] && : > "$VP_LOCK_FLAG"
+      break
+    fi
+    echo "[VortexPanel] The package manager is busy (${holder:-another process}) -- waiting for it to finish... (${waited}s of ${max}s)"
+    sleep 10; continue
+  fi
+  if [ $repaired = 0 ] && grep -q "dpkg --configure -a" "$log" && [ -n "$DPKG" ]; then
+    echo "[VortexPanel] A previous package operation was interrupted -- running 'dpkg --configure -a' and retrying"
+    DEBIAN_FRONTEND=noninteractive "$DPKG" --configure -a --force-confdef --force-confold 2>&1
+    repaired=1; continue
+  fi
+  break
+done
+rm -f "$log"
+exit $rc
+"""
+
+_DPKG_WRAPPER = r"""#!/bin/bash
+# Generated by VortexPanel -- waits for the dpkg lock instead of failing.
+REAL="__REAL__"
+max=${VP_LOCK_WAIT:-600}; waited=0
+case " $* " in
+  *" -i "*|*" --install "*|*" --configure "*|*" -r "*|*" -P "*|*" --remove "*|*" --purge "*) ;;
+  *) exec "$REAL" "$@" ;;
+esac
+if [ "$(readlink -f /proc/$$/fd/2 2>/dev/null)" = "/dev/null" ]; then exec 2>&1; fi
+log=$(mktemp 2>/dev/null || echo /tmp/vp_dpkg_$$.log)
+while :; do
+  "$REAL" "$@" 2>&1 | tee "$log"
+  rc=${PIPESTATUS[0]}
+  [ "$rc" -eq 0 ] && break
+  if grep -qE "lock was locked by another process|Unable to acquire the dpkg|status database area is locked" "$log" && [ $waited -lt $max ]; then
+    echo "[VortexPanel] dpkg is busy with another process -- waiting... (${waited}s of ${max}s)"
+    sleep 10; waited=$((waited+10)); continue
+  fi
+  break
+done
+rm -f "$log"
+exit $rc
+"""
+
+_RPM_WRAPPER = r"""#!/bin/bash
+# Generated by VortexPanel -- shows dnf/yum errors even when the caller
+# discarded stderr (dnf/yum already wait for their own lock).
+REAL="__REAL__"
+if [ "$(readlink -f /proc/$$/fd/2 2>/dev/null)" = "/dev/null" ]; then exec 2>&1; fi
+exec "$REAL" "$@"
+"""
+
+def _ensure_pkg_wrappers():
+    """(Re)write the wrapper scripts for whichever package tools exist on this
+    host. Returns the wrapper directory, or '' if it could not be created
+    (jobs then run without wrappers rather than not at all)."""
+    try:
+        os.makedirs(_PKG_WRAP_DIR, exist_ok=True)
+        clean_path = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+        for tool, body in (('apt-get', _APT_WRAPPER), ('dpkg', _DPKG_WRAPPER),
+                           ('dnf', _RPM_WRAPPER), ('yum', _RPM_WRAPPER)):
+            dest = os.path.join(_PKG_WRAP_DIR, tool)
+            real = shutil.which(tool, path=clean_path)
+            if not real or not shutil.which('bash', path=clean_path):
+                if os.path.exists(dest):
+                    os.remove(dest)
+                continue
+            content = body.replace('__REAL__', real)
+            try:
+                with open(dest) as f:
+                    if f.read() == content and os.access(dest, os.X_OK):
+                        continue
+            except Exception:
+                pass
+            tmp = dest + '.tmp'
+            with open(tmp, 'w') as f:
+                f.write(content)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, dest)
+        return _PKG_WRAP_DIR
+    except Exception:
+        return ''
+
+def _job_env(job_id=''):
+    env = os.environ.copy()
+    if job_id:
+        env['VP_LOCK_FLAG'] = _job_path(job_id) + '.lockfail'
+    env['DEBIAN_FRONTEND'] = 'noninteractive'
+    env['APT_LISTCHANGES_FRONTEND'] = 'none'
+    env['UCF_FORCE_CONFFOLD'] = '1'
+    env['NEEDRESTART_MODE'] = 'a'   # Ubuntu 22.04+: never block on the needrestart prompt
+    env.setdefault('PATH', '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')
+    wrap = _ensure_pkg_wrappers()
+    if wrap:
+        env['PATH'] = wrap + ':' + env['PATH']
+    return env
+
+_DPKG_PROGRESS_RE = re.compile(r'^\(Reading database \.\.\.\s*(\d+%)?\s*$')
+
+def _run_streaming(job_id, cmd, max_seconds, what='Operation'):
+    """Run a shell command, streaming every output line into the job.
+    A watchdog kills the whole process group after max_seconds even if the
+    command has gone silent (the old per-line check only fired when a new
+    line arrived, so a hung download never timed out). Returns
+    (returncode, timed_out)."""
+    import signal
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, text=True, bufsize=1, env=_job_env(job_id),
+                            errors='replace', start_new_session=True)
+    timed_out = {'v': False}
+    def _kill():
+        timed_out['v'] = True
+        _job_append_line(job_id, f'[VortexPanel] {what} exceeded {max_seconds // 60} minutes -- stopping it.')
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(proc.pid, sig)
+            except Exception:
+                pass
+            time.sleep(5)
+    timer = threading.Timer(max_seconds, _kill)
+    timer.daemon = True
+    timer.start()
+    try:
+        for line in proc.stdout:
+            line = line.rstrip('\r\n')
+            # dpkg's "(Reading database ... 5%" progress arrives as ~20
+            # separate lines once \r is split; keep only the final count.
+            if _DPKG_PROGRESS_RE.match(line):
+                continue
+            _job_append_line(job_id, line)
+        proc.wait()
+    finally:
+        timer.cancel()
+        try:
+            os.remove(_job_path(job_id) + '.lockfail')
+        except Exception:
+            pass
+    return proc.returncode, timed_out['v']
+
+def _start_job_thread(job_id, fn, installed_on_error):
+    """Run fn in a background thread. Whatever happens inside it (including
+    an unexpected Python exception), the job ALWAYS gets a final "done" line
+    -- previously an exception (e.g. TimeoutExpired from systemctl stop) killed
+    the thread silently and left the browser waiting forever."""
+    def runner():
+        try:
+            fn()
+        except Exception as e:
+            _job_append_line(job_id, f'[VortexPanel] Internal error: {type(e).__name__}: {e}')
+            _job_finish(job_id, success=False, installed=installed_on_error,
+                        message='The operation stopped because of an internal error (shown above).')
+        finally:
+            if job_id not in _finished_jobs:
+                _job_finish(job_id, success=False, installed=installed_on_error,
+                            message='The operation ended without reporting a result.')
+            try:
+                panel_cache.invalidate('modules_list')
+            except Exception:
+                pass
+    threading.Thread(target=runner, daemon=True).start()
+
+def _pkg_lock_holders():
+    """Processes (other than this panel) holding the apt/dpkg locks now."""
+    out = []
+    try:
+        r = subprocess.run(['lslocks', '-n', '-o', 'PID,PATH'], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return out
+    paths = ('/var/lib/dpkg/lock-frontend', '/var/lib/dpkg/lock', '/var/lib/apt/lists/lock', '/var/lib/apt/archives/lock')
+    seen = set()
+    for ln in r.stdout.splitlines():
+        parts = ln.split(None, 1)
+        if len(parts) == 2 and parts[1].strip() in paths and parts[0] not in seen:
+            seen.add(parts[0])
+            try:
+                with open(f'/proc/{parts[0]}/comm') as f:
+                    name = f.read().strip()
+            except Exception:
+                name = '?'
+            out.append(f'{name} (pid {parts[0]})')
+    return out
+
+def _wait_pkg_lock(job_id, max_seconds=600):
+    """Wait until no other process holds the package-manager lock. Returns
+    True when free. Used BEFORE an uninstall touches anything, so a busy
+    package manager never leaves an app stopped but still installed."""
+    if not shutil.which('apt-get') and not os.path.exists('/var/lib/dpkg'):
+        return True
+    start = time.time(); last = -100
+    while True:
+        h = _pkg_lock_holders()
+        if not h:
+            return True
+        w = int(time.time() - start)
+        if w >= max_seconds:
+            return False
+        if w - last >= 15:
+            _job_append_line(job_id, f'[VortexPanel] The package manager is busy: {", ".join(h)} -- waiting for it to finish before changing anything... ({w}s of {max_seconds}s)')
+            last = w
+        time.sleep(3)
+
+def _svc_active(svc):
+    if not svc:
+        return False
+    try:
+        return subprocess.run(['systemctl', 'is-active', '--quiet', svc], timeout=15).returncode == 0
+    except Exception:
+        return False
+
+def _svc_stop(job_id, svc):
+    """Stop a service without ever raising. Falls back to systemctl kill if
+    a normal stop hangs (a stop that hung past 15s used to raise
+    TimeoutExpired and kill the whole uninstall job)."""
+    try:
+        r = subprocess.run(['systemctl', 'stop', svc], capture_output=True, text=True, timeout=90)
+        if r.returncode != 0 and r.stderr.strip() and 'not loaded' not in r.stderr:
+            _job_append_line(job_id, r.stderr.strip())
+    except subprocess.TimeoutExpired:
+        _job_append_line(job_id, f'[VortexPanel] {svc} did not stop within 90s -- forcing it to stop')
+        try:
+            subprocess.run(['systemctl', 'kill', '--signal=SIGKILL', svc], timeout=30)
+        except Exception:
+            pass
+    except Exception as e:
+        _job_append_line(job_id, f'[VortexPanel] Could not stop {svc}: {e}')
+
+def _svc_start(svc):
+    try:
+        subprocess.run(['systemctl', 'enable', svc], capture_output=True, timeout=60)
+        subprocess.run(['systemctl', 'start', svc], capture_output=True, timeout=120)
+    except Exception:
+        pass
+    return _svc_active(svc)
+
+def _system_python_ver():
+    """major.minor of the OS's own python3 (never removable from the panel)."""
+    for exe in ('/usr/bin/python3', '/usr/libexec/platform-python'):
+        if os.path.exists(exe):
+            try:
+                out = subprocess.run([exe, '-c', 'import sys;print("%d.%d" % sys.version_info[:2])'],
+                                     capture_output=True, text=True, timeout=10).stdout.strip()
+                if out:
+                    return out
+            except Exception:
+                pass
+    return ''
 
 def sh(c, t=10):
     try:
@@ -227,10 +621,10 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
   apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && \
   apt-get install -y nginx && systemctl enable --now nginx; \
 elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then \
-  if [ -n "$(rpm -E %fedora 2>/dev/null)" ]; then \
+  if [ -n "$(rpm -E %{?fedora} 2>/dev/null)" ]; then \
     (dnf install -y nginx 2>/dev/null || yum install -y nginx) && systemctl enable --now nginx; \
   else \
-  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && \
+  RHEL_VER=$(r=$(rpm -E %{?rhel} 2>/dev/null); echo ${r:-9}) && \
   REPO_PATH="rhel/$RHEL_VER" && \
   [ "{ver}" = "mainline" ] && REPO_PATH="mainline/rhel/$RHEL_VER" || true && \
   printf "[nginx]\nname=nginx repo\nbaseurl=http://nginx.org/packages/%s/\\$basearch/\ngpgcheck=1\nenabled=1\ngpgkey=https://nginx.org/keys/nginx_signing.key\nmodule_hotfixes=true\n" "$REPO_PATH" > /etc/yum.repos.d/nginx.repo && \
@@ -254,6 +648,7 @@ fi''',
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  export DEBIAN_FRONTEND=noninteractive; '
+            '  (command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common); '
             '  add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
             '  if ! apt-get update -qq 2>/tmp/vp_apache_repo_err.log; then '
             '    echo "[VortexPanel] ondrej/apache2 has no release for {codename} yet -- using stock apache2"; '
@@ -301,7 +696,7 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
     apt-get install -y $LSPHP_VER-$ext 2>/dev/null || true; \
   done; \
 elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky|cloudlinux"; then \
-  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && \
+  RHEL_VER=$(r=$(rpm -E %{?rhel} 2>/dev/null); echo ${r:-9}) && \
   (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && \
   (dnf install -y https://rpms.remirepo.net/enterprise/remi-release-${RHEL_VER}.rpm 2>/dev/null || true) && \
   (rpm -Uvh --force http://rpms.litespeedtech.com/centos/litespeed-repo-1.3-1.el${RHEL_VER}.noarch.rpm 2>/dev/null || true) && \
@@ -615,8 +1010,8 @@ mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2
                 # every EL major version and Fedora release has its own distinct
                 # filename and build suffix, which the previous single hardcoded
                 # "el7-11" filename never accounted for.
-            '    EL_MAJOR=$(rpm -E %{rhel} 2>/dev/null); '
-            '    FEDORA_MAJOR=$(rpm -E %{fedora} 2>/dev/null); '
+            '    EL_MAJOR=$(rpm -E %{?rhel} 2>/dev/null); '
+            '    FEDORA_MAJOR=$(rpm -E %{?fedora} 2>/dev/null); '
             '    MYSQL_YUM_CONF=""; '
             '    if [ -n "$FEDORA_MAJOR" ] && [ "$FEDORA_MAJOR" != "%{fedora}" ]; then '
             '      case "$FEDORA_MAJOR" in '
@@ -690,7 +1085,7 @@ for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi
 if command -v apt-get >/dev/null 2>&1; then apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server; else (dnf install -y MariaDB-server 2>/dev/null || yum install -y MariaDB-server 2>/dev/null || dnf install -y mariadb-server 2>/dev/null || yum install -y mariadb-server); fi && \
 systemctl enable --now mariadb''',
         'install':'DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server && systemctl enable mariadb && systemctl start mariadb',
-        'uninstall':'systemctl stop mariadb 2>/dev/null; dnf remove -y MariaDB-server MariaDB-client mariadb-server mariadb 2>/dev/null; yum remove -y MariaDB-server mariadb-server 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common mysql-common && apt-get autoremove -y && rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
+        'uninstall':'systemctl stop mariadb 2>/dev/null; dnf remove -y MariaDB-server MariaDB-client mariadb-server mariadb 2>/dev/null; yum remove -y MariaDB-server mariadb-server 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold mariadb-server mariadb-client mariadb-common mysql-common 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -rf /etc/mysql /var/lib/mysql /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp /usr/share/keyrings/mariadb-keyring*.gpg 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'mariadb', 'manage':True,
     },
     {
@@ -729,7 +1124,7 @@ systemctl enable --now mariadb''',
             '  systemctl enable mongod && systemctl start mongod; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
                 # Official MongoDB-documented RHEL .repo format (repo.mongodb.org/yum/redhat)
-            '  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && '
+            '  RHEL_VER=$(r=$(rpm -E %{?rhel} 2>/dev/null); echo ${r:-9}) && '
             '  printf "[mongodb-org-{ver}]\\nname=MongoDB Repository\\nbaseurl=https://repo.mongodb.org/yum/redhat/%s/mongodb-org/{ver}/\\$basearch/\\ngpgcheck=1\\nenabled=1\\ngpgkey=https://www.mongodb.org/static/pgp/server-{ver}.asc\\n" "$RHEL_VER" > /etc/yum.repos.d/mongodb-org-{ver}.repo && '
             '  (dnf install -y mongodb-org 2>/dev/null || yum install -y mongodb-org) && '
             '  systemctl enable mongod && systemctl start mongod; '
@@ -780,7 +1175,7 @@ systemctl enable --now mariadb''',
                 # RHEL/AlmaLinux/Rocky ship an OLDER "postgresql" AppStream module by
                 # default which conflicts with PGDG's own versioned packages, so it
                 # must be disabled first (this is PostgreSQL's own documented step).
-            '  RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9) && '
+            '  RHEL_VER=$(r=$(rpm -E %{?rhel} 2>/dev/null); echo ${r:-9}) && '
             '  ARCH=$(uname -m) && '
             '  (dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null || '
             '   yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-${RHEL_VER}-${ARCH}/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null) && '
@@ -799,7 +1194,8 @@ systemctl enable --now mariadb''',
     {
         'id':'php', 'name':'PHP', 'icon':'/static/icons/php.svg', 'category':'PHP',
         'desc':'PHP-FPM — multiple versions supported side by side',
-        'check':'which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 2>/dev/null | head -1',
+        'check':'which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 php7.4 2>/dev/null | head -1',
+        'verify_tpl':'command -v php{ver} 2>/dev/null || (php -r "echo PHP_MAJOR_VERSION.chr(46).PHP_MINOR_VERSION;" 2>/dev/null | grep -x "{ver}")',
         'versions':[
             {'label':'8.5.11 (Latest - security release)', 'value':'8.5'},
             {'label':'8.4.26 (Active support)', 'value':'8.4'},
@@ -822,7 +1218,7 @@ grep -q \'^listen.owner\' $POOL && sed -i "s|^listen.owner.*|listen.owner = $WEB
 grep -q \'^listen.group\' $POOL && sed -i "s|^listen.group.*|listen.group = $WEB_USER|" $POOL || echo "listen.group = $WEB_USER" >> $POOL && \
 systemctl restart php{ver}-fpm; \
 else \
-RHEL_VER=$(rpm -E %rhel 2>/dev/null || echo 9); VNODOT=$(echo {ver} | tr -d .); \
+RHEL_VER=$(r=$(rpm -E %{?rhel} 2>/dev/null); echo ${r:-9}); VNODOT=$(echo {ver} | tr -d .); \
 (dnf install -y https://rpms.remirepo.net/enterprise/remi-release-${RHEL_VER}.rpm 2>/dev/null || yum install -y https://rpms.remirepo.net/enterprise/remi-release-${RHEL_VER}.rpm 2>/dev/null || true) && \
 (command -v dnf >/dev/null 2>&1 && dnf install -y dnf-utils 2>/dev/null; true) && \
 (dnf install -y php${VNODOT} php${VNODOT}-php-fpm php${VNODOT}-php-mysqlnd php${VNODOT}-php-xml php${VNODOT}-php-gd php${VNODOT}-php-mbstring php${VNODOT}-php-zip php${VNODOT}-php-bcmath php${VNODOT}-php-intl php${VNODOT}-php-soap php${VNODOT}-php-cli 2>/dev/null || \
@@ -838,11 +1234,11 @@ apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=
 php{ver}-xml php{ver}-curl php{ver}-gd php{ver}-mbstring php{ver}-zip php{ver}-bcmath \
 php{ver}-intl php{ver}-soap php{ver}-cli php{ver}-readline php{ver}-* 2>/dev/null || true && \
 apt-get autoremove -y 2>/dev/null || true''',
-        'uninstall':'''for ver in 7.4 8.1 8.2 8.3 8.4; do
+        'uninstall':'''for ver in 7.4 8.0 8.1 8.2 8.3 8.4 8.5; do
   systemctl stop php$ver-fpm 2>/dev/null || true
   apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold php$ver php$ver-* 2>/dev/null || true
 done
-for v in 74 81 82 83 84 85; do
+for v in 74 80 81 82 83 84 85; do
   systemctl stop php$v-php-fpm 2>/dev/null || true
   dnf remove -y "php${v}*" 2>/dev/null || yum remove -y "php${v}*" 2>/dev/null || true
 done
@@ -1117,7 +1513,14 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; else curl -fsSL https:
     {
         'id':'python', 'name':'Python Manager', 'icon':'/static/icons/python.svg', 'category':'Runtime',
         'desc':'Python 3 runtime + pip + venv',
-        'check':'which python3 2>/dev/null',
+        # "Installed" = this panel set up Python tooling: either an extra
+        # Python version (not the OS's own), or pip + venv for the OS Python.
+        # The old check (which python3) was true on every Linux server, so
+        # Python always showed "Installed" and every uninstall "failed".
+        'check':('SYS=$(/usr/bin/python3 -c "import sys;print(\'%d.%d\' % sys.version_info[:2])" 2>/dev/null); '
+                 'for v in 3.10 3.11 3.12 3.13 3.14; do [ "$v" != "$SYS" ] && command -v python$v >/dev/null 2>&1 && echo found && exit 0; done; '
+                 'python3 -m pip --version >/dev/null 2>&1 && python3 -c "import ensurepip" >/dev/null 2>&1 && echo found'),
+        'verify_tpl':'command -v python{ver} 2>/dev/null',
         'versions':[
             {'label':'3.14 (Latest)', 'value':'3.14'},
             {'label':'3.13 (Stable)', 'value':'3.13'},
@@ -1125,29 +1528,61 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; else curl -fsSL https:
             {'label':'3.11 (Security)', 'value':'3.11'},
             {'label':'3.10 (Security - EOL Oct 2026)', 'value':'3.10'},
         ],
-        'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
-apt-get install -y software-properties-common && \
-add-apt-repository -y ppa:deadsnakes/ppa && \
-if ! apt-get update -q 2>/tmp/vp_python_repo_err.log; then \
-  echo "[VortexPanel] deadsnakes/ppa has no release for {codename} yet -- this specific Python version cannot be installed via PPA on this OS release. Removing the broken repo entry so it does not block other installs."; \
-  add-apt-repository --remove -y ppa:deadsnakes/ppa 2>/dev/null; \
-  rm -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.list /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.sources 2>/dev/null; \
-  apt-get update -q; \
-  exit 1; \
-fi && \
-apt-get install -y python{ver} python{ver}-venv python{ver}-dev && \
-curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true; \
-else \
-(dnf install -y python{ver} python{ver}-devel python{ver}-pip 2>/dev/null || yum install -y python{ver} python{ver}-devel 2>/dev/null) && \
-curl -sS https://bootstrap.pypa.io/get-pip.py | python{ver} 2>/dev/null || true; \
-fi''',
+        'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian)
+SYS_PY=$(/usr/bin/python3 -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
+if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then
+  export DEBIAN_FRONTEND=noninteractive
+  if [ "{ver}" = "$SYS_PY" ]; then
+    echo "[VortexPanel] Python {ver} is this server's own Python -- installing pip, venv and development headers for it"
+    apt-get install -y python3-pip python3-venv python3-dev python{ver}-venv python{ver}-dev || exit 1
+  else
+    if ! apt-cache policy python{ver} 2>/dev/null | grep -q "Candidate: [0-9]"; then
+      if grep -qi ubuntu /etc/os-release; then
+        apt-get install -y software-properties-common || exit 1
+        if ! add-apt-repository -y ppa:deadsnakes/ppa; then
+          echo "[VortexPanel] Could not add the deadsnakes PPA (reason above) -- Python {ver} cannot be installed right now."
+          exit 1
+        fi
+        if ! apt-get update -q 2>/tmp/vp_python_repo_err.log; then
+          cat /tmp/vp_python_repo_err.log
+          echo "[VortexPanel] deadsnakes/ppa has no release for {codename} yet -- removing the broken repo entry so it does not block other installs."
+          add-apt-repository --remove -y ppa:deadsnakes/ppa 2>/dev/null
+          rm -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.list /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.sources 2>/dev/null
+          apt-get update -q
+          exit 1
+        fi
+      else
+        echo "[VortexPanel] Python {ver} is not packaged for this Debian release (the deadsnakes PPA is Ubuntu-only)."
+        exit 1
+      fi
+    fi
+    apt-get install -y python{ver} python{ver}-venv python{ver}-dev || exit 1
+  fi
+else
+  (dnf install -y python{ver} python{ver}-devel python{ver}-pip 2>/dev/null || dnf install -y python{ver} python{ver}-devel || yum install -y python{ver} python{ver}-devel) || exit 1
+fi
+command -v python{ver} >/dev/null 2>&1 || { echo "[VortexPanel] python{ver} was not found after installation."; exit 1; }
+if ! python{ver} -m pip --version >/dev/null 2>&1; then
+  python{ver} -m ensurepip --upgrade >/dev/null 2>&1 || \\
+  (curl -fsSL https://bootstrap.pypa.io/get-pip.py | python{ver} - --break-system-packages >/dev/null 2>&1) || \\
+  echo "[VortexPanel] Note: pip is not set up globally for python{ver} (normal on Debian/Ubuntu). Create a virtual environment instead: python{ver} -m venv /path/to/env -- it includes pip."
+fi
+echo "[VortexPanel] $(python{ver} --version 2>&1) is ready."''',
         'install':'apt-get install -y python3 python3-pip python3-venv python3-dev',
-        'uninstall_tpl':'''apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python{ver} python{ver}-venv python{ver}-dev \
-python{ver}-distutils python{ver}-lib2to3 2>/dev/null || true && \
-apt-get autoremove -y 2>/dev/null || true && \
+        'uninstall_tpl':'''SYS_PY=$(/usr/bin/python3 -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
+if [ "{ver}" = "$SYS_PY" ]; then echo "[VortexPanel] Refusing to remove Python {ver}: it is the operating system's own Python."; exit 1; fi
+if command -v dpkg >/dev/null 2>&1; then
+  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python{ver} python{ver}-venv python{ver}-dev python{ver}-distutils python{ver}-lib2to3 python{ver}-tk python{ver}-gdbm python{ver}-full libpython{ver}-dev
+  apt-get autoremove -y
+else
+  dnf remove -y python{ver} python{ver}-devel python{ver}-pip 2>/dev/null || yum remove -y python{ver} python{ver}-devel
+fi
 update-alternatives --remove python /usr/bin/python{ver} 2>/dev/null || true''',
-        'uninstall':'''for ver in 3.10 3.11 3.12 3.13; do
-  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python$ver python$ver-* 2>/dev/null || true
+        # Remove every EXTRA Python version; the OS's own one is always skipped.
+        'uninstall':'''SYS_PY=$(/usr/bin/python3 -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
+for ver in 3.10 3.11 3.12 3.13 3.14; do
+  [ "$ver" = "$SYS_PY" ] && continue
+  apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold python$ver python$ver-venv python$ver-dev python$ver-distutils python$ver-lib2to3 2>/dev/null || true
   dnf remove -y python$ver 2>/dev/null || yum remove -y python$ver 2>/dev/null || true
 done
 apt-get autoremove -y 2>/dev/null || true''',
@@ -1250,12 +1685,26 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            '  apt-get install -y memcached libmemcached-tools && '
-            '  systemctl enable memcached && systemctl start memcached; '
+            '  apt-get install -y memcached libmemcached-tools || exit 1; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
-            '  (dnf install -y memcached libmemcached 2>/dev/null || yum install -y memcached libmemcached 2>/dev/null) && '
-            '  systemctl enable memcached && systemctl start memcached; '
-            'fi'
+            '  (dnf install -y memcached libmemcached 2>/dev/null || yum install -y memcached libmemcached) || exit 1; '
+            'fi; '
+            # The packaged default listens on 127.0.0.1 AND ::1. On a server
+            # with IPv6 disabled (common on VPS images) memcached then exits
+            # with "Address family not supported by protocol" and crash-loops
+            # -- confirmed in testing. Listen on IPv4 loopback only there.
+            'if ! grep -q 00000000000000000000000000000001 /proc/net/if_inet6 2>/dev/null; then '
+            '  if [ -f /etc/memcached.conf ] && grep -q "^-l .*::1" /etc/memcached.conf; then '
+            '    sed -i "s/^-l .*/-l 127.0.0.1/" /etc/memcached.conf; '
+            '    echo "[VortexPanel] IPv6 is disabled on this server -- memcached set to listen on 127.0.0.1 only"; '
+            '  fi; '
+            '  if [ -f /etc/sysconfig/memcached ] && grep -q "::1" /etc/sysconfig/memcached; then '
+            '    sed -i "s/-l 127.0.0.1,::1/-l 127.0.0.1/" /etc/sysconfig/memcached; '
+            '    echo "[VortexPanel] IPv6 is disabled on this server -- memcached set to listen on 127.0.0.1 only"; '
+            '  fi; '
+            'fi; '
+            'systemctl reset-failed memcached 2>/dev/null; '
+            'systemctl enable memcached && systemctl restart memcached'
         ),
         'install':'apt-get install -y memcached libmemcached-tools && systemctl enable memcached && systemctl start memcached',
         'uninstall':'systemctl stop memcached 2>/dev/null; systemctl disable memcached 2>/dev/null; apt-get remove -y --purge memcached libmemcached-tools 2>/dev/null; dnf remove -y memcached libmemcached 2>/dev/null; yum remove -y memcached libmemcached 2>/dev/null; apt-get autoremove -y 2>/dev/null; rm -f /etc/memcached.conf /etc/sysconfig/memcached',
@@ -1285,39 +1734,79 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
             {'label':'1.7.4 (Latest)', 'value':'1.7.4'},
             {'label':'1.6.19 (LTS)', 'value':'1.6.19'},
         ],
-        'install_tpl':(
-            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
-            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            '  apt-get install -y wget php php-mysql php-curl php-json php-mbstring '
-            '  php-intl php-imagick php-xml php-zip php-gd; '
-            '  WEB_USER=www-data; '
-            'else '
-            # Confirmed via multiple current sources (including the widely-used
-            # geerlingguy.php-mysql Ansible role's own distro-specific default):
-            # RHEL-family uses php-mysqlnd, not php-mysql - that package does
-            # not exist there at all, and dnf fails the ENTIRE install command
-            # if any one listed package is unknown, unlike a partial failure.
-            '  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true); '
-            '  (dnf install -y wget php php-mysqlnd php-curl php-json php-mbstring '
-            '  php-intl php-imagick php-xml php-zip php-gd 2>/dev/null || '
-            '  yum install -y wget php php-mysqlnd php-curl php-json php-mbstring '
-            '  php-intl php-imagick php-xml php-zip php-gd 2>/dev/null); '
-            # www-data does not exist as a user on RHEL-family at all - the
-            # actual web server user there is apache (or nginx, if that's
-            # what's installed) - confirmed the same way get_webserver_user()
-            # already resolves this elsewhere in this codebase.
-            '  WEB_USER=apache; '
-            '  id nginx >/dev/null 2>&1 && systemctl is-active nginx >/dev/null 2>&1 && WEB_USER=nginx; '
-            'fi && '
-            'mkdir -p /var/www/roundcube && '
-            'wget -q https://github.com/roundcube/roundcubemail/releases/download/{ver}/roundcubemail-{ver}-complete.tar.gz '
-            '  -O /tmp/roundcube.tar.gz && '
-            'tar -xzf /tmp/roundcube.tar.gz -C /var/www/roundcube --strip-components=1 && '
-            'cp /var/www/roundcube/config/config.inc.php.sample /var/www/roundcube/config/config.inc.php && '
-            'chown -R $WEB_USER:$WEB_USER /var/www/roundcube/'
-        ),
+        'install_tpl':r'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian)
+if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then
+  export DEBIAN_FRONTEND=noninteractive
+  # Use PHP-FPM, never the "php" metapackage: on Debian/Ubuntu "php" pulls in
+  # libapache2-mod-php AND apache2, which then fights nginx for port 80.
+  # Reuse the PHP-FPM version already on this server when there is one.
+  PV=""
+  for v in 8.4 8.3 8.5 8.2 8.1; do
+    if [ -S /run/php/php$v-fpm.sock ] || command -v php-fpm$v >/dev/null 2>&1; then PV=$v; break; fi
+  done
+  if [ -n "$PV" ]; then
+    PKGS="php$PV-fpm php$PV-mysql php$PV-curl php$PV-mbstring php$PV-intl php$PV-xml php$PV-zip php$PV-gd php$PV-imagick"
+  else
+    PKGS="php-fpm php-mysql php-curl php-mbstring php-intl php-xml php-zip php-gd php-imagick"
+  fi
+  apt-get install -y wget $PKGS || exit 1
+  WEB_USER=www-data
+else
+  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true)
+  (dnf install -y wget php-fpm php-mysqlnd php-curl php-mbstring php-intl php-xml php-zip php-gd php-pecl-imagick 2>/dev/null || \
+   dnf install -y wget php-fpm php-mysqlnd php-mbstring php-intl php-xml php-gd || \
+   yum install -y wget php-fpm php-mysqlnd php-mbstring php-intl php-xml php-gd) || exit 1
+  systemctl enable --now php-fpm 2>/dev/null
+  WEB_USER=apache
+  id nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx && WEB_USER=nginx
+fi
+echo "[VortexPanel] Downloading Roundcube {ver}..."
+wget -q --timeout=60 https://github.com/roundcube/roundcubemail/releases/download/{ver}/roundcubemail-{ver}-complete.tar.gz -O /tmp/roundcube.tar.gz \
+  || { echo "[VortexPanel] Download of Roundcube {ver} from github.com failed."; rm -f /tmp/roundcube.tar.gz; exit 1; }
+mkdir -p /var/www/roundcube
+tar -xzf /tmp/roundcube.tar.gz -C /var/www/roundcube --strip-components=1 || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /tmp/roundcube.tar.gz; exit 1; }
+rm -f /tmp/roundcube.tar.gz
+[ -f /var/www/roundcube/config/config.inc.php ] || cp /var/www/roundcube/config/config.inc.php.sample /var/www/roundcube/config/config.inc.php
+chown -R $WEB_USER:$WEB_USER /var/www/roundcube/
+SOCK=$(ls /run/php/php[0-9]*-fpm.sock 2>/dev/null | sort -V | tail -1)
+[ -z "$SOCK" ] && [ -S /run/php/php-fpm.sock ] && SOCK=/run/php/php-fpm.sock
+[ -z "$SOCK" ] && [ -S /run/php-fpm/www.sock ] && SOCK=/run/php-fpm/www.sock
+if systemctl is-active --quiet nginx && [ -n "$SOCK" ]; then
+  mkdir -p /etc/nginx/conf.d
+  cat > /etc/nginx/conf.d/roundcube.conf <<RCEOF
+server {
+    listen 8083;
+    server_name _;
+    root /var/www/roundcube;
+    index index.php;
+    client_max_body_size 25m;
+    location ~ ^/(config|temp|logs|bin|SQL|installer)/ { deny all; }
+    location ~ /\. { deny all; }
+    location ~ \.php\$ {
+        include fastcgi_params;
+        fastcgi_pass unix:$SOCK;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+RCEOF
+  if nginx -t 2>&1; then
+    systemctl reload nginx
+    (command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active" && ufw allow 8083/tcp comment "Roundcube") >/dev/null 2>&1
+    (command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port=8083/tcp && firewall-cmd --reload) >/dev/null 2>&1
+    echo "[VortexPanel] Roundcube is served by nginx at http://YOUR-SERVER-IP:8083 -- finish the setup in Settings (IMAP/SMTP server, database)."
+  else
+    rm -f /etc/nginx/conf.d/roundcube.conf
+    echo "[VortexPanel] nginx rejected the Roundcube site config (shown above) -- removed it again, nginx is unchanged."
+  fi
+else
+  echo "[VortexPanel] Roundcube files are in /var/www/roundcube. nginx with PHP-FPM was not found running, so no web server site was created -- point your web server at /var/www/roundcube."
+fi''',
         'install':'',
-        'uninstall':'rm -rf /var/www/roundcube',
+        'uninstall':('rm -rf /var/www/roundcube; '
+                     'if [ -f /etc/nginx/conf.d/roundcube.conf ]; then rm -f /etc/nginx/conf.d/roundcube.conf; nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null; fi; '
+                     '(command -v ufw >/dev/null 2>&1 && ufw delete allow 8083/tcp) >/dev/null 2>&1; '
+                     '(command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --remove-port=8083/tcp && firewall-cmd --reload) >/dev/null 2>&1; true'),
         'manage':True,
     },
     # --- WAF / Security ---------------------------------------------------------
@@ -1513,8 +2002,10 @@ echo "[VortexPanel] \u2713 caddy-waf installed — Caddy rebuilt, validated, and
             '  cp "$LATEST_BACKUP" "$CADDY_BIN" && systemctl restart caddy 2>/dev/null && '
             '  echo "[VortexPanel] Restored the pre-WAF Caddy binary from backup."; '
             'else '
-            '  echo "[VortexPanel] No pre-WAF backup found — reinstall Caddy from the App Store to get a clean binary without the WAF module."; '
-            'fi'
+            '  echo "[VortexPanel] No pre-WAF backup binary found. Caddy keeps running with its current binary; to get a clean binary without the WAF module, uninstall and reinstall Caddy from the App Store."; '
+            'fi; '
+            'systemctl is-active --quiet caddy 2>/dev/null || systemctl start caddy 2>/dev/null; '
+            'if [ -z "$LATEST_BACKUP" ]; then exit 1; fi'
         ),
         'manage':True, 'service':'caddy',
     },
@@ -1528,6 +2019,10 @@ echo "[VortexPanel] \u2713 caddy-waf installed — Caddy rebuilt, validated, and
             {'label':'IP Hash (Sticky)',       'value':'iphash'},
         ],
         'install_tpl':'''# Create Nginx load balancer config with {ver} method
+if ! command -v nginx >/dev/null 2>&1; then
+  echo "[VortexPanel] nginx is not installed. Install Nginx from the App Store first."
+  exit 1
+fi
 mkdir -p /etc/nginx/conf.d/
 cat > /etc/nginx/conf.d/loadbalancer.conf << 'LBEOF'
 # VortexPanel Load Balancer Configuration
@@ -1573,7 +2068,13 @@ server {{
     }}
 }}
 LBEOF
-nginx -t && systemctl reload nginx''',
+if nginx -t; then
+  systemctl reload nginx
+else
+  rm -f /etc/nginx/conf.d/loadbalancer.conf
+  echo "[VortexPanel] nginx rejected the load balancer config (shown above) -- removed it again, nginx is unchanged."
+  exit 1
+fi''',
         'install':'',
         'uninstall':'rm -f /etc/nginx/conf.d/loadbalancer.conf && systemctl reload nginx 2>/dev/null || true',
         'manage':False,
@@ -1825,49 +2326,6 @@ def install_module(mod_id):
     elif mod_id == 'postgresql': cmd = postgresql_install_script(ver or '17')
     elif mod_id == 'redis': cmd = redis_install_script()
     elif mod_id == 'mongodb': cmd = mongodb_install_script(ver or '8.0')
-    elif mod_id == 'roundcube':
-        rc_dir = '/var/www/roundcube'
-        rc_conf = rc_dir + '/config/config.inc.php'
-        nginx_conf = '/etc/nginx/conf.d/roundcube.conf'
-        # Read config values
-        def rc_get(key):
-            cmd = "grep -oP \"'" + key + "'\\] = '\\K[^']+\" " + rc_conf + " 2>/dev/null | head -1"
-            return sh(cmd).strip().lstrip("'") or ''
-        imap_host  = rc_get('imap_host') or 'localhost'
-        smtp_host  = rc_get('smtp_host') or 'localhost'
-        smtp_port  = rc_get('smtp_port') or '587'
-        skin       = rc_get('skin') or 'elastic'
-        db_dsn     = rc_get('db_dsnw') or ''
-        # Nginx port
-        port = '8083'
-        if os.path.exists(nginx_conf):
-            with open(nginx_conf) as f: cc = f.read()
-            m = _re.search(r'listen\s+(\d+)', cc)
-            if m: port = m.group(1)
-        # PHP version in use
-        current_php = ''
-        if os.path.exists(nginx_conf):
-            with open(nginx_conf) as f: cc = f.read()
-            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', cc)
-            if m: current_php = m.group(1)
-        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists(f'/run/php/php{v}-fpm.sock')]
-        # Available skins
-        skins = []
-        try: skins = [d for d in os.listdir(rc_dir+'/skins') if os.path.isdir(rc_dir+'/skins/'+d)]
-        except: pass
-        # Logs
-        logs = sh(f'tail -80 {rc_dir}/logs/errors.log 2>/dev/null') or                sh(f'tail -80 {rc_dir}/logs/errors 2>/dev/null') or 'No logs found'
-        # Conf content
-        try:
-            with open(rc_conf) as f: conf_content = f.read()
-        except: conf_content = '# Config file not found'
-        return jsonify({'ok':True,
-            'port':port, 'url': 'http://YOUR-IP:'+port,
-            'imap_host':imap_host, 'smtp_host':smtp_host, 'smtp_port':smtp_port,
-            'skin':skin, 'db_dsn':db_dsn,
-            'current_php':current_php, 'php_versions':php_versions,
-            'skins':skins, 'conf_path':rc_conf, 'conf_content':conf_content,
-            'logs':logs, 'rc_dir':rc_dir})
     elif mod_id == 'docker': cmd = docker_install_script()
     elif mod_id == 'nodejs': cmd = nodejs_install_script(ver or '22')
     elif mod_id == 'php': cmd = php_install_script(ver or '8.3')
@@ -1875,78 +2333,56 @@ def install_module(mod_id):
 
     job_id = str(uuid.uuid4())[:8]
     _job_create(job_id, initial_installed=False)
+    verify_tpl = mod.get('verify_tpl', '')
+    verify_cmd = verify_tpl.replace('{ver}', ver) if (verify_tpl and ver) else ''
 
     def run_job():
-        _job_append_line(job_id, f'[VortexPanel] Installing {mod["name"]} {ver}...')
-        _final_cmd = translate_install_cmd(cmd)
-        # Make apt-get wait out lock contention instead of failing
-        # instantly -- confirmed via direct testing that apt's own
-        # -o DPkg::Lock::Timeout does NOT cover /var/lib/apt/lists/lock
-        # (only the separate dpkg-level locks), so a genuinely concurrent
-        # apt-get (e.g. the Security Updates check, or two installs
-        # started close together) fails every install instantly with
-        # "Could not get lock" instead of just waiting a few seconds.
-        # A real wrapper SCRIPT on PATH, not a shell function -- the
-        # first attempt at this used a function named apt-get, which
-        # dash (the actual shell subprocess.Popen(shell=True) invokes,
-        # not bash) rejects outright with "Bad function name" since
-        # dash doesn't allow hyphens in function names. Caught by
-        # testing under dash specifically before shipping it.
-        _wrap_dir = '/tmp/vp_apt_wrap'
-        os.makedirs(_wrap_dir, exist_ok=True)
-        with open(os.path.join(_wrap_dir, 'apt-get'), 'w') as _f:
-            _f.write(
-                '#!/bin/sh\n'
-                'max=90; w=0\n'
-                'while true; do\n'
-                '    out=$("$APT_GET_REAL" "$@" 2>&1); rc=$?\n'
-                '    if [ $rc -eq 0 ]; then echo "$out"; exit 0; fi\n'
-                '    if echo "$out" | grep -q "Could not get lock\\|Unable to lock"; then\n'
-                '        if [ $w -ge $max ]; then echo "$out"; echo "[VortexPanel] Timed out waiting for another apt process to finish"; exit $rc; fi\n'
-                '        echo "[VortexPanel] apt is busy with another process, waiting... (${w}s/${max}s)"\n'
-                '        sleep 3; w=$((w+3))\n'
-                '    else\n'
-                '        echo "$out"; exit $rc\n'
-                '    fi\n'
-                'done\n'
-            )
-        os.chmod(os.path.join(_wrap_dir, 'apt-get'), 0o755)
-        _final_cmd = f'export APT_GET_REAL=/usr/bin/apt-get; export PATH={_wrap_dir}:$PATH; ' + _final_cmd
+        _job_append_line(job_id, f'[VortexPanel] Installing {mod["name"]}{" " + ver if ver else ""}...')
+        rc, timed_out = _run_streaming(job_id, translate_install_cmd(cmd), 1800, 'Installation')
 
-        env = os.environ.copy()
-        env['DEBIAN_FRONTEND'] = 'noninteractive'
-        env['APT_LISTCHANGES_FRONTEND'] = 'none'
-        env['UCF_FORCE_CONFFOLD'] = '1'
+        check_ok  = is_installed(mod['check'])
+        verify_ok = is_installed(verify_cmd) if verify_cmd else True
+        installed = (rc == 0) and check_ok and verify_ok and not timed_out
+        svc = _resolve_svc(mod.get('service', '')) if installed else ''
+        svc_note = ''
+        if svc and not _svc_active(svc):
+            # Installed but the service will not run -- say so instead of a
+            # plain green "Installed" (memcached on an IPv6-less server was
+            # reported installed while its service crash-looped).
+            _svc_start(svc)
+            if not _svc_active(svc):
+                try:
+                    tail = subprocess.run(f'journalctl -u {svc} -n 15 --no-pager -o cat 2>/dev/null',
+                                          shell=True, capture_output=True, text=True, timeout=15).stdout.strip()
+                except Exception:
+                    tail = ''
+                if tail:
+                    _job_append_line(job_id, f'[VortexPanel] Last log lines of {svc}:')
+                    for l in tail.splitlines():
+                        _job_append_line(job_id, '  ' + l)
+                svc_note = f' Warning: the {svc} service is installed but is not running -- see its log above, or use Settings > Service.'
+        inst_ver = get_version(mod['id'], ver) if installed else ''
+        if installed:
+            msg = 'Installed successfully' + (f' -- version {inst_ver}' if inst_ver else '') + '.' + svc_note
+        elif timed_out:
+            msg = 'Installation was stopped because it took longer than 30 minutes.'
+        elif rc < 0:
+            msg = 'Installation was interrupted before it finished (the panel was restarted or the process was stopped). Run the install again.'
+        elif rc != 0:
+            msg = f'Installation failed (exit code {rc}). The reason is in the output above.'
+        elif not verify_ok:
+            msg = f'Installation failed: {mod["name"]} {ver} was not found on the system after the install finished.'
+        else:
+            msg = f'Installation failed: {mod["name"]} was not found on the system after the install commands ran. The reason is in the output above.'
+        _job_finish(job_id, success=installed, installed=check_ok if not installed else True,
+                    inst_ver=inst_ver, message=msg)
 
-        proc = subprocess.Popen(_final_cmd,
-            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, env=env)
-
-        import time as _time
-        start = _time.time()
-        MAX_SECONDS = 600  # 10 min max for install
-        for line in proc.stdout:
-            _job_append_line(job_id, line.rstrip())
-            if _time.time() - start > MAX_SECONDS:
-                proc.kill()
-                _job_append_line(job_id, '[VortexPanel] Timed out after 10 minutes. Process killed.')
-                break
-        proc.wait()
-
-        proc_ok       = (proc.returncode == 0)
-        check_ok      = is_installed(mod['check'])
-        installed     = proc_ok and check_ok
-        if check_ok and not proc_ok:
-            _job_append_line(job_id, '[VortexPanel] The install command itself reported an error (see output above) even though something matching the check command was found on the system — treating this as failed rather than silently reporting success.')
-        inst_ver      = get_version(mod['id'], ver) if installed else ''
-        _job_append_line(job_id,
-            f'[VortexPanel] {"✓ Installed successfully! Version: "+inst_ver if installed else "Installation may have failed — check output above."}'
-        )
-        _job_finish(job_id, success=installed, installed=installed, inst_ver=inst_ver)
-        panel_cache.invalidate('modules_list')
-
-    threading.Thread(target=run_job, daemon=True).start()
+    _start_job_thread(job_id, run_job, installed_on_error=False)
     return jsonify({'ok':True, 'job_id':job_id, 'action':'install'})
+
+# Apps whose uninstall must NOT stop their 'service' first (the service
+# belongs to another app that has to keep running).
+_NO_PRESTOP = {'caddy-waf'}
 
 @modules_bp.route('/api/modules/<mod_id>/uninstall', methods=['POST'])
 def uninstall_module(mod_id):
@@ -1954,13 +2390,29 @@ def uninstall_module(mod_id):
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False, 'error':'Not found'}), 404
 
-    # FFmpeg is a multi-version manager — redirect to Settings to manage individual versions
+    # FFmpeg is a multi-version manager -- redirect to Settings to manage individual versions
     if mod_id == 'ffmpeg':
         return jsonify({'ok': False, 'open_settings': True,
                         'error': 'Use the ffmpeg manager Settings to uninstall individual versions.'}), 400
+    if mod.get('builtin'):
+        return jsonify({'ok': False, 'error': f'{mod["name"]} is built into the panel and cannot be uninstalled.'}), 400
 
     d   = request.get_json() or {}
-    ver = d.get('version','')
+    ver = str(d.get('version', '') or '').strip()
+    if ver and not re.match(r'^[0-9A-Za-z._-]{1,20}$', ver):
+        return jsonify({'ok': False, 'error': 'Invalid version'}), 400
+
+    # The OS's own Python must never be removed from here: on Ubuntu/Debian
+    # removing python3.X (the default) also removes python3, apt tooling,
+    # netplan, cloud-init, certbot, fail2ban... -- confirmed: the old
+    # no-version uninstall purged python3 and python3-minimal.
+    if mod_id == 'python':
+        sysv = _system_python_ver()
+        if not ver:
+            return jsonify({'ok': False, 'error': 'Choose which Python version to remove.'}), 400
+        if sysv and ver == sysv:
+            return jsonify({'ok': False, 'error': f'Python {ver} is the operating system\'s own Python and cannot be removed -- '
+                                                  'removing it would break the server (apt, networking tools, certbot and the panel itself).'}), 400
 
     # Support version-specific uninstall (PHP, Python)
     tpl = mod.get('uninstall_tpl','')
@@ -1975,55 +2427,90 @@ def uninstall_module(mod_id):
     _job_create(job_id, initial_installed=True)
 
     def run_job():
-        _job_append_line(job_id, f'[VortexPanel] Removing {mod["name"]} {ver}...')
+        _job_append_line(job_id, f'[VortexPanel] Removing {mod["name"]}{" " + ver if ver else ""}...')
+        try:
+            lock_wait = int(os.environ.get('VP_LOCK_WAIT', '600'))
+        except ValueError:
+            lock_wait = 600
+        if not _wait_pkg_lock(job_id, lock_wait):
+            _job_finish(job_id, success=False, installed=True,
+                        message=f'Nothing was changed: the package manager stayed busy ({", ".join(_pkg_lock_holders()) or "another process"}) '
+                                f'for {str(lock_wait // 60) + " minutes" if lock_wait >= 120 else str(lock_wait) + " seconds"}. Try the uninstall again when it has finished.')
+            return
 
-        # Stop the service first to prevent dpkg from hanging on restart triggers
-        svc = _resolve_svc(mod.get('service', mod_id))
+        # Stop the service first so dpkg does not hang on restart triggers.
+        # Only for apps that really have a service (previously every app,
+        # e.g. "systemctl stop php", "systemctl stop roundcube").
+        svc = _resolve_svc(mod.get('service', '')) if (mod.get('service') and mod_id not in _NO_PRESTOP) else ''
+        was_active = _svc_active(svc) if svc else False
         if svc:
             _job_append_line(job_id, f'[VortexPanel] Stopping {svc} service...')
-            subprocess.run(f'systemctl stop {svc} 2>/dev/null || true', shell=True, timeout=15)
+            _svc_stop(job_id, svc)
 
-        env = os.environ.copy()
-        env['DEBIAN_FRONTEND'] = 'noninteractive'
-        env['APT_LISTCHANGES_FRONTEND'] = 'none'
-        env['UCF_FORCE_CONFFOLD'] = '1'
+        rc, timed_out = _run_streaming(job_id, translate_install_cmd(cmd), 1200, 'Uninstall')
 
-        proc = subprocess.Popen(cmd,
-            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, env=env)
-
-        import time as _time
-        start = _time.time()
-        MAX_SECONDS = 300  # 5 min max for uninstall
-        for line in proc.stdout:
-            _job_append_line(job_id, line.rstrip())
-            if _time.time() - start > MAX_SECONDS:
-                proc.kill()
-                _job_append_line(job_id, '[VortexPanel] Timed out after 5 minutes. Process killed.')
-                break
-        proc.wait()
-
-        if ver and mod_id in ('php','python'):
-            ver_binary = f'php{ver}' if mod_id=='php' else f'python{ver}'
-            still_installed = bool(sh(f'which {ver_binary} 2>/dev/null'))
+        if ver and mod_id in ('php', 'python'):
+            ver_binary = f'php{ver}' if mod_id == 'php' else f'python{ver}'
+            still_installed = bool(sh(f'command -v {ver_binary} 2>/dev/null'))
         else:
             still_installed = is_installed(mod['check'])
-        removed = not still_installed
-        if mod_id == 'php':
-            any_php = is_installed(mod['check'])
-            _job_finish(job_id, success=removed, installed=any_php)
-        else:
-            _job_finish(job_id, success=removed, installed=still_installed)
-        _job_append_line(job_id,
-            f'[VortexPanel] {"✓ Removed successfully!" if removed else "May not be fully removed — check output above."}'
-        )
-        panel_cache.invalidate('modules_list')
+        removed = not still_installed and not timed_out
 
-    threading.Thread(target=run_job, daemon=True).start()
+        if removed:
+            msg = f'{mod["name"]}{" " + ver if ver else ""} removed successfully.'
+        else:
+            msg = f'{mod["name"]}{" " + ver if ver else ""} could NOT be fully removed -- the reason is in the output above.'
+            if svc and was_active:
+                # Never leave a half-removed app stopped: bring it back so
+                # the sites that depend on it keep working.
+                if _svc_start(svc):
+                    msg += f' Its {svc} service has been started again so your sites keep running.'
+                else:
+                    msg += f' Its {svc} service could not be started again -- check Settings > Service.'
+        installed_flag = is_installed(mod['check']) if mod_id == 'php' else still_installed
+        _job_finish(job_id, success=removed, installed=installed_flag, message=msg)
+
+    _start_job_thread(job_id, run_job, installed_on_error=True)
     return jsonify({'ok':True, 'job_id':job_id, 'action':'uninstall'})
+
+@modules_bp.route('/api/modules/python/installed')
+def python_installed_versions():
+    """Python versions present on this host, for the uninstall picker. The
+    OS's own version is flagged and cannot be removed."""
+    if not req(): return jsonify({'ok': False}), 401
+    sysv = _system_python_ver()
+    found = []
+    for v in ('3.8', '3.9', '3.10', '3.11', '3.12', '3.13', '3.14', '3.15'):
+        if shutil.which(f'python{v}'):
+            found.append({'value': v, 'label': f'Python {v}' + (' (system -- cannot be removed)' if v == sysv else ''),
+                          'system': v == sysv})
+    return jsonify({'ok': True, 'versions': found, 'system': sysv})
+
+@modules_bp.route('/api/modules/job/<job_id>/status')
+def job_status(job_id):
+    """Polling fallback for the job window when the live stream drops."""
+    if not req(): return jsonify({'ok': False}), 401
+    j = _job_get(job_id)
+    if j is None:
+        return jsonify({'ok': False, 'error': 'Job not found'}), 404
+    try:
+        since = max(0, int(request.args.get('since', 0)))
+    except Exception:
+        since = 0
+    return jsonify({'ok': True, 'total': len(j['lines']), 'lines': j['lines'][since:],
+                    'done': j['done'], 'success': j['success'], 'installed': j['installed'],
+                    'installedVer': j['installedVer'], 'message': j['message']})
 
 @modules_bp.route('/api/modules/job/<job_id>')
 def job_stream(job_id):
+    if not req(): return jsonify({'ok': False}), 401
+    # EventSource reconnects send Last-Event-ID: resume after that line
+    # instead of replaying (or losing) output.
+    try:
+        resume_from = int(request.headers.get('Last-Event-ID', '0') or 0)
+    except Exception:
+        resume_from = 0
+
     def generate():
         path = _job_path(job_id)
         # Wait up to 5s for the job file to appear (handles race between
@@ -2036,36 +2523,53 @@ def job_stream(job_id):
             yield f'data: {json.dumps({"error": "Job not found"})}\n\n'
             return
 
-        sent = 0  # number of JSONL lines already sent to client
-        for _ in range(1200):  # max 6 minutes (1200 × 0.3s)
+        yield 'retry: 3000\n\n'
+        sent_lines = 0     # output lines already emitted (incl. skipped on resume)
+        consumed = 0       # raw JSONL rows already processed
+        last_change = time.time()
+        last_ping = time.time()
+        deadline = time.time() + 3 * 3600
+        while time.time() < deadline:
             try:
                 with open(path) as f:
-                    all_lines = f.readlines()
+                    rows = f.readlines()
             except Exception:
-                time.sleep(0.3)
-                continue
-
-            # Stream any new lines since last poll
-            for raw in all_lines[sent:]:
+                rows = None
+            if rows is None:
+                yield f'data: {json.dumps({"error": "Job output is no longer available"})}\n\n'
+                return
+            if len(rows) > consumed:
+                last_change = time.time()
+            for raw in rows[consumed:]:
+                consumed += 1
                 raw = raw.strip()
                 if not raw:
                     continue
                 try:
                     obj = json.loads(raw)
                 except json.JSONDecodeError:
-                    sent += 1
                     continue
                 if 'line' in obj:
-                    yield f'data: {json.dumps({"line": obj["line"]})}\n\n'
+                    sent_lines += 1
+                    if sent_lines > resume_from:
+                        yield f'id: {sent_lines}\ndata: {json.dumps({"line": obj["line"]})}\n\n'
                 elif obj.get('done'):
-                    yield f'data: {json.dumps({"done": True, "success": obj.get("success", False), "installed": obj.get("installed", True), "installedVer": obj.get("installedVer", "")})}\n\n'
-                    try:
-                        os.remove(path)
-                    except Exception:
-                        pass
+                    yield f'id: {sent_lines}\ndata: {json.dumps({"done": True, "success": obj.get("success", False), "installed": obj.get("installed", True), "installedVer": obj.get("installedVer", ""), "message": obj.get("message", "")})}\n\n'
                     return
-                sent += 1
-
+            now = time.time()
+            if now - last_change > 10 and int(now) % 10 == 0:
+                j = _job_get(job_id)
+                if j and j['done'] and j['message'].startswith('The panel was restarted'):
+                    yield f'data: {json.dumps({"done": True, "success": False, "installed": True, "installedVer": "", "message": j["message"]})}\n\n'
+                    return
+            if now - last_change > 3600:
+                yield f'data: {json.dumps({"done": True, "success": False, "installed": True, "installedVer": "", "message": "No output for 60 minutes -- the job appears to have stopped (was the panel restarted?). Refresh the App Store to see the current state."})}\n\n'
+                return
+            if now - last_ping > 15:
+                # SSE comment: keeps proxies (nginx, Cloudflare) from closing
+                # an idle stream during long silent steps (apt, compiles).
+                last_ping = now
+                yield ': keep-alive\n\n'
             time.sleep(0.3)
 
     return Response(generate(), mimetype='text/event-stream',
@@ -2208,7 +2712,7 @@ def ffmpeg_install_version(version):
 
             # Download with progress visible in the job terminal
             dl = subprocess.run(
-                f'curl -fL --progress-bar --max-time 180 "{url}" -o "{tmp_archive}"',
+                f'curl -fL --progress-bar --connect-timeout 30 --max-time 1200 "{url}" -o "{tmp_archive}"',
                 shell=True, capture_output=True, text=True, executable='/bin/bash'
             )
             if dl.returncode != 0 or not os.path.isfile(tmp_archive):
@@ -2321,8 +2825,27 @@ def ffmpeg_reset():
     shutil.rmtree(FFMPEG_BASE_DIR, ignore_errors=True)
     return jsonify({'ok': True, 'removed_versions': removed})
 
+# Apps whose Settings > Switch Version list must match the App Store catalog
+# (the Settings endpoints carried their own hard-coded, outdated lists: e.g.
+# MySQL "9.3", MongoDB "6.0", PostgreSQL without 18, nginx 1.30.4/1.31.3).
+_SWITCH_FROM_CATALOG = {'nginx', 'apache2', 'openlitespeed', 'mysql', 'mariadb', 'postgresql',
+                        'mongodb', 'redis', 'nodejs', 'bind9'}
+
 @modules_bp.route('/api/modules/<mod_id>/settings')
 def get_module_settings(mod_id):
+    resp = _get_module_settings_impl(mod_id)
+    try:
+        if mod_id in _SWITCH_FROM_CATALOG and isinstance(resp, Response) and resp.is_json:
+            data = resp.get_json()
+            mod = _get_mod(mod_id)
+            if isinstance(data, dict) and data.get('ok') and 'versions' in data and mod and mod.get('versions'):
+                data['versions'] = mod['versions']
+                return jsonify(data)
+    except Exception:
+        pass
+    return resp
+
+def _get_module_settings_impl(mod_id):
     if not req(): return jsonify({'ok': False}), 401
     import os, re as _re
     def sh(cmd, t=15):
@@ -2802,6 +3325,49 @@ def get_module_settings(mod_id):
             'port':port,'url':'http://YOUR-IP:' + port,
             'php_versions':php_versions,'current_php':current_php,'conf_path':pma_conf})
 
+    elif mod_id == 'roundcube':
+        rc_dir = '/var/www/roundcube'
+        rc_conf = rc_dir + '/config/config.inc.php'
+        nginx_conf = '/etc/nginx/conf.d/roundcube.conf'
+        # Read config values
+        def rc_get(key):
+            cmd = "grep -oP \"'" + key + "'\\] = '\\K[^']+\" " + rc_conf + " 2>/dev/null | head -1"
+            return sh(cmd).strip().lstrip("'") or ''
+        imap_host  = rc_get('imap_host') or 'localhost'
+        smtp_host  = rc_get('smtp_host') or 'localhost'
+        smtp_port  = rc_get('smtp_port') or '587'
+        skin       = rc_get('skin') or 'elastic'
+        db_dsn     = rc_get('db_dsnw') or ''
+        # Nginx port
+        port = '8083'
+        if os.path.exists(nginx_conf):
+            with open(nginx_conf) as f: cc = f.read()
+            m = _re.search(r'listen\s+(\d+)', cc)
+            if m: port = m.group(1)
+        # PHP version in use
+        current_php = ''
+        if os.path.exists(nginx_conf):
+            with open(nginx_conf) as f: cc = f.read()
+            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', cc)
+            if m: current_php = m.group(1)
+        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists(f'/run/php/php{v}-fpm.sock')]
+        # Available skins
+        skins = []
+        try: skins = [d for d in os.listdir(rc_dir+'/skins') if os.path.isdir(rc_dir+'/skins/'+d)]
+        except: pass
+        # Logs
+        logs = sh(f'tail -80 {rc_dir}/logs/errors.log 2>/dev/null') or                sh(f'tail -80 {rc_dir}/logs/errors 2>/dev/null') or 'No logs found'
+        # Conf content
+        try:
+            with open(rc_conf) as f: conf_content = f.read()
+        except: conf_content = '# Config file not found'
+        return jsonify({'ok':True,
+            'port':port, 'url': 'http://YOUR-IP:'+port,
+            'imap_host':imap_host, 'smtp_host':smtp_host, 'smtp_port':smtp_port,
+            'skin':skin, 'db_dsn':db_dsn,
+            'current_php':current_php, 'php_versions':php_versions,
+            'skins':skins, 'conf_path':rc_conf, 'conf_content':conf_content,
+            'logs':logs, 'rc_dir':rc_dir})
     elif mod_id == 'docker':
         status  = sh('systemctl is-active docker') or 'inactive'
         version = sh('docker version --format "{{.Server.Version}}" 2>/dev/null') or ''
@@ -3269,6 +3835,7 @@ def save_module_settings(mod_id):
                 + ('if echo "$OS_FAMILY" | grep -qiE "^debian"; then '
                    '  apt-get install -y apache2; '
                    'else '
+                   '  (command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common); '
                    '  add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
                    '  apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
                    f'  (apt-get install -y --allow-downgrades apache2={ver}-* 2>/dev/null || apt-get install -y apache2); '
@@ -3300,7 +3867,7 @@ def save_module_settings(mod_id):
         elif mod_id == 'bind9':
             script = (
                 'export DEBIAN_FRONTEND=noninteractive && '
-                + ('add-apt-repository -y ppa:isc/bind && apt-get update -qq && ' if ver == '9.20' else 'apt-get update -qq && ') +
+                + ('(command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common); add-apt-repository -y ppa:isc/bind && apt-get update -qq && ' if ver == '9.20' else 'apt-get update -qq && ') +
                 'apt-get install -y bind9 bind9utils && '
                 '(systemctl restart named 2>/dev/null || systemctl restart bind9 2>/dev/null)'
             )
@@ -3337,35 +3904,21 @@ def save_module_settings(mod_id):
         def run_switch():
             mod_name = mod['name'] if mod else mod_id
             _job_append_line(job_id, f'[VortexPanel] Switching {mod_name} to version {ver}...')
-            env = os.environ.copy()
-            env['DEBIAN_FRONTEND'] = 'noninteractive'
-            # Prevent apt-get from hanging indefinitely on slow/unreachable mirrors
-            env['APT_LISTCHANGES_FRONTEND'] = 'none'
-            proc = subprocess.Popen(
-                script,
-                shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, env=env
-            )
-            # Max 8 minutes — kills hanging apt-get update etc.
-            MAX_SECONDS = 480
-            import time as _time
-            start = _time.time()
-            for line in proc.stdout:
-                _job_append_line(job_id, line.rstrip())
-                if _time.time() - start > MAX_SECONDS:
-                    proc.kill()
-                    _job_append_line(job_id, '[VortexPanel] Timed out after 8 minutes. Operation killed.')
-                    break
-            proc.wait()
-            success = proc.returncode == 0
+            rc, timed_out = _run_streaming(job_id, script, 1800, 'Version switch')
+            success = (rc == 0) and not timed_out
             new_ver = sh(ver_check_cmd) if ver_check_cmd else ver
-            _job_append_line(job_id,
-                f'[VortexPanel] {"✓ Switched to " + new_ver + " successfully!" if success else "Switch failed — check output above."}'
-            )
-            _job_finish(job_id, success=success, installed=True, inst_ver=new_ver)
-            panel_cache.invalidate('modules_list')
+            svc = _resolve_svc(mod.get('service', '')) if mod else ''
+            note = ''
+            if svc and not _svc_active(svc):
+                if _svc_start(svc):
+                    note = f' The {svc} service was stopped afterwards and has been started again.'
+                else:
+                    note = f' Warning: the {svc} service is not running -- check Settings > Service.'
+            msg = (f'Switched to {new_ver} successfully.' if success
+                   else f'Version switch failed (exit code {rc}) -- the reason is in the output above. Running version: {new_ver or "unknown"}.') + note
+            _job_finish(job_id, success=success, installed=True, inst_ver=new_ver, message=msg)
 
-        threading.Thread(target=run_switch, daemon=True).start()
+        _start_job_thread(job_id, run_switch, installed_on_error=True)
         return jsonify({'ok': True, 'job_id': job_id, 'action': 'switch_version'})
 
     elif action == 'setup_private_dns':

@@ -4978,20 +4978,20 @@
             </div>
             <div class="terminal-out job-terminal" style="max-height:340px;min-height:100px">
               <template x-for="(line,i) in jobModal.lines" :key="i">
-                <div :style="line.startsWith('[VortexPanel] ✓') ? 'color:#4ade80;font-weight:600' : line.startsWith('[VortexPanel]') ? 'color:#fbbf24;font-weight:600' : line.startsWith('[VortexPanel]') ? 'color:#67e8f9;font-weight:500' : 'color:#d1fae5'" x-text="line"></div>
+                <div :style="!line.startsWith('[VortexPanel]') ? 'color:#d1fae5' : (/(could NOT|failed|Refusing|Gave up|not running|cannot be|Internal error|stopped because)/.test(line) ? 'color:#f87171;font-weight:600' : (/(successfully|is ready|\u2713)/.test(line) ? 'color:#4ade80;font-weight:600' : 'color:#fbbf24;font-weight:600'))" x-text="line"></div>
               </template>
             </div>
             <div class="modal-ft">
               <div x-show="jobModal.done">
                 <span x-show="jobModal.success" style="color:var(--green);font-size:13px;font-weight:600">
-                  ✓ <span x-text="jobModal.action==='install'?'Installed':'Removed'"></span>
+                  ✓ <span x-text="jobModal.action==='install'?'Installed':(jobModal.action==='switch_version'?'Switched':'Removed')"></span>
                   <span x-show="jobModal.installedVer" style="font-family:var(--font-mono);font-size:11px;background:rgba(16,185,129,.12);padding:1px 7px;border-radius:4px;margin-left:6px" x-text="'v'+jobModal.installedVer"></span>
                 </span>
-                <span x-show="!jobModal.success" style="color:var(--yellow);font-size:13px">Check output above</span>
+                <span x-show="!jobModal.success" style="color:var(--yellow);font-size:13px" x-text="jobModal.message || 'Failed -- see the output above'"></span>
               </div>
               <div style="flex:1"></div>
-              <button class="btn btn-primary" @click="jobModal.show=false;load()" :disabled="!jobModal.done">
-                <span x-text="jobModal.done?'Close':'Working…'"></span>
+              <button class="btn btn-primary" @click="jobModal.show=false;load()" :title="jobModal.done?'':'The operation keeps running on the server'">
+                <span x-text="jobModal.done?'Close':'Hide (keeps running)'"></span>
               </button>
             </div>
           </div>

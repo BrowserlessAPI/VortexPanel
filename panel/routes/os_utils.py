@@ -138,6 +138,10 @@ def nginx_install_script(channel='stable'):
     """
     os_info = get_os()
     stream_setup = (
+        # Grouped in ( ... ) so its trailing "true" cannot mask a failed
+        # install earlier in the && chain (it used to make every nginx
+        # install exit 0, even when nothing was installed).
+        '( '
         # Only add stream block if nginx.conf exists AND stream block is not already present.
         # Use printf (not echo -e) — echo -e prints "-e" literally in dash/sh on Ubuntu.
         'if [ -f /etc/nginx/nginx.conf ] && ! grep -q "^stream" /etc/nginx/nginx.conf; then '
@@ -149,7 +153,7 @@ def nginx_install_script(channel='stable'):
         '(firewall-cmd --state 2>/dev/null | grep -q running && '
         'firewall-cmd --add-port=443/udp --permanent 2>/dev/null && '
         'firewall-cmd --reload 2>/dev/null); '
-        'true'
+        'true )'
     )
     if os_info['family'] == 'debian':
         # Same bug as mariadb_install_script: family='debian' groups genuine
@@ -174,7 +178,7 @@ def nginx_install_script(channel='stable'):
             f'cat > /etc/yum.repos.d/nginx.repo << EOF\n'
             f'[nginx-{channel}]\n'
             f'name=nginx {channel} repo\n'
-            f'baseurl=http://nginx.org/packages/{"" if channel=="stable" else "mainline/"}rhel/\$releasever/\$basearch/\n'
+            f'baseurl=http://nginx.org/packages/{"" if channel=="stable" else "mainline/"}rhel/\\$releasever/\\$basearch/\n'
             f'gpgcheck=1\n'
             f'enabled=1\n'
             f'gpgkey=https://nginx.org/keys/nginx_signing.key\n'
@@ -237,18 +241,27 @@ def php_install_script(ver):
             # what happens next, poisoning every future apt-get update
             # system-wide unless cleaned up.
             php_repo_setup = (
-                'add-apt-repository -y ppa:ondrej/php && '
-                f'if ! {pkg_update()} 2>/tmp/vp_php_repo_err.log; then '
-                f'  echo "[VortexPanel] ondrej/php has no release for {codename} yet -- removing it and trying packages.sury.org"; '
+                '(command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common); '
+                # Fall back to packages.sury.org when the PPA cannot be added
+                # at all (Launchpad unreachable) as well as when it has no
+                # release for this codename -- previously only the second case
+                # was handled and an unreachable Launchpad ended the install.
+                f'if add-apt-repository -y ppa:ondrej/php && {pkg_update()} 2>/tmp/vp_php_repo_err.log; then :; else '
+                f'  echo "[VortexPanel] ondrej/php is unavailable (unreachable, or no release for {codename}) -- removing it and trying packages.sury.org"; '
                 '  add-apt-repository --remove -y ppa:ondrej/php 2>/dev/null; '
                 '  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources 2>/dev/null; '
                 '  apt-get install -y ca-certificates apt-transport-https gnupg2 && '
-                '  curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
+                '  curl -fsSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
                 f'  echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ {codename} main" > /etc/apt/sources.list.d/php-sury.list && '
                 f'  if ! {pkg_update()} 2>/tmp/vp_php_sury_err.log; then '
                 f'    echo "[VortexPanel] packages.sury.org has no release for {codename} yet either -- falling back to noble (24.04) packages"; '
                 '    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ noble main" > /etc/apt/sources.list.d/php-sury.list && '
                 f'    {pkg_update()}; '
+                '  fi; '
+                '  if [ ! -s /usr/share/keyrings/deb.sury.org-php.gpg ]; then '
+                f'    echo "[VortexPanel] packages.sury.org could not be reached either -- PHP {ver} cannot be installed right now."; '
+                '    rm -f /etc/apt/sources.list.d/php-sury.list /usr/share/keyrings/deb.sury.org-php.gpg; '
+                f'    {pkg_update()}; false; '
                 '  fi; '
                 'fi'
             )
@@ -256,16 +269,16 @@ def php_install_script(ver):
             f'{php_repo_setup} && '
             f'{pkg_install(f"php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml php{ver}-curl php{ver}-mbstring php{ver}-zip php{ver}-gd php{ver}-bcmath php{ver}-intl php{ver}-soap php{ver}-redis")} && '
             f'systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm && '
-            f'{fix_pool_owner} && systemctl restart php{ver}-fpm'
+            f'( {fix_pool_owner} ) && systemctl restart php{ver}-fpm'
         )
     elif os_info['family'] in ('rhel','fedora'):
         return (
-            f'dnf install -y https://rpms.remirepo.net/enterprise/remi-release-$(rpm -E %rhel).rpm 2>/dev/null; '
+            f'REMI_RPM=$(if [ -n "$(rpm -E %{{?fedora}} 2>/dev/null)" ]; then echo https://rpms.remirepo.net/fedora/remi-release-$(rpm -E %{{?fedora}}).rpm; else r=$(rpm -E %{{?rhel}} 2>/dev/null); echo https://rpms.remirepo.net/enterprise/remi-release-${{r:-9}}.rpm; fi); dnf install -y "$REMI_RPM" 2>/dev/null; '
             f'dnf module reset php -y 2>/dev/null; '
             f'dnf module enable php:remi-{ver} -y 2>/dev/null; '
             f'{pkg_install(f"php php-fpm php-common php-mysql php-xml php-curl php-mbstring php-zip php-gd php-bcmath php-intl php-soap")} && '
             f'systemctl enable php-fpm && systemctl start php-fpm && '
-            f'{fix_pool_owner} && systemctl restart php-fpm'
+            f'( {fix_pool_owner} ) && systemctl restart php-fpm'
         )
     return f'{pkg_install(f"php{ver}-fpm")} && systemctl enable php{ver}-fpm'
 
@@ -373,7 +386,7 @@ def postgresql_install_script(ver='17'):
         major = ver.split('.')[0]
         return (
             f'PGARCH=$(uname -m) && '
-            f'dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-$(rpm -E %rhel)-${{PGARCH}}/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null; '
+            f'dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-$(r=$(rpm -E %{{?rhel}} 2>/dev/null); echo ${{r:-9}})-${{PGARCH}}/pgdg-redhat-repo-latest.noarch.rpm 2>/dev/null; '
             f'dnf -qy module disable postgresql 2>/dev/null; '
             f'{pkg_install(f"postgresql{major}-server postgresql{major}-contrib")} && '
             f'/usr/pgsql-{major}/bin/postgresql-{major}-setup initdb 2>/dev/null; '
@@ -385,19 +398,31 @@ def redis_install_script():
     """Redis official install script for all distros"""
     os_info = get_os()
     if os_info['family'] == 'debian':
+        cn = os_info["codename"]
+        # Two independent failure points, both must fall back to the distro
+        # redis-server: (1) packages.redis.io unreachable (the key download
+        # fails -- previously this aborted the whole install, the fallback
+        # only covered (2)); (2) the repo has no release for this codename.
         return (
-            f'rm -f /usr/share/keyrings/redis-archive-keyring.gpg && '
-            f'curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && '
-            f'echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {os_info["codename"]} main" > /etc/apt/sources.list.d/redis.list && '
-            f'(if ! {pkg_update()} 2>/tmp/vp_redis_repo_err.log; then '
-            f'  echo "[VortexPanel] packages.redis.io has no release for {os_info["codename"]} yet -- removing it, using distro-packaged redis-server instead"; '
-            f'  rm -f /etc/apt/sources.list.d/redis.list; {pkg_update()}; fi) && '
+            'rm -f /usr/share/keyrings/redis-archive-keyring.gpg /etc/apt/sources.list.d/redis.list; '
+            'if curl -fsSL --connect-timeout 20 --max-time 60 https://packages.redis.io/gpg -o /tmp/vp_redis.gpg '
+            '&& gpg --batch --no-tty --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg /tmp/vp_redis.gpg; then '
+            f'  echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {cn} main" > /etc/apt/sources.list.d/redis.list; '
+            f'  if ! {pkg_update()} 2>/tmp/vp_redis_repo_err.log; then '
+            f'    echo "[VortexPanel] packages.redis.io has no release for {cn} yet -- removing it, using distro-packaged redis-server instead"; '
+            f'    rm -f /etc/apt/sources.list.d/redis.list /usr/share/keyrings/redis-archive-keyring.gpg; {pkg_update()}; '
+            '  fi; '
+            'else '
+            '  echo "[VortexPanel] packages.redis.io could not be reached -- using the distro-packaged redis-server instead"; '
+            f'  rm -f /usr/share/keyrings/redis-archive-keyring.gpg; {pkg_update()}; '
+            'fi; '
+            'rm -f /tmp/vp_redis.gpg; '
             f'{pkg_install("redis-server")} && '
-            f'systemctl enable redis-server && systemctl start redis-server'
+            f'systemctl enable redis-server && systemctl restart redis-server'
         )
     elif os_info['family'] in ('rhel','fedora'):
         return (
-            f'dnf install -y https://rpms.remirepo.net/enterprise/remi-release-$(rpm -E %rhel).rpm 2>/dev/null; '
+            f'REMI_RPM=$(if [ -n "$(rpm -E %{{?fedora}} 2>/dev/null)" ]; then echo https://rpms.remirepo.net/fedora/remi-release-$(rpm -E %{{?fedora}}).rpm; else r=$(rpm -E %{{?rhel}} 2>/dev/null); echo https://rpms.remirepo.net/enterprise/remi-release-${{r:-9}}.rpm; fi); dnf install -y "$REMI_RPM" 2>/dev/null; '
             f'{pkg_install("redis")} && '
             f'systemctl enable redis && systemctl start redis'
         )
@@ -444,7 +469,7 @@ def mongodb_install_script(ver='8.0'):
             f'MGARCH=$(uname -m) && '
             f'cat > /etc/yum.repos.d/mongodb-org-{ver}.repo << EOF\n'
             f'[mongodb-org-{ver}]\nname=MongoDB Repository\n'
-            f'baseurl=https://repo.mongodb.org/yum/redhat/\$releasever/mongodb-org/{ver}/${{MGARCH}}/\n'
+            f'baseurl=https://repo.mongodb.org/yum/redhat/\\$releasever/mongodb-org/{ver}/${{MGARCH}}/\n'
             f'gpgcheck=1\nenabled=1\n'
             f'gpgkey=https://pgp.mongodb.com/server-{ver}.asc\nEOF\n'
             f'{pkg_install("mongodb-org")} && '

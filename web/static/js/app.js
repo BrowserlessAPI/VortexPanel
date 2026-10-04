@@ -2519,11 +2519,33 @@ function modulesPage() {
           return;
         }
       }
-      if (m.id==='python' && m.versions?.length) {
-        this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'uninstall'};
+      if (m.id==='python') {
+        // Only offer versions that are really installed, and never the
+        // operating system's own Python (removing it breaks the server).
+        const r = await get('/api/modules/python/installed');
+        const removable = (r.versions||[]).filter(v => !v.system);
+        if (!removable.length) {
+          toast('No extra Python versions are installed. Python '+(r.system||'')+' belongs to the operating system and cannot be removed.', 'error');
+          return;
+        }
+        this.verModal = {show:true, mod:{...m, versions:removable}, selVer:removable[0].value, action:'uninstall'};
         return;
       }
-      if (!confirm(`Uninstall ${m.name}? This cannot be undone.`)) return;
+      const dataWarn = {
+        mysql:      'ALL MySQL databases in /var/lib/mysql will be deleted.',
+        mariadb:    'ALL MariaDB databases in /var/lib/mysql will be deleted.',
+        postgresql: 'ALL PostgreSQL databases in /var/lib/postgresql will be deleted.',
+        mongodb:    'ALL MongoDB databases in /var/lib/mongodb will be deleted.',
+        nginx:      'All nginx configuration in /etc/nginx (every website config) will be deleted. Websites will stop working.',
+        caddy:      'The Caddyfile and all Caddy configuration in /etc/caddy will be deleted. Websites will stop working.',
+        apache2:    'Websites served by Apache will stop working.',
+        openlitespeed: 'Everything in /usr/local/lsws (OpenLiteSpeed configs) will be deleted. Websites will stop working.',
+        bind9:      'All DNS zone files in /etc/bind/zones will be deleted.',
+        redis:      'Redis and its stored data will be removed.',
+        roundcube:  'The Roundcube folder /var/www/roundcube and its webmail site will be deleted.',
+        docker:     'Docker will be removed. Running containers will stop.',
+      }[m.id];
+      if (!confirm(`Uninstall ${m.name}?` + (dataWarn ? '\n\nWARNING: '+dataWarn : '') + '\n\nThis cannot be undone.')) return;
       await this._startJob(m, 'uninstall', '');
     },
 
@@ -2585,26 +2607,61 @@ function modulesPage() {
       const isChannel = ver && ['stable','mainline','latest','builtin'].includes(ver.toLowerCase());
       const verLabel  = ver ? (isChannel ? ' ('+ver+')' : ' v'+ver) : '';
       const label = `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel}`;
-      this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:''};
-      const es = new EventSource(`/api/modules/job/${r.job_id}`);
-      es.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.line) this.jobModal.lines.push(d.line);
-        if (d.done) {
-          es.close(); m.loading=false; m.installed=d.installed;
-          if (d.installedVer) m.installedVer=d.installedVer;
-          this.jobModal.done=true; this.jobModal.success=d.success;
-          this.jobModal.installedVer=d.installedVer||'';
-          if (d.success) window.dispatchEvent(new CustomEvent('vp:module-changed', {detail:{id:m.id, action}}));
-          setTimeout(()=>this.load(), 1200);
-        }
-        if (d.error) { es.close(); m.loading=false; toast(d.error,'error'); }
-        this.$nextTick(()=>{
-          const t=document.querySelector('.job-terminal');
-          if(t) t.scrollTop=t.scrollHeight;
-        });
+      this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:'', message:''};
+      this._followJob(r.job_id, (d) => {
+        m.loading=false; m.installed=d.installed;
+        if (d.installedVer) m.installedVer=d.installedVer;
+        if (d.success) window.dispatchEvent(new CustomEvent('vp:module-changed', {detail:{id:m.id, action}}));
+        setTimeout(()=>this.load(), 1200);
+      });
+    },
+
+    // Follow an App Store job until it finishes. Uses the live stream, and if
+    // the stream drops (proxy timeout, network blip, panel restart) falls back
+    // to polling the job status, so the window can never get stuck on
+    // "Working..." with a disabled Close button.
+    _followJob(jobId, onDone) {
+      const jm = this.jobModal;
+      let finished = false, polling = false;
+      const scroll = () => this.$nextTick(()=>{ const t=document.querySelector('.job-terminal'); if(t) t.scrollTop=t.scrollHeight; });
+      const finish = (d) => {
+        if (finished) return; finished = true;
+        jm.done = true; jm.success = !!d.success;
+        jm.installedVer = d.installedVer || '';
+        jm.message = d.message || '';
+        try { onDone && onDone(d); } catch(e) {}
+        scroll();
       };
-      es.onerror = () => { es.close(); m.loading=false; };
+      const poll = async () => {
+        if (polling || finished) return; polling = true;
+        let misses = 0;
+        const started = Date.now();
+        while (!finished && Date.now() - started < 4*3600*1000) {
+          let r = null;
+          try { r = await get(`/api/modules/job/${jobId}/status?since=${jm.lines.length}`); } catch(e) { r = null; }
+          if (r && r.ok) {
+            misses = 0;
+            (r.lines||[]).forEach(l => jm.lines.push(l));
+            if ((r.lines||[]).length) scroll();
+            if (r.done) { finish(r); return; }
+          } else if (r && r.error === 'Job not found') {
+            finish({success:false, installed:true, message:'The job record is no longer available. Refresh the App Store to see the current state.'});
+            return;
+          } else if (++misses > 150) {
+            finish({success:false, installed:true, message:'Lost contact with the panel. The operation may still be running on the server -- refresh the App Store in a minute to see the result.'});
+            return;
+          }
+          await new Promise(res => setTimeout(res, 2000));
+        }
+      };
+      const es = new EventSource(`/api/modules/job/${jobId}`);
+      es.onmessage = (e) => {
+        let d; try { d = JSON.parse(e.data); } catch(_) { return; }
+        if (d.line !== undefined) { jm.lines.push(d.line); scroll(); }
+        if (d.done) { es.close(); finish(d); }
+        if (d.error) { es.close(); poll(); }
+      };
+      es.onerror = () => { if (finished) return; es.close(); poll(); };
     },
 
     async control(m, action) {
@@ -2821,24 +2878,11 @@ function modulesPage() {
     async ffmpegInstall(version) {
       const r = await post(`/api/modules/ffmpeg/versions/${version}/install`, {});
       if (!r.ok) { toast(r.error || 'Install failed', 'error'); return; }
-      this.jobModal = {show:true, title:`Installing: ffmpeg ${version}`, lines:[], done:false, success:false, action:'install', installedVer:''};
-      const es = new EventSource(`/api/modules/job/${r.job_id}`);
-      es.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.line) this.jobModal.lines.push(d.line);
-        if (d.done) {
-          es.close();
-          this.jobModal.done = true; this.jobModal.success = d.success;
-          toast(d.success ? `ffmpeg ${version} installed` : 'Install failed — check log', d.success ? 'success' : 'error');
-          this.loadFfmpegVersions();
-        }
-        if (d.error) { es.close(); toast(d.error, 'error'); }
-        this.$nextTick(()=>{
-          const t=document.querySelector('.job-terminal');
-          if(t) t.scrollTop=t.scrollHeight;
-        });
-      };
-      es.onerror = () => { es.close(); };
+      this.jobModal = {show:true, title:`Installing: ffmpeg ${version}`, lines:[], done:false, success:false, action:'install', installedVer:'', message:''};
+      this._followJob(r.job_id, (d) => {
+        toast(d.success ? `ffmpeg ${version} installed` : 'Install failed -- check the log', d.success ? 'success' : 'error');
+        this.loadFfmpegVersions();
+      });
     },
 
     async ffmpegUninstall(version) {
@@ -2930,26 +2974,12 @@ function modulesPage() {
       });
       if (!r.ok) { toast(r.error || 'Failed to start switch', 'error'); return; }
       sm.show = false;
-      this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action:'switch_version', installedVer:''};
-      const es = new EventSource(`/api/modules/job/${r.job_id}`);
-      es.onmessage = (e) => {
-        const d = JSON.parse(e.data);
-        if (d.line) this.jobModal.lines.push(d.line);
-        if (d.done) {
-          es.close();
-          this.jobModal.done    = true;
-          this.jobModal.success = d.success;
-          this.jobModal.installedVer = d.installedVer || sm.switchVer;
-          if (d.success) sm.version = d.installedVer || sm.switchVer;
-          setTimeout(() => this.load(), 1200);
-        }
-        if (d.error) { es.close(); toast(d.error, 'error'); }
-        this.$nextTick(() => {
-          const t = document.querySelector('.job-terminal');
-          if (t) t.scrollTop = t.scrollHeight;
-        });
-      };
-      es.onerror = () => es.close();
+      this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action:'switch_version', installedVer:'', message:''};
+      this._followJob(r.job_id, (d) => {
+        this.jobModal.installedVer = d.installedVer || sm.switchVer;
+        if (d.success) sm.version = d.installedVer || sm.switchVer;
+        setTimeout(() => this.load(), 1200);
+      });
     },
 
     settingsTabs(modId) {
