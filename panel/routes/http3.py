@@ -15,11 +15,34 @@ import os, re, shutil
 from flask import jsonify, request
 
 try:
-    from panel.routes.websites_core import websites_bp, req, sh, get_nginx_dirs, reload_nginx
+    from panel.routes.websites_core import websites_bp, req, sh, get_nginx_dirs, reload_nginx, _nginx_apply, _find_site_config, nginx_test
     from panel.routes.os_utils import get_os, pkg_install
 except ImportError:
-    from websites_core import websites_bp, req, sh, get_nginx_dirs, reload_nginx
+    from websites_core import websites_bp, req, sh, get_nginx_dirs, reload_nginx, _nginx_apply, _find_site_config, nginx_test
     from os_utils import get_os, pkg_install
+
+
+def _site_ws(domain):
+    """The web server that serves THIS site (several may be installed);
+    falls back to whichever is running."""
+    try:
+        ws = _find_site_config(domain)[1]
+    except Exception:
+        ws = None
+    return ws or _active_webserver()
+
+
+def _other_quic_sites(fp):
+    import glob as _glob
+    for cf in _glob.glob('/etc/nginx/vortex/*.conf') + _glob.glob('/etc/nginx/conf.d/*.conf'):
+        if os.path.realpath(cf) == os.path.realpath(fp):
+            continue
+        try:
+            if re.search(r'listen\s+\S*443\s+quic', open(cf).read()):
+                return True
+        except Exception:
+            pass
+    return False
 
 
 # --- Webserver detection -------------------------------------------------------
@@ -69,10 +92,10 @@ def _nginx_version_tuple():
 def _open_udp_443():
     """Open UDP 443 in whatever firewall is active (UFW or firewalld)."""
     results = []
-    if sh('which ufw 2>/dev/null') and sh('ufw status 2>/dev/null | head -1') == 'Status: active':
+    if shutil.which('ufw') and sh('ufw status 2>/dev/null | head -1') == 'Status: active':
         out = sh('ufw allow 443/udp 2>&1')
         results.append(f'ufw: {out}')
-    if sh('which firewall-cmd 2>/dev/null'):
+    if sh('firewall-cmd --state 2>/dev/null') == 'running':
         sh('firewall-cmd --add-port=443/udp --permanent 2>/dev/null')
         sh('firewall-cmd --reload 2>/dev/null')
         results.append('firewalld: UDP 443 added')
@@ -80,24 +103,23 @@ def _open_udp_443():
 
 def _close_udp_443():
     """Remove UDP 443 firewall rule."""
-    if sh('which ufw 2>/dev/null') and sh('ufw status 2>/dev/null | head -1') == 'Status: active':
+    if shutil.which('ufw') and sh('ufw status 2>/dev/null | head -1') == 'Status: active':
         sh('ufw delete allow 443/udp 2>/dev/null')
-    if sh('which firewall-cmd 2>/dev/null'):
+    if shutil.which('firewall-cmd'):
         sh('firewall-cmd --remove-port=443/udp --permanent 2>/dev/null')
         sh('firewall-cmd --reload 2>/dev/null')
 
 def _udp_443_open():
     """Check if UDP 443 is currently open in the firewall."""
     ufw_out = sh('ufw status 2>/dev/null')
-    if '443/udp' in ufw_out and 'ALLOW' in ufw_out:
+    ufw_active = ufw_out.startswith('Status: active')
+    fwd_active = sh('firewall-cmd --state 2>/dev/null') == 'running'
+    if ufw_active and re.search(r'^443/udp\s+ALLOW', ufw_out, re.M):
         return True
-    fwd_out = sh('firewall-cmd --list-ports 2>/dev/null')
-    if '443/udp' in fwd_out:
+    if fwd_active and '443/udp' in sh('firewall-cmd --list-ports 2>/dev/null'):
         return True
-    # No firewall active — assume open
-    if not sh('which ufw 2>/dev/null') and not sh('which firewall-cmd 2>/dev/null'):
-        return True
-    return False
+    # No firewall active (installed but disabled counts as none) - open
+    return not ufw_active and not fwd_active
 
 
 # --- Nginx upgrade to nginx.org mainline ---------------------------------------
@@ -158,7 +180,7 @@ def _upgrade_nginx_to_mainline():
 def http3_status(domain):
     if not req(): return jsonify({'ok': False}), 401
 
-    ws = _active_webserver()
+    ws = _site_ws(domain)
 
     # Per-webserver HTTP/3 capability and status
     if ws == 'caddy':
@@ -203,7 +225,7 @@ def http3_status(domain):
     if os.path.exists(fp):
         content = open(fp).read()
         has_ssl = 'ssl_certificate' in content
-        enabled = bool(re.search(r'listen\s+443\s+quic', content))
+        enabled = bool(re.search(r'listen\s+\S*443\s+quic', content))
 
     upgrade_needed = not capable and old_enough and not from_org
 
@@ -236,7 +258,7 @@ def http3_toggle(domain):
 
     d      = request.get_json() or {}
     enable = d.get('enable', True)
-    ws     = _active_webserver()
+    ws     = _site_ws(domain)
 
     # Caddy and OpenLiteSpeed: HTTP/3 is always on, just need UDP 443
     if ws in ('caddy', 'openlitespeed'):
@@ -277,10 +299,8 @@ def http3_toggle(domain):
     if enable and 'ssl_certificate' not in content:
         return jsonify({'ok': False, 'error': 'Enable SSL for this domain first — HTTP/3 requires HTTPS.'}), 400
 
-    backup = content
-
     if enable:
-        if re.search(r'listen\s+443\s+quic', content):
+        if re.search(r'listen\s+\S*443\s+quic', content):
             _open_udp_443()
             return jsonify({'ok': True, 'message': 'HTTP/3 already enabled', 'enabled': True})
         # `reuseport` may appear on only ONE listen directive per address:port
@@ -289,7 +309,6 @@ def http3_toggle(domain):
         # beyond the first site. Detect it and omit the keyword here if so.
         reuseport_taken = False
         try:
-            avail, _ = get_nginx_dirs()
             import glob as _glob
             for _cf in _glob.glob(os.path.join(avail, '*')) + _glob.glob('/etc/nginx/conf.d/*'):
                 try:
@@ -299,35 +318,42 @@ def http3_toggle(domain):
                     pass
         except Exception:
             pass
-        quic_listen = 'listen 443 quic;' if reuseport_taken else 'listen 443 quic reuseport;'
-        content = re.sub(
-            r'(listen\s+443\s+ssl;)',
-            r'\1\n    ' + quic_listen + '\n    http2 on;\n'
-            r'    add_header Alt-Svc \'h3=":443"; ma=86400\' always;',
-            content, count=1
-        )
+        reuse = '' if reuseport_taken else ' reuseport'
+        quic_listen = f'listen 443 quic{reuse};'
+        # a site that also listens on [::]:443 needs the QUIC listener there too
+        # (only present when the vhost already has an IPv6 HTTPS listener)
+        if re.search(r'^[ \t]*listen\s+\[::\]:443\b[^;]*\bssl\b', content, re.M) and \
+                os.path.exists('/proc/net/if_inet6'):
+            quic_listen += f' listen [::]:443 quic{reuse};'
+        # any `listen [addr:]443 ssl ...;` (e.g. "listen 443 ssl default_server;"
+        # or certbot's "# managed by Certbot" lines); the old exact match on
+        # "listen 443 ssl;" left the file unchanged and still reported success
+        m = re.search(r'^([ \t]*)listen\s+(?:[^\s;]*:)?443\s+[^;]*\bssl\b[^;]*;[^\n]*', content, re.M)
+        if not m:
+            return jsonify({'ok': False, 'error': 'Could not find the HTTPS "listen 443 ssl" line in this site\'s config'}), 400
+        ind = m.group(1) or '    '
+        add = ''.join(f'\n{ind}{l.strip()};' for l in quic_listen.split(';') if l.strip())
+        # `http2 on;` is only valid once per server and needs nginx >= 1.25.1
+        if not re.search(r'^\s*http2\s+on\s*;', content, re.M) and not re.search(r'listen[^;]*\bhttp2\b', content):
+            add += f'\n{ind}http2 on;'
+        add += f"\n{ind}add_header Alt-Svc 'h3=\":443\"; ma=86400' always;"
+        content = content[:m.end()] + add + content[m.end():]
     else:
-        content = re.sub(r'\n\s*listen\s+443\s+quic[^\n;]*;', '', content)
-        content = re.sub(r'\n\s*add_header\s+Alt-Svc[^\n;]*;', '', content)
+        content = re.sub(r'\n\s*listen\s+\S*443\s+quic[^\n;]*;', '', content)
+        content = re.sub(r'\n\s*add_header\s+Alt-Svc[^\n]*;', '', content)
         content = re.sub(r'\n\s*add_header\s+X-Quic-Status[^\n;]*;', '', content)
-        content = re.sub(r'\n\s*http2\s+on;', '', content)
 
-    with open(fp, 'w') as f:
-        f.write(content)
-
-    test = sh('nginx -t 2>&1')
-    if 'failed' in test.lower():
-        with open(fp, 'w') as f:
-            f.write(backup)
-        return jsonify({'ok': False, 'error': f'nginx config test failed, rolled back: {test}'}), 400
-
-    reload_nginx()
+    ok, err = _nginx_apply(fp, content)
+    if not ok:
+        return jsonify({'ok': False, 'error': f'nginx config test failed, rolled back: {err}'}), 400
 
     if enable:
         fw = _open_udp_443()
     else:
-        _close_udp_443()
         fw = []
+        # other sites may still serve HTTP/3 on the same UDP port
+        if not _other_quic_sites(fp):
+            _close_udp_443()
 
     return jsonify({
         'ok': True,
@@ -356,16 +382,28 @@ def nginx_upgrade_mainline():
     steps   = []
 
     if family == 'debian':
+        # upstream layout + codename from os_utils (Mint/Pop!_OS report their
+        # own ID/codename, for which nginx.org has no repository; lsb_release
+        # is missing on minimal images)
+        base = os_info.get('base') or ('debian' if os_info.get('id') == 'debian' else 'ubuntu')
+        codename = os_info.get('codename') or ''
+        if not re.fullmatch(r'[a-z]+', base) or not re.fullmatch(r'[a-z]+', codename):
+            return jsonify({'ok': False, 'error': 'Could not determine the distribution codename'}), 400
         cmds = [
-            'apt-get install -y curl gnupg2 ca-certificates lsb-release 2>&1',
-            'curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor --batch -o /usr/share/keyrings/nginx-archive-keyring.gpg 2>&1',
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg2 ca-certificates 2>&1',
+            'curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor --batch --yes -o /usr/share/keyrings/nginx-archive-keyring.gpg 2>&1',
             'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] '
-            'https://nginx.org/packages/mainline/$(. /etc/os-release && echo $ID) '
-            '$(lsb_release -cs) nginx" > /etc/apt/sources.list.d/nginx-mainline.list',
+            f'https://nginx.org/packages/mainline/{base} '
+            f'{codename} nginx" > /etc/apt/sources.list.d/nginx-mainline.list',
             'apt-get update -qq 2>&1',
-            'DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades nginx 2>&1',
+            # keep the existing nginx.conf / site configs: without these options
+            # dpkg stops at the conffile prompt (no tty) and the install fails
+            'DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades '
+            '-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold nginx 2>&1',
         ]
     elif family in ('rhel', 'fedora'):
+        if get_os().get('id') == 'fedora':
+            return jsonify({'ok': False, 'error': 'nginx.org publishes no Fedora packages -- Fedora\'s own nginx is already a recent release'}), 400
         cmds = [
             r'''cat > /etc/yum.repos.d/nginx-mainline.repo << 'EOF'
 [nginx-mainline]
@@ -397,7 +435,11 @@ EOF''',
             'nginx_version': _nginx_version(),
         }), 500
 
-    sh('systemctl restart nginx 2>/dev/null || service nginx restart 2>/dev/null')
+    ok_t, test = nginx_test()
+    if not ok_t:
+        return jsonify({'ok': False, 'error': 'nginx was upgraded but its configuration test fails -- fix it before restarting nginx: '
+                                              + test.strip()[-600:], 'steps': steps}), 500
+    sh('systemctl restart nginx 2>/dev/null || service nginx restart 2>/dev/null', 60)
     _open_udp_443()
 
     return jsonify({

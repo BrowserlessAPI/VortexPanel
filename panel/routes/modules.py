@@ -2,8 +2,10 @@ from flask import Blueprint, jsonify, request, session, Response
 import subprocess, os, threading, time, json, uuid, re, shutil
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script, panel_cache
+    from panel.routes.os_utils import ensure_epel_cmd, selinux_web_booleans_cmd, selinux_port_cmd, selinux_label_cmd, selinux_allow_port
 except ImportError:
     from os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script, panel_cache
+    from os_utils import ensure_epel_cmd, selinux_web_booleans_cmd, selinux_port_cmd, selinux_label_cmd, selinux_allow_port
 
 modules_bp = Blueprint('modules', __name__)
 
@@ -18,7 +20,24 @@ _SVC_ALIASES = {
     'redis-server': ['redis-server', 'redis'], 'redis': ['redis', 'redis-server'],
     'supervisor': ['supervisor', 'supervisord'], 'supervisord': ['supervisord', 'supervisor'],
     'named': ['named', 'bind9', 'named-chroot'], 'bind9': ['bind9', 'named'],
+    # EPEL ClamAV has no clamav-daemon unit: the scanner is the clamd@scan instance.
+    'clamav-daemon': ['clamav-daemon', 'clamd@scan'],
 }
+
+def _newest_pgdg_unit():
+    """PGDG on the RHEL family installs postgresql-NN.service (one per major
+    version) and no plain postgresql.service. Newest installed one, or ''."""
+    try:
+        out = subprocess.run(['systemctl', 'list-unit-files', '--no-legend', 'postgresql*.service'],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return ''
+    best = None
+    for ln in out.splitlines():
+        m = re.match(r'^postgresql-(\d+)\.service\b', ln.strip())
+        if m and (best is None or int(m.group(1)) > best):
+            best = int(m.group(1))
+    return f'postgresql-{best}' if best is not None else ''
 
 def _resolve_svc(svc):
     """Return the systemd unit name that actually exists on this host for a
@@ -35,7 +54,13 @@ def _resolve_svc(svc):
                 return c
         except Exception:
             pass
+    if svc == 'postgresql':
+        pg = _newest_pgdg_unit()
+        if pg:
+            return pg
     return _SVC_ALIASES.get(svc, [svc])[0]
+
+_APT_UPDATE_RE = re.compile(r"apt-get update(?:[ \t]+-o[ \t]+[^\s;&|)]+|[ \t]+-q+)*")
 
 def os_cmd(apt_cmd):
     """Translate apt-get commands to the current OS package manager"""
@@ -46,9 +71,11 @@ def os_cmd(apt_cmd):
     cmd = apt_cmd
     cmd = cmd.replace('DEBIAN_FRONTEND=noninteractive ', '')
     cmd = cmd.replace('apt-get install -y', 'dnf install -y')
-    cmd = cmd.replace('apt-get update -qq', 'dnf check-update -q; true')
-    cmd = cmd.replace('apt-get update -q', 'dnf check-update -q; true')
-    cmd = cmd.replace('apt-get update', 'dnf check-update; true')
+    # One grouped command, so it still works inside `if ! X; then`, `X && Y`
+    # and `X 2>file` (the old 'dnf check-update -q; true' split those: `if !`
+    # tested `true`, and 'a; true && b' ran b whatever happened before).
+    # check-update exits 100 when updates exist -- not an error.
+    cmd = _APT_UPDATE_RE.sub('{ dnf check-update -q || true; }', cmd)
     # Strip dpkg-specific options that don't apply to dnf
     import re as _re
     cmd = _re.sub(r"-o Dpkg::Options::='[^']*'\s*", '', cmd)
@@ -63,9 +90,12 @@ def os_cmd(apt_cmd):
     cmd = cmd.replace('apt-get -y install', 'dnf install -y')
     # Package name differences
     cmd = cmd.replace('software-properties-common', 'dnf-plugins-core')
-    cmd = cmd.replace('python3-pip', 'python3-pip')
-    cmd = cmd.replace('apache2', 'httpd')
+    # Longer names first: 'apache2' -> 'httpd' used to run before these and
+    # produced httpd-utils / httpdctl / libhttpd-mod-security2 (none exist).
+    cmd = cmd.replace('libapache2-mod-security2', 'mod_security')
     cmd = cmd.replace('apache2-utils', 'httpd-tools')
+    cmd = cmd.replace('apache2ctl', 'apachectl')
+    cmd = cmd.replace('apache2', 'httpd')
     return cmd
 
 def translate_install_cmd(cmd):
@@ -525,6 +555,7 @@ def _svc_stop(job_id, svc):
 
 def _svc_start(svc):
     try:
+        subprocess.run(['systemctl', 'reset-failed', svc], capture_output=True, timeout=30)
         subprocess.run(['systemctl', 'enable', svc], capture_output=True, timeout=60)
         subprocess.run(['systemctl', 'start', svc], capture_output=True, timeout=120)
     except Exception:
@@ -553,11 +584,12 @@ def sh(c, t=10):
 def get_version(mod_id, ver=None):
     cmds = {
         'nginx':        "nginx -v 2>&1 | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'apache2':      "apache2 -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || httpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'openlitespeed':"cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || /usr/local/lsws/bin/lshttpd -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        # Grouped: 'a | grep | head || b' never ran b (head exits 0).
+        'apache2':      "{ apache2 -v 2>/dev/null || httpd -v 2>/dev/null; } | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'openlitespeed':"{ cat /usr/local/lsws/VERSION 2>/dev/null || /usr/local/lsws/bin/lshttpd -v 2>/dev/null; } | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'caddy':        "caddy version 2>/dev/null | awk '{print $1}' | tr -d v",
         'mysql':        "mysqld --version 2>/dev/null | grep -iv mariadb | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
-        'mariadb':      "mysqld --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || mariadbd --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'mariadb':      "{ mariadbd --version 2>/dev/null || mysqld --version 2>/dev/null; } | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'mongodb':      "mongod --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'redis':        "redis-server --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'nodejs':       "node --version 2>/dev/null | tr -d 'v'",
@@ -584,9 +616,18 @@ def get_version(mod_id, ver=None):
         'supervisor':   "supervisord --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+'",
         'phpmyadmin':   "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /usr/share/phpmyadmin/composer.json 2>/dev/null | head -1",
         'roundcube':    "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /var/www/roundcube/composer.json 2>/dev/null | head -1",
-        'modsecurity':  "modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1 || dpkg -l libmodsecurity3t64 2>/dev/null | grep '^ii' | awk '{print $3}'",
+        'modsecurity':  "{ modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1; dpkg-query -W -f='${Version}\\n' libmodsecurity3t64 libmodsecurity3 2>/dev/null; rpm -q --qf '%{VERSION}\\n' libmodsecurity mod_security 2>/dev/null | grep -v 'not installed'; } | grep -m1 .",
     }
 
+    if mod_id == 'php':
+        # Debian phpX.Y, Remi SCL and the RHEL system PHP all via php.py.
+        try:
+            lays = [php_layout(ver)] if ver else installed_php_layouts()
+            lay = next((l for l in lays if l and os.path.exists(l['bin'])), None)
+        except Exception:
+            lay = None
+        if lay:
+            cmds['php'] = f'"{lay["bin"]}" -n -r "echo PHP_VERSION;" 2>/dev/null'
     cmd = cmds.get(mod_id, '')
     if not cmd: return ''
     v = sh(cmd)
@@ -599,6 +640,147 @@ def is_installed(check_cmd):
         if out in ('', '0', 'inactive', 'unknown', 'failed', 'activating'): return False
         return r.returncode == 0
     except: return False
+
+# --- Shell snippets used by several catalog install scripts ----------------------------
+# PHP-FPM socket for the phpMyAdmin / Roundcube sites: every layout php.py knows
+# (Debian/sury /run/php/phpX.Y-fpm.sock, Remi SCL /var/opt/remi/phpXY/run/
+# php-fpm/www.sock, RHEL/Fedora system PHP /run/php-fpm/www.sock) -- previously
+# only the Debian sockets were looked for, with a hard-coded
+# /run/php/php8.5-fpm.sock fallback that did not exist (every PHP request 502).
+# An installed but stopped FPM is started. Sets SOCK ('' = none) and PUSER (the
+# pool's user, which must own the app's writable directories). Order of
+# preference: $PHP_PREF. A brace group, so it can sit inside an && chain.
+_PHP_SOCK_SH = r'''{
+VP_FIND_SOCK() {
+  SOCK=""
+  for v in ${PHP_PREF:-8.4 8.3 8.2 8.1 8.0 7.4 8.5}; do
+    vn=$(echo "$v" | tr -d .)
+    for s in /run/php/php$v-fpm.sock /var/opt/remi/php$vn/run/php-fpm/www.sock; do
+      if [ -S "$s" ]; then SOCK=$s; return 0; fi
+    done
+  done
+  for s in /run/php-fpm/www.sock /run/php/php-fpm.sock; do
+    if [ -S "$s" ]; then SOCK=$s; return 0; fi
+  done
+  return 0
+}
+VP_FIND_SOCK
+if [ -z "$SOCK" ]; then
+  for u in $(for v in ${PHP_PREF:-8.4 8.3 8.2 8.1 8.0 7.4 8.5}; do echo "php$v-fpm php$(echo "$v" | tr -d .)-php-fpm"; done) php-fpm; do
+    if systemctl cat "$u" >/dev/null 2>&1; then
+      echo "[VortexPanel] Starting $u (installed but not running)"
+      systemctl enable --now "$u" >/dev/null 2>&1; sleep 2; break
+    fi
+  done
+  VP_FIND_SOCK
+fi
+PUSER=""
+if [ -n "$SOCK" ]; then
+  POOLF=$(grep -lsE "^[[:space:]]*listen[[:space:]]*=[[:space:]]*$SOCK[[:space:]]*$" /etc/php/*/fpm/pool.d/*.conf /etc/php-fpm.d/*.conf /etc/opt/remi/php*/php-fpm.d/*.conf | head -1)
+  [ -n "$POOLF" ] && PUSER=$(sed -n 's/^[[:space:]]*user[[:space:]]*=[[:space:]]*\([^[:space:];]*\).*/\1/p' "$POOLF" | head -1)
+fi
+if [ -z "$PUSER" ] || ! id "$PUSER" >/dev/null 2>&1; then
+  PUSER=$(id -un www-data 2>/dev/null || id -un nginx 2>/dev/null || id -un apache 2>/dev/null || echo nobody)
+fi
+}'''
+
+# nginx.org packages run nginx as 'nginx' while Debian pools hand the FPM
+# socket to www-data (0660): let nginx's user connect to the pool behind $SOCK
+# ($POOLF from _PHP_SOCK_SH). RHEL pools grant access with listen.acl_users.
+_NGINX_POOL_SH = r'''{
+NGINX_USER=$(grep -oE "^[[:space:]]*user[[:space:]]+[^;[:space:]]+" /etc/nginx/nginx.conf 2>/dev/null | awk '{print $2}' | head -1)
+if [ -n "$NGINX_USER" ] && [ -n "$POOLF" ] && ! grep -qE "^[[:space:]]*listen\.acl_users" "$POOLF"; then
+  CUR=$(sed -n 's/^[[:space:]]*listen\.owner[[:space:]]*=[[:space:]]*//p' "$POOLF" | head -1)
+  if [ "$CUR" != "$NGINX_USER" ]; then
+    for K in listen.owner listen.group; do
+      if grep -qE "^[[:space:]]*$K[[:space:]]*=" "$POOLF"; then sed -i -E "s|^[[:space:]]*$K[[:space:]]*=.*|$K = $NGINX_USER|" "$POOLF"; else echo "$K = $NGINX_USER" >> "$POOLF"; fi
+    done
+    case "$POOLF" in
+      /etc/php/*) U="php$(echo "$POOLF" | cut -d/ -f4)-fpm" ;;
+      /etc/opt/remi/*) U="$(echo "$POOLF" | cut -d/ -f5)-php-fpm" ;;
+      *) U=php-fpm ;;
+    esac
+    systemctl restart "$U"
+  fi
+fi
+}'''
+
+# Pure-FTPd only authenticates the panel's virtual users with PureDB enabled
+# (same logic as ftp._ensure_puredb_enabled): Debian keeps it off (no auth/
+# link), the RHEL/EPEL pure-ftpd.conf has the PureDB line commented out.
+_PUREDB_SH = r'''{
+# The PureDB file must exist before pure-ftpd starts with PureDB enabled
+# ("Invalid configuration file ... pureftpd.pdb: No such file" otherwise).
+
+if [ ! -s /etc/pure-ftpd/pureftpd.pdb ] && command -v pure-pw >/dev/null 2>&1; then
+  mkdir -p /etc/pure-ftpd; touch /etc/pure-ftpd/pureftpd.passwd; chmod 600 /etc/pure-ftpd/pureftpd.passwd
+  pure-pw mkdb /etc/pure-ftpd/pureftpd.pdb -f /etc/pure-ftpd/pureftpd.passwd >/dev/null 2>&1 || true
+fi
+if [ -d /etc/pure-ftpd/conf ] && [ -d /etc/pure-ftpd/auth ]; then
+  [ -s /etc/pure-ftpd/conf/PureDB ] || echo /etc/pure-ftpd/pureftpd.pdb > /etc/pure-ftpd/conf/PureDB
+  if ! readlink /etc/pure-ftpd/auth/* 2>/dev/null | grep -q 'PureDB$'; then ln -sfn ../conf/PureDB /etc/pure-ftpd/auth/50pure; fi
+  echo "[VortexPanel] PureDB authentication enabled (panel FTP accounts)"
+else
+  for C in /etc/pure-ftpd/pure-ftpd.conf /etc/pure-ftpd.conf; do
+    [ -f "$C" ] || continue
+    if ! grep -qE '^[[:space:]]*PureDB[[:space:]]+[^[:space:]]' "$C"; then
+      if grep -qE '^[[:space:]]*#[[:space:]]*PureDB[[:space:]]' "$C"; then
+        sed -i -E '0,/^[[:space:]]*#[[:space:]]*PureDB[[:space:]].*/s||PureDB                       /etc/pure-ftpd/pureftpd.pdb|' "$C"
+      else
+        echo 'PureDB                       /etc/pure-ftpd/pureftpd.pdb' >> "$C"
+      fi
+      echo "[VortexPanel] PureDB authentication enabled in $C (panel FTP accounts)"
+    fi
+    break
+  done
+fi
+}'''
+
+# fail2ban's ban action must match the firewall this server really has: the
+# upstream .deb keeps banaction = iptables-multiport, and Debian 12/13 minimal
+# images have no iptables at all (every ban failed); with firewalld running
+# the bans belong in firewalld. Debian 12+ without rsyslog has no auth.log, so
+# the sshd jail (enabled by the package) must read the journal or fail2ban
+# refuses to start. Written to a file of our own, never over the admin's:
+# only when it does not exist or still starts with our marker line.
+_F2B_BANACTION_SH = r'''{
+F2B_LOCAL=/etc/fail2ban/jail.d/00-vortexpanel.local
+if [ -d /etc/fail2ban ] && { [ ! -e "$F2B_LOCAL" ] || head -1 "$F2B_LOCAL" | grep -q "Managed by VortexPanel"; }; then
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then BA=firewallcmd-rich-rules; BAA=firewallcmd-allports
+  elif command -v iptables >/dev/null 2>&1; then BA=iptables-multiport; BAA=iptables-allports
+  elif command -v nft >/dev/null 2>&1; then BA=nftables-multiport; BAA=nftables-allports
+  else BA=iptables-multiport; BAA=iptables-allports; fi
+  mkdir -p /etc/fail2ban/jail.d
+  [ -e "$F2B_LOCAL" ] && cp -f "$F2B_LOCAL" "$F2B_LOCAL.vpbak"
+  {
+    echo "# Managed by VortexPanel (ban action for this server's firewall). Delete this line to keep your own edits."
+    echo "[DEFAULT]"
+    echo "banaction = $BA"
+    echo "banaction_allports = $BAA"
+    if [ ! -f /var/log/auth.log ] && [ ! -f /var/log/secure ] && python3 -c "import systemd.journal" >/dev/null 2>&1; then
+      printf '\n[sshd]\nbackend = systemd\n'
+    fi
+  } > "$F2B_LOCAL"
+  if fail2ban-client -t >/dev/null 2>&1; then
+    echo "[VortexPanel] fail2ban ban action: $BA"
+    rm -f "$F2B_LOCAL.vpbak"
+  else
+    echo "[VortexPanel] fail2ban rejected $F2B_LOCAL -- not changed:"
+    fail2ban-client -t 2>&1 | tail -5
+    if [ -f "$F2B_LOCAL.vpbak" ]; then mv -f "$F2B_LOCAL.vpbak" "$F2B_LOCAL"; else rm -f "$F2B_LOCAL"; fi
+  fi
+fi
+}'''
+
+# Weekly OWASP CRS update. Runs the panel's own update (security.py
+# modsec_update_crs: latest release only -- never a v4.0.0 fallback -- unpacked
+# into a fresh directory, config-tested, previous ruleset restored on failure,
+# no stale rule files left from the old release). Writes $CRS_CRON_FILE.
+_CRS_CRON_LINE = ('0 3 * * 0 root mkdir -p /var/log/vortexpanel; cd /opt/vortexpanel && '
+                  'venv/bin/python3 -m panel.routes.modules update-crs >> /var/log/vortexpanel/crs-update.log 2>&1')
+_CRS_CRON_SH = ("printf '%s\\n' '# Managed by VortexPanel -- weekly OWASP CRS update (tested, rolled back on failure)' "
+                "'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "
+                f"'{_CRS_CRON_LINE}' > \"$CRS_CRON_FILE\" && chmod 644 \"$CRS_CRON_FILE\"")
 
 MODULES = [
     # --- Web Servers -----------------------------------------------------------
@@ -660,7 +842,7 @@ fi''',
             '  systemctl enable apache2 && systemctl start apache2; '
             'else '
             '  (dnf install -y httpd mod_ssl 2>/dev/null || yum install -y httpd mod_ssl) && '
-            '  systemctl enable httpd && systemctl start httpd; '
+            '  systemctl enable httpd && systemctl start httpd && __VP_SEL_WEB__; '
             'fi'
         ),
         'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then export DEBIAN_FRONTEND=noninteractive && apt-get install -y apache2 && systemctl enable --now apache2; else (dnf install -y httpd mod_ssl 2>/dev/null || yum install -y httpd mod_ssl) && systemctl enable --now httpd; fi',
@@ -681,9 +863,9 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
   wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh; \
   if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_ols_err.log; then \
     if grep -q litespeedtech.com /tmp/vp_ols_err.log 2>/dev/null; then \
-      echo "[VortexPanel] litespeedtech.com has no build for $(lsb_release -cs) yet -- retrying with the previous stable codename (bullseye), a confirmed working substitution for this exact situation"; \
+      echo "[VortexPanel] litespeedtech.com has no build for $(. /etc/os-release 2>/dev/null; echo "$VERSION_CODENAME") yet -- retrying with the previous stable codename (bullseye), a confirmed working substitution for this exact situation"; \
       for f in /etc/apt/sources.list.d/*.list; do \
-        [ -f "$f" ] && grep -qi litespeedtech "$f" && sed -i "s/$(lsb_release -cs)/bullseye/g" "$f"; \
+        [ -f "$f" ] && grep -qi litespeedtech "$f" && sed -i "s/$(. /etc/os-release 2>/dev/null; echo "$VERSION_CODENAME")/bullseye/g" "$f"; \
       done; \
     fi; \
     apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
@@ -697,7 +879,7 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
   done; \
 elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky|cloudlinux"; then \
   RHEL_VER=$(r=$(rpm -E %{?rhel} 2>/dev/null); echo ${r:-9}) && \
-  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && \
+  __VP_EPEL__ && \
   (dnf install -y https://rpms.remirepo.net/enterprise/remi-release-${RHEL_VER}.rpm 2>/dev/null || true) && \
   (rpm -Uvh --force http://rpms.litespeedtech.com/centos/litespeed-repo-1.3-1.el${RHEL_VER}.noarch.rpm 2>/dev/null || true) && \
   (dnf install -y openlitespeed 2>/dev/null || yum install -y openlitespeed 2>/dev/null) && \
@@ -708,7 +890,7 @@ elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky|cloudlinu
     (dnf install -y $LSPHP_VER-$ext 2>/dev/null || yum install -y $LSPHP_VER-$ext 2>/dev/null || true); \
   done; \
 fi; \
-mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2>/dev/null; true''',
+mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/null 2>&1 && echo nogroup || echo nobody) /var/log/openlitespeed 2>/dev/null; true''',
         'install':'''wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && \
 (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y openlitespeed && \
 systemctl enable lsws && systemctl start lsws && \
@@ -717,7 +899,7 @@ apt-get install -y $LSPHP_VER $LSPHP_VER-common 2>&1 && \
 for ext in mysql curl opcache imagick intl mbstring xml zip gd soap; do \
   apt-get install -y $LSPHP_VER-$ext 2>/dev/null || true; \
 done; \
-mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2>/dev/null; true''',
+mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/null 2>&1 && echo nogroup || echo nobody) /var/log/openlitespeed 2>/dev/null; true''',
         'uninstall':(
             'systemctl stop lsws 2>/dev/null; systemctl disable lsws 2>/dev/null; '
             '/usr/local/lsws/admin/misc/uninstall.sh 2>/dev/null; '
@@ -791,7 +973,7 @@ mkdir -p /var/log/openlitespeed && chown nobody:nogroup /var/log/openlitespeed 2
     {
         'id':'mysql', 'name':'MySQL', 'icon':'/static/icons/mysql.svg', 'category':'Database',
         'desc':'The world\'s most popular open source database',
-        'check':'systemctl is-active mysql 2>/dev/null | grep -q active && ! systemctl is-active mariadb 2>/dev/null | grep -q active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
+        'check':'systemctl is-active mysql 2>/dev/null | grep -qx active && ! systemctl is-active mariadb 2>/dev/null | grep -qx active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
         'versions':[
             {'label':'Innovation (rolling — currently 26.7.0, latest quarterly release)', 'value':'innovation'},
             {'label':'9.7.2 (LTS)',           'value':'9.7'},
@@ -1194,8 +1376,15 @@ systemctl enable --now mariadb''',
     {
         'id':'php', 'name':'PHP', 'icon':'/static/icons/php.svg', 'category':'PHP',
         'desc':'PHP-FPM — multiple versions supported side by side',
-        'check':'which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 php7.4 2>/dev/null | head -1',
-        'verify_tpl':'command -v php{ver} 2>/dev/null || (php -r "echo PHP_MAJOR_VERSION.chr(46).PHP_MINOR_VERSION;" 2>/dev/null | grep -x "{ver}")',
+        # Debian/sury phpX.Y, RHEL Remi SCL /opt/remi/phpXY and the RHEL
+        # module-stream system PHP (/usr/sbin/php-fpm) -- the old check only
+        # knew phpX.Y, so every RHEL PHP install was reported as failed.
+        'check':('{ which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 php7.4 2>/dev/null; '
+                 'ls /opt/remi/php*/root/usr/bin/php 2>/dev/null; '
+                 'test -x /usr/sbin/php-fpm && echo /usr/sbin/php-fpm; } | head -1'),
+        'verify_tpl':('command -v php{ver} 2>/dev/null || '
+                      '(test -x /opt/remi/php$(echo {ver} | tr -d .)/root/usr/bin/php && echo found) || '
+                      '(php -r "echo PHP_MAJOR_VERSION.chr(46).PHP_MINOR_VERSION;" 2>/dev/null | grep -x "{ver}")'),
         'versions':[
             {'label':'8.5.11 (Latest - security release)', 'value':'8.5'},
             {'label':'8.4.26 (Active support)', 'value':'8.4'},
@@ -1228,12 +1417,28 @@ POOL=/etc/opt/remi/php${VNODOT}/php-fpm.d/www.conf; WEB_USER=nginx; id nginx >/d
 systemctl enable --now php${VNODOT}-php-fpm; \
 fi''',
         'install':'',
-        'uninstall_tpl':'''systemctl stop php{ver}-fpm 2>/dev/null || true && \
-systemctl disable php{ver}-fpm 2>/dev/null || true && \
+        # RHEL: Remi SCL phpXY-* packages, or the module-stream system PHP
+        # when it is this version. (The Debian-only command translated to
+        # 'dnf remove php8.3 ...' there and removed nothing.)
+        'uninstall_tpl':'''if command -v dpkg >/dev/null 2>&1; then
+systemctl stop php{ver}-fpm 2>/dev/null || true
+systemctl disable php{ver}-fpm 2>/dev/null || true
 apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql \
 php{ver}-xml php{ver}-curl php{ver}-gd php{ver}-mbstring php{ver}-zip php{ver}-bcmath \
-php{ver}-intl php{ver}-soap php{ver}-cli php{ver}-readline php{ver}-* 2>/dev/null || true && \
-apt-get autoremove -y 2>/dev/null || true''',
+php{ver}-intl php{ver}-soap php{ver}-cli php{ver}-readline php{ver}-* 2>/dev/null || true
+apt-get autoremove -y 2>/dev/null || true
+else
+VN=$(echo {ver} | tr -d .)
+if rpm -q php$VN-php-common >/dev/null 2>&1 || rpm -q php$VN-php-cli >/dev/null 2>&1; then
+  systemctl disable --now php$VN-php-fpm 2>/dev/null
+  dnf remove -y "php$VN" "php$VN-*" || exit 1
+elif [ "$(/usr/bin/php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)" = "{ver}" ]; then
+  systemctl disable --now php-fpm 2>/dev/null
+  dnf remove -y php-common php-cli php-fpm || exit 1
+else
+  echo "[VortexPanel] PHP {ver} is not installed from a package this panel manages."
+fi
+fi''',
         'uninstall':'''for ver in 7.4 8.0 8.1 8.2 8.3 8.4 8.5; do
   systemctl stop php$ver-fpm 2>/dev/null || true
   apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold php$ver php$ver-* 2>/dev/null || true
@@ -1263,10 +1468,11 @@ apt-get autoremove -y 2>/dev/null || true''',
             # RHEL-family - it's just pure-ftpd there. dnf fails the ENTIRE
             # install command if any one listed package doesn't exist, so
             # this previously failed outright on every RHEL-family system.
-            '  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && '
+            '  __VP_EPEL__ && '
             '  (dnf install -y pure-ftpd 2>/dev/null || yum install -y pure-ftpd 2>/dev/null); '
             'fi && '
-            'systemctl enable pure-ftpd && systemctl start pure-ftpd'
+            '__VP_PUREDB__ && __VP_SEL_FTP__ && '
+            'systemctl enable pure-ftpd && systemctl restart pure-ftpd'
         ),
         'uninstall':'systemctl stop pure-ftpd 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold pure-ftpd pure-ftpd-common 2>/dev/null; dnf remove -y pure-ftpd 2>/dev/null; yum remove -y pure-ftpd 2>/dev/null; apt-get autoremove -y 2>/dev/null; true',
         'service':'pure-ftpd', 'manage':True,
@@ -1279,74 +1485,148 @@ apt-get autoremove -y 2>/dev/null || true''',
         'versions':[
             {'label':'5.2.3 (Latest)', 'value':'5.2.3'},
         ],
-        'install':(
-            '(command -v wget >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y wget 2>/dev/null || dnf install -y wget 2>/dev/null || yum install -y wget 2>/dev/null) && '
-            'wget -q https://files.phpmyadmin.net/phpMyAdmin/5.2.3/'
-            'phpMyAdmin-5.2.3-all-languages.tar.gz -O /tmp/pma.tar.gz && '
-            'mkdir -p /usr/share/phpmyadmin && '
-            'tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 && '
-            'cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php && '
-            # phpMyAdmin 5.2 supports PHP 7.2-8.4 only, prefer compatible version
-            'SOCK="" && '
-            'for v in 8.4 8.3 8.2 8.1 8.0 7.4 8.5; do '
-            '  if [ -S /run/php/php${v}-fpm.sock ]; then SOCK=/run/php/php${v}-fpm.sock; break; fi; '
-            'done && '
-            'SOCK=${SOCK:-/run/php/php8.5-fpm.sock} && '
-            # Detect active web server and configure
-            'if systemctl is-active nginx >/dev/null 2>&1; then '
-            '  NGINX_USER=$(grep -oP "^user\\s+\\K\\S+" /etc/nginx/nginx.conf 2>/dev/null | tr -d ";" | head -1) && '
-            '  NGINX_USER=${NGINX_USER:-www-data} && '
-            '  mkdir -p /etc/nginx/conf.d && '
-            '  printf "server {\\n  listen 8082;\\n  server_name _;\\n  root /usr/share/phpmyadmin;\\n  index index.php;\\n  location ~ \\\\.php$ {\\n    fastcgi_split_path_info ^(.+\\.php)(/.+)$;\\n    fastcgi_pass unix:$SOCK;\\n    fastcgi_index index.php;\\n    include fastcgi_params;\\n    fastcgi_param SCRIPT_FILENAME \\$document_root\\$fastcgi_script_name;\\n  }\\n}\\n" > /etc/nginx/conf.d/phpmyadmin.conf && '
-            '  for v in 8.4 8.3 8.2 8.1 8.0 7.4 8.5; do '
-            '    POOL=/etc/php/${v}/fpm/pool.d/www.conf; '
-            '    [ -f "$POOL" ] || continue; '
-            '    grep -q "^listen.owner" "$POOL" && sed -i "s|^listen.owner.*|listen.owner = $NGINX_USER|" "$POOL" || echo "listen.owner = $NGINX_USER" >> "$POOL"; '
-            '    grep -q "^listen.group" "$POOL" && sed -i "s|^listen.group.*|listen.group = $NGINX_USER|" "$POOL" || echo "listen.group = $NGINX_USER" >> "$POOL"; '
-            '    systemctl restart php${v}-fpm 2>/dev/null || true; '
-            '  done && '
-            '  nginx -t 2>/dev/null && systemctl reload nginx; '
-            'elif systemctl is-active caddy >/dev/null 2>&1; then '
-            '  printf "\n:8082 {\n  root * /usr/share/phpmyadmin\n  php_fastcgi unix/$SOCK\n  file_server\n}\n" >> /etc/caddy/Caddyfile && '
-            '  systemctl reload caddy; '
-            'elif systemctl is-active apache2 >/dev/null 2>&1; then '
-            '  a2enmod proxy_fcgi setenvif 2>/dev/null; '
-            '  cat > /etc/apache2/conf-available/phpmyadmin.conf << APACHEEOF\n'
-            'Listen 8082\n'
-            '<VirtualHost *:8082>\n'
-            '  DocumentRoot /usr/share/phpmyadmin\n'
-            '  <Directory /usr/share/phpmyadmin>\n'
-            '    Options FollowSymLinks\n'
-            '    DirectoryIndex index.php\n'
-            '    Require all granted\n'
-            '  </Directory>\n'
-            '  <FilesMatch \\.php$>\n'
-            '    SetHandler "proxy:unix:$SOCK|fcgi://localhost"\n'
-            '  </FilesMatch>\n'
-            '</VirtualHost>\n'
-            'APACHEEOF\n'
-            '  a2enconf phpmyadmin && systemctl reload apache2; '
-            'elif systemctl is-active lsws >/dev/null 2>&1; then '
-            '  mkdir -p /usr/local/lsws/conf/vhosts/phpmyadmin && '
-            '  echo "docRoot /usr/share/phpmyadmin" > /usr/local/lsws/conf/vhosts/phpmyadmin/vhconf.conf && '
-            '  systemctl restart lsws; '
-            'fi && '
-            '(command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active" && ufw allow 8082/tcp comment "phpMyAdmin" || true) && '
-            '(command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port=8082/tcp && firewall-cmd --reload || true) && '
-            'echo "[VortexPanel] phpMyAdmin ready at http://YOUR-SERVER-IP:8082"'
-        ),
-        'uninstall':(
-            'rm -rf /usr/share/phpmyadmin && '
-            'rm -f /etc/nginx/conf.d/phpmyadmin.conf && '
-            'systemctl reload nginx 2>/dev/null || true && '
-            # Remove from Caddyfile
-            'sed -i "/:8082/,/^}/d" /etc/caddy/Caddyfile 2>/dev/null && '
-            'systemctl reload caddy 2>/dev/null || true && '
-            'rm -f /etc/apache2/conf-available/phpmyadmin.conf && '
-            'systemctl reload apache2 2>/dev/null || true && '
-            '(command -v ufw >/dev/null 2>&1 && ufw delete allow 8082/tcp 2>/dev/null || true) && '
-            '(command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --remove-port=8082/tcp && firewall-cmd --reload || true)'
-        ),
+        # phpMyAdmin 5.2 supports PHP 7.2-8.4 -- prefer those over 8.5.
+        # Serves the PHP-FPM socket that really exists (Debian, Remi SCL or
+        # RHEL system PHP), on nginx, Caddy, Apache (Debian conf-available,
+        # RHEL /etc/httpd/conf.d) -- each config tested and reverted if the
+        # web server rejects it; port 8082 is allowed in SELinux.
+        'install':r'''PMA_VER=5.2.3
+PHP_PREF="8.4 8.3 8.2 8.1 8.0 7.4 8.5"
+__VP_PHP_SOCK__
+if [ -z "$SOCK" ]; then
+  echo "[VortexPanel] No PHP-FPM is installed on this server -- install PHP from the App Store first, then install phpMyAdmin again."
+  exit 1
+fi
+echo "[VortexPanel] Using the PHP-FPM socket $SOCK (pool user $PUSER)"
+command -v wget >/dev/null 2>&1 || apt-get install -y wget || exit 1
+wget -q --timeout=60 https://files.phpmyadmin.net/phpMyAdmin/$PMA_VER/phpMyAdmin-$PMA_VER-all-languages.tar.gz -O /tmp/pma.tar.gz \
+  || { echo "[VortexPanel] Download of phpMyAdmin $PMA_VER failed."; rm -f /tmp/pma.tar.gz; exit 1; }
+mkdir -p /usr/share/phpmyadmin
+tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 --no-same-owner \
+  || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /tmp/pma.tar.gz; exit 1; }
+rm -f /tmp/pma.tar.gz
+if [ ! -f /usr/share/phpmyadmin/config.inc.php ]; then
+  cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php || exit 1
+  SECRET=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
+  sed -i "s|^\$cfg\['blowfish_secret'\] = '[^']*';|\$cfg['blowfish_secret'] = '$SECRET';|" /usr/share/phpmyadmin/config.inc.php
+fi
+mkdir -p /usr/share/phpmyadmin/tmp
+chown "$PUSER" /usr/share/phpmyadmin/tmp && chmod 700 /usr/share/phpmyadmin/tmp
+__VP_SEL_PMA__
+CONFIGURED=""
+if systemctl is-active --quiet nginx; then
+  mkdir -p /etc/nginx/conf.d
+  rm -f /tmp/vp-pma-nginx.bak
+  [ -f /etc/nginx/conf.d/phpmyadmin.conf ] && cp -f /etc/nginx/conf.d/phpmyadmin.conf /tmp/vp-pma-nginx.bak
+  cat > /etc/nginx/conf.d/phpmyadmin.conf <<PMAEOF
+server {
+    listen 8082;
+    server_name _;
+    root /usr/share/phpmyadmin;
+    index index.php;
+    location ~ ^/(libraries|templates|tmp|vendor)/ { deny all; }
+    location ~ \.php\$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_pass unix:$SOCK;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+PMAEOF
+  __VP_NGINX_POOL__
+  __VP_SEL_PORT_8082__
+  if nginx -t 2>&1; then
+    systemctl reload nginx && CONFIGURED=nginx
+  else
+    echo "[VortexPanel] nginx rejected the phpMyAdmin site (shown above) -- reverted, nginx is unchanged."
+    if [ -f /tmp/vp-pma-nginx.bak ]; then mv -f /tmp/vp-pma-nginx.bak /etc/nginx/conf.d/phpmyadmin.conf; else rm -f /etc/nginx/conf.d/phpmyadmin.conf; fi
+  fi
+elif systemctl is-active --quiet caddy && [ -f /etc/caddy/Caddyfile ]; then
+  if grep -q "root \* /usr/share/phpmyadmin" /etc/caddy/Caddyfile; then
+    CONFIGURED=caddy
+  else
+    cp -f /etc/caddy/Caddyfile /tmp/vp-pma-caddy.bak
+    printf '\n:8082 {\n  root * /usr/share/phpmyadmin\n  php_fastcgi unix/%s\n  file_server\n}\n' "$SOCK" >> /etc/caddy/Caddyfile
+    # Caddy runs as 'caddy': it needs the socket's group to connect.
+    G=$(stat -c %G "$SOCK" 2>/dev/null)
+    if [ -n "$G" ] && id caddy >/dev/null 2>&1 && ! id -nG caddy | grep -qw "$G"; then usermod -aG "$G" caddy; fi
+    __VP_SEL_PORT_8082__
+    if caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 && systemctl restart caddy; then
+      CONFIGURED=caddy
+    else
+      echo "[VortexPanel] Caddy rejected the phpMyAdmin site (shown above) -- reverted."
+      cp -f /tmp/vp-pma-caddy.bak /etc/caddy/Caddyfile; systemctl restart caddy
+    fi
+    rm -f /tmp/vp-pma-caddy.bak
+  fi
+elif [ -d /etc/httpd/conf.d ] && systemctl is-active --quiet httpd; then
+  cat > /etc/httpd/conf.d/phpmyadmin.conf <<APACHEEOF
+Listen 8082
+<VirtualHost *:8082>
+  DocumentRoot /usr/share/phpmyadmin
+  <Directory /usr/share/phpmyadmin>
+    Options FollowSymLinks
+    DirectoryIndex index.php
+    Require all granted
+  </Directory>
+  <FilesMatch \.php\$>
+    SetHandler "proxy:unix:$SOCK|fcgi://localhost"
+  </FilesMatch>
+</VirtualHost>
+APACHEEOF
+  __VP_SEL_PORT_8082__
+  if apachectl configtest 2>&1; then
+    systemctl reload httpd && CONFIGURED=httpd
+  else
+    echo "[VortexPanel] Apache rejected the phpMyAdmin site (shown above) -- reverted."
+    rm -f /etc/httpd/conf.d/phpmyadmin.conf
+  fi
+elif systemctl is-active --quiet apache2; then
+  a2enmod proxy_fcgi setenvif >/dev/null 2>&1
+  cat > /etc/apache2/conf-available/phpmyadmin.conf <<APACHEEOF
+Listen 8082
+<VirtualHost *:8082>
+  DocumentRoot /usr/share/phpmyadmin
+  <Directory /usr/share/phpmyadmin>
+    Options FollowSymLinks
+    DirectoryIndex index.php
+    Require all granted
+  </Directory>
+  <FilesMatch \.php\$>
+    SetHandler "proxy:unix:$SOCK|fcgi://localhost"
+  </FilesMatch>
+</VirtualHost>
+APACHEEOF
+  a2enconf phpmyadmin >/dev/null 2>&1
+  if apache2ctl configtest 2>&1; then
+    systemctl reload apache2 && CONFIGURED=apache2
+  else
+    echo "[VortexPanel] Apache rejected the phpMyAdmin site (shown above) -- reverted."
+    a2disconf phpmyadmin >/dev/null 2>&1; rm -f /etc/apache2/conf-available/phpmyadmin.conf
+  fi
+fi
+if [ -n "$CONFIGURED" ]; then
+  (command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active" && ufw allow 8082/tcp comment "phpMyAdmin") >/dev/null 2>&1
+  (command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port=8082/tcp && firewall-cmd --reload) >/dev/null 2>&1
+  echo "[VortexPanel] phpMyAdmin is served by $CONFIGURED at http://YOUR-SERVER-IP:8082"
+else
+  echo "[VortexPanel] phpMyAdmin files are in /usr/share/phpmyadmin, but no running nginx, Caddy or Apache accepted a site for it -- point your web server at that directory (PHP-FPM socket: $SOCK)."
+fi
+true''',
+        'uninstall':r'''rm -rf /usr/share/phpmyadmin
+if [ -f /etc/nginx/conf.d/phpmyadmin.conf ]; then rm -f /etc/nginx/conf.d/phpmyadmin.conf; nginx -t >/dev/null 2>&1 && systemctl reload nginx; fi
+if [ -f /etc/caddy/Caddyfile ] && grep -q "root \* /usr/share/phpmyadmin" /etc/caddy/Caddyfile; then
+  sed -i "/:8082/,/^}/d" /etc/caddy/Caddyfile; systemctl reload caddy 2>/dev/null
+fi
+if [ -f /etc/httpd/conf.d/phpmyadmin.conf ]; then rm -f /etc/httpd/conf.d/phpmyadmin.conf; apachectl configtest >/dev/null 2>&1 && systemctl reload httpd; fi
+if [ -f /etc/apache2/conf-available/phpmyadmin.conf ]; then
+  a2disconf phpmyadmin >/dev/null 2>&1; rm -f /etc/apache2/conf-available/phpmyadmin.conf
+  apache2ctl configtest >/dev/null 2>&1 && systemctl reload apache2
+fi
+(command -v ufw >/dev/null 2>&1 && ufw delete allow 8082/tcp) >/dev/null 2>&1
+(command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --remove-port=8082/tcp && firewall-cmd --reload) >/dev/null 2>&1
+true''',
         'manage':False,
     },
     # --- Security --------------------------------------------------------------
@@ -1359,7 +1639,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         ],
         'install':r'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
-  apt-get install -y python3 python3-pip curl gzip && \
+  apt-get install -y python3 python3-pip python3-systemd curl gzip && \
   F2B_VER=$(curl -fsSL https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
   F2B_VER=${F2B_VER:-1.1.0} && \
   curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
@@ -1368,12 +1648,14 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
     echo "[VortexPanel] Upstream package did not provide a systemd unit -- falling back to the distro package"; \
     apt-get install -y fail2ban; \
   fi && \
-  systemctl enable fail2ban && systemctl start fail2ban; \
+  __VP_F2B_BANACTION__ && \
+  systemctl enable fail2ban && systemctl restart fail2ban; \
 elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then \
   echo "[VortexPanel] fail2ban is not in the default RHEL-family repos -- enabling EPEL first" && \
-  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && \
+  __VP_EPEL__ && \
   (dnf install -y fail2ban fail2ban-firewalld 2>/dev/null || yum install -y fail2ban fail2ban-firewalld 2>/dev/null || dnf install -y fail2ban 2>/dev/null || yum install -y fail2ban) && \
-  systemctl enable --now fail2ban; \
+  __VP_F2B_BANACTION__ && \
+  systemctl enable fail2ban && systemctl restart fail2ban; \
 fi''',
         'uninstall':(
             'systemctl stop fail2ban 2>/dev/null; '
@@ -1405,8 +1687,11 @@ fi''',
             # packages at all. The correct names are clamd and
             # clamav-update, and the service unit is clamd@scan (a systemd
             # template unit), not clamav-daemon.
-            '  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && '
+            '  __VP_EPEL__ && '
             '  (dnf install -y clamav clamd clamav-update 2>/dev/null || yum install -y clamav clamd clamav-update 2>/dev/null) && '
+            # EPEL ships /etc/clamd.d/scan.conf with the socket commented
+            # out -- clamd@scan then refuses to start.
+            '  ( [ -f /etc/clamd.d/scan.conf ] && sed -i -e "s|^#\\?LocalSocket /run/clamd.scan/clamd.sock|LocalSocket /run/clamd.scan/clamd.sock|" -e "s|^Example|#Example|" /etc/clamd.d/scan.conf; true ) && '
             '  (freshclam 2>&1 || true) && '
             '  systemctl enable clamd@scan 2>/dev/null; systemctl start clamd@scan 2>/dev/null; '
             'fi; true'
@@ -1422,7 +1707,7 @@ fi''',
         'versions':[
             {'label':'Latest (apt)', 'value':'latest'},
         ],
-        'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then apt-get install -y ddclient; else (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && (dnf install -y ddclient 2>/dev/null || yum install -y ddclient); fi',
+        'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then apt-get install -y ddclient; else __VP_EPEL__ && (dnf install -y ddclient 2>/dev/null || yum install -y ddclient); fi',
         'uninstall':'apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold ddclient 2>/dev/null; dnf remove -y ddclient 2>/dev/null; yum remove -y ddclient 2>/dev/null; apt-get autoremove -y 2>/dev/null',
         'manage':False,
     },
@@ -1641,11 +1926,11 @@ if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_redis_repo_err.log;
   rm -f /etc/apt/sources.list.d/redis.list; \
   apt-get update -qq; \
 fi; \
-apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server; else (dnf install -y redis 2>/dev/null || (dnf install -y epel-release 2>/dev/null; dnf install -y redis 2>/dev/null) || yum install -y redis) && systemctl enable --now redis; fi''',
+apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server; else (dnf install -y redis 2>/dev/null || (__VP_EPEL__; dnf install -y redis 2>/dev/null) || yum install -y redis) && systemctl enable --now redis; fi''',
         'install':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
 apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
-apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server; else (dnf install -y redis 2>/dev/null || (dnf install -y epel-release 2>/dev/null; dnf install -y redis 2>/dev/null) || yum install -y redis) && systemctl enable --now redis; fi''',
+apt-get install -y redis-server && systemctl enable redis-server && systemctl start redis-server; else (dnf install -y redis 2>/dev/null || (__VP_EPEL__; dnf install -y redis 2>/dev/null) || yum install -y redis) && systemctl enable --now redis; fi''',
         'uninstall':'systemctl stop redis-server redis 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold redis-server redis-tools 2>/dev/null; dnf remove -y redis 2>/dev/null; yum remove -y redis 2>/dev/null; apt-get autoremove -y 2>/dev/null && rm -f /usr/share/keyrings/redis-archive-keyring.gpg /etc/apt/sources.list.d/redis.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
         'service':'redis-server', 'manage':True,
     },
@@ -1664,12 +1949,12 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
             '  (systemctl enable supervisord 2>/dev/null || systemctl enable supervisor) && '
             '  (systemctl start supervisord 2>/dev/null || systemctl start supervisor); '
             'else '
-            '  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && '
+            '  __VP_EPEL__ && '
             '  (dnf install -y supervisor 2>/dev/null || yum install -y supervisor) && '
             '  systemctl enable --now supervisord; '
             'fi'
         ),
-        'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable --now supervisor; else (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true) && (dnf install -y supervisor 2>/dev/null || yum install -y supervisor) && systemctl enable --now supervisord; fi',
+        'install':'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then DEBIAN_FRONTEND=noninteractive apt-get install -y supervisor && systemctl enable --now supervisor; else __VP_EPEL__ && (dnf install -y supervisor 2>/dev/null || yum install -y supervisor) && systemctl enable --now supervisord; fi',
         'uninstall':'systemctl stop supervisor supervisord 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold supervisor 2>/dev/null; dnf remove -y supervisor 2>/dev/null; yum remove -y supervisor 2>/dev/null; apt-get autoremove -y 2>/dev/null',
         'service':'supervisor', 'manage':True,
     },
@@ -1750,15 +2035,22 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then
     PKGS="php-fpm php-mysql php-curl php-mbstring php-intl php-xml php-zip php-gd php-imagick"
   fi
   apt-get install -y wget $PKGS || exit 1
-  WEB_USER=www-data
 else
-  (dnf install -y epel-release 2>/dev/null || yum install -y epel-release 2>/dev/null; true)
-  (dnf install -y wget php-fpm php-mysqlnd php-curl php-mbstring php-intl php-xml php-zip php-gd php-pecl-imagick 2>/dev/null || \
-   dnf install -y wget php-fpm php-mysqlnd php-mbstring php-intl php-xml php-gd || \
-   yum install -y wget php-fpm php-mysqlnd php-mbstring php-intl php-xml php-gd) || exit 1
-  systemctl enable --now php-fpm 2>/dev/null
-  WEB_USER=apache
-  id nginx >/dev/null 2>&1 && systemctl is-active --quiet nginx && WEB_USER=nginx
+  __VP_EPEL__
+  command -v wget >/dev/null 2>&1 || dnf install -y wget || exit 1
+  # Reuse a Remi SCL PHP when one is installed (phpXY-php-fpm), else the
+  # system PHP. Optional extensions one by one (dnf aborts the whole
+  # transaction on one unknown name).
+  VN=""
+  for v in 84 83 85 82 81; do
+    if [ -x /opt/remi/php$v/root/usr/sbin/php-fpm ]; then VN=$v; break; fi
+  done
+  if [ -n "$VN" ]; then P="php$VN-php-"; U="php$VN-php-fpm"; else P="php-"; U="php-fpm"; fi
+  dnf install -y ${P}fpm ${P}mysqlnd ${P}mbstring ${P}intl ${P}xml ${P}gd || exit 1
+  for X in pecl-zip pecl-imagick-im7 pecl-imagick; do
+    dnf install -y "$P$X" >/dev/null 2>&1 || echo "[VortexPanel] Note: optional package $P$X is not available -- skipped"
+  done
+  systemctl enable --now "$U"
 fi
 echo "[VortexPanel] Downloading Roundcube {ver}..."
 wget -q --timeout=60 https://github.com/roundcube/roundcubemail/releases/download/{ver}/roundcubemail-{ver}-complete.tar.gz -O /tmp/roundcube.tar.gz \
@@ -1767,12 +2059,18 @@ mkdir -p /var/www/roundcube
 tar -xzf /tmp/roundcube.tar.gz -C /var/www/roundcube --strip-components=1 || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /tmp/roundcube.tar.gz; exit 1; }
 rm -f /tmp/roundcube.tar.gz
 [ -f /var/www/roundcube/config/config.inc.php ] || cp /var/www/roundcube/config/config.inc.php.sample /var/www/roundcube/config/config.inc.php
-chown -R $WEB_USER:$WEB_USER /var/www/roundcube/
-SOCK=$(ls /run/php/php[0-9]*-fpm.sock 2>/dev/null | sort -V | tail -1)
-[ -z "$SOCK" ] && [ -S /run/php/php-fpm.sock ] && SOCK=/run/php/php-fpm.sock
-[ -z "$SOCK" ] && [ -S /run/php-fpm/www.sock ] && SOCK=/run/php-fpm/www.sock
+# The site points at a PHP-FPM socket that really exists (Debian, Remi SCL or
+# RHEL system PHP); the app is owned by that pool's user (it writes temp/ and
+# logs/; the old code chowned to apache/www-data whatever the pool ran as).
+PHP_PREF="8.4 8.3 8.5 8.2 8.1"
+__VP_PHP_SOCK__
+chown -R "$PUSER": /var/www/roundcube/
+__VP_SEL_RC__
+__VP_SEL_WEBMAIL__
 if systemctl is-active --quiet nginx && [ -n "$SOCK" ]; then
   mkdir -p /etc/nginx/conf.d
+  __VP_NGINX_POOL__
+  __VP_SEL_PORT_8083__
   cat > /etc/nginx/conf.d/roundcube.conf <<RCEOF
 server {
     listen 8083;
@@ -1799,8 +2097,10 @@ RCEOF
     rm -f /etc/nginx/conf.d/roundcube.conf
     echo "[VortexPanel] nginx rejected the Roundcube site config (shown above) -- removed it again, nginx is unchanged."
   fi
+elif [ -z "$SOCK" ]; then
+  echo "[VortexPanel] Roundcube files are in /var/www/roundcube, but no PHP-FPM socket was found, so no web server site was created."
 else
-  echo "[VortexPanel] Roundcube files are in /var/www/roundcube. nginx with PHP-FPM was not found running, so no web server site was created -- point your web server at /var/www/roundcube."
+  echo "[VortexPanel] Roundcube files are in /var/www/roundcube. nginx was not found running, so no web server site was created -- point your web server at /var/www/roundcube (PHP-FPM socket: $SOCK)."
 fi''',
         'install':'',
         'uninstall':('rm -rf /var/www/roundcube; '
@@ -1846,7 +2146,7 @@ fi''',
             {'label':'v2 + OWASP CRS v4 (Apache legacy)', 'value':'2'},
         ],
         'install_tpl':(
-    'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); echo "[VortexPanel] Installing ModSecurity engine..."; WAF_VER="{ver}"; if [ "$WAF_VER" = "2" ]; then apt-get install -y libapache2-mod-security2 2>&1   || echo "[WARN] libapache2-mod-security2 install reported errors"; a2enmod security2 >/dev/null 2>&1 || true; mkdir -p /etc/modsecurity; if [ -f /etc/modsecurity/modsecurity.conf-recommended ]; then   cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf;   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/modsecurity/modsecurity.conf;   sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/modsecurity/unicode.mapping#" /etc/modsecurity/modsecurity.conf;   echo "[VortexPanel] OK Core engine config written (Apache)"; else   echo "[ERROR] modsecurity.conf-recommended not found - writing fallback";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/modsecurity/modsecurity.conf; fi; if [ -f /usr/share/modsecurity-crs/owasp-crs.load ]; then   mv /usr/share/modsecurity-crs/owasp-crs.load /usr/share/modsecurity-crs/owasp-crs.load.disabled-by-vortexpanel 2>/dev/null; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/modsecurity/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/modsecurity/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/modsecurity/crs/crs-setup.conf.example ]; then   cp /etc/modsecurity/crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf;   printf "Include /etc/modsecurity/crs/crs-setup.conf\\nInclude /etc/modsecurity/crs/rules/*.conf\\n" > /etc/modsecurity/main.conf;   echo "[VortexPanel] OK OWASP CRS $CRS_TAG installed"; else   printf "" > /etc/modsecurity/main.conf;   echo "[WARN] Could not download CRS after 3 attempts."; fi; echo "0 3 * * 0 root /bin/bash -c \\"CRS_TAG=\\$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest | python3 -c \\"import json,sys; print(json.load(sys.stdin)[chr(39)+chr(116)+chr(97)+chr(103)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101)+chr(39)])\\" 2>/dev/null) && wget -q --timeout=15 https://github.com/coreruleset/coreruleset/archive/refs/tags/\\${CRS_TAG}.tar.gz -O /tmp/crs.tar.gz && tar -xzf /tmp/crs.tar.gz -C /etc/modsecurity/crs --strip-components=1 && rm -f /tmp/crs.tar.gz && apache2ctl configtest && systemctl reload apache2\\"" > /etc/cron.d/vortex-crs-update-apache && chmod 644 /etc/cron.d/vortex-crs-update-apache; if apache2ctl configtest 2>&1; then   systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null;   echo "[VortexPanel] OK apache2 config test passed"; else   echo "[ERROR] apache2 configtest failed - disabling security2 module";   a2dismod security2 >/dev/null 2>&1;   (apache2ctl configtest 2>&1 && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null) && echo "[VortexPanel] OK security2 disabled, apache2 back up")     || echo "[ERROR] apache2 still failing even with security2 disabled"; fi; else CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules; if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then   apt-get update -qq && apt-get install -y libmodsecurity-dev build-essential git     zlib1g-dev libssl-dev 2>&1     || echo "[WARN] libmodsecurity/build-tooling install reported errors";   apt-get install -y libpcre2-dev 2>&1 || apt-get install -y libpcre3-dev 2>&1     || echo "[WARN] Neither libpcre2-dev nor libpcre3-dev available on this system — proceeding anyway, nginx\'s own ./configure will report clearly if it actually needs one";   NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\');   DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\');   [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP";   if [ -n "$NGINX_VER" ]; then     BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&     echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER...";     if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz         && tar -xzf nginx.tar.gz         && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git         && cd "nginx-${NGINX_VER}"         && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx              > /tmp/modsec-connector-configure.log 2>&1         && make modules > /tmp/modsec-connector-make.log 2>&1         && mkdir -p "$MODULES_PATH"         && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then       CONNECTOR_OK=1;       echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER — WAF can actually load in nginx";     else       echo "[ERROR] Connector build failed against nginx $NGINX_VER — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server. nginx.conf will NOT be modified, so nginx stays working; the engine/CRS below still get prepared but the WAF will not actually be active until this is resolved.";     fi;     cd / && rm -rf "$BUILD_DIR";   else     echo "[ERROR] Could not detect installed nginx version via "nginx -v" — skipping connector build. nginx.conf will NOT be modified.";   fi; elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then   dnf install -y epel-release 2>/dev/null || true;   (dnf install -y gcc make automake autoconf libtool pcre2-devel openssl-devel zlib-devel git 2>&1 || echo "[WARN] build-tooling install reported errors"); NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\'); DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\'); [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP"; if [ -n "$NGINX_VER" ]; then   BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&   echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER (RHEL-family)...";   if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz       && tar -xzf nginx.tar.gz       && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git       && cd "nginx-${NGINX_VER}"       && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx            > /tmp/modsec-connector-configure.log 2>&1       && make modules > /tmp/modsec-connector-make.log 2>&1       && mkdir -p "$MODULES_PATH"       && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then     CONNECTOR_OK=1;     echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER (RHEL-family) — WAF can actually load in nginx";   else     echo "[ERROR] Connector build failed against nginx $NGINX_VER on RHEL-family — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server.";   fi;   cd / && rm -rf "$BUILD_DIR"; else   echo "[ERROR] Could not detect installed nginx version via nginx -v on RHEL-family — skipping connector build."; fi;   dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"; fi; echo "[VortexPanel] Writing core engine config..."; mkdir -p /etc/nginx/modsec && CONF_OK=0; for attempt in 1 2 3; do   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended     -O /etc/nginx/modsec/modsecurity.conf && CONF_OK=1 && break;   echo "[VortexPanel] modsecurity.conf download attempt $attempt failed, retrying..."; sleep 2; done; if [ "$CONF_OK" = "1" ]; then   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf;   sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf;   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/unicode.mapping     -O /etc/nginx/modsec/unicode.mapping &&     sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/nginx/modsec/unicode.mapping#" /etc/nginx/modsec/modsecurity.conf     || echo "[WARN] Could not download unicode.mapping — nginx -t will fail until this is retried from the WAF page";   echo "[VortexPanel] ✓ Core engine config written — Engine Mode toggle will work"; else   echo "[ERROR] Could not download modsecurity.conf after 3 attempts — writing a minimal fallback config so the engine is still usable";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/nginx/modsec/modsecurity.conf; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/nginx/modsec/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/nginx/modsec/crs/crs-setup.conf.example ]; then   cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf;   echo "[VortexPanel] ✓ OWASP CRS $CRS_TAG installed — Paranoia level control will work"; else   echo "[WARN] Could not download OWASP CRS ruleset after 3 attempts. The core engine (Engine Mode toggle) is still usable, but no attack-pattern rules are loaded yet and Paranoia level will show unavailable until you retry from the WAF page (Repair CRS button)."; fi; if [ "$CRS_OK" = "1" ]; then   printf "Include /etc/nginx/modsec/modsecurity.conf\\nInclude /etc/nginx/modsec/crs/crs-setup.conf\\nInclude /etc/nginx/modsec/crs/rules/*.conf\\n" > /etc/nginx/modsec/main.conf; else   printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; fi; cp /etc/nginx/nginx.conf /tmp/nginx.conf.pre-modsecurity 2>/dev/null; if [ "$CONNECTOR_OK" = "1" ]; then   grep -q "ngx_http_modsecurity_module.so" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "1i load_module ${MODULES_PATH}/ngx_http_modsecurity_module.so;" /etc/nginx/nginx.conf;   grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;"     /etc/nginx/nginx.conf 2>/dev/null || true; else   echo "[VortexPanel] Skipping nginx.conf changes — connector module isn\'t present. nginx stays working; WAF stays inactive until the connector build succeeds."; fi; echo "0 3 * * 0 root /bin/bash -c \\"CRS_TAG=\\$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest | python3 -c \\"import json,sys; print(json.load(sys.stdin)[chr(39)+chr(116)+chr(97)+chr(103)+chr(95)+chr(110)+chr(97)+chr(109)+chr(101)+chr(39)])\\" 2>/dev/null) && wget -q --timeout=15 https://github.com/coreruleset/coreruleset/archive/refs/tags/\\${CRS_TAG}.tar.gz -O /tmp/crs.tar.gz && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 && rm -f /tmp/crs.tar.gz && nginx -t && systemctl reload nginx\\"" > /etc/cron.d/vortex-crs-update && chmod 644 /etc/cron.d/vortex-crs-update; if nginx -t 2>&1; then   systemctl reload nginx 2>/dev/null;   echo "[VortexPanel] ✓ nginx config test passed — WAF is actually serving traffic"; else   echo "[ERROR] nginx -t failed after this install — restoring nginx.conf to its pre-install state so the server keeps working. WAF is NOT active; fix the underlying issue and reinstall.";   if [ -f /tmp/nginx.conf.pre-modsecurity ]; then     cp /tmp/nginx.conf.pre-modsecurity /etc/nginx/nginx.conf;     nginx -t 2>&1 && systemctl reload nginx 2>/dev/null && echo "[VortexPanel] ✓ nginx.conf restored, server is back up"       || echo "[ERROR] Restore also failed nginx -t — nginx.conf may have been broken before this install ran too. Manual check required.";   fi; fi; echo "[VortexPanel] ModSecurity install finished. Connector: $([ \\"$CONNECTOR_OK\\" = \\"1\\" ] && echo compiled-and-enabled || echo FAILED — WAF NOT active, see /tmp/modsec-connector-*.log). Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."; fi; '
+    'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); echo "[VortexPanel] Installing ModSecurity engine..."; WAF_VER="{ver}"; if [ "$WAF_VER" = "2" ]; then apt-get install -y libapache2-mod-security2 2>&1   || echo "[WARN] libapache2-mod-security2 install reported errors"; a2enmod security2 >/dev/null 2>&1 || true; mkdir -p /etc/modsecurity; if [ -f /etc/modsecurity/modsecurity.conf-recommended ]; then   cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf;   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/modsecurity/modsecurity.conf;   sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/modsecurity/unicode.mapping#" /etc/modsecurity/modsecurity.conf;   echo "[VortexPanel] OK Core engine config written (Apache)"; else   echo "[ERROR] modsecurity.conf-recommended not found - writing fallback";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/modsecurity/modsecurity.conf; fi; if [ -f /usr/share/modsecurity-crs/owasp-crs.load ]; then   mv /usr/share/modsecurity-crs/owasp-crs.load /usr/share/modsecurity-crs/owasp-crs.load.disabled-by-vortexpanel 2>/dev/null; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/modsecurity/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/modsecurity/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/modsecurity/crs/crs-setup.conf.example ]; then   cp /etc/modsecurity/crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf;   printf "Include /etc/modsecurity/crs/crs-setup.conf\\nInclude /etc/modsecurity/crs/rules/*.conf\\n" > /etc/modsecurity/main.conf;   echo "[VortexPanel] OK OWASP CRS $CRS_TAG installed"; else   printf "" > /etc/modsecurity/main.conf;   echo "[WARN] Could not download CRS after 3 attempts."; fi; CRS_CRON_FILE=/etc/cron.d/vortex-crs-update-apache; __VP_CRS_CRON__; if apache2ctl configtest 2>&1; then   systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null;   echo "[VortexPanel] OK apache2 config test passed"; else   echo "[ERROR] apache2 configtest failed - disabling security2 module";   a2dismod security2 >/dev/null 2>&1;   (apache2ctl configtest 2>&1 && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null) && echo "[VortexPanel] OK security2 disabled, apache2 back up")     || echo "[ERROR] apache2 still failing even with security2 disabled"; fi; else CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules; if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then   apt-get update -qq && apt-get install -y libmodsecurity-dev build-essential git     zlib1g-dev libssl-dev 2>&1     || echo "[WARN] libmodsecurity/build-tooling install reported errors";   apt-get install -y libpcre2-dev 2>&1 || apt-get install -y libpcre3-dev 2>&1     || echo "[WARN] Neither libpcre2-dev nor libpcre3-dev available on this system — proceeding anyway, nginx\'s own ./configure will report clearly if it actually needs one";   NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\');   DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\');   [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP";   if [ -n "$NGINX_VER" ]; then     BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&     echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER...";     if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz         && tar -xzf nginx.tar.gz         && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git         && cd "nginx-${NGINX_VER}"         && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx              > /tmp/modsec-connector-configure.log 2>&1         && make modules > /tmp/modsec-connector-make.log 2>&1         && mkdir -p "$MODULES_PATH"         && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then       CONNECTOR_OK=1;       echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER — WAF can actually load in nginx";     else       echo "[ERROR] Connector build failed against nginx $NGINX_VER — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server. nginx.conf will NOT be modified, so nginx stays working; the engine/CRS below still get prepared but the WAF will not actually be active until this is resolved.";     fi;     cd / && rm -rf "$BUILD_DIR";   else     echo "[ERROR] Could not detect installed nginx version via "nginx -v" — skipping connector build. nginx.conf will NOT be modified.";   fi; elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then   __VP_EPEL__;   (dnf install -y gcc make automake autoconf libtool pcre2-devel openssl-devel zlib-devel git 2>&1 || echo "[WARN] build-tooling install reported errors"); NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\'); DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\'); [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP"; if [ -n "$NGINX_VER" ]; then   BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&   echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER (RHEL-family)...";   if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz       && tar -xzf nginx.tar.gz       && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git       && cd "nginx-${NGINX_VER}"       && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx            > /tmp/modsec-connector-configure.log 2>&1       && make modules > /tmp/modsec-connector-make.log 2>&1       && mkdir -p "$MODULES_PATH"       && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then     CONNECTOR_OK=1;     echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER (RHEL-family) — WAF can actually load in nginx";   else     echo "[ERROR] Connector build failed against nginx $NGINX_VER on RHEL-family — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server.";   fi;   cd / && rm -rf "$BUILD_DIR"; else   echo "[ERROR] Could not detect installed nginx version via nginx -v on RHEL-family — skipping connector build."; fi;   dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"; fi; echo "[VortexPanel] Writing core engine config..."; mkdir -p /etc/nginx/modsec && CONF_OK=0; for attempt in 1 2 3; do   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended     -O /etc/nginx/modsec/modsecurity.conf && CONF_OK=1 && break;   echo "[VortexPanel] modsecurity.conf download attempt $attempt failed, retrying..."; sleep 2; done; if [ "$CONF_OK" = "1" ]; then   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf;   sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf;   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/unicode.mapping     -O /etc/nginx/modsec/unicode.mapping &&     sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/nginx/modsec/unicode.mapping#" /etc/nginx/modsec/modsecurity.conf     || echo "[WARN] Could not download unicode.mapping — nginx -t will fail until this is retried from the WAF page";   echo "[VortexPanel] ✓ Core engine config written — Engine Mode toggle will work"; else   echo "[ERROR] Could not download modsecurity.conf after 3 attempts — writing a minimal fallback config so the engine is still usable";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/nginx/modsec/modsecurity.conf; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/nginx/modsec/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/nginx/modsec/crs/crs-setup.conf.example ]; then   cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf;   echo "[VortexPanel] ✓ OWASP CRS $CRS_TAG installed — Paranoia level control will work"; else   echo "[WARN] Could not download OWASP CRS ruleset after 3 attempts. The core engine (Engine Mode toggle) is still usable, but no attack-pattern rules are loaded yet and Paranoia level will show unavailable until you retry from the WAF page (Repair CRS button)."; fi; if [ "$CRS_OK" = "1" ]; then   printf "Include /etc/nginx/modsec/modsecurity.conf\\nInclude /etc/nginx/modsec/crs/crs-setup.conf\\nInclude /etc/nginx/modsec/crs/rules/*.conf\\n" > /etc/nginx/modsec/main.conf; else   printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; fi; cp /etc/nginx/nginx.conf /tmp/nginx.conf.pre-modsecurity 2>/dev/null; if [ "$CONNECTOR_OK" = "1" ]; then   grep -q "ngx_http_modsecurity_module.so" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "1i load_module ${MODULES_PATH}/ngx_http_modsecurity_module.so;" /etc/nginx/nginx.conf;   grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;"     /etc/nginx/nginx.conf 2>/dev/null || true; else   echo "[VortexPanel] Skipping nginx.conf changes — connector module isn\'t present. nginx stays working; WAF stays inactive until the connector build succeeds."; fi; CRS_CRON_FILE=/etc/cron.d/vortex-crs-update; __VP_CRS_CRON__; if nginx -t 2>&1; then   systemctl reload nginx 2>/dev/null;   echo "[VortexPanel] ✓ nginx config test passed — WAF is actually serving traffic"; else   echo "[ERROR] nginx -t failed after this install — restoring nginx.conf to its pre-install state so the server keeps working. WAF is NOT active; fix the underlying issue and reinstall.";   if [ -f /tmp/nginx.conf.pre-modsecurity ]; then     cp /tmp/nginx.conf.pre-modsecurity /etc/nginx/nginx.conf;     nginx -t 2>&1 && systemctl reload nginx 2>/dev/null && echo "[VortexPanel] ✓ nginx.conf restored, server is back up"       || echo "[ERROR] Restore also failed nginx -t — nginx.conf may have been broken before this install ran too. Manual check required.";   fi; fi; echo "[VortexPanel] ModSecurity install finished. Connector: $([ \\"$CONNECTOR_OK\\" = \\"1\\" ] && echo compiled-and-enabled || echo FAILED — WAF NOT active, see /tmp/modsec-connector-*.log). Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."; fi; '
         ),
         'uninstall':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -2093,6 +2393,37 @@ fi''',
     },
 ]
 
+# --- Shared shell snippets referenced by marker in the catalog commands ------------
+# (kept as markers so the long one-line templates stay readable). Expanded once,
+# at import, into every string field of MODULES.
+_VP_SNIPPETS = {
+    '__VP_EPEL__': ensure_epel_cmd(),
+    '__VP_SEL_WEB__': selinux_web_booleans_cmd(proxy=True, db=True),
+    '__VP_SEL_WEBMAIL__': selinux_web_booleans_cmd(proxy=True, db=True, mail=True),
+    '__VP_SEL_FTP__': selinux_web_booleans_cmd(proxy=False, db=False, ftp=True),
+    '__VP_SEL_PORT_8082__': selinux_port_cmd(8082),
+    '__VP_SEL_PORT_8083__': selinux_port_cmd(8083),
+    '__VP_SEL_PMA__': selinux_label_cmd('/usr/share/phpmyadmin', writable=False) + '; ' +
+                      selinux_label_cmd('/usr/share/phpmyadmin/tmp', writable=True),
+    '__VP_SEL_RC__': selinux_label_cmd('/var/www/roundcube/temp', writable=True) + '; ' +
+                     selinux_label_cmd('/var/www/roundcube/logs', writable=True),
+    '__VP_PHP_SOCK__': _PHP_SOCK_SH,
+    '__VP_PUREDB__': _PUREDB_SH,
+    '__VP_NGINX_POOL__': _NGINX_POOL_SH,
+    '__VP_F2B_BANACTION__': _F2B_BANACTION_SH,
+    '__VP_CRS_CRON__': _CRS_CRON_SH,
+}
+
+def _expand_snippets(mods):
+    for m in mods:
+        for k, v in list(m.items()):
+            if isinstance(v, str) and '__VP_' in v:
+                for mk, sv in _VP_SNIPPETS.items():
+                    v = v.replace(mk, sv)
+                m[k] = v
+
+_expand_snippets(MODULES)
+
 # --- App catalog override -------------------------------------------------------
 # Lets version labels/descriptions be refreshed independently of a full panel
 # update (which requires a git pull + service restart for even a one-line
@@ -2266,9 +2597,11 @@ def list_modules():
         if installed:
             svc = _resolve_svc(m.get('service',''))
             if svc:
-                r = subprocess.run(f'systemctl is-active {svc} 2>/dev/null',
-                                   shell=True, capture_output=True, text=True)
-                svc_status = r.stdout.strip()
+                try:
+                    r = subprocess.run(['systemctl', 'is-active', svc], capture_output=True, text=True, timeout=10)
+                    svc_status = (r.stdout.strip().splitlines() or [''])[0]
+                except Exception:
+                    svc_status = ''
             installed_ver = get_version(m['id'])
             has_update, latest_same_track = _check_update_available(installed_ver, m.get('versions', []))
         result.append({
@@ -2449,9 +2782,13 @@ def uninstall_module(mod_id):
 
         rc, timed_out = _run_streaming(job_id, translate_install_cmd(cmd), 1200, 'Uninstall')
 
-        if ver and mod_id in ('php', 'python'):
-            ver_binary = f'php{ver}' if mod_id == 'php' else f'python{ver}'
-            still_installed = bool(sh(f'command -v {ver_binary} 2>/dev/null'))
+        if ver and mod_id == 'php':
+            # php_layout knows the RHEL layouts too (Remi SCL has no php8.3
+            # command, so `command -v php8.3` reported every RHEL removal as
+            # done, even a failed one).
+            still_installed = php_layout(ver) is not None
+        elif ver and mod_id == 'python':
+            still_installed = bool(sh(f'command -v python{ver} 2>/dev/null'))
         else:
             still_installed = is_installed(mod['check'])
         removed = not still_installed and not timed_out
@@ -2583,10 +2920,17 @@ def control_module(mod_id):
     if not mod: return jsonify({'ok':False}), 404
     svc = _resolve_svc(mod.get('service',''))
     if svc and action in ('start','stop','restart','reload'):
-        subprocess.run(f'systemctl {action} {svc} 2>&1', shell=True)
+        # Timeouts: a hanging stop/start used to block the gunicorn worker forever.
+        try:
+            subprocess.run(['systemctl', action, svc], capture_output=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            pass
         time.sleep(0.8)
-        status = subprocess.run(f'systemctl is-active {svc} 2>/dev/null',
-                                shell=True, capture_output=True, text=True).stdout.strip()
+        try:
+            status = subprocess.run(['systemctl', 'is-active', svc], capture_output=True, text=True,
+                                    timeout=15).stdout.strip()
+        except Exception:
+            status = 'unknown'
         return jsonify({'ok':True, 'status':status})
     return jsonify({'ok':False, 'error':'No service defined'})
 
@@ -2831,9 +3175,408 @@ def ffmpeg_reset():
 _SWITCH_FROM_CATALOG = {'nginx', 'apache2', 'openlitespeed', 'mysql', 'mariadb', 'postgresql',
                         'mongodb', 'redis', 'nodejs', 'bind9'}
 
+import glob as _glob, ipaddress as _ipaddress
+try:
+    from panel.routes.php import (php_layout, installed_php_layouts, php_layout_for_path, php_loaded_modules,
+                                  php_svc_status, php_apply_file, php_ini_set, php_save_ini_values,
+                                  php_install_ext, php_uninstall_ext, valid_php_ver)
+except ImportError:
+    from php import (php_layout, installed_php_layouts, php_layout_for_path, php_loaded_modules,
+                     php_svc_status, php_apply_file, php_ini_set, php_save_ini_values,
+                     php_install_ext, php_uninstall_ext, valid_php_ver)
+
+# --- Settings helpers -------------------------------------------------------------
+def _st_run(cmd, t=60):
+    """Run a shell command. Returns (returncode, stdout+stderr); never raises."""
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t, errors='replace')
+        return r.returncode, ((r.stdout or '') + (r.stderr or '')).strip()
+    except subprocess.TimeoutExpired:
+        return 124, f'timed out after {t}s'
+    except Exception as e:
+        return 1, str(e)
+
+def _st_family():
+    try:
+        return 'debian' if get_os().get('family') == 'debian' else 'rhel'
+    except Exception:
+        return 'debian'
+
+def _st_read(path, default=''):
+    try:
+        with open(path, errors='replace') as f:
+            return f.read()
+    except Exception:
+        return default
+
+def _st_tail(path, n=100):
+    if not path or not os.path.exists(path):
+        return ''
+    rc, out = _st_run(f'tail -n {int(n)} "{path}" 2>/dev/null', 15)
+    return out
+
+def _st_journal(unit, n=80):
+    rc, out = _st_run(f'journalctl -u {unit} -n {int(n)} --no-pager 2>/dev/null', 20)
+    return out if out and '-- No entries --' not in out else ''
+
+def _st_status(*names):
+    """systemctl is-active of the first unit that exists among the logical
+    names (resolved per distro). Never returns multi-line output."""
+    first = ''
+    for n in names:
+        unit = _resolve_svc(n)
+        rc, out = _st_run(f'systemctl is-active {unit} 2>/dev/null', 10)
+        st = (out.splitlines() or ['inactive'])[0].strip() or 'inactive'
+        if st == 'active':
+            return 'active'
+        first = first or st
+    return first or 'inactive'
+
+def _st_restore(path, old):
+    try:
+        if old is None:
+            os.remove(path)
+        else:
+            with open(path, 'w') as f:
+                f.write(old)
+    except Exception:
+        pass
+
+def _st_apply(changes, test_cmd=None, svc=None, action='reload'):
+    """Write config file(s) {path: content}, run test_cmd, then reload/restart
+    svc when it is running and confirm it still runs. On any failure every
+    file is restored (and the service restarted on the old config).
+    Returns (ok, message)."""
+    olds = {}
+    for path, content in changes.items():
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            for p, o in olds.items():
+                _st_restore(p, o)
+            return False, f'{d} does not exist on this server.'
+        try:
+            with open(path) as f:
+                olds[path] = f.read()
+        except FileNotFoundError:
+            olds[path] = None
+        with open(path, 'w') as f:
+            f.write(content)
+    def _undo():
+        for p, o in olds.items():
+            _st_restore(p, o)
+    if test_cmd:
+        rc, out = _st_run(test_cmd, 90)
+        if rc != 0:
+            _undo()
+            return False, 'Configuration test failed -- the previous file was restored:\n' + out[-1500:]
+    if svc:
+        unit = _resolve_svc(svc)
+        if not _svc_active(unit):
+            return True, f'Saved. {unit} is not running, so the change takes effect when it starts.'
+        rc, out = _st_run(f'systemctl {action} {unit} 2>&1', 240)
+        if rc == 0:
+            time.sleep(1)
+        if rc != 0 or not _svc_active(unit):
+            tail = _st_journal(unit, 15)
+            _undo()
+            # The failed start usually tripped systemd's start limit (the unit
+            # auto-restarts several times in a row); without reset-failed the
+            # restart on the restored config is refused and the service stays
+            # down ("Start request repeated too quickly").
+            _st_run(f'systemctl reset-failed {unit} 2>&1', 30)
+            _st_run(f'systemctl restart {unit} 2>&1', 240)
+            time.sleep(1)
+            back = _svc_active(unit)
+            return False, (f'{unit} failed to {action} with the new configuration -- the previous file was '
+                           f'restored and ' + (f'{unit} is running again.' if back else
+                                               f'{unit} could NOT be started again -- check its log.') +
+                           '\n' + (out or tail)[-1500:])
+    return True, ''
+
+_ST_VAL_RE = re.compile(r'^[A-Za-z0-9._:/-]{1,128}$')
+_ST_SIZE_RE = re.compile(r'^\d{1,12}[KkMmGgTt]?$')
+_ST_INT_RE = re.compile(r'^\d{1,9}$')
+
+def _st_valid_port(p):
+    try:
+        p = int(str(p).strip())
+        return 0 < p < 65536
+    except (TypeError, ValueError):
+        return False
+
+def _st_ip_or_net(x):
+    try:
+        _ipaddress.ip_network(x, strict=False)
+        return True
+    except ValueError:
+        return False
+
+# --- per-app file locations ---------------------------------------------------------
+def _st_nginx_conf():
+    return next((p for p in ['/etc/nginx/nginx.conf', '/www/server/nginx/conf/nginx.conf'] if os.path.exists(p)),
+                '/etc/nginx/nginx.conf')
+
+def _st_apache():
+    if os.path.exists('/etc/apache2/apache2.conf') or not os.path.exists('/etc/httpd/conf/httpd.conf'):
+        mpm = sorted(_glob.glob('/etc/apache2/mods-enabled/mpm_*.conf'))
+        return {'conf': '/etc/apache2/apache2.conf', 'svc': 'apache2', 'bin': 'apache2',
+                'test': 'apache2ctl configtest 2>&1', 'log': '/var/log/apache2/error.log',
+                'mpm': mpm[0] if mpm else ''}
+    return {'conf': '/etc/httpd/conf/httpd.conf', 'svc': 'httpd', 'bin': 'httpd',
+            'test': 'apachectl configtest 2>&1', 'log': '/var/log/httpd/error_log', 'mpm': ''}
+
+_OLS_CONF = '/usr/local/lsws/conf/httpd_config.conf'
+
+_MYSQL_CNF = {
+    'mysql':   ['/etc/mysql/mysql.conf.d/mysqld.cnf', '/etc/my.cnf.d/mysql-server.cnf', '/etc/my.cnf',
+                '/etc/mysql/my.cnf'],
+    'mariadb': ['/etc/mysql/mariadb.conf.d/50-server.cnf', '/etc/my.cnf.d/mariadb-server.cnf',
+                '/etc/my.cnf.d/server.cnf', '/etc/my.cnf', '/etc/mysql/my.cnf'],
+}
+_MYSQLD_SECTION_RE = re.compile(r'^[ \t]*\[(mysqld|mariadb|server)\][ \t]*$', re.M)
+
+def _st_mysql_flavor(mod_id):
+    rc, out = _st_run('mysqld --version 2>/dev/null; mariadbd --version 2>/dev/null; mariadb --version 2>/dev/null', 15)
+    if 'mariadb' in out.lower():
+        return 'mariadb'
+    if out.strip():
+        return 'mysql'
+    return 'mariadb' if mod_id == 'mariadb' else 'mysql'
+
+def _st_mysql_cnf(flavor):
+    existing = [p for p in _MYSQL_CNF[flavor] if os.path.exists(p)]
+    for p in existing:
+        if _MYSQLD_SECTION_RE.search(_st_read(p)):
+            return p
+    return existing[0] if existing else _MYSQL_CNF[flavor][0]
+
+def _st_mysql_svc(flavor):
+    return _resolve_svc('mariadb' if flavor == 'mariadb' else 'mysql')
+
+def _st_redis_conf():
+    return next((p for p in ['/etc/redis/redis.conf', '/etc/redis.conf'] if os.path.exists(p)), '/etc/redis/redis.conf')
+
+def _st_memcached_conf():
+    for p in ('/etc/memcached.conf', '/etc/sysconfig/memcached'):
+        if os.path.exists(p):
+            return p, ('sysconfig' if 'sysconfig' in p else 'flags')
+    return ('/etc/memcached.conf', 'flags') if _st_family() == 'debian' else ('/etc/sysconfig/memcached', 'sysconfig')
+
+def _st_pg():
+    """Newest PostgreSQL cluster config: Debian /etc/postgresql/<v>/main,
+    RHEL PGDG /var/lib/pgsql/<v>/data, RHEL AppStream /var/lib/pgsql/data."""
+    def _v(p):
+        m = re.search(r'/(\d+(?:\.\d+)?)/', p)
+        return _parse_ver_tuple(m.group(1)) if m else (0,)
+    deb = sorted(_glob.glob('/etc/postgresql/*/main/postgresql.conf'), key=_v)
+    if deb:
+        conf = deb[-1]
+        ver = re.search(r'/etc/postgresql/([^/]+)/', conf).group(1)
+        unit = f'postgresql@{ver}-main'
+        return {'conf': conf, 'ver': ver, 'svc': unit, 'status_svcs': [unit, 'postgresql'],
+                'all': deb, 'hba': os.path.join(os.path.dirname(conf), 'pg_hba.conf')}
+    rh = sorted(_glob.glob('/var/lib/pgsql/*/data/postgresql.conf'), key=_v)
+    if rh:
+        conf = rh[-1]
+        ver = re.search(r'/var/lib/pgsql/([^/]+)/', conf).group(1)
+        return {'conf': conf, 'ver': ver, 'svc': f'postgresql-{ver}', 'status_svcs': [f'postgresql-{ver}'],
+                'all': rh, 'hba': os.path.join(os.path.dirname(conf), 'pg_hba.conf')}
+    conf = '/var/lib/pgsql/data/postgresql.conf'
+    if os.path.exists(conf):
+        return {'conf': conf, 'ver': '', 'svc': 'postgresql', 'status_svcs': ['postgresql'], 'all': [conf],
+                'hba': '/var/lib/pgsql/data/pg_hba.conf'}
+    return {'conf': '', 'ver': '', 'svc': 'postgresql', 'status_svcs': ['postgresql'], 'all': [], 'hba': ''}
+
+def _st_bind():
+    if _st_family() == 'debian' or os.path.isdir('/etc/bind'):
+        return {'conf': '/etc/bind/named.conf', 'local': '/etc/bind/named.conf.local',
+                'options': '/etc/bind/named.conf.options', 'zones_dir': '/etc/bind/zones', 'base': '/etc/bind'}
+    return {'conf': '/etc/named.conf', 'local': '/etc/named.rfc1912.zones', 'options': '/etc/named.conf',
+            'zones_dir': '/var/named', 'base': '/var/named'}
+
+def _st_supervisor():
+    if os.path.exists('/etc/supervisor/supervisord.conf'):
+        return '/etc/supervisor/supervisord.conf', 'supervisor'
+    if os.path.exists('/etc/supervisord.conf'):
+        return '/etc/supervisord.conf', 'supervisord'
+    return '/etc/supervisor/supervisord.conf', 'supervisor'
+
+def _st_allowed_conf(mod_id):
+    """Config files the generic Config tab may write for this app:
+    (allowed paths, test command, service, reload action)."""
+    if mod_id == 'nginx':
+        return [_st_nginx_conf()], 'nginx -t 2>&1', 'nginx', 'reload'
+    if mod_id == 'apache2':
+        a = _st_apache()
+        return [a['conf']], a['test'], a['svc'], 'reload'
+    if mod_id == 'openlitespeed':
+        return [_OLS_CONF], None, 'lsws', 'restart'
+    if mod_id in ('mysql', 'mariadb'):
+        fl = _st_mysql_flavor(mod_id)
+        return [p for p in _MYSQL_CNF[fl] if os.path.exists(p)], None, _st_mysql_svc(fl), 'restart'
+    if mod_id == 'redis':
+        return [_st_redis_conf()], None, 'redis-server', 'restart'
+    if mod_id == 'memcached':
+        return [_st_memcached_conf()[0]], None, 'memcached', 'restart'
+    if mod_id == 'mongodb':
+        return ['/etc/mongod.conf'], None, 'mongod', 'restart'
+    if mod_id == 'supervisor':
+        p, svc = _st_supervisor()
+        return [p], None, svc, 'restart'
+    if mod_id in ('pure-ftpd', 'pure_ftpd'):
+        return [p for p in ('/etc/pure-ftpd/pure-ftpd.conf', '/etc/pure-ftpd.conf') if os.path.exists(p)], None, 'pure-ftpd', 'restart'
+    if mod_id == 'bind9':
+        b = _st_bind()
+        files = [b['conf'], b['local'], b['options']]
+        return list(dict.fromkeys(files)), f'named-checkconf {b["conf"]} 2>&1', 'named', 'reload'
+    return [], None, None, None
+
+def _st_same_file(a, b):
+    try:
+        return os.path.realpath(a) == os.path.realpath(b)
+    except Exception:
+        return False
+
+def _st_caddy():
+    try:
+        from panel.routes import caddy as _c
+    except ImportError:
+        import caddy as _c
+    return _c
+
+def _st_redis_cli(conf_content):
+    """redis-cli argument prefix + env with the password from redis.conf, so
+    the Settings page still works when requirepass is set."""
+    m = re.search(r'^\s*port\s+(\d+)', conf_content, re.M)
+    port = m.group(1) if m else '6379'
+    args = ['redis-cli']
+    if port == '0':
+        s = re.search(r'^\s*unixsocket\s+(\S+)', conf_content, re.M)
+        if s:
+            args += ['-s', s.group(1)]
+    else:
+        args += ['-p', port]
+    env = os.environ.copy()
+    pw = re.search(r'^\s*requirepass\s+(.+?)\s*$', conf_content, re.M)
+    if pw:
+        env['REDISCLI_AUTH'] = pw.group(1).strip().strip('"').strip("'")
+    def cli(*a):
+        try:
+            r = subprocess.run(args + list(a), capture_output=True, text=True, timeout=10, env=env)
+            return r.stdout.strip() if r.returncode == 0 else ''
+        except Exception:
+            return ''
+    return cli
+
+# --- phpMyAdmin / Roundcube PHP socket ------------------------------------------------
+_PMA_CONFS = (('/etc/nginx/conf.d/phpmyadmin.conf', 'nginx'),
+              ('/etc/httpd/conf.d/phpmyadmin.conf', 'httpd'),
+              ('/etc/apache2/conf-available/phpmyadmin.conf', 'apache2'))
+
+def _st_pma_conf():
+    """(path, kind) of the web server config serving phpMyAdmin, ('', '') if none."""
+    for p, kind in _PMA_CONFS:
+        if os.path.exists(p):
+            return p, kind
+    try:
+        cad = _st_caddy()
+        if '/usr/share/phpmyadmin' in _st_read(cad.CADDYFILE):
+            return cad.CADDYFILE, 'caddy'
+    except Exception:
+        pass
+    return '', ''
+
+def _st_php_sock_versions():
+    """PHP versions whose FPM socket exists right now (every layout php.py knows)."""
+    return [l['ver'] for l in installed_php_layouts() if os.path.exists(l['sock'])]
+
+def _st_conf_php(conf_text):
+    """PHP version a site config's FPM socket belongs to ('' if unknown)."""
+    for l in installed_php_layouts():
+        if l['sock'] and l['sock'] in (conf_text or ''):
+            return l['ver']
+    m = re.search(r'php(\d+\.\d+)-fpm\.sock', conf_text or '')
+    return m.group(1) if m else ''
+
+# FPM socket reference inside nginx (fastcgi_pass unix:...;), Apache
+# (proxy:unix:...|fcgi) and Caddy (php_fastcgi unix/...) site configs.
+_SOCK_REF_RE = re.compile(r'(fastcgi_pass\s+unix:|proxy:unix:|php_fastcgi\s+unix/)(/[^\s;|"]+\.sock)')
+
+# --- PHP -------------------------------------------------------------------------------
+_PHP_SETTINGS_EXTS = [
+    {'name':'fileinfo','type':'Universal','desc':'Get file MIME type and encoding'},
+    {'name':'memcached','type':'Cache','desc':'Advanced distributed caching'},
+    {'name':'redis','type':'Cache','desc':'Redis key-value store client'},
+    {'name':'apcu','type':'Cache','desc':'In-memory user data cache'},
+    {'name':'imagick','type':'Universal','desc':'ImageMagick graphics library'},
+    {'name':'exif','type':'General','desc':'Read image EXIF information'},
+    {'name':'intl','type':'Universal','desc':'Internationalization support'},
+    {'name':'mbstring','type':'Universal','desc':'Multibyte string handling'},
+    {'name':'zip','type':'Universal','desc':'ZIP file support'},
+    {'name':'gd','type':'Universal','desc':'GD graphics library'},
+    {'name':'curl','type':'Universal','desc':'cURL HTTP client'},
+    {'name':'opcache','type':'Cache','desc':'PHP opcode cache'},
+    {'name':'xdebug','type':'Debug','desc':'Debugger and profiler'},
+    {'name':'sodium','type':'Security','desc':'Modern cryptography'},
+    {'name':'xml','type':'Universal','desc':'XML parsing'},
+]
+
+_PHP_CONFIG_KEYS = ['short_open_tag', 'max_execution_time', 'memory_limit', 'post_max_size', 'upload_max_filesize',
+                    'max_file_uploads', 'display_errors', 'date.timezone', 'max_input_time', 'disable_functions',
+                    'session.gc_maxlifetime']
+_FPM_PROFILE_KEYS = ['pm', 'pm.max_children', 'pm.start_servers', 'pm.min_spare_servers', 'pm.max_spare_servers',
+                     'pm.max_requests', 'request_slowlog_timeout', 'request_terminate_timeout']
+
+def _st_kv(content, key):
+    m = re.search(rf'^[ \t]*{re.escape(key)}[ \t]*=[ \t]*(.*?)[ \t]*$', content, re.M)
+    return m.group(1).strip().strip('"') if m else ''
+
+def _st_php_payload(lay, all_layouts):
+    ini_content = _st_read(lay['ini'])
+    fpm_content = _st_read(lay['pool'])
+    defaults = {'short_open_tag': 'Off', 'max_execution_time': '30', 'memory_limit': '128M',
+                'post_max_size': '8M', 'upload_max_filesize': '2M', 'max_file_uploads': '20',
+                'display_errors': 'Off', 'date.timezone': 'UTC', 'max_input_time': '60',
+                'disable_functions': '', 'session.gc_maxlifetime': '1440'}
+    config = {k: (_st_kv(ini_content, k) or defaults[k]) for k in _PHP_CONFIG_KEYS}
+    fpm_profile = {
+        'pm':                   _st_kv(fpm_content, 'pm') or 'dynamic',
+        'pm.max_children':      _st_kv(fpm_content, 'pm.max_children') or '5',
+        'pm.start_servers':     _st_kv(fpm_content, 'pm.start_servers') or '2',
+        'pm.min_spare_servers': _st_kv(fpm_content, 'pm.min_spare_servers') or '1',
+        'pm.max_spare_servers': _st_kv(fpm_content, 'pm.max_spare_servers') or '3',
+        'listen':               _st_kv(fpm_content, 'listen') or lay['sock'],
+        'request_slowlog_timeout': _st_kv(fpm_content, 'request_slowlog_timeout') or '0',
+    }
+    loaded = php_loaded_modules(lay)
+    extensions = [{**e, 'installed': e['name'] in loaded} for e in _PHP_SETTINGS_EXTS]
+    logs = _st_tail(lay['log'], 100) or _st_journal(lay['svc'], 80) or 'No logs'
+    rc, vfull = _st_run(f'"{lay["bin"]}" -r "echo PHP_VERSION;" 2>/dev/null', 15) if os.path.exists(lay['bin']) else (1, '')
+    vfull = vfull.strip().splitlines()[-1] if rc == 0 and vfull.strip() else lay['ver']
+    status = php_svc_status(lay)
+    return {'ok': True, 'status': status, 'version': vfull, 'sel_ver': lay['ver'],
+            'service': lay['svc'],
+            'php_versions': [{'version': l['ver'], 'status': php_svc_status(l), 'ini_path': l['ini'],
+                              'fpm_conf': l['pool'], 'service': l['svc']} for l in all_layouts],
+            'ini_path': lay['ini'], 'ini_content': ini_content,
+            'fpm_conf': lay['pool'], 'fpm_content': fpm_content,
+            'config': config, 'fpm_profile': fpm_profile,
+            'extensions': extensions, 'logs': logs,
+            'phpinfo': {'version': lay['ver'],
+                        'install_path': os.path.dirname(os.path.dirname(lay['bin'])),
+                        'ini_path': lay['ini'],
+                        'loaded': '\n'.join(sorted(loaded))}}
+
+
 @modules_bp.route('/api/modules/<mod_id>/settings')
 def get_module_settings(mod_id):
-    resp = _get_module_settings_impl(mod_id)
+    if not req(): return jsonify({'ok': False}), 401
+    try:
+        resp = _get_module_settings_impl(mod_id)
+    except Exception as e:
+        # One unreadable file or odd command output must not turn the whole
+        # Settings dialog into an HTTP 500.
+        return jsonify({'ok': False, 'error': f'Could not read the {mod_id} settings: {type(e).__name__}: {e}'})
     try:
         if mod_id in _SWITCH_FROM_CATALOG and isinstance(resp, Response) and resp.is_json:
             data = resp.get_json()
@@ -2847,194 +3590,146 @@ def get_module_settings(mod_id):
 
 def _get_module_settings_impl(mod_id):
     if not req(): return jsonify({'ok': False}), 401
-    import os, re as _re
+    _re = re
     def sh(cmd, t=15):
         try: return subprocess.check_output(cmd,shell=True,text=True,stderr=subprocess.DEVNULL,timeout=t).strip()
-        except: return ''
+        except Exception: return ''
 
     if mod_id == 'nginx':
-        status  = sh('systemctl is-active nginx') or 'inactive'
-        version = sh('nginx -v 2>&1 | grep -oP "[0-9.]+"') or ''
-        paths   = ['/etc/nginx/nginx.conf','/www/server/nginx/conf/nginx.conf']
-        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/nginx/nginx.conf')
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
+        status  = _st_status('nginx')
+        version = sh('nginx -v 2>&1 | grep -oE "[0-9]+\\.[0-9]+\\.[0-9]+" | head -1') or ''
+        conf_path = _st_nginx_conf()
+        conf_content = _st_read(conf_path)
         log_path = next((p for p in ['/var/log/nginx/error.log','/www/wwwlogs/nginx_error.log'] if os.path.exists(p)), '')
-        logs = sh('tail -100 ' + log_path) if log_path else 'No error log found'
-        nginx_versions = [
-            {'label':'1.30.4 (Stable — security)','value':'stable'},
-            {'label':'1.31.3 (Mainline — security)','value':'mainline'},
-        ]
+        logs = _st_tail(log_path, 100) if log_path else 'No error log found'
+        def nget(pat, default):
+            m = _re.search(pat, conf_content, _re.M)
+            return m.group(1) if m else default
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'log_path':log_path,
-            'versions':nginx_versions,
+            'versions':[{'label':'Stable','value':'stable'},{'label':'Mainline','value':'mainline'}],
             'optimization':{
-                'worker_processes':    sh('grep -oP "worker_processes\\s+\\K\\S+" ' + conf_path + ' 2>/dev/null | head -1') or 'auto',
-                'worker_connections':  sh('grep -oP "worker_connections\\s+\\K[0-9]+" ' + conf_path + ' 2>/dev/null | head -1') or '1024',
-                'keepalive_timeout':   sh('grep -oP "keepalive_timeout\\s+\\K[0-9]+" ' + conf_path + ' 2>/dev/null | head -1') or '65',
-                'client_max_body_size':sh('grep -oP "client_max_body_size\\s+\\K\\S+" ' + conf_path + ' 2>/dev/null | head -1') or '50m',
-                'gzip':                sh('grep -oP "^\\s*gzip\\s+\\K\\S+" ' + conf_path + ' 2>/dev/null | head -1') or 'on',
+                'worker_processes':    nget(r'^\s*worker_processes\s+([^;\s]+)', 'auto'),
+                'worker_connections':  nget(r'^\s*worker_connections\s+(\d+)', '1024'),
+                'keepalive_timeout':   nget(r'^\s*keepalive_timeout\s+([^;\s]+)', '65'),
+                'client_max_body_size':nget(r'^\s*client_max_body_size\s+([^;\s]+)', '1m'),
+                'gzip':                nget(r'^\s*gzip\s+([^;\s]+)', 'off'),
             }})
 
     elif mod_id == 'apache2':
-        status  = sh('systemctl is-active apache2') or 'inactive'
-        version = sh("apache2 -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
-        paths   = ['/etc/apache2/apache2.conf','/etc/httpd/conf/httpd.conf']
-        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/apache2/apache2.conf')
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        logs = sh('tail -100 /var/log/apache2/error.log') or sh('journalctl -u apache2 -n 80') or 'No logs'
+        a = _st_apache()
+        status  = _st_status('apache2')
+        version = sh(f"{a['bin']} -v 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+        conf_content = _st_read(a['conf'])
+        logs = _st_tail(a['log'], 100) or _st_journal(_resolve_svc('apache2')) or 'No logs'
+        mpm_content = _st_read(a['mpm']) if a['mpm'] else ''
+        def aget(content, key):
+            m = _re.search(rf'^\s*{key}\s+(\S+)', content, _re.M)
+            return m.group(1) if m else ''
+        optimization = {}
+        for k in _APACHE_KEYS:
+            v = aget(conf_content, k)
+            if v: optimization[k] = v
+        for k in _APACHE_MPM_KEYS:
+            v = aget(mpm_content, k)
+            if v: optimization[k] = v
         return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
+            'conf_path':a['conf'],'conf_content':conf_content,'logs':logs,'log_path':a['log'],
+            'optimization':optimization})
 
     elif mod_id == 'openlitespeed':
-        status   = sh('systemctl is-active lsws 2>/dev/null || systemctl is-active openlitespeed 2>/dev/null') or 'inactive'
-        version  = sh("cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
-        conf_path = '/usr/local/lsws/conf/httpd_config.conf'
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
+        status   = _st_status('lsws')
+        version  = sh("grep -oE '[0-9]+[.][0-9]+[.][0-9]+' /usr/local/lsws/VERSION 2>/dev/null | head -1") or ''
+        conf_path = _OLS_CONF
+        conf_content = _st_read(conf_path)
         log_path = '/usr/local/lsws/logs/error.log'
-        logs = sh(f'tail -100 {log_path}') if os.path.exists(log_path) else 'No logs'
+        logs = _st_tail(log_path, 100) or 'No logs'
         def lsget(key):
-            return sh(rf"grep -oP '{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
-        optimization = {
-            'maxConnections':    lsget('maxConnections') or '10000',
-            'maxSSLConnections': lsget('maxSSLConnections') or '10000',
-            'connTimeout':       lsget('connTimeout') or '300',
-            'maxKeepAliveReq':   lsget('maxKeepAliveReq') or '10000',
-            'enableGzip':        lsget('enableGzip') or '1',
-            'gzipCompressLevel': lsget('gzipCompressLevel') or '6',
-        }
-        versions = [
-            {'label':'1.9.2 (Latest)','value':'1.9.2'},
-            {'label':'1.8.5','value':'1.8.5'},
-            {'label':'1.8.4','value':'1.8.4'},
-        ]
+            m = _re.search(rf'^\s*{key}\s+(\S+)', conf_content, _re.M)
+            return m.group(1) if m else ''
+        optimization = {k: (lsget(k) or dv) for k, dv in _OLS_KEYS.items()}
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,
             'logs':logs,'log_path':log_path,
-            'optimization':optimization,'versions':versions})
+            'optimization':optimization,'versions':[]})
 
-    elif mod_id == 'mysql':
-        status  = sh('systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld') or 'inactive'
-        version = (sh("mysql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'")+' ').split('\n')[0].strip() or ''
-        paths   = ['/etc/mysql/mysql.conf.d/mysqld.cnf','/etc/mysql/my.cnf','/etc/my.cnf']
-        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/mysql/my.cnf')
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        log_path = '/var/log/mysql/error.log'
-        logs     = sh('tail -100 ' + log_path) or sh('journalctl -u mysql -n 50') or 'No logs'
-        slow_log = sh('tail -80 /var/log/mysql/mysql-slow.log 2>/dev/null') or 'Slow log not enabled'
+    elif mod_id in ('mysql', 'mariadb'):
+        flavor = _st_mysql_flavor(mod_id)
+        unit = _st_mysql_svc(flavor)
+        status  = _st_status(unit)
+        version = sh("mysqld --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or \
+                  sh("mariadb --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or \
+                  sh("mysql --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+        conf_path = _st_mysql_cnf(flavor)
+        conf_content = _st_read(conf_path)
         def mvar(var):
             return sh("mysql -e 'SHOW VARIABLES LIKE \"" + var + "\"' 2>/dev/null | awk 'NR==2{print $2}'") or ''
         def mstat(stat):
             return sh("mysql -e 'SHOW STATUS LIKE \"" + stat + "\"' 2>/dev/null | awk 'NR==2{print $2}'") or ''
+        log_path = mvar('log_error')
+        if not log_path or not log_path.startswith('/'):
+            log_path = next((p for p in ['/var/log/mysql/error.log', '/var/log/mysqld.log', '/var/log/mysql/mysqld.log',
+                                         '/var/log/mariadb/mariadb.log'] if os.path.exists(p)), '/var/log/mysql/error.log')
+        logs = _st_tail(log_path, 100) or _st_journal(unit) or 'No logs'
+        slow_path = mvar('slow_query_log_file')
+        slow_log = _st_tail(slow_path, 100) if slow_path.startswith('/') else ''
+        slow_log = slow_log or 'Slow query log is empty or not enabled.'
         port    = mvar('port') or '3306'
         datadir = mvar('datadir') or '/var/lib/mysql'
-        uptime  = mstat('Uptime') or '0'
-        launch_time = sh("date -d '@$(( $(date +%s) - " + uptime + " ))' '+%Y-%m-%d %H:%M:%S' 2>/dev/null") if uptime.isdigit() else ''
-        current_status = {
-            'launch_time':       launch_time,
-            'total_connections': mstat('Connections'),
-            'send':              mstat('Bytes_sent'),
-            'receive':           mstat('Bytes_received'),
-            'query_per_sec':     mstat('Questions'),
-            'threads_connected': mstat('Threads_connected'),
-        }
-        optimization = {
-            'key_buffer_size':         mvar('key_buffer_size') or '8M',
-            'tmp_table_size':          mvar('tmp_table_size') or '16M',
-            'innodb_buffer_pool_size': mvar('innodb_buffer_pool_size') or '128M',
-            'innodb_log_buffer_size':  mvar('innodb_log_buffer_size') or '8M',
-            'sort_buffer_size':        mvar('sort_buffer_size') or '2M',
-            'read_buffer_size':        mvar('read_buffer_size') or '128K',
-            'thread_cache_size':       mvar('thread_cache_size') or '10',
-            'max_connections':         mvar('max_connections') or '151',
-            'table_open_cache':        mvar('table_open_cache') or '2000',
-        }
+        uptime  = mstat('Uptime') or ''
+        launch_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - int(uptime))) if uptime.isdigit() else ''
+        if mod_id == 'mysql':
+            current_status = {
+                'launch_time':       launch_time,
+                'total_connections': mstat('Connections'),
+                'send':              mstat('Bytes_sent'),
+                'receive':           mstat('Bytes_received'),
+                'query_per_sec':     mstat('Questions'),
+                'threads_connected': mstat('Threads_connected'),
+            }
+        else:
+            current_status = {
+                'uptime':            uptime,
+                'queries':           mstat('Queries'),
+                'slow_queries':      mstat('Slow_queries'),
+                'threads_connected': mstat('Threads_connected'),
+                'connections':       mstat('Connections'),
+            }
+        defaults = {'key_buffer_size': '8M', 'tmp_table_size': '16M', 'innodb_buffer_pool_size': '128M',
+                    'innodb_log_buffer_size': '8M', 'sort_buffer_size': '2M', 'read_buffer_size': '128K',
+                    'thread_cache_size': '10', 'max_connections': '151', 'table_open_cache': '2000'}
+        optimization = {k: (mvar(k) or dv) for k, dv in defaults.items()}
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,
             'logs':logs,'log_path':log_path,'slow_log':slow_log,
             'port':port,'datadir':datadir,
-            'current_status':current_status,'optimization':optimization, 'versions': [{'label': '9.3 (Latest)', 'value': '9.3'}, {'label': '8.4 (LTS)', 'value': '8.4'}, {'label': '8.0 (LTS)', 'value': '8.0'}]})
-
-    elif mod_id == 'mariadb':
-        status  = sh('systemctl is-active mariadb') or 'inactive'
-        version = sh("mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or \
-                  sh("mysql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
-        paths   = ['/etc/mysql/mariadb.conf.d/50-server.cnf','/etc/my.cnf','/etc/mysql/my.cnf']
-        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/mysql/my.cnf')
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        logs     = sh('journalctl -u mariadb -n 80') or 'No logs'
-        log_path = '/var/log/mysql/error.log'
-        port     = sh(r"mysql -e 'SHOW VARIABLES LIKE \"port\"' 2>/dev/null | awk 'NR==2{print $2}'") or '3306'
-        datadir  = sh(r"mysql -e 'SHOW VARIABLES LIKE \"datadir\"' 2>/dev/null | awk 'NR==2{print $2}'") or '/var/lib/mysql'
-        def mvar(v): return sh(f"mysql -e 'SHOW VARIABLES LIKE \"{v}\"' 2>/dev/null | awk 'NR==2{{print $2}}'") or ''
-        def mstat(v): return sh(f"mysql -e 'SHOW STATUS LIKE \"{v}\"' 2>/dev/null | awk 'NR==2{{print $2}}'") or ''
-        current_status = {
-            'uptime':            mstat('Uptime'),
-            'queries':           mstat('Queries'),
-            'slow_queries':      mstat('Slow_queries'),
-            'threads_connected': mstat('Threads_connected'),
-            'connections':       mstat('Connections'),
-        }
-        optimization = {
-            'key_buffer_size':         mvar('key_buffer_size') or '8M',
-            'tmp_table_size':          mvar('tmp_table_size') or '16M',
-            'innodb_buffer_pool_size': mvar('innodb_buffer_pool_size') or '128M',
-            'innodb_log_buffer_size':  mvar('innodb_log_buffer_size') or '8M',
-            'sort_buffer_size':        mvar('sort_buffer_size') or '2M',
-            'read_buffer_size':        mvar('read_buffer_size') or '128K',
-            'thread_cache_size':       mvar('thread_cache_size') or '10',
-            'max_connections':         mvar('max_connections') or '151',
-            'table_open_cache':        mvar('table_open_cache') or '2000',
-        }
-        slow_log_path = mvar('slow_query_log_file') or '/var/log/mysql/mariadb-slow.log'
-        slow_log = sh(f'tail -100 {slow_log_path} 2>/dev/null') or 'Slow query log is empty or not enabled.'
-        return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,
-            'logs':logs,'log_path':log_path,
-            'port':port,'datadir':datadir,
-            'current_status':current_status,'optimization':optimization,'slow_log':slow_log,
-            'versions':[{'label':'13.0 (Latest)','value':'13.0'},{'label':'12.3','value':'12.3'},{'label':'11.8 (LTS)','value':'11.8'},{'label':'11.4 (LTS)','value':'11.4'},{'label':'10.11 (LTS)','value':'10.11'},{'label':'10.6 (LTS)','value':'10.6'}]})
+            'current_status':current_status,'optimization':optimization,'versions':[]})
 
     elif mod_id == 'redis':
-        status  = sh('systemctl is-active redis-server 2>/dev/null || systemctl is-active redis') or 'inactive'
-        version = sh("redis-server --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
-        paths   = ['/etc/redis/redis.conf','/etc/redis.conf']
-        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/redis/redis.conf')
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        logs = sh('tail -100 /var/log/redis/redis-server.log 2>/dev/null') or \
-               sh('journalctl -u redis -n 80') or 'No logs'
-        info = sh('redis-cli INFO 2>/dev/null') or ''
+        status  = _st_status('redis-server')
+        version = sh("redis-server --version 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+        conf_path = _st_redis_conf()
+        conf_content = _st_read(conf_path)
+        log_m = _re.search(r'^\s*logfile\s+"?([^"\s]+)', conf_content, _re.M)
+        logs = (_st_tail(log_m.group(1), 100) if log_m else '') or \
+               _st_tail('/var/log/redis/redis-server.log', 100) or _st_tail('/var/log/redis/redis.log', 100) or \
+               _st_journal(_resolve_svc('redis-server')) or 'No logs'
+        cli = _st_redis_cli(conf_content)
+        info = cli('INFO')
         def rget(key):
             for line in info.split('\n'):
                 if line.startswith(key + ':'): return line.split(':', 1)[1].strip()
             return ''
         def rcfg(key):
-            r = sh('redis-cli CONFIG GET ' + key + ' 2>/dev/null')
-            lines = r.split('\n')
-            return lines[1] if len(lines) > 1 else ''
-        current_status = {
-            'uptime_in_days':             rget('uptime_in_days'),
-            'tcp_port':                   rget('tcp_port'),
-            'connected_clients':          rget('connected_clients'),
-            'used_memory_human':          rget('used_memory_human'),
-            'used_memory_rss_human':      rget('used_memory_rss_human'),
-            'mem_fragmentation_ratio':    rget('mem_fragmentation_ratio'),
-            'total_connections_received': rget('total_connections_received'),
-            'total_commands_processed':   rget('total_commands_processed'),
-            'keyspace_hits':              rget('keyspace_hits'),
-            'keyspace_misses':            rget('keyspace_misses'),
-        }
+            lines = cli('CONFIG', 'GET', key).split('\n')
+            if len(lines) > 1:
+                return lines[1]
+            m = _re.search(rf'^\s*{_re.escape(key)}\s+(.+?)\s*$', conf_content, _re.M)
+            return m.group(1).strip('"') if m else ''
+        current_status = {k: rget(k) for k in ('uptime_in_days', 'tcp_port', 'connected_clients', 'used_memory_human',
+                                                'used_memory_rss_human', 'mem_fragmentation_ratio',
+                                                'total_connections_received', 'total_commands_processed',
+                                                'keyspace_hits', 'keyspace_misses')}
         optimization = {
             'bind':        rcfg('bind') or '127.0.0.1',
             'port':        rcfg('port') or '6379',
@@ -3048,40 +3743,39 @@ def _get_module_settings_impl(mod_id):
             'dir':         rcfg('dir') or '/var/lib/redis',
             'aof_enabled': rcfg('appendonly') or 'no',
             'appendfsync': rcfg('appendfsync') or 'everysec',
-            'rdb_saves':   sh('redis-cli CONFIG GET save 2>/dev/null | tail -1') or '',
+            'rdb_saves':   rcfg('save'),
         }
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,
             'current_status':current_status,'optimization':optimization,'persistence':persistence,
-            'versions':[{'label':'Redis 8.10.2 (Latest)','value':'8.10'},{'label':'Redis 8.8.3','value':'8.8'},{'label':'Redis 7.4.11 (Legacy)','value':'7.4'}]})
+            'versions':[]})
 
     elif mod_id == 'memcached':
-        status  = sh('systemctl is-active memcached 2>/dev/null') or 'inactive'
-        version = sh("memcached -h 2>/dev/null | head -1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ''
-        conf_paths = ['/etc/memcached.conf', '/etc/sysconfig/memcached']
-        conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/memcached.conf')
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except Exception: conf_content = ''
+        status  = _st_status('memcached')
+        version = sh("memcached -h 2>/dev/null | head -1 | grep -oE '[0-9]+[.][0-9]+[.][0-9]+'") or ''
+        conf_path, fmt = _st_memcached_conf()
+        conf_content = _st_read(conf_path)
+        if fmt == 'flags':
+            def mcfg(flag, default):
+                m = _re.search(rf'^-{flag}\s+(\S+)', conf_content, _re.M)
+                return m.group(1) if m else default
+            bind_ip, port, cache_mb, maxconn = mcfg('l', '127.0.0.1'), mcfg('p', '11211'), mcfg('m', '64'), mcfg('c', '1024')
+        else:
+            def scfg(key, default):
+                m = _re.search(rf'^{key}="?([^"\n]*)"?', conf_content, _re.M)
+                return m.group(1).strip() if m and m.group(1).strip() else default
+            opts = scfg('OPTIONS', '')
+            lm = _re.search(r'-l\s+(\S+)', opts)
+            bind_ip = lm.group(1) if lm else '0.0.0.0'
+            port, cache_mb, maxconn = scfg('PORT', '11211'), scfg('CACHESIZE', '64'), scfg('MAXCONN', '1024')
 
-        def mcfg(key, default=''):
-            # memcached.conf uses "-X value" flag-style lines (Debian) OR KEY="value" (RHEL sysconfig)
-            m = _re.search(rf'^-{key}\s+(\S+)', conf_content, _re.MULTILINE)
-            if m: return m.group(1)
-            m = _re.search(rf'^{key.upper()}="?([^"\n]*)"?', conf_content, _re.MULTILINE)
-            return m.group(1) if m else default
-
-        bind_ip = mcfg('l', '127.0.0.1')
-        port    = mcfg('p', '11211')
-        cache_mb  = mcfg('m', '64')
-        maxconn = mcfg('c', '1024')
-
-        # Live stats via memcached's own text protocol ("stats" command) — same technique
-        # aaPanel uses. No extra client library needed, just a raw TCP round-trip.
         def memcached_stats():
             import socket
+            host = (bind_ip.split(',')[0] or '127.0.0.1')
+            if host in ('0.0.0.0', '::', ''):
+                host = '127.0.0.1'
             try:
-                with socket.create_connection((bind_ip or '127.0.0.1', int(port or 11211)), timeout=2) as s:
+                with socket.create_connection((host, int(port or 11211)), timeout=2) as s:
                     s.sendall(b'stats\r\n')
                     data = b''
                     s.settimeout(2)
@@ -3106,13 +3800,15 @@ def _get_module_settings_impl(mod_id):
                 n /= 1024
             return f'{n:.2f} TB'
 
-        cmd_get    = int(sget('cmd_get') or 0)
-        get_hits   = int(sget('get_hits') or 0)
+        def _int(x):
+            try: return int(x)
+            except (TypeError, ValueError): return 0
+        cmd_get    = _int(sget('cmd_get'))
+        get_hits   = _int(sget('get_hits'))
         hit_rate   = round(get_hits / cmd_get, 2) if cmd_get else 0
 
         current_status = {
-            'bind': bind_ip or '127.0.0.1', 'port': port or '11211',
-            'maxconn': maxconn or '1024', 'cachesize': cache_mb or '64',
+            'bind': bind_ip, 'port': port, 'maxconn': maxconn, 'cachesize': cache_mb,
             'curr_connections': sget('curr_connections'),
             'cmd_get': sget('cmd_get'), 'get_hits': sget('get_hits'), 'get_misses': sget('get_misses'),
             'bytes_read':    fmt_bytes(sget('bytes_read')),
@@ -3121,344 +3817,231 @@ def _get_module_settings_impl(mod_id):
             'curr_items': sget('curr_items'), 'evictions': sget('evictions'),
             'hit_rate': hit_rate,
         }
-        optimization = {
-            'bind': bind_ip or '127.0.0.1', 'port': port or '11211',
-            'cachesize': cache_mb or '64', 'maxconn': maxconn or '1024',
-        }
+        optimization = {'bind': bind_ip, 'port': port, 'cachesize': cache_mb, 'maxconn': maxconn}
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,
             'current_status':current_status,'optimization':optimization,
-            'versions':[{'label':f'Memcached {version}' if version else 'Memcached (installed)','value':'latest'}]})
+            'versions':[{'label':f'Memcached {version} (upgrade to the newest packaged build)' if version else 'Latest packaged build','value':'latest'}]})
 
     elif mod_id == 'php':
-        php_versions = []
-        for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4','7.3','7.2']:
-            if os.path.exists('/usr/bin/php' + v):
-                php_versions.append({
-                    'version': v,
-                    'status':  sh('systemctl is-active php' + v + '-fpm') or 'inactive',
-                    'ini_path':'/etc/php/' + v + '/fpm/php.ini',
-                    'fpm_conf':'/etc/php/' + v + '/fpm/pool.d/www.conf',
-                })
-        sel = php_versions[0]['version'] if php_versions else '8.3'
-        ini_path = '/etc/php/' + sel + '/fpm/php.ini'
-        fpm_conf = '/etc/php/' + sel + '/fpm/pool.d/www.conf'
-        try:
-            with open(ini_path) as f: ini_content = f.read()
-        except: ini_content = ''
-        try:
-            with open(fpm_conf) as f: fpm_content = f.read()
-        except: fpm_content = ''
-        logs = sh('tail -100 /var/log/php' + sel + '-fpm.log 2>/dev/null') or \
-               sh('journalctl -u php' + sel + '-fpm -n 80') or 'No logs'
-        def ini_get(key):
-            return sh('grep -oP "^' + key + r'\s*=\s*\K.*" ' + ini_path + ' 2>/dev/null | head -1').strip() or ''
-        def fpm_get(key):
-            return sh('grep -oP "^' + key + r'\s*=\s*\K.*" ' + fpm_conf + ' 2>/dev/null | head -1').strip() or ''
-        config = {
-            'short_open_tag':      ini_get('short_open_tag') or 'On',
-            'max_execution_time':  ini_get('max_execution_time') or '300',
-            'memory_limit':        ini_get('memory_limit') or '128M',
-            'post_max_size':       ini_get('post_max_size') or '50M',
-            'upload_max_filesize': ini_get('upload_max_filesize') or '50M',
-            'max_file_uploads':    ini_get('max_file_uploads') or '20',
-            'display_errors':      ini_get('display_errors') or 'On',
-            'date.timezone':       ini_get('date.timezone') or 'UTC',
-            'max_input_time':      ini_get('max_input_time') or '60',
-            'disable_functions':   ini_get('disable_functions') or '',
-            'session.gc_maxlifetime': ini_get('session.gc_maxlifetime') or '1440',
-        }
-        fpm_profile = {
-            'pm':                   fpm_get('pm') or 'dynamic',
-            'pm.max_children':      fpm_get('pm.max_children') or '50',
-            'pm.start_servers':     fpm_get('pm.start_servers') or '5',
-            'pm.min_spare_servers': fpm_get('pm.min_spare_servers') or '5',
-            'pm.max_spare_servers': fpm_get('pm.max_spare_servers') or '35',
-            'listen':               fpm_get('listen') or '/run/php/php' + sel + '-fpm.sock',
-            'request_slowlog_timeout': fpm_get('request_slowlog_timeout') or '0',
-        }
-        EXTS = [
-            {'name':'fileinfo','type':'Universal','desc':'Get file MIME type and encoding'},
-            {'name':'memcached','type':'Cache','desc':'Advanced distributed caching'},
-            {'name':'redis','type':'Cache','desc':'Redis key-value store client'},
-            {'name':'apcu','type':'Cache','desc':'PHP script bytecode cache'},
-            {'name':'imagick','type':'Universal','desc':'ImageMagick graphics library'},
-            {'name':'exif','type':'General','desc':'Read image EXIF information'},
-            {'name':'intl','type':'Universal','desc':'Internationalization support'},
-            {'name':'mbstring','type':'Universal','desc':'Multibyte string handling'},
-            {'name':'zip','type':'Universal','desc':'ZIP file support'},
-            {'name':'gd','type':'Universal','desc':'GD graphics library'},
-            {'name':'curl','type':'Universal','desc':'cURL HTTP client'},
-            {'name':'opcache','type':'Cache','desc':'PHP opcode cache'},
-            {'name':'xdebug','type':'Debug','desc':'Debugger and profiler'},
-            {'name':'sodium','type':'Security','desc':'Modern cryptography'},
-            {'name':'xml','type':'Universal','desc':'XML parsing'},
-        ]
-        extensions = []
-        for ext in EXTS:
-            installed = bool(sh('php' + sel + ' -m 2>/dev/null | grep -ix "' + ext['name'] + '"'))
-            extensions.append({**ext, 'installed': installed})
-        return jsonify({'ok':True,
-            'status':  sh('systemctl is-active php' + sel + '-fpm') or 'inactive',
-            'version': sh('php' + sel + ' --version 2>/dev/null | head -1 | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or sel,
-            'sel_ver': sel, 'php_versions': php_versions,
-            'ini_path': ini_path, 'ini_content': ini_content,
-            'fpm_conf': fpm_conf, 'fpm_content': fpm_content,
-            'config': config, 'fpm_profile': fpm_profile,
-            'extensions': extensions, 'logs': logs,
-            'phpinfo': {
-                'version': sel,
-                'install_path': sh('php' + sel + ' -r "echo PHP_PREFIX;" 2>/dev/null') or '/usr',
-                'ini_path': ini_path,
-                'loaded': sh('php' + sel + ' -m 2>/dev/null') or '',
-            }})
+        layouts = installed_php_layouts()
+        if not layouts:
+            return jsonify({'ok': True, 'status': 'not installed', 'version': '', 'sel_ver': '',
+                            'php_versions': [], 'config': {}, 'fpm_profile': {}, 'extensions': [],
+                            'logs': 'No PHP version is installed.'})
+        return jsonify(_st_php_payload(layouts[0], layouts))
 
     elif mod_id in ('pure-ftpd', 'pure_ftpd'):
-        status  = sh('systemctl is-active pure-ftpd') or 'inactive'
-        version = sh('pure-ftpd --version 2>/dev/null | head -1 | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
+        status  = _st_status('pure-ftpd')
+        version = sh('pure-ftpd --help 2>&1 | grep -oE "[0-9]+[.][0-9]+[.][0-9]+" | head -1') or ''
         paths   = ['/etc/pure-ftpd/pure-ftpd.conf','/etc/pure-ftpd.conf']
-        conf_path = next((p for p in paths if os.path.exists(p)), '/etc/pure-ftpd/pure-ftpd.conf')
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        port = sh("grep -r '^Bind' /etc/pure-ftpd/conf/ 2>/dev/null | head -1 | awk '{print $2}'") or '21'
-        users_raw = sh('pure-pw list 2>/dev/null') or ''
+        conf_path = next((p for p in paths if os.path.exists(p)), paths[0])
+        conf_content = _st_read(conf_path)
+        # Debian: one value per file in /etc/pure-ftpd/conf ("Bind" = "IP,port").
+        # RHEL: "Bind IP,port" inside pure-ftpd.conf.
+        bind = _st_read('/etc/pure-ftpd/conf/Bind').strip()
+        if not bind:
+            m = _re.search(r'^\s*Bind\s+(\S+)', conf_content, _re.M)
+            bind = m.group(1) if m else ''
+        port = bind.split(',')[-1].strip() if bind else '21'
+        if not port.isdigit(): port = '21'
         users = []
-        for line in users_raw.strip().split('\n'):
-            if line.strip():
-                parts = line.split()
-                if parts:
-                    users.append({'user': parts[0], 'home': parts[1] if len(parts) > 1 else '/www/wwwroot', 'status': 'active'})
-        logs = sh('journalctl -u pure-ftpd -n 80') or sh('tail -50 /var/log/syslog 2>/dev/null | grep pure') or 'No logs'
+        for line in (sh('pure-pw list 2>/dev/null') or '').split('\n'):
+            parts = line.split()
+            if parts:
+                users.append({'user': parts[0], 'home': parts[1] if len(parts) > 1 else '/www/wwwroot', 'status': 'active'})
+        logs = _st_journal('pure-ftpd') or 'No logs'
         ftp_addr = sh("hostname -I 2>/dev/null | awk '{print $1}'") or 'YOUR-IP'
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,
             'port':port,'users':users,'logs':logs,
             'ftp_addr':'ftp://' + ftp_addr + ':' + port,
-            'versions':[{'label':'Latest (distro-packaged)','value':'latest'}]})
+            'versions':[{'label':'Latest packaged build','value':'latest'}]})
 
     elif mod_id == 'fail2ban':
-        status  = sh('systemctl is-active fail2ban') or 'inactive'
-        version = sh('fail2ban-client --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
-        try:
-            with open('/etc/fail2ban/ip.blacklist') as f: black_ips = f.read()
-        except: black_ips = ''
-        try:
-            with open('/etc/fail2ban/ip.whitelist') as f: white_ips = f.read()
-        except: white_ips = '127.0.0.1/8'
+        status  = _st_status('fail2ban')
+        version = sh('fail2ban-client --version 2>/dev/null | grep -oE "[0-9]+[.][0-9]+[.][0-9]+" | head -1') or ''
+        black_ips = _st_read(_F2B_BLACK_FILE)
+        white_ips = _st_read(_F2B_WHITE_FILE, '127.0.0.1/8')
         jails_raw = sh('fail2ban-client status 2>/dev/null') or ''
         jail_line = _re.findall(r'Jail list:\s+(.+)', jails_raw)
         jails = []
         if jail_line:
             for jail in jail_line[0].replace(' ', '').split(','):
-                if not jail: continue
+                if not jail or not _re.match(r'^[A-Za-z0-9_.-]+$', jail): continue
                 jail_status = sh('fail2ban-client status ' + jail + ' 2>/dev/null') or ''
                 banned = _re.findall(r'Banned IP list:\s+(.+)', jail_status)
                 banned_ips = banned[0].split() if banned else []
                 currently  = _re.search(r'Currently banned:\s+(\d+)', jail_status)
                 jails.append({'name': jail, 'banned_ips': banned_ips,
                               'currently': currently.group(1) if currently else '0'})
-        logs = sh('tail -80 /var/log/fail2ban.log 2>/dev/null') or \
-               sh('journalctl -u fail2ban -n 80') or 'No logs'
+        logs = _st_tail('/var/log/fail2ban.log', 80) or _st_journal('fail2ban') or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,
             'jails':jails,'black_ips':black_ips,'white_ips':white_ips,'logs':logs})
 
     elif mod_id == 'supervisor':
-        status  = sh('systemctl is-active supervisor') or 'inactive'
+        conf_path, svc = _st_supervisor()
+        status  = _st_status(svc)
         version = sh('supervisord --version 2>/dev/null') or ''
-        conf_path = '/etc/supervisor/supervisord.conf'
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        logs = sh('tail -80 /var/log/supervisor/supervisord.log 2>/dev/null') or \
-               sh('journalctl -u supervisor -n 80') or 'No logs'
+        conf_content = _st_read(conf_path)
+        logs = _st_tail('/var/log/supervisor/supervisord.log', 80) or _st_journal(_resolve_svc(svc)) or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs})
 
     elif mod_id == 'clamav':
-        status  = sh('systemctl is-active clamav-daemon') or 'inactive'
-        version = sh('clamscan --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+"') or ''
-        logs    = sh('tail -80 /var/log/clamav/clamav.log 2>/dev/null') or \
-                  sh('journalctl -u clamav-daemon -n 80') or 'No logs'
+        status  = _st_status('clamav-daemon', 'clamd@scan')
+        version = sh('clamscan --version 2>/dev/null | grep -oE "[0-9]+[.][0-9]+[.][0-9]+" | head -1') or ''
+        logs    = _st_tail('/var/log/clamav/clamav.log', 80) or _st_journal('clamav-daemon') or \
+                  _st_journal('clamd@scan') or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,'logs':logs})
 
     elif mod_id == 'postgresql':
-        status  = sh('systemctl is-active postgresql') or 'inactive'
-        version = sh('psql --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+"') or ''
-        paths   = ['/etc/postgresql/16/main/postgresql.conf',
-                   '/etc/postgresql/15/main/postgresql.conf',
-                   '/etc/postgresql/14/main/postgresql.conf']
-        conf_path = next((p for p in paths if os.path.exists(p)), paths[0])
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        logs = sh('journalctl -u postgresql -n 80') or 'No logs'
+        pg = _st_pg()
+        status  = _st_status(*pg['status_svcs'])
+        version = sh('psql --version 2>/dev/null | grep -oE "[0-9]+[.][0-9]+" | head -1') or pg['ver']
+        conf_content = _st_read(pg['conf']) if pg['conf'] else ''
+        logs = _st_journal(_resolve_svc(pg['svc'])) or _st_journal('postgresql') or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,'logs':logs, 'versions': [{'label': '17 (Latest)', 'value': '17'}, {'label': '16 (Stable)', 'value': '16'}, {'label': '15 (Stable)', 'value': '15'}]})
+            'conf_path':pg['conf'],'conf_content':conf_content,'logs':logs,'versions':[]})
 
     elif mod_id == 'mongodb':
-        status  = sh('systemctl is-active mongod') or 'inactive'
-        version = sh('mongod --version 2>/dev/null | grep -oP "[0-9]+[.][0-9]+[.][0-9]+" | head -1') or ''
+        status  = _st_status('mongod')
+        version = sh('mongod --version 2>/dev/null | grep -oE "[0-9]+[.][0-9]+[.][0-9]+" | head -1') or ''
         conf_path = '/etc/mongod.conf'
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
-        logs = sh('tail -80 /var/log/mongodb/mongod.log 2>/dev/null') or \
-               sh('journalctl -u mongod -n 80') or 'No logs'
+        conf_content = _st_read(conf_path)
+        logs = _st_tail('/var/log/mongodb/mongod.log', 80) or _st_journal('mongod') or 'No logs'
         return jsonify({'ok':True,'status':status,'version':version,
-            'conf_path':conf_path,'conf_content':conf_content,'logs':logs, 'versions': [{'label': '8.0 (Latest)', 'value': '8.0'}, {'label': '7.0 (Stable)', 'value': '7.0'}, {'label': '6.0 (LTS)', 'value': '6.0'}]})
+            'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'versions':[]})
 
     elif mod_id == 'phpmyadmin':
-        pma_conf = '/etc/nginx/conf.d/phpmyadmin.conf'
-        port = '8082'
-        if os.path.exists(pma_conf):
-            with open(pma_conf) as f: cc = f.read()
-            m = _re.search(r'listen\s+(\d+)', cc)
-            if m: port = m.group(1)
-        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists(f'/run/php/php{v}-fpm.sock')]
-        current_php = ''
-        if os.path.exists(pma_conf):
-            with open(pma_conf) as f: cc = f.read()
-            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', cc)
-            if m: current_php = m.group(1)
+        pma_conf, kind = _st_pma_conf()
+        cc = _st_read(pma_conf) if pma_conf else ''
+        if kind == 'caddy':
+            m = _re.search(r'(?:^|\n)[ \t]*:(\d+)\s*\{\s*root \* /usr/share/phpmyadmin', cc)
+        else:
+            m = _re.search(r'(?i)listen\s+(\d+)', cc)
+        port = m.group(1) if m else '8082'
         return jsonify({'ok':True,'installed':os.path.isdir('/usr/share/phpmyadmin'),
             'port':port,'url':'http://YOUR-IP:' + port,
-            'php_versions':php_versions,'current_php':current_php,'conf_path':pma_conf})
+            'php_versions':_st_php_sock_versions(),'current_php':_st_conf_php(cc),
+            'conf_path':pma_conf or '/etc/nginx/conf.d/phpmyadmin.conf'})
 
     elif mod_id == 'roundcube':
-        rc_dir = '/var/www/roundcube'
-        rc_conf = rc_dir + '/config/config.inc.php'
+        rc_dir = _RC_DIR
+        rc_conf = _RC_CONF
         nginx_conf = '/etc/nginx/conf.d/roundcube.conf'
-        # Read config values
+        conf_content = _st_read(rc_conf, None)
         def rc_get(key):
-            cmd = "grep -oP \"'" + key + "'\\] = '\\K[^']+\" " + rc_conf + " 2>/dev/null | head -1"
-            return sh(cmd).strip().lstrip("'") or ''
-        imap_host  = rc_get('imap_host') or 'localhost'
-        smtp_host  = rc_get('smtp_host') or 'localhost'
-        smtp_port  = rc_get('smtp_port') or '587'
-        skin       = rc_get('skin') or 'elastic'
-        db_dsn     = rc_get('db_dsnw') or ''
-        # Nginx port
+            m = _re.search(r"^\s*\$config\['" + _re.escape(key) + r"'\]\s*=\s*'((?:[^'\\]|\\.)*)'", conf_content or '', _re.M)
+            if not m:
+                m = _re.search(r"^\s*\$config\['" + _re.escape(key) + r"'\]\s*=\s*(\d+)", conf_content or '', _re.M)
+            if not m:
+                return ''
+            return m.group(1).replace("\\'", "'").replace('\\\\', '\\')
+        cc = _st_read(nginx_conf)
         port = '8083'
-        if os.path.exists(nginx_conf):
-            with open(nginx_conf) as f: cc = f.read()
-            m = _re.search(r'listen\s+(\d+)', cc)
-            if m: port = m.group(1)
-        # PHP version in use
-        current_php = ''
-        if os.path.exists(nginx_conf):
-            with open(nginx_conf) as f: cc = f.read()
-            m = _re.search(r'php(\d+\.\d+)-fpm\.sock', cc)
-            if m: current_php = m.group(1)
-        php_versions = [v for v in ['8.5','8.4','8.3','8.2','8.1','8.0','7.4'] if os.path.exists(f'/run/php/php{v}-fpm.sock')]
-        # Available skins
+        m = _re.search(r'listen\s+(\d+)', cc)
+        if m: port = m.group(1)
+        current_php = _st_conf_php(cc)
+        php_versions = _st_php_sock_versions()
         skins = []
         try: skins = [d for d in os.listdir(rc_dir+'/skins') if os.path.isdir(rc_dir+'/skins/'+d)]
-        except: pass
-        # Logs
-        logs = sh(f'tail -80 {rc_dir}/logs/errors.log 2>/dev/null') or                sh(f'tail -80 {rc_dir}/logs/errors 2>/dev/null') or 'No logs found'
-        # Conf content
-        try:
-            with open(rc_conf) as f: conf_content = f.read()
-        except: conf_content = '# Config file not found'
+        except Exception: pass
+        logs = _st_tail(f'{rc_dir}/logs/errors.log', 80) or _st_tail(f'{rc_dir}/logs/errors', 80) or 'No logs found'
         return jsonify({'ok':True,
             'port':port, 'url': 'http://YOUR-IP:'+port,
-            'imap_host':imap_host, 'smtp_host':smtp_host, 'smtp_port':smtp_port,
-            'skin':skin, 'db_dsn':db_dsn,
+            'imap_host':rc_get('imap_host') or 'localhost', 'smtp_host':rc_get('smtp_host') or 'localhost',
+            'smtp_port':rc_get('smtp_port') or '587',
+            'skin':rc_get('skin') or 'elastic', 'db_dsn':rc_get('db_dsnw') or '',
             'current_php':current_php, 'php_versions':php_versions,
-            'skins':skins, 'conf_path':rc_conf, 'conf_content':conf_content,
+            'skins':skins, 'conf_path':rc_conf,
+            'conf_content':conf_content if conf_content is not None else '# Config file not found',
             'logs':logs, 'rc_dir':rc_dir})
+
     elif mod_id == 'docker':
-        status  = sh('systemctl is-active docker') or 'inactive'
+        status  = _st_status('docker')
         version = sh('docker version --format "{{.Server.Version}}" 2>/dev/null') or ''
         info    = sh('docker info 2>/dev/null | head -25') or ''
         return jsonify({'ok':True,'status':status,'version':version,'info':info})
 
     elif mod_id == 'caddy':
-        status   = sh('systemctl is-active caddy') or 'inactive'
+        c = _st_caddy()
+        status   = _st_status('caddy')
         version  = sh("caddy version 2>/dev/null | awk '{print $1}' | tr -d v") or ''
-        conf_path = '/etc/caddy/Caddyfile'
-        try:
-            with open(conf_path) as f: conf_content = f.read()
-        except: conf_content = ''
+        conf_path = c.CADDYFILE
+        conf_content = _st_read(conf_path)
         log_path = '/var/log/caddy/caddy.log'
-        logs = sh(f'tail -100 {log_path} 2>/dev/null') or sh('journalctl -u caddy -n 100 --no-pager') or 'No logs'
-        # Parse global options from Caddyfile
+        logs = _st_tail(log_path, 100) or _st_journal('caddy', 100) or 'No logs'
+        g = c.get_global_options()
         def cget(key):
-            return sh(rf"grep -oP '^\s*{key}\s+\K\S+' {conf_path} 2>/dev/null | head -1").strip() or ''
+            m = _re.search(rf'^\s*{key}\s+(\S+)', g, _re.M)
+            return m.group(1) if m else ''
         global_opts = {
-            'email':      cget('email') or '',
+            'email':      cget('email'),
             'http_port':  cget('http_port') or '80',
             'https_port': cget('https_port') or '443',
             'admin':      cget('admin') or 'localhost:2019',
         }
-        # TLS cert info
-        tls_certs = sh("ls /var/lib/caddy/.local/share/certmagic/acme/acme-v02.api.letsencrypt.org/sites/ 2>/dev/null || ls /root/.local/share/caddy/certificates/ 2>/dev/null | head -20") or 'No certificates found'
+        names = []
+        for base in c.caddy_cert_dirs():
+            for dname in sorted(os.listdir(base)):
+                if os.path.isdir(os.path.join(base, dname)):
+                    names.append(f'{dname}  ({os.path.basename(base)})')
+        tls_certs = '\n'.join(names[:200]) or 'No certificates found'
         return jsonify({'ok':True,'status':status,'version':version,
             'conf_path':conf_path,'conf_content':conf_content,'logs':logs,'log_path':log_path,
             'global_opts':global_opts,'tls_certs':tls_certs})
 
     elif mod_id == 'nodejs':
-        status  = sh('systemctl is-active nodejs 2>/dev/null') or 'inactive'
         version = sh('node --version 2>/dev/null | tr -d v') or ''
         npm_ver = sh('npm --version 2>/dev/null') or ''
-        node_path = sh('which node 2>/dev/null') or ''
-        npm_path  = sh('which npm 2>/dev/null') or ''
+        node_path = sh('command -v node 2>/dev/null') or ''
+        npm_path  = sh('command -v npm 2>/dev/null') or ''
         info = f'Node.js {version}\nnpm {npm_ver}\nnode: {node_path}\nnpm: {npm_path}'
         return jsonify({'ok':True,'status':'active' if node_path else 'inactive',
-            'version':version,'info':info, 'versions': [
-                {'label': 'v24 LTS — Active (Krypton)', 'value': '24'},
-                {'label': 'v22 LTS — Maintenance (Jod)', 'value': '22'},
-                {'label': 'v26 Current (non-LTS)',       'value': '26'},
-            ]})
+            'version':version,'info':info, 'versions':[]})
 
     elif mod_id == 'bind9':
-        status  = sh('systemctl is-active named 2>/dev/null || systemctl is-active bind9 2>/dev/null') or 'inactive'
-        version = sh("named -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
-        zones_dir = '/etc/bind/zones'
-        named_conf = '/etc/bind/named.conf'
-        named_conf_local = '/etc/bind/named.conf.local'
-        os.makedirs(zones_dir, exist_ok=True)
-        # Read zones from named.conf.local
+        b = _st_bind()
+        status  = _st_status('named', 'bind9')
+        version = sh("named -v 2>/dev/null | grep -oE '[0-9]+[.][0-9]+[.][0-9]+' | head -1") or ''
+        zones_dir = b['zones_dir']
+        if os.path.isdir('/etc/bind'):
+            os.makedirs(zones_dir, exist_ok=True)
+        def _count(path):
+            if not path.startswith('/'):
+                path = os.path.join(b['base'], path)
+            return sum(1 for l in _st_read(path).splitlines() if _re.search(r'\sIN\s', l))
         zones = []
-        import re as _re
-        for conf_file in [named_conf_local, named_conf]:
-            if os.path.exists(conf_file):
-                with open(conf_file) as f: raw = f.read()
-                for m in _re.finditer(r'zone\s+"([^"]+)"\s*\{[^}]*file\s+"([^"]+)"', raw, _re.DOTALL):
-                    domain, zone_file = m.group(1), m.group(2)
-                    if domain not in [z['domain'] for z in zones]:
-                        zones.append({'domain': domain, 'file': zone_file,
-                            'records': int(sh(f'grep -c "IN" {zone_file} 2>/dev/null') or 0)})
-        # Read zone files from zones dir
+        for conf_file in [b['local'], b['conf']]:
+            raw = _st_read(conf_file)
+            for m in _re.finditer(r'zone\s+"([^"]+)"\s*(?:IN\s*)?\{[^}]*?file\s+"([^"]+)"', raw, _re.DOTALL):
+                domain, zone_file = m.group(1), m.group(2)
+                if domain in ('.', 'localhost', '127.in-addr.arpa', '0.in-addr.arpa', '255.in-addr.arpa') or \
+                   domain.endswith('.ip6.arpa') or domain in [z['domain'] for z in zones]:
+                    continue
+                zones.append({'domain': domain, 'file': zone_file, 'records': _count(zone_file)})
         if os.path.isdir(zones_dir):
-            for f_name in os.listdir(zones_dir):
+            for f_name in sorted(os.listdir(zones_dir)):
                 if f_name.startswith('db.'):
                     domain = f_name[3:]
                     if domain not in [z['domain'] for z in zones]:
                         zones.append({'domain': domain, 'file': f'{zones_dir}/{f_name}',
-                            'records': int(sh(f'grep -c "IN" {zones_dir}/{f_name} 2>/dev/null') or 0)})
-        try:
-            with open(named_conf) as f: conf_content = f.read()
-        except: conf_content = ''
-        logs = sh('journalctl -u named -n 80 --no-pager 2>/dev/null') or                sh('journalctl -u bind9 -n 80 --no-pager 2>/dev/null') or 'No logs'
+                                      'records': _count(f'{zones_dir}/{f_name}')})
+        conf_content = _st_read(b['conf'])
+        logs = _st_journal(_resolve_svc('named')) or 'No logs'
         return jsonify({'ok':True, 'status':status, 'version':version,
-            'zones': zones, 'conf_path': named_conf, 'conf_content': conf_content,
-            'logs': logs, 'zones_dir': zones_dir, 'versions': [{'label': '9.20.x (Stable - ISC)', 'value': '9.20'}, {'label': '9.18.x (ESV/LTS - Ubuntu)', 'value': '9.18'}]})
+            'zones': zones, 'conf_path': b['conf'], 'conf_content': conf_content,
+            'logs': logs, 'zones_dir': zones_dir, 'versions': []})
 
     elif mod_id == 'ddns':
-        import json as _json
         cfg_file = '/opt/vortexpanel/ddns_config.json'
         cfg = {}
-        if os.path.exists(cfg_file):
-            try:
-                with open(cfg_file) as f: cfg = _json.load(f)
-            except: pass
-        log = ''
-        log_file = '/opt/vortexpanel/ddns.log'
-        if os.path.exists(log_file):
-            log = sh(f'tail -100 {log_file}') or ''
-        # Get current public IP
+        try:
+            with open(cfg_file) as f: cfg = json.load(f) or {}
+        except Exception:
+            cfg = {}
+        log = _st_tail('/opt/vortexpanel/ddns.log', 100)
         ip = sh("curl -s --max-time 5 https://api.ipify.org 2>/dev/null || curl -s --max-time 5 https://ifconfig.me/ip 2>/dev/null") or 'Unknown'
         return jsonify({'ok':True, 'status':'active' if cfg.get('enabled') else 'inactive',
             'version':'', 'domains': cfg.get('domains',[]),
@@ -3467,12 +4050,8 @@ def _get_module_settings_impl(mod_id):
             'log': log})
 
     elif mod_id == 'modsecurity':
-        # ModSecurity has no standalone systemd service — it's a shared
-        # module loaded into whichever webserver is active (see the App
-        # Store install_tpl). Reusing security.py's real detection layer
-        # here rather than duplicating nginx-only logic a second time --
-        # that duplication is exactly what caused this same tab to show
-        # "nginx service: inactive" on a genuinely working Apache install.
+        # ModSecurity has no standalone systemd service -- it's a shared
+        # module loaded into whichever webserver is active.
         from panel.routes.security import _modsec_installed, _connector_present, _modsec_conf, _modsec_target
         installed = _modsec_installed()
         connector = _connector_present()
@@ -3480,18 +4059,14 @@ def _get_module_settings_impl(mod_id):
         engine_state = 'not installed'
         conf = _modsec_conf()
         if os.path.exists(conf):
-            try:
-                content = open(conf).read()
-                m = _re.search(r'^SecRuleEngine\s+(\S+)', content, _re.MULTILINE)
-                engine_state = m.group(1) if m else 'unknown'
-            except Exception:
-                engine_state = 'unknown'
+            m = _re.search(r'^SecRuleEngine\s+(\S+)', _st_read(conf), _re.MULTILINE)
+            engine_state = m.group(1) if m else 'unknown'
         if target == 'apache':
             webserver_name = 'apache2'
-            webserver_status = sh('systemctl is-active apache2 2>/dev/null') or 'inactive'
+            webserver_status = _st_status('apache2')
         else:
             webserver_name = 'nginx'
-            webserver_status = sh('systemctl is-active nginx 2>/dev/null') or 'inactive'
+            webserver_status = _st_status('nginx')
         return jsonify({'ok':True,
             'modsec_installed': installed,
             'connector_loaded': connector,
@@ -3500,97 +4075,255 @@ def _get_module_settings_impl(mod_id):
             'webserver_status': webserver_status,
             'nginx_status': webserver_status})
 
-
     # Generic fallback
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False,'error':'Module not found'}), 404
-    svc    = _resolve_svc(mod.get('service', mod_id))
-    status = sh('systemctl is-active ' + svc + ' 2>/dev/null') or 'inactive'
-    version= sh(svc + ' --version 2>/dev/null | head -1') or ''
+    svc    = _resolve_svc(mod.get('service') or mod_id)
+    status = _st_status(svc)
+    version= get_version(mod_id) or ''
     return jsonify({'ok':True,'status':status,'version':version})
 
+
+# --- Settings: constants used by GET and POST ------------------------------------------
+_APACHE_KEYS = ['Timeout', 'KeepAlive', 'MaxKeepAliveRequests', 'KeepAliveTimeout']
+_APACHE_MPM_KEYS = ['StartServers', 'MinSpareThreads', 'MaxSpareThreads', 'ThreadsPerChild', 'MaxRequestWorkers',
+                    'MinSpareServers', 'MaxSpareServers', 'MaxConnectionsPerChild']
+_OLS_KEYS = {'maxConnections': '10000', 'maxSSLConnections': '10000', 'connTimeout': '300',
+             'maxKeepAliveReq': '10000', 'enableGzipCompress': '1', 'gzipCompressLevel': '6'}
+_NGINX_OPT = {   # key -> (context, value regex)
+    'worker_processes':     ('main',   r'^(auto|\d{1,4})$'),
+    'worker_connections':   ('events', r'^\d{1,7}$'),
+    'keepalive_timeout':    ('http',   r'^\d{1,6}[smh]?$'),
+    'client_max_body_size': ('http',   r'^\d{1,9}[kKmMgG]?$'),
+    'gzip':                 ('http',   r'^(on|off)$'),
+}
+_MYSQL_OPT_KEYS = ['key_buffer_size', 'tmp_table_size', 'innodb_buffer_pool_size', 'innodb_log_buffer_size',
+                   'sort_buffer_size', 'read_buffer_size', 'thread_cache_size', 'max_connections',
+                   'table_open_cache', 'port']
+_RC_DIR = '/var/www/roundcube'
+_RC_CONF = _RC_DIR + '/config/config.inc.php'
+_F2B_BLACK_FILE = '/etc/fail2ban/ip.blacklist'
+_F2B_WHITE_FILE = '/etc/fail2ban/ip.whitelist'
+_F2B_BLACK_JAIL = 'vortexpanel-blacklist'
+_F2B_BLACK_CONF = '/etc/fail2ban/jail.d/zz-vortexpanel-blacklist.local'
+_F2B_WHITE_CONF = '/etc/fail2ban/jail.d/zz-vortexpanel-whitelist.local'
+
+def _st_set_directive(content, key, val):
+    """Replace the first active `key value` line; None when the key is absent."""
+    pat = re.compile(r'^([ \t]*)' + re.escape(key) + r'[ \t]+[^\n]*$', re.M)
+    m = pat.search(content)
+    if not m:
+        return None
+    return content[:m.start()] + m.group(1) + key + ' ' + val + content[m.end():]
+
+
+# --- Switch Version --------------------------------------------------------------------
+_VP_PICK = (
+    "VP_PICK() { apt-cache madison \"$1\" 2>/dev/null | awk -F'|' -v src=\"$3\" "
+    "'{v=$2; gsub(/ /,\"\",v); if (src==\"\" || index($3,src)>0) print v}' | grep -E \"$2\" | head -1; }\n"
+    "VP_RPICK() { dnf -q list --showduplicates \"$1\" 2>/dev/null | awk -v n=\"$1\" "
+    "'index($1, n\".\")==1 {print $2}' | grep -E \"$2\" | sort -V | tail -1; }\n"
+)
+
+def _st_key_dl(url, keyring):
+    """Download+dearmor a signing key to a temp file and only then replace the
+    keyring, so a failed download never breaks the existing repo."""
+    return (f'curl -fsSL --connect-timeout 20 --max-time 90 "{url}" -o /tmp/vp_switch_key.asc && '
+            'gpg --batch --no-tty --yes --dearmor -o /tmp/vp_switch_key.gpg /tmp/vp_switch_key.asc && '
+            f'mkdir -p "$(dirname {keyring})" && mv -f /tmp/vp_switch_key.gpg {keyring} || '
+            f'{{ echo "[VortexPanel] Could not download the signing key from {url}."; rm -f /tmp/vp_switch_key.*; exit 1; }}\n'
+            'rm -f /tmp/vp_switch_key.asc\n')
+
+_SWITCH_NO_DOWNGRADE = {'mysql', 'mariadb', 'mongodb', 'redis', 'postgresql'}
+_SWITCH_DEBIAN_ONLY = {
+    'mysql': 'On RHEL-family servers MySQL comes from the AppStream module or the MySQL community repository; '
+             'switch it with dnf (dnf module switch-to mysql:<stream>) after a full backup.',
+    'mariadb': 'MariaDB RPM packages cannot be upgraded across major versions in place; back up with mariadb-dump, '
+               'remove the old MariaDB-server, install the new version and restore.',
+    'postgresql': 'On RHEL-family servers each PostgreSQL major version is a separate postgresqlNN-server package '
+                  'with its own data directory; install the new version and migrate with pg_upgrade.',
+    'bind9': 'On RHEL-family servers BIND only comes from the distribution repository, which carries one version.',
+}
+
+def _st_target_tuple(mod_id, ver):
+    if mod_id == 'mysql' and ver == 'innovation':
+        return (99,)
+    return _parse_ver_tuple(ver)
+
+def _st_switch_ok(mod_id, ver, got):
+    if not got:
+        return False
+    if ver == 'latest':
+        return True
+    if mod_id == 'nginx':
+        t = _parse_ver_tuple(got)
+        return bool(t and len(t) > 1 and (t[1] % 2 == (0 if ver == 'stable' else 1)))
+    if mod_id == 'mysql' and ver == 'innovation':
+        t = _parse_ver_tuple(got)
+        return bool(t and t[0] >= 9)
+    return got == ver or got.startswith(ver + '.') or got.startswith(ver + '-')
+
+def _st_switch_script(mod_id, ver, mod):
+    """Shell script that moves an installed app to `ver` on THIS distro, or
+    (None, reason) when that cannot be done safely here."""
+    osi = get_os()
+    fam = _st_family()
+    cn = osi.get('codename') or ''
+    is_ubuntu = osi.get('id') != 'debian'
+    vre = ver.replace('.', '\\.')
+    if fam != 'debian' and mod_id in _SWITCH_DEBIAN_ONLY:
+        return None, f'Switching {mod["name"] if mod else mod_id} versions from the panel is only supported on Debian/Ubuntu. ' + _SWITCH_DEBIAN_ONLY[mod_id]
+    if fam == 'debian' and not cn and mod_id in ('nginx', 'redis'):
+        return None, 'The OS codename could not be detected (VERSION_CODENAME missing in /etc/os-release).'
+    S = _VP_PICK
+    if mod_id == 'nginx':
+        if fam == 'debian':
+            dpath = 'ubuntu' if is_ubuntu else 'debian'
+            src = f'nginx.org/packages/{dpath}' if ver == 'stable' else f'nginx.org/packages/mainline/{dpath}'
+            S += _st_key_dl('https://nginx.org/keys/nginx_signing.key', '/usr/share/keyrings/nginx-archive-keyring.gpg')
+            S += (f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://{src} {cn} nginx" > /etc/apt/sources.list.d/nginx.list\n'
+                  'apt-get update -qq || { echo "[VortexPanel] apt-get update failed (see above)."; exit 1; }\n'
+                  f'V=$(VP_PICK nginx . "{src}")\n'
+                  f'[ -n "$V" ] || {{ echo "[VortexPanel] nginx.org has no {ver} build for {cn}."; exit 1; }}\n'
+                  'echo "[VortexPanel] Installing nginx $V"\n'
+                  'apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-confold "nginx=$V" || exit 1\n')
+        else:
+            sub = '' if ver == 'stable' else 'mainline/'
+            S += (f"cat > /etc/yum.repos.d/nginx.repo <<'EOF'\n[nginx-{ver}]\nname=nginx {ver} repo\n"
+                  f"baseurl=http://nginx.org/packages/{sub}rhel/$releasever/$basearch/\ngpgcheck=1\nenabled=1\n"
+                  "gpgkey=https://nginx.org/keys/nginx_signing.key\nmodule_hotfixes=true\nEOF\n"
+                  'dnf -y distro-sync nginx || exit 1\n')
+        S += 'nginx -t || exit 1\nsystemctl restart nginx || exit 1\n'
+        return S, None
+    if mod_id == 'apache2':
+        if fam == 'debian':
+            if is_ubuntu:
+                S += ('(command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common)\n'
+                      'add-apt-repository -y ppa:ondrej/apache2 || echo "[VortexPanel] ppa:ondrej/apache2 is unavailable -- using the distribution packages"\n'
+                      'if ! apt-get update -qq; then add-apt-repository --remove -y ppa:ondrej/apache2 2>/dev/null; '
+                      'rm -f /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*; apt-get update -qq || exit 1; fi\n')
+            else:
+                S += 'apt-get update -qq || exit 1\n'
+            S += (f'V=$(VP_PICK apache2 "^([0-9]+:)?{vre}-" "")\n'
+                  f'[ -n "$V" ] || {{ echo "[VortexPanel] Apache {ver} is not available from the configured repositories. Available:"; apt-cache madison apache2; exit 1; }}\n'
+                  'apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-confold "apache2=$V" "apache2-bin=$V" "apache2-data=$V" "apache2-utils=$V" || exit 1\n'
+                  'apache2ctl configtest || exit 1\nsystemctl restart apache2 || exit 1\n')
+        else:
+            S += (f'V=$(VP_RPICK httpd "^([0-9]+:)?{vre}-")\n'
+                  f'[ -n "$V" ] || {{ echo "[VortexPanel] httpd {ver} is not available from the enabled repositories (RHEL-family repositories usually carry one build). Available:"; dnf -q list --showduplicates httpd; exit 1; }}\n'
+                  'dnf -y install "httpd-$V" || dnf -y downgrade "httpd-$V" || exit 1\n'
+                  'apachectl configtest || exit 1\nsystemctl restart httpd || exit 1\n')
+        return S, None
+    if mod_id == 'openlitespeed':
+        S += ('curl -fsSL --max-time 90 https://repo.litespeed.sh -o /tmp/vp_ls_repo.sh || { echo "[VortexPanel] Could not download the LiteSpeed repository script."; exit 1; }\n'
+              'bash /tmp/vp_ls_repo.sh || exit 1\nrm -f /tmp/vp_ls_repo.sh\n')
+        if fam == 'debian':
+            S += ('apt-get update -qq || exit 1\n'
+                  f'V=$(VP_PICK openlitespeed "^([0-9]+:)?{vre}([.-]|$)" "")\n'
+                  f'[ -n "$V" ] || {{ echo "[VortexPanel] OpenLiteSpeed {ver} is not available. Available:"; apt-cache madison openlitespeed; exit 1; }}\n'
+                  'apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-confold "openlitespeed=$V" || exit 1\n')
+        else:
+            S += (f'V=$(VP_RPICK openlitespeed "^([0-9]+:)?{vre}([.-]|$)")\n'
+                  f'[ -n "$V" ] || {{ echo "[VortexPanel] OpenLiteSpeed {ver} is not available. Available:"; dnf -q list --showduplicates openlitespeed; exit 1; }}\n'
+                  'dnf -y install "openlitespeed-$V" || dnf -y downgrade "openlitespeed-$V" || exit 1\n')
+        S += '/usr/local/lsws/bin/lswsctrl restart || systemctl restart lsws || exit 1\n'
+        return S, None
+    if mod_id == 'mysql':
+        tpl = (mod or {}).get('install_tpl', '')
+        if not tpl:
+            return None, 'No MySQL install recipe in the catalog.'
+        return tpl.replace('{ver}', ver).replace('{codename}', cn) + '\n', None
+    if mod_id == 'mariadb':
+        return mariadb_install_script(ver) + ' && systemctl restart mariadb\n', None
+    if mod_id == 'postgresql':
+        if os.path.isdir(f'/usr/lib/postgresql/{ver}/bin'):
+            return None, f'PostgreSQL {ver} is already installed.'
+        return postgresql_install_script(ver) + '\npg_lsclusters 2>/dev/null; true\n', None
+    if mod_id == 'mongodb':
+        S = ('echo "[VortexPanel] Note: MongoDB upgrades one release series at a time and needs '
+             'featureCompatibilityVersion set to the current series first (db.adminCommand({setFeatureCompatibilityVersion: ...}))."\n')
+        S += mongodb_install_script(ver)
+        if fam != 'debian':
+            S += ' && dnf -y upgrade "mongodb-org*"'
+        S += ' && systemctl restart mongod\n'
+        return S, None
+    if mod_id == 'redis':
+        if fam == 'debian':
+            S += _st_key_dl('https://packages.redis.io/gpg', '/usr/share/keyrings/redis-archive-keyring.gpg')
+            S += (f'echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {cn} main" > /etc/apt/sources.list.d/redis.list\n'
+                  f'apt-get update -qq || {{ echo "[VortexPanel] packages.redis.io has no release for {cn} -- removing it again."; rm -f /etc/apt/sources.list.d/redis.list; apt-get update -qq; exit 1; }}\n'
+                  f'V=$(VP_PICK redis-server "^([0-9]+:)?{vre}\\." "packages.redis.io")\n'
+                  f'[ -n "$V" ] || {{ echo "[VortexPanel] packages.redis.io has no Redis {ver} for {cn}. Available:"; apt-cache madison redis-server; exit 1; }}\n'
+                  'apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-confold "redis-server=$V" "redis-tools=$V" || exit 1\n'
+                  'systemctl restart redis-server || exit 1\n')
+        else:
+            S += (f'dnf -y module reset redis && dnf -y module enable "redis:remi-{ver}" || '
+                  f'{{ echo "[VortexPanel] The Remi repository has no redis:remi-{ver} module stream for this OS."; exit 1; }}\n'
+                  'dnf -y distro-sync redis || exit 1\nsystemctl restart redis || exit 1\n')
+        return S, None
+    if mod_id == 'nodejs':
+        if fam == 'debian':
+            S += _st_key_dl('https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key', '/etc/apt/keyrings/nodesource.gpg')
+            S += ('rm -f /etc/apt/sources.list.d/nodejs.list /etc/apt/sources.list.d/nodesource.sources\n'
+                  f'echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{ver}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list\n'
+                  'apt-get update -qq || exit 1\n'
+                  f'V=$(VP_PICK nodejs "^([0-9]+:)?{vre}\\." "nodesource.com")\n'
+                  f'[ -n "$V" ] || {{ echo "[VortexPanel] NodeSource has no Node.js {ver} build."; exit 1; }}\n'
+                  'apt-get install -y --allow-downgrades "nodejs=$V" || exit 1\n')
+        else:
+            S += (f'curl -fsSL --max-time 90 https://rpm.nodesource.com/setup_{ver}.x -o /tmp/vp_nodesource.sh || exit 1\n'
+                  'bash /tmp/vp_nodesource.sh || exit 1\nrm -f /tmp/vp_nodesource.sh\n'
+                  'dnf -y distro-sync nodejs || exit 1\n')
+        return S, None
+    if mod_id == 'bind9':
+        if is_ubuntu:
+            if ver == '9.20':
+                S += ('(command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common)\n'
+                      'add-apt-repository -y ppa:isc/bind || exit 1\n'
+                      f'apt-get update -qq || {{ echo "[VortexPanel] ppa:isc/bind has no release for {cn} -- removing it."; add-apt-repository --remove -y ppa:isc/bind; apt-get update -qq; exit 1; }}\n')
+            else:
+                S += ('add-apt-repository --remove -y ppa:isc/bind >/dev/null 2>&1\n'
+                      'rm -f /etc/apt/sources.list.d/isc-ubuntu-bind-*\n'
+                      'apt-get update -qq || exit 1\n')
+        else:
+            S += 'apt-get update -qq || exit 1\n'
+        unit = _resolve_svc('named')
+        S += (f'V=$(VP_PICK bind9 "^([0-9]+:)?{vre}\\." "")\n'
+              f'[ -n "$V" ] || {{ echo "[VortexPanel] BIND {ver} is not available for this OS release. Available:"; apt-cache madison bind9; exit 1; }}\n'
+              "PKGS=$(dpkg-query -W -f='${Status} ${Package}\\n' 'bind9*' 2>/dev/null | awk '$3==\"installed\"{print $4}' | grep -E '^bind9(-libs|-utils|-host|-dnsutils|-doc)?$')\n"
+              'ARGS=""; for p in $PKGS; do ARGS="$ARGS $p=$V"; done\n'
+              '[ -n "$ARGS" ] || ARGS="bind9=$V"\n'
+              'apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-confold $ARGS || exit 1\n'
+              f'named-checkconf || exit 1\nsystemctl restart {unit} || exit 1\n')
+        return S, None
+    if mod_id in ('memcached', 'pure-ftpd') and ver == 'latest':
+        if fam == 'debian':
+            S = (f'apt-get update -qq || exit 1\n'
+                 f'apt-get install -y --only-upgrade -o Dpkg::Options::=--force-confold {mod_id} || exit 1\n')
+        else:
+            S = f'dnf -y upgrade {mod_id} || exit 1\n'
+        S += f'systemctl restart {mod_id} || exit 1\n'
+        return S, None
+    return None, f'Version switch is not supported for {mod_id}.'
 
 
 @modules_bp.route('/api/modules/<mod_id>/settings', methods=['POST'])
 def save_module_settings(mod_id):
     """Save app-specific settings."""
     if not req(): return jsonify({'ok': False}), 401
+    try:
+        resp = _save_module_settings_impl(mod_id)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+    if resp is None:
+        return jsonify({'ok': False, 'error': 'This setting is not supported for this app.'}), 400
+    return resp
 
-    import os
-    d = request.get_json() or {}
+def _save_module_settings_impl(mod_id):
+    d = request.get_json(silent=True) or {}
     action = d.get('action', 'save_config')
-    ver = d.get('version', '')
+    ver = str(d.get('version', '') or '')
     mod = _get_mod(mod_id)  # needed by switch_version closure
-
-    if action == 'get_ver_data' and ver:
-        import os as _os
-        ini_path = f'/etc/php/{ver}/fpm/php.ini'
-        fpm_conf = f'/etc/php/{ver}/fpm/pool.d/www.conf'
-        try:
-            with open(ini_path) as f: ini_content = f.read()
-        except: ini_content = ''
-        try:
-            with open(fpm_conf) as f: fpm_content = f.read()
-        except: fpm_content = ''
-        def ini_get(key):
-            import re as _re
-            m = _re.search(rf'^{re.escape(key)}\s*=\s*(.+)', ini_content, _re.MULTILINE)
-            return m.group(1).strip() if m else ''
-        def fpm_get(key):
-            import re as _re
-            m = _re.search(rf'^{re.escape(key)}\s*=\s*(.+)', fpm_content, _re.MULTILINE)
-            return m.group(1).strip() if m else ''
-        import subprocess as _sp
-        def sh2(c):
-            try: return _sp.check_output(c,shell=True,text=True,stderr=_sp.DEVNULL,timeout=10).strip()
-            except: return ''
-        raw = sh2(f'php{ver} -m 2>/dev/null')
-        installed_exts = set(e.lower().strip() for e in raw.splitlines() if e.strip() and not e.startswith('['))
-        EXTS = [
-            {'name':'fileinfo','type':'Universal','desc':'Get file MIME type'},
-            {'name':'redis','type':'Cache','desc':'Redis client'},
-            {'name':'apcu','type':'Cache','desc':'PHP opcode cache'},
-            {'name':'imagick','type':'Universal','desc':'ImageMagick'},
-            {'name':'exif','type':'General','desc':'Read image EXIF'},
-            {'name':'intl','type':'Universal','desc':'Internationalization'},
-            {'name':'mbstring','type':'Universal','desc':'Multibyte strings'},
-            {'name':'zip','type':'Universal','desc':'ZIP support'},
-            {'name':'gd','type':'Universal','desc':'GD graphics'},
-            {'name':'curl','type':'Universal','desc':'cURL HTTP client'},
-            {'name':'opcache','type':'Cache','desc':'Opcode cache'},
-            {'name':'xdebug','type':'Debug','desc':'Debugger'},
-            {'name':'sodium','type':'Security','desc':'Cryptography'},
-            {'name':'xml','type':'Universal','desc':'XML parsing'},
-        ]
-        extensions = [{**e, 'installed': e['name'] in installed_exts} for e in EXTS]
-        config = {
-            'short_open_tag':         ini_get('short_open_tag') or 'On',
-            'max_execution_time':     ini_get('max_execution_time') or '300',
-            'memory_limit':           ini_get('memory_limit') or '128M',
-            'post_max_size':          ini_get('post_max_size') or '50M',
-            'upload_max_filesize':    ini_get('upload_max_filesize') or '50M',
-            'max_file_uploads':       ini_get('max_file_uploads') or '20',
-            'display_errors':         ini_get('display_errors') or 'Off',
-            'date.timezone':          ini_get('date.timezone') or 'UTC',
-            'max_input_time':         ini_get('max_input_time') or '60',
-            'disable_functions':      ini_get('disable_functions') or '',
-            'session.gc_maxlifetime': ini_get('session.gc_maxlifetime') or '1440',
-        }
-        fpm_profile = {
-            'pm':                   fpm_get('pm') or 'dynamic',
-            'pm.max_children':      fpm_get('pm.max_children') or '50',
-            'pm.start_servers':     fpm_get('pm.start_servers') or '5',
-            'pm.min_spare_servers': fpm_get('pm.min_spare_servers') or '5',
-            'pm.max_spare_servers': fpm_get('pm.max_spare_servers') or '35',
-            'listen':               fpm_get('listen') or f'/run/php/php{ver}-fpm.sock',
-            'request_slowlog_timeout': fpm_get('request_slowlog_timeout') or '0',
-        }
-        logs = sh2(f'tail -80 /var/log/php{ver}-fpm.log 2>/dev/null') or                sh2(f'journalctl -u php{ver}-fpm -n 50 --no-pager') or 'No logs'
-        version_full = sh2(f"php{ver} --version 2>/dev/null | head -1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'") or ver
-        status = sh2(f'systemctl is-active php{ver}-fpm 2>/dev/null') or 'inactive'
-        return jsonify({'ok':True,'version':version_full,'status':status,'ini_path':ini_path,
-            'ini_content':ini_content,'fpm_conf':fpm_conf,'fpm_content':fpm_content,
-            'fpm_profile':fpm_profile,'config':config,'extensions':extensions,'logs':logs})
 
     def sh(cmd, t=30):
         try:
@@ -3598,306 +4331,168 @@ def save_module_settings(mod_id):
                                            stderr=subprocess.STDOUT, timeout=t).strip()
         except subprocess.CalledProcessError as e:
             return e.output or ''
-        except: return ''
+        except Exception: return ''
 
-    if action == 'save_fpm_content':
+    def _res(ok, msg='', **extra):
+        body = {'ok': bool(ok), **extra}
+        if ok:
+            body['message'] = msg or 'Saved.'
+        else:
+            body['error'] = msg or 'Failed.'
+        return jsonify(body), (200 if ok else 400)
+
+    # ---- PHP -------------------------------------------------------------------
+    if action == 'get_ver_data':
+        lay = php_layout(ver)
+        if not lay:
+            return _res(False, f'PHP {ver} is not installed.')
+        return jsonify(_st_php_payload(lay, installed_php_layouts()))
+
+    if action in ('install_php_ext', 'uninstall_php_ext'):
+        fn = php_install_ext if action == 'install_php_ext' else php_uninstall_ext
+        ok, msg = fn(ver, d.get('ext', ''))
+        return _res(ok, msg)
+
+    if action == 'save_php_config':
+        lay = php_layout(ver)
+        if not lay:
+            return _res(False, f'PHP {ver} is not installed.')
+        cfg = d.get('config') or {}
+        if not isinstance(cfg, dict):
+            return _res(False, 'Invalid settings.')
+        cfg = {k: v for k, v in cfg.items() if k in _PHP_CONFIG_KEYS}
+        if not cfg:
+            return _res(False, 'No supported settings given.')
+        ok, msg = php_save_ini_values(lay, cfg)
+        return _res(ok, msg or f'Saved and PHP {ver} FPM reloaded.')
+
+    if action == 'save_fpm_profile':
+        lay = php_layout(ver)
+        if not lay:
+            return _res(False, f'PHP {ver} is not installed.')
+        prof = d.get('fpm_profile') or {}
+        if not isinstance(prof, dict):
+            return _res(False, 'Invalid FPM profile.')
+        content = _st_read(lay['pool'], None)
+        if content is None:
+            return _res(False, f'FPM pool file {lay["pool"]} not found.')
+        note = ''
+        for k, v in prof.items():
+            v = str(v).strip()
+            if k == 'listen':
+                if v and v != (_st_kv(content, 'listen') or lay['sock']):
+                    note = ' The listen socket was not changed (websites use it); edit it in the FPM file tab if you really need to.'
+                continue
+            if k not in _FPM_PROFILE_KEYS or v == '':
+                continue
+            if k == 'pm':
+                if v not in ('static', 'dynamic', 'ondemand'):
+                    return _res(False, 'pm must be static, dynamic or ondemand.')
+            elif not re.match(r'^\d{1,7}[smhd]?$', v):
+                return _res(False, f'Invalid value for {k}: {v}')
+            content = php_ini_set(content, k, v)
+        ok, msg = php_apply_file(lay, lay['pool'], content, test='fpm')
+        return _res(ok, (msg or f'Saved and PHP {ver} FPM reloaded.') + note if ok else msg)
+
+    if action == 'save_fpm_content' or (action == 'save_config' and mod_id == 'php'):
         conf_path = d.get('conf_path', '')
-        fpm_content = d.get('content', '')
-        version = d.get('version', '')
-        if not conf_path or not fpm_content:
-            return jsonify({'ok': False, 'error': 'Missing conf_path or content'})
-        try:
-            with open(conf_path, 'w') as f: f.write(fpm_content)
-        except Exception as e:
-            return jsonify({'ok': False, 'error': str(e)})
-        sh(f'systemctl reload php{version}-fpm 2>/dev/null || systemctl reload php-fpm 2>/dev/null')
-        return jsonify({'ok': True})
+        content = d.get('content', '')
+        if not conf_path or not isinstance(content, str) or not content.strip():
+            return _res(False, 'Missing conf_path or content')
+        lay = php_layout_for_path(conf_path)
+        if not lay:
+            return _res(False, 'That file does not belong to an installed PHP version.')
+        is_ini = any(lay.get(k) and _st_same_file(conf_path, lay[k]) for k in ('ini', 'ini_cli'))
+        ok, msg = php_apply_file(lay, conf_path, content, test='ini' if is_ini else 'fpm')
+        return _res(ok, msg or f'Saved and PHP {lay["ver"]} FPM reloaded.')
 
+    # ---- Roundcube mail settings -----------------------------------------------------
+    if action == 'save_config' and mod_id == 'roundcube' and not d.get('conf_path'):
+        c = _st_read(_RC_CONF, None)
+        if c is None:
+            return _res(False, f'{_RC_CONF} not found -- is Roundcube installed?')
+        fields = {'imap_host': d.get('imap_host'), 'smtp_host': d.get('smtp_host'),
+                  'smtp_port': d.get('smtp_port'), 'skin': d.get('skin'), 'db_dsnw': d.get('db_dsn')}
+        for k, v in fields.items():
+            if v is None or str(v).strip() == '':
+                continue
+            v = str(v).strip()
+            if '\n' in v or '\r' in v or len(v) > 500:
+                return _res(False, f'Invalid value for {k}.')
+            if k == 'smtp_port':
+                if not _st_valid_port(v):
+                    return _res(False, 'Invalid SMTP port.')
+                line = f"$config['{k}'] = {int(v)};"
+            else:
+                if k == 'skin' and not os.path.isdir(os.path.join(_RC_DIR, 'skins', v)):
+                    return _res(False, f'Skin {v} is not installed.')
+                esc = v.replace('\\', '\\\\').replace("'", "\\'")
+                line = f"$config['{k}'] = '{esc}';"
+            pat = re.compile(r"^[ \t]*\$config\['" + re.escape(k) + r"'\][ \t]*=.*?;[ \t]*$", re.M)
+            if pat.search(c):
+                c = pat.sub(lambda _m: line, c, count=1)
+            elif c.rstrip().endswith('?>'):
+                c = c.rstrip()[:-2].rstrip('\n') + '\n' + line + '\n?>\n'
+            else:
+                c = c.rstrip('\n') + '\n' + line + '\n'
+        phpbin = shutil.which('php') or next((l['bin'] for l in installed_php_layouts() if os.path.exists(l['bin'])), '')
+        ok, msg = _st_apply({_RC_CONF: c}, test_cmd=f'"{phpbin}" -l {_RC_CONF} 2>&1' if phpbin else None)
+        return _res(ok, msg or 'Roundcube configuration saved.')
+
+    # ---- Generic config file ----------------------------------------------------------
     if action == 'save_config':
         conf_path = d.get('conf_path', '')
         content   = d.get('content', '')
-        if not conf_path or not content:
-            return jsonify({'ok': False, 'error': 'Missing conf_path or content'})
-        try:
-            with open(conf_path, 'w') as f: f.write(content)
-        except Exception as e:
-            return jsonify({'ok': False, 'error': str(e)})
-        # Test and reload
-        if mod_id == 'nginx':
-            test = sh('nginx -t 2>&1')
-            if 'successful' not in test and 'ok' not in test.lower():
-                return jsonify({'ok': False, 'error': 'Config test failed: ' + test})
-            sh('systemctl reload nginx 2>&1')
-        elif mod_id == 'apache2':
-            test = sh('apache2ctl configtest 2>&1 || apachectl configtest 2>&1')
-            if 'Syntax OK' not in test:
-                return jsonify({'ok': False, 'error': 'Config test failed: ' + test})
-            sh('systemctl reload apache2 2>&1')
-        elif mod_id == 'bind9':
-            sh('rndc reload 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null')
-        elif mod_id == 'caddy':
-            test = sh('caddy validate --config ' + conf_path + ' 2>&1')
-            if 'Valid' not in test and 'valid' not in test.lower() and test:
-                return jsonify({'ok': False, 'error': 'Caddyfile invalid: ' + test[:200]})
-            sh('systemctl reload caddy 2>/dev/null || caddy reload --config ' + conf_path + ' 2>/dev/null')
-        elif mod_id == 'openlitespeed':
-            sh('systemctl reload lsws 2>/dev/null || systemctl restart lsws 2>/dev/null')
-        elif mod_id in ('mysql', 'mariadb'):
-            sh(f'systemctl restart {mod_id} 2>&1')
-        elif mod_id == 'memcached':
-            sh('systemctl restart memcached 2>&1')
-        return jsonify({'ok': True, 'message': 'Configuration saved and service reloaded'})
+        if not conf_path or not isinstance(content, str) or not content.strip():
+            return _res(False, 'Missing conf_path or content')
+        if mod_id == 'caddy':
+            c = _st_caddy()
+            if not _st_same_file(conf_path, c.CADDYFILE):
+                return _res(False, 'Only the main Caddyfile can be edited here.')
+            ok, msg = c.apply_caddy_file(c.CADDYFILE, content)
+            return _res(ok, msg or 'Caddyfile saved and Caddy reloaded.')
+        if mod_id == 'postgresql':
+            pg = _st_pg()
+            if not pg['conf'] or not any(_st_same_file(conf_path, p) for p in pg['all']):
+                return _res(False, 'That file is not a PostgreSQL cluster configuration on this server.')
+            return _res(*_st_pg_apply(conf_path, content))
+        allowed, test_cmd, svc, act = _st_allowed_conf(mod_id)
+        if not allowed:
+            return _res(False, f'Editing the configuration of {mod_id} is not supported here.')
+        target = next((p for p in allowed if _st_same_file(conf_path, p)), None)
+        if not target:
+            return _res(False, 'That file is not a configuration file of this app.')
+        ok, msg = _st_apply({target: content}, test_cmd=test_cmd, svc=svc, action=act)
+        return _res(ok, msg or 'Configuration saved and service reloaded.')
 
     elif action == 'save_optimization':
-        opts = d.get('optimization', {})
-        if mod_id == 'memcached':
-            conf_paths = ['/etc/memcached.conf', '/etc/sysconfig/memcached']
-            conf_path = next((p for p in conf_paths if os.path.exists(p)), '/etc/memcached.conf')
-            try:
-                with open(conf_path) as f: c = f.read()
-            except Exception:
-                c = ''
-            import re as _re2
-            flag_map = {'bind': 'l', 'port': 'p', 'cachesize': 'm', 'maxconn': 'c'}
-            for opt_key, flag in flag_map.items():
-                if opt_key not in opts: continue
-                val = opts[opt_key]
-                pattern = rf'^-{flag}\s+\S+'
-                replacement = f'-{flag} {val}'
-                if _re2.search(pattern, c, _re2.MULTILINE):
-                    c = _re2.sub(pattern, replacement, c, flags=_re2.MULTILINE)
-                else:
-                    c += f'\n{replacement}\n'
-            try:
-                with open(conf_path, 'w') as f: f.write(c)
-            except Exception as e:
-                return jsonify({'ok': False, 'error': str(e)})
-            sh('systemctl restart memcached 2>&1')
-            return jsonify({'ok': True})
-        if mod_id == 'apache2':
-            conf = '/etc/apache2/apache2.conf'
-            mpm_conf = sh('find /etc/apache2/mods-enabled/ -name "mpm_*.conf" 2>/dev/null | head -1')
-            apache_keys = ['Timeout','KeepAlive','MaxKeepAliveRequests','KeepAliveTimeout']
-            mpm_keys = ['StartServers','MinSpareThreads','MaxSpareThreads','ThreadsPerChild','MaxRequestWorkers']
-            import re as _re
-            if os.path.exists(conf):
-                with open(conf) as f: c = f.read()
-                for k in apache_keys:
-                    if k in opts:
-                        c = _re.sub(rf'^(\s*{k}\s+)\S+', rf'\g<1>{opts[k]}', c, flags=_re.MULTILINE)
-                with open(conf,'w') as f: f.write(c)
-            if mpm_conf and os.path.exists(mpm_conf):
-                with open(mpm_conf) as f: c = f.read()
-                for k in mpm_keys:
-                    if k in opts:
-                        c = _re.sub(rf'^(\s*{k}\s+)\S+', rf'\g<1>{opts[k]}', c, flags=_re.MULTILINE)
-                with open(mpm_conf,'w') as f: f.write(c)
-            sh('apache2ctl configtest 2>&1 && systemctl reload apache2 2>&1')
-            return jsonify({'ok': True})
-        if mod_id == 'openlitespeed':
-            conf = '/usr/local/lsws/conf/httpd_config.conf'
-            import re as _re
-            if os.path.exists(conf):
-                with open(conf) as f: c = f.read()
-                for k,v in opts.items():
-                    c = _re.sub(rf'({k}\s+)\S+', rf'\g<1>{v}', c)
-                with open(conf,'w') as f: f.write(c)
-            sh('systemctl reload lsws 2>/dev/null || kill -USR1 $(cat /tmp/lshttpd/lshttpd.pid 2>/dev/null) 2>/dev/null')
-            return jsonify({'ok': True})
-        if mod_id == 'nginx':
-
-            conf = '/etc/nginx/nginx.conf'
-            try:
-                with open(conf) as f: content = f.read()
-                import re as _re
-                for key, val in opts.items():
-                    content = _re.sub(rf'(\s+{key}\s+)\S+;', rf'\g<1>{val};', content)
-                with open(conf, 'w') as f: f.write(content)
-                sh('nginx -t && systemctl reload nginx')
-                return jsonify({'ok': True})
-            except Exception as e:
-                return jsonify({'ok': False, 'error': str(e)})
-
-        if mod_id in ('mysql', 'mariadb'):
-            # Determine cnf path
-            if mod_id == 'mariadb':
-                cnf_paths = ['/etc/mysql/mariadb.conf.d/50-server.cnf', '/etc/my.cnf', '/etc/mysql/my.cnf']
-            else:
-                cnf_paths = ['/etc/mysql/mysql.conf.d/mysqld.cnf', '/etc/my.cnf', '/etc/mysql/my.cnf']
-            cnf = next((p for p in cnf_paths if os.path.exists(p)), cnf_paths[-1])
-            import re as _re
-            try:
-                with open(cnf) as f: c = f.read()
-                for key, val in opts.items():
-                    if not val: continue
-                    # Update if exists, else append under [mysqld]
-                    if _re.search(rf'^\s*{key}\s*=', c, flags=_re.MULTILINE):
-                        c = _re.sub(rf'^(\s*{key}\s*=\s*)\S+', rf'\g<1>{val}', c, flags=_re.MULTILINE)
-                    else:
-                        c = _re.sub(r'(\[mysqld\])', rf'\1\n{key} = {val}', c, count=1)
-                with open(cnf, 'w') as f: f.write(c)
-                sh(f'systemctl restart {mod_id} 2>&1')
-                return jsonify({'ok': True, 'message': 'Optimization saved and MariaDB restarted.'})
-            except Exception as e:
-                return jsonify({'ok': False, 'error': str(e)})
+        opts = d.get('optimization') or {}
+        if not isinstance(opts, dict):
+            return _res(False, 'Invalid optimization settings.')
+        opts = {str(k): str(v).strip() for k, v in opts.items() if v is not None}
+        return _res(*_st_save_optimization(mod_id, opts))
 
     elif action == 'switch_version':
-        ver = d.get('version', '')
         if not ver:
             return jsonify({'ok': False, 'error': 'No version specified'}), 400
-
-        # Build the switch script per module
-        script = None
-        ver_check_cmd = None  # command to get new version string after switch
-
-        if mod_id == 'redis':
-            script = (
-                'systemctl stop redis-server 2>/dev/null || systemctl stop redis 2>/dev/null && '
-                'curl -fsSL https://packages.redis.io/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && '
-                'echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && '
-                'apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && '
-                f'apt-get install -y --allow-downgrades redis-server={ver}.* 2>/dev/null || apt-get install -y redis-server && '
-                'systemctl start redis-server 2>/dev/null || systemctl start redis'
-            )
-            ver_check_cmd = "redis-server --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'"
-
-        elif mod_id in ('pure-ftpd', 'pure_ftpd'):
-            script = f'apt-get install -y pure-ftpd={ver} 2>/dev/null || apt-get install -y pure-ftpd'
-            ver_check_cmd = "pure-ftpd --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
-
-        elif mod_id == 'mariadb':
-            script = (
-                'export DEBIAN_FRONTEND=noninteractive && '
-                'systemctl stop mariadb 2>/dev/null && '
-                f'curl -fsSL --max-time 30 https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | bash -s -- --mariadb-server-version={ver} --skip-maxscale; '
-                'for f in /etc/apt/sources.list.d/*.sources; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then awk -v RS="" -v ORS="\\n\\n" \'tolower($0) !~ /maxscale/\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi; done; '
-                'for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then sed -i \'/[Mm]ax[Ss]cale/d\' "$f"; fi; done; '
-                # Same self-healing already added to the main install_tpl:
-                # verify the repo genuinely resolves before relying on it,
-                # rather than leaving a broken entry to poison every other
-                # apt-get update afterward if this specific version/codename
-                # combination has no build yet.
-                'if ! apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 2>/tmp/vp_mariadb_switch_err.log; then '
-                '  echo "[VortexPanel] MariaDB repo has no usable build for this version/distro combination -- removing the broken repo entry"; '
-                '  rm -f /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/mariadb.sources /etc/apt/keyrings/mariadb-keyring.pgp; '
-                '  apt-get update -qq 2>/dev/null; '
-                '  exit 1; '
-                'fi && '
-                'apt-get install -y --allow-downgrades --allow-change-held-packages '
-                '-o Dpkg::Options::="--force-confnew" mariadb-server && '
-                'systemctl start mariadb && systemctl enable mariadb'
-            )
-            ver_check_cmd = "mariadb --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
-
-        elif mod_id == 'mysql':
-            script = (
-                'export DEBIAN_FRONTEND=noninteractive && '
-                f'apt-get install -y --allow-downgrades mysql-server={ver}* 2>/dev/null || '
-                'apt-get install -y mysql-server && '
-                'systemctl restart mysql'
-            )
-            ver_check_cmd = "mysql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
-
-        elif mod_id == 'postgresql':
-            script = (
-                'export DEBIAN_FRONTEND=noninteractive && '
-                'rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
-                'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
-                'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
-                f'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && '
-                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
-                f'apt-get install -y postgresql-{ver} && '
-                'systemctl restart postgresql'
-            )
-            ver_check_cmd = "psql --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+' | head -1"
-
-        elif mod_id == 'mongodb':
-            script = (
-                'export DEBIAN_FRONTEND=noninteractive && '
-                'systemctl stop mongod 2>/dev/null && '
-                f'rm -f /usr/share/keyrings/mongodb-server-*.gpg /etc/apt/sources.list.d/mongodb*.list && '
-                f'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.asc && '
-                f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.asc && '
-                f'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-                'apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
-                'apt-get install -y mongodb-org && '
-                'systemctl start mongod'
-            )
-            ver_check_cmd = "mongod --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
-
-        elif mod_id == 'apache2':
-            script = (
-                'export DEBIAN_FRONTEND=noninteractive && '
-                'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && '
-                # Same PPA-on-Debian bug already fixed in the main install_tpl
-                # and the earlier switch_version instance - ppa:ondrej/apache2
-                # is Launchpad/Ubuntu-only, skip it entirely on Debian.
-                + ('if echo "$OS_FAMILY" | grep -qiE "^debian"; then '
-                   '  apt-get install -y apache2; '
-                   'else '
-                   '  (command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common); '
-                   '  add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
-                   '  apt-get update -qq -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 && '
-                   f'  (apt-get install -y --allow-downgrades apache2={ver}-* 2>/dev/null || apt-get install -y apache2); '
-                   'fi && ') +
-                'systemctl restart apache2'
-            )
-            ver_check_cmd = "apache2 -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
-
-        elif mod_id == 'nodejs':
-            script = (
-                'export DEBIAN_FRONTEND=noninteractive && '
-                # Remove old nodesource repo so the new one takes precedence
-                'rm -f /etc/apt/sources.list.d/nodesource.list '
-                '/etc/apt/sources.list.d/nodejs.list '
-                '/usr/share/keyrings/nodesource.gpg '
-                '/usr/share/keyrings/nodesource-repo.gpg '
-                '/etc/apt/keyrings/nodesource.gpg && '
-                'mkdir -p /etc/apt/keyrings && '
-                # Same fix as elsewhere: setup_XX.x scripts are officially
-                # deprecated per NodeSource's own GitHub. Using their current
-                # distro-agnostic 'nodistro' method instead.
-                f'curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && '
-                f'echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{ver}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && '
-                'apt-get update -qq && '
-                'apt-get install -y --allow-downgrades nodejs'
-            )
-            ver_check_cmd = f"node --version 2>/dev/null | tr -d 'v'"
-
-        elif mod_id == 'bind9':
-            script = (
-                'export DEBIAN_FRONTEND=noninteractive && '
-                + ('(command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common); add-apt-repository -y ppa:isc/bind && apt-get update -qq && ' if ver == '9.20' else 'apt-get update -qq && ') +
-                'apt-get install -y bind9 bind9utils && '
-                '(systemctl restart named 2>/dev/null || systemctl restart bind9 2>/dev/null)'
-            )
-            ver_check_cmd = "named -v 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1"
-
-        elif mod_id == 'nginx':
-            repo = 'http://nginx.org/packages/ubuntu' if ver == 'stable' else 'http://nginx.org/packages/mainline/ubuntu'
-            script = (
-                f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} $(lsb_release -cs) nginx" '
-                '> /etc/apt/sources.list.d/nginx.list && '
-                'apt-get update -o APT::Update::Error-Mode=any 2>/dev/null && '
-                'apt-get install -y nginx && '
-                'systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null'
-            )
-            ver_check_cmd = "nginx -v 2>&1 | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'"
-
-        elif mod_id == 'openlitespeed':
-            script = (
-                'systemctl stop lsws 2>/dev/null && '
-                'wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh && '
-                '(apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && '
-                f'apt-get install -y --allow-downgrades openlitespeed={ver} 2>/dev/null || apt-get install -y openlitespeed && '
-                'systemctl start lsws'
-            )
-            ver_check_cmd = "cat /usr/local/lsws/VERSION 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+'"
-
+        allowed_vers = [str(v.get('value')) for v in ((mod or {}).get('versions') or [])]
+        if mod_id in ('memcached', 'pure-ftpd'):
+            allowed_vers = ['latest']
+        if ver not in allowed_vers:
+            return jsonify({'ok': False, 'error': f'Unknown version {ver} for {mod_id}'}), 400
+        cur_ver = get_version(mod_id) if mod_id != 'postgresql' else ''
+        if mod_id in _SWITCH_NO_DOWNGRADE and cur_ver:
+            cur_t, tgt_t = _parse_ver_tuple(cur_ver), _st_target_tuple(mod_id, ver)
+            if cur_t and tgt_t and tgt_t < cur_t[:len(tgt_t)]:
+                name = mod['name'] if mod else mod_id
+                return jsonify({'ok': False, 'error': f'{name} {cur_ver} is installed. Downgrading to {ver} in place is not '
+                                f'supported by its data format and can make existing data unreadable. Back up the data, '
+                                f'uninstall, install {ver} and restore instead.'}), 400
+        script, why = _st_switch_script(mod_id, ver, mod)
         if not script:
-            return jsonify({'ok': False, 'error': f'Version switch not supported for {mod_id}'}), 400
+            return jsonify({'ok': False, 'error': why}), 400
 
-        # Run as a streaming job — same system as install/uninstall
+        # Run as a streaming job -- same system as install/uninstall
         job_id = str(uuid.uuid4())[:8]
         _job_create(job_id, initial_installed=True)
 
@@ -3905,113 +4500,157 @@ def save_module_settings(mod_id):
             mod_name = mod['name'] if mod else mod_id
             _job_append_line(job_id, f'[VortexPanel] Switching {mod_name} to version {ver}...')
             rc, timed_out = _run_streaming(job_id, script, 1800, 'Version switch')
-            success = (rc == 0) and not timed_out
-            new_ver = sh(ver_check_cmd) if ver_check_cmd else ver
-            svc = _resolve_svc(mod.get('service', '')) if mod else ''
+            if mod_id == 'postgresql':
+                new_ver = ver if os.path.exists(f'/usr/lib/postgresql/{ver}/bin/postgres') else ''
+                matched = bool(new_ver)
+            else:
+                new_ver = get_version(mod_id)
+                matched = True if ver == 'latest' else _st_switch_ok(mod_id, ver, new_ver)
+            success = (rc == 0) and not timed_out and matched
+            svc = _resolve_svc(mod.get('service', '')) if mod and mod.get('service') else ''
             note = ''
             if svc and not _svc_active(svc):
                 if _svc_start(svc):
                     note = f' The {svc} service was stopped afterwards and has been started again.'
                 else:
                     note = f' Warning: the {svc} service is not running -- check Settings > Service.'
-            msg = (f'Switched to {new_ver} successfully.' if success
-                   else f'Version switch failed (exit code {rc}) -- the reason is in the output above. Running version: {new_ver or "unknown"}.') + note
-            _job_finish(job_id, success=success, installed=True, inst_ver=new_ver, message=msg)
+            if success and mod_id == 'postgresql':
+                msg = (f'PostgreSQL {ver} is installed next to the existing version. Your databases are still in the '
+                       f'old cluster (see pg_lsclusters above); the new cluster is empty. To move them: '
+                       f'pg_dropcluster --stop {ver} main && pg_upgradecluster <old-version> main.')
+            elif success:
+                msg = f'Switched to {new_ver or ver} successfully.'
+            elif timed_out:
+                msg = 'Version switch was stopped because it took longer than 30 minutes.'
+            elif rc != 0:
+                msg = f'Version switch failed (exit code {rc}) -- the reason is in the output above. Running version: {new_ver or "unknown"}.'
+            else:
+                msg = f'Version switch did not take effect: {ver} was requested but {new_ver or "an unknown version"} is installed.'
+            _job_finish(job_id, success=success, installed=True, inst_ver=new_ver, message=msg + note)
 
         _start_job_thread(job_id, run_switch, installed_on_error=True)
         return jsonify({'ok': True, 'job_id': job_id, 'action': 'switch_version'})
 
     elif action == 'setup_private_dns':
-        networks = d.get('networks', '127.0.0.1;')
-        conf_local = '/etc/bind/named.conf.options'
-        acl_lines = chr(10).join(['        '+n.strip()+';' for n in networks.replace(chr(10),';').split(';') if n.strip()])
-        options_conf = 'options {' + chr(10)
-        options_conf += '    directory "/var/cache/bind";' + chr(10)
-        options_conf += '    recursion yes;' + chr(10)
-        options_conf += '    allow-query {' + chr(10)
-        options_conf += acl_lines + chr(10)
-        options_conf += '    };' + chr(10)
-        options_conf += '    allow-recursion {' + chr(10)
-        options_conf += acl_lines + chr(10)
-        options_conf += '    };' + chr(10)
-        options_conf += '    dnssec-validation auto;' + chr(10)
-        options_conf += '    listen-on { any; };' + chr(10)
-        options_conf += '};' + chr(10)
-        try:
-            with open(conf_local, 'w') as f: f.write(options_conf)
-            sh('rndc reload 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null')
-            return jsonify({'ok': True})
-        except Exception as e:
-            return jsonify({'ok': False, 'error': str(e)})
+        b = _st_bind()
+        if b['options'] != '/etc/bind/named.conf.options':
+            return _res(False, 'Private DNS setup edits /etc/bind/named.conf.options (Debian/Ubuntu layout). '
+                               'On this server edit the options block of /etc/named.conf in the Config tab.')
+        raw = str(d.get('networks', '127.0.0.1;'))
+        nets = [n.strip() for n in raw.replace('\n', ';').replace(',', ';').split(';') if n.strip()]
+        for n in nets:
+            if n not in ('any', 'none', 'localhost', 'localnets') and not _st_ip_or_net(n.lstrip('!')):
+                return _res(False, f'Invalid network: {n}')
+        if not nets:
+            return _res(False, 'Enter at least one network.')
+        old = _st_read(b['options'])
+        fm = re.search(r'forwarders\s*\{[^}]*\}\s*;', _st_named_mask(old))
+        fwd = re.search(r'.*', old[fm.start():fm.end()], re.S) if fm else None
+        acl = '\n'.join('        ' + n + ';' for n in nets)
+        conf = ('options {\n    directory "/var/cache/bind";\n    recursion yes;\n'
+                f'    allow-query {{\n{acl}\n    }};\n    allow-recursion {{\n{acl}\n    }};\n')
+        if fwd:
+            conf += '    ' + fwd.group(0) + '\n'
+        conf += '    dnssec-validation auto;\n    listen-on { any; };\n    listen-on-v6 { any; };\n};\n'
+        return _res(*_st_apply({b['options']: conf}, test_cmd=f'named-checkconf {b["conf"]} 2>&1',
+                               svc='named', action='reload'))
 
     elif action == 'set_forwarders':
-        fwds = d.get('forwarders', '8.8.8.8; 1.1.1.1;')
-        conf_local = '/etc/bind/named.conf.options'
-        fwd_lines = chr(10).join(['        '+f.strip()+';' for f in fwds.replace(chr(10),';').split(';') if f.strip()])
-        try:
-            import re as _re
-            if os.path.exists(conf_local):
-                with open(conf_local) as f: c = f.read()
-                if 'forwarders' in c:
-                    c = _re.sub(r'forwarders\s*\{[^}]*\}', 'forwarders {' + chr(10) + fwd_lines + chr(10) + '    }', c)
-                else:
-                    c = c.replace('dnssec-validation auto;', 'forwarders {' + chr(10) + fwd_lines + chr(10) + '    };' + chr(10) + '    dnssec-validation auto;')
-                with open(conf_local,'w') as f: f.write(c)
-            sh('rndc reload 2>/dev/null || systemctl reload named 2>/dev/null || systemctl reload bind9 2>/dev/null')
-            return jsonify({'ok': True})
-        except Exception as e:
-            return jsonify({'ok': False, 'error': str(e)})
+        b = _st_bind()
+        raw = str(d.get('forwarders', ''))
+        fwds = [f.strip() for f in raw.replace('\n', ';').replace(',', ';').split(';') if f.strip()]
+        for f_ in fwds:
+            try:
+                _ipaddress.ip_address(f_)
+            except ValueError:
+                return _res(False, f'Invalid forwarder address: {f_}')
+        c = _st_read(b['options'], None)
+        if c is None:
+            return _res(False, f'{b["options"]} not found.')
+        block = 'forwarders {\n' + ''.join(f'        {f_};\n' for f_ in fwds) + '    };'
+        masked = _st_named_mask(c)   # ignore the commented-out example block
+        m = re.search(r'forwarders\s*\{[^}]*\}\s*;', masked)
+        if m:
+            c = c[:m.start()] + (block if fwds else '') + c[m.end():]
+        elif fwds:
+            m = re.search(r'options\s*\{', masked)
+            if not m:
+                return _res(False, f'No options {{ }} block in {b["options"]}.')
+            c = c[:m.end()] + '\n    ' + block + c[m.end():]
+        return _res(*_st_apply({b['options']: c}, test_cmd=f'named-checkconf {b["conf"]} 2>&1',
+                               svc='named', action='reload'))
 
     elif action == 'save_global_opts':
-        opts = d.get('opts', {})
-        conf_path = d.get('conf_path', '/etc/caddy/Caddyfile')
-        if not os.path.exists(conf_path):
-            return jsonify({'ok': False, 'error': 'Caddyfile not found'})
-        import re as _re
-        with open(conf_path) as f: caddyfile = f.read()
-        # Update or insert global block
-        lines = ['{']
+        c = _st_caddy()
+        opts = d.get('opts') or {}
+        if not isinstance(opts, dict):
+            return _res(False, 'Invalid options.')
+        content = _st_read(c.CADDYFILE, None)
+        if content is None:
+            return _res(False, 'Caddyfile not found')
+        checks = {'email': r'^[^\s{}"#]+@[^\s{}"#]+$', 'http_port': r'^\d{1,5}$', 'https_port': r'^\d{1,5}$',
+                  'admin': r'^(off|[A-Za-z0-9.\[\]:_-]{1,100})$'}
         for k, v in opts.items():
-            if v: lines.append(f'\t{k} {v}')
-        lines.append('}')
-        global_block = '\n'.join(lines)
-        if _re.search(r'^\s*\{[^}]*\}', caddyfile, _re.MULTILINE | _re.DOTALL):
-            caddyfile = _re.sub(r'^\s*\{[^}]*\}', global_block, caddyfile, count=1, flags=_re.MULTILINE | _re.DOTALL)
+            if k not in checks:
+                return _res(False, f'Unsupported global option: {k}')
+            if v and not re.match(checks[k], str(v).strip()):
+                return _res(False, f'Invalid value for {k}')
+        blocks = c._blocks(content)
+        has_global = bool(blocks) and blocks[0][0] == '' and \
+            all(l.strip().startswith('#') or not l.strip() for l in content[:blocks[0][1]].splitlines())
+        if has_global:
+            _a, s, e = blocks[0]
+            ob = content.index('{', s)
+            body = content[ob + 1:e - 1]
         else:
-            caddyfile = global_block + chr(10) + chr(10) + caddyfile
-        with open(conf_path, 'w') as f: f.write(caddyfile)
-        sh('systemctl reload caddy 2>/dev/null || caddy reload --config ' + conf_path + ' 2>/dev/null')
-        return jsonify({'ok': True})
+            s = e = 0
+            body = '\n'
+        for k in checks:
+            if k not in opts:
+                continue
+            v = str(opts[k] or '').strip()
+            pat = re.compile(rf'^[ \t]*{k}(?:[ \t]+[^\n]*)?$\n?', re.M)
+            if v:
+                if pat.search(body):
+                    body = pat.sub(lambda _m: f'\t{k} {v}\n', body, count=1)
+                else:
+                    body = body.rstrip('\n') + f'\n\t{k} {v}\n'
+            else:
+                body = pat.sub('', body, count=1)
+        block = '{' + ('\n' if not body.startswith('\n') else '') + body.rstrip('\n') + '\n}'
+        new = content[:s] + block + content[e:] if e else block + '\n\n' + content
+        ok, msg = c.apply_caddy_file(c.CADDYFILE, new)
+        return _res(ok, msg or 'Global options saved and Caddy reloaded.')
 
     elif action == 'export_certs':
-        # Export Caddy certs to /etc/ssl/vortexpanel/ for portability
-        cert_dirs = [
-            '/var/lib/caddy/.local/share/certmagic/acme/acme-v02.api.letsencrypt.org/sites',
-            '/root/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org',
-            '/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org',
-        ]
-        sh('mkdir -p /etc/ssl/vortexpanel')
+        c = _st_caddy()
         exported = []
-        for base in cert_dirs:
-            if not os.path.exists(base): continue
-            domains = sh(f'ls {base} 2>/dev/null').split()
-            for domain in domains:
-                domain_dir = f'{base}/{domain}'
-                dest = f'/etc/ssl/vortexpanel/{domain}'
-                sh(f'mkdir -p {dest}')
-                # Copy cert and key files
-                for ext in ['.crt', '.key', '.pem']:
-                    sh(f'cp {domain_dir}/*{ext} {dest}/ 2>/dev/null || true')
-                exported.append(domain)
+        for base in c.caddy_cert_dirs():
+            for domain in sorted(os.listdir(base)):
+                src = os.path.join(base, domain)
+                if not os.path.isdir(src) or not re.match(r'^[A-Za-z0-9_.*-]+$', domain):
+                    continue
+                dest = os.path.join('/etc/ssl/vortexpanel', domain)
+                os.makedirs(dest, mode=0o700, exist_ok=True)
+                os.chmod(dest, 0o700)
+                copied = False
+                for fn in os.listdir(src):
+                    if fn.endswith(('.crt', '.key', '.pem')):
+                        dp = os.path.join(dest, fn)
+                        shutil.copyfile(os.path.join(src, fn), dp)
+                        os.chmod(dp, 0o600 if fn.endswith('.key') else 0o644)
+                        copied = True
+                if copied and domain not in exported:
+                    exported.append(domain)
         if exported:
             return jsonify({'ok': True, 'exported': exported})
         return jsonify({'ok': False, 'error': 'No certificates found to export'})
 
     elif action == 'pma_set_port':
-        port = d.get('port', '8082')
-        nginx_conf  = '/etc/nginx/conf.d/phpmyadmin.conf'
-        apache_conf = '/etc/apache2/conf-available/phpmyadmin.conf'
-        caddyfile   = '/etc/caddy/Caddyfile'
+        port = str(d.get('port', '8082')).strip()
+        if not _st_valid_port(port):
+            return _res(False, 'Invalid port.')
+        port = str(int(port))
 
         def _update_firewall(old_port, new_port):
             if old_port and old_port != new_port:
@@ -4020,96 +4659,409 @@ def save_module_settings(mod_id):
             sh(f'ufw status 2>/dev/null | grep -q "Status: active" && ufw allow {new_port}/tcp comment "phpMyAdmin" 2>/dev/null; '
                f'firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port={new_port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null; true')
 
-        if os.path.exists(nginx_conf):
-            with open(nginx_conf) as f: c = f.read()
+        conf, kind = _st_pma_conf()
+        if not conf:
+            return _res(False, 'phpMyAdmin config not found for any supported web server (nginx, Apache, Caddy)')
+        # SELinux: the web server cannot bind a port outside http_port_t.
+        selinux_allow_port(port)
+        if kind == 'nginx':
+            c = _st_read(conf)
             m = re.search(r'listen\s+(\d+)', c)
             old_port = m.group(1) if m else None
             c = re.sub(r'listen\s+\d+', f'listen {port}', c)
-            with open(nginx_conf, 'w') as f: f.write(c)
-            sh('nginx -t && systemctl reload nginx')
-            _update_firewall(old_port, port)
-            return jsonify({'ok': True, 'port': port})
-
-        if os.path.exists(apache_conf):
-            with open(apache_conf) as f: c = f.read()
+            ok, msg = _st_apply({conf: c}, test_cmd='nginx -t 2>&1', svc='nginx', action='reload')
+        elif kind in ('httpd', 'apache2'):
+            a = _st_apache()
+            c = _st_read(conf)
             m = re.search(r'Listen\s+(\d+)', c)
             old_port = m.group(1) if m else None
             c = re.sub(r'Listen\s+\d+', f'Listen {port}', c)
             c = re.sub(r'<VirtualHost \*:\d+>', f'<VirtualHost *:{port}>', c)
-            with open(apache_conf, 'w') as f: f.write(c)
-            sh('apache2ctl configtest && systemctl reload apache2')
-            _update_firewall(old_port, port)
-            return jsonify({'ok': True, 'port': port})
+            ok, msg = _st_apply({conf: c}, test_cmd=a['test'], svc=a['svc'], action='reload')
+        else:
+            cad = _st_caddy()
+            c = _st_read(cad.CADDYFILE)
+            m = re.search(r'(^|\n)[ \t]*:(\d+)(\s*\{\s*root \* /usr/share/phpmyadmin)', c)
+            if not m:
+                return _res(False, 'The phpMyAdmin site block was not found in the Caddyfile.')
+            old_port = m.group(2)
+            c = c[:m.start()] + f'{m.group(1)}:{port}{m.group(3)}' + c[m.end():]
+            ok, msg = cad.apply_caddy_file(cad.CADDYFILE, c)
+        if ok: _update_firewall(old_port, port)
+        return _res(ok, msg, port=port)
 
-        if os.path.exists(caddyfile):
-            with open(caddyfile) as f: c = f.read()
-            m = re.search(r':(\d+)\s*\{\s*root \* /usr/share/phpmyadmin', c)
-            old_port = m.group(1) if m else None
-            if old_port:
-                c = c.replace(f':{old_port} {{\n  root * /usr/share/phpmyadmin', f':{port} {{\n  root * /usr/share/phpmyadmin')
-                with open(caddyfile, 'w') as f: f.write(c)
-                sh('systemctl reload caddy')
-                _update_firewall(old_port, port)
-                return jsonify({'ok': True, 'port': port})
+    elif action in ('pma_set_php', 'set_php'):
+        php_ver = str(d.get('php_version' if action == 'pma_set_php' else 'version', '') or '')
+        if not valid_php_ver(php_ver):
+            return _res(False, 'PHP version missing or invalid')
+        lay = php_layout(php_ver)
+        if not lay:
+            return _res(False, f'PHP {php_ver} is not installed.')
+        sock = lay['sock']
+        if not os.path.exists(sock):
+            return _res(False, f'PHP {php_ver}-FPM is not running ({sock} not found).')
+        if action == 'set_php':
+            conf, kind = '/etc/nginx/conf.d/roundcube.conf', 'nginx'
+            if not os.path.exists(conf):
+                return _res(False, 'Roundcube nginx config not found')
+        else:
+            conf, kind = _st_pma_conf()
+            if not conf:
+                return _res(False, 'phpMyAdmin config not found for any supported web server (nginx, Apache, Caddy)')
+        old = _st_read(conf)
+        if kind == 'caddy':
+            # only the phpMyAdmin block of the Caddyfile
+            new = re.sub(r'(root \* /usr/share/phpmyadmin[^}]*?php_fastcgi\s+unix/)/[^\s;|"]+\.sock',
+                         lambda m_: m_.group(1) + sock, old, flags=re.DOTALL)
+        else:
+            new = _SOCK_REF_RE.sub(lambda m_: m_.group(1) + sock, old)
+        if new == old and sock not in old:
+            return _res(False, f'No PHP-FPM socket reference found in {conf}.')
+        if kind == 'caddy':
+            cad = _st_caddy()
+            return _res(*cad.apply_caddy_file(conf, new))
+        if kind == 'nginx':
+            return _res(*_st_apply({conf: new}, test_cmd='nginx -t 2>&1', svc='nginx', action='reload'))
+        a = _st_apache()
+        return _res(*_st_apply({conf: new}, test_cmd=a['test'], svc=a['svc'], action='reload'))
 
-        return jsonify({'ok': False, 'error': 'phpMyAdmin config not found for any supported web server (nginx, Apache, Caddy)'})
+    elif action in ('ftp_add_user', 'ftp_del_user'):
+        try:
+            from panel.routes import ftp as _ftp
+        except ImportError:
+            import ftp as _ftp
+        if action == 'ftp_add_user':
+            return _ftp.create_account()
+        return _ftp.delete_account(str(d.get('user', '')))
 
-    elif action == 'pma_set_php':
-        php_ver = d.get('php_version', '')
-        if not php_ver:
-            return jsonify({'ok': False, 'error': 'PHP version missing'})
+    elif action in ('fail2ban_save_blacklist', 'fail2ban_save_whitelist'):
+        return _res(*_st_f2b_lists(action == 'fail2ban_save_blacklist', str(d.get('ips', ''))))
 
-        # Mirror the install script's own webserver detection - it correctly
-        # writes to a different location depending on which webserver is
-        # active (nginx: conf.d file, Apache: conf-available file, Caddy:
-        # a block inside Caddyfile). This action was hardcoded to nginx's
-        # path only, so anyone running Apache or Caddy got "Config not
-        # found" on every attempt - confirmed from a real report matching
-        # this exact error message.
-        nginx_conf   = '/etc/nginx/conf.d/phpmyadmin.conf'
-        apache_conf  = '/etc/apache2/conf-available/phpmyadmin.conf'
-        caddyfile    = '/etc/caddy/Caddyfile'
+    return jsonify({'ok': False, 'error': 'Unknown action'}), 400
 
-        if os.path.exists(nginx_conf):
-            with open(nginx_conf) as f: c = f.read()
-            c = re.sub(r'php[\d.]+\-fpm\.sock', f'php{php_ver}-fpm.sock', c)
-            with open(nginx_conf, 'w') as f: f.write(c)
-            sh('nginx -t && systemctl reload nginx')
-            return jsonify({'ok': True})
 
-        if os.path.exists(apache_conf):
-            with open(apache_conf) as f: c = f.read()
-            # Apache's block uses SetHandler "proxy:unix:$SOCK|fcgi://localhost"
-            # with the socket path already expanded at install time, not a
-            # literal PHP-version pattern - match the actual socket path form.
-            c = re.sub(r'unix:/run/php/php[\d.]+-fpm\.sock', f'unix:/run/php/php{php_ver}-fpm.sock', c)
-            with open(apache_conf, 'w') as f: f.write(c)
-            sh('apache2ctl configtest && systemctl reload apache2')
-            return jsonify({'ok': True})
+def _st_named_mask(c):
+    """named.conf text with comments (//, #, /* */) blanked out, same length,
+    so regex positions map 1:1 onto the original."""
+    def blank(m_):
+        return re.sub(r'[^\n]', ' ', m_.group(0))
+    return re.sub(r'/\*.*?\*/|//[^\n]*|#[^\n]*', blank, c, flags=re.S)
 
-        if os.path.exists(caddyfile):
-            with open(caddyfile) as f: c = f.read()
-            if ':8082' in c:
-                c = re.sub(r'(:8082\s*\{[^}]*?php_fastcgi unix/)/run/php/php[\d.]+-fpm\.sock', 
-                           rf'\g<1>/run/php/php{php_ver}-fpm.sock', c, flags=re.DOTALL)
-                with open(caddyfile, 'w') as f: f.write(c)
-                sh('systemctl reload caddy')
-                return jsonify({'ok': True})
+def _st_pg_apply(conf_path, content):
+    """Save postgresql.conf, reload the cluster and roll back when PostgreSQL
+    reports errors for the new file (pg_file_settings)."""
+    old = _st_read(conf_path, None)
+    with open(conf_path, 'w') as f:
+        f.write(content)
+    pg = _st_pg()
+    unit = _resolve_svc(pg['svc'])
+    if not _svc_active(unit):
+        return True, f'Saved. {unit} is not running, so the change takes effect when it starts.'
+    _st_run(f'systemctl reload {unit} 2>&1', 60)
+    m = re.search(r'^\s*port\s*=\s*(\d+)', content, re.M)
+    port = m.group(1) if m else '5432'
+    rc, out = _st_run(f"runuser -u postgres -- psql -p {port} -tAc \"SELECT sourcefile||':'||sourceline||' '||error "
+                      "FROM pg_file_settings WHERE error IS NOT NULL\" 2>&1", 30)
+    if rc == 0 and out.strip():
+        _st_restore(conf_path, old)
+        _st_run(f'systemctl reload {unit} 2>&1', 60)
+        return False, 'PostgreSQL rejected the new configuration -- the previous file was restored:\n' + out[-1500:]
+    note = ''
+    rc2, pend = _st_run(f"runuser -u postgres -- psql -p {port} -tAc \"SELECT string_agg(name, ', ') FROM pg_settings "
+                        "WHERE pending_restart\" 2>/dev/null", 30)
+    if rc2 == 0 and pend.strip():
+        note = f' These settings need a PostgreSQL restart to take effect: {pend.strip()}.'
+    return True, 'Saved and PostgreSQL reloaded.' + note
 
-        return jsonify({'ok': False, 'error': 'phpMyAdmin config not found for any supported web server (nginx, Apache, Caddy)'})
 
-    elif action == 'set_php':
-        # Used by Roundcube's PHP Version tab to switch which PHP-FPM
-        # socket serves it via nginx.
-        php_ver = d.get('version', '')
-        conf    = '/etc/nginx/conf.d/roundcube.conf'
-        if os.path.exists(conf) and php_ver:
-            import re as _re
-            with open(conf) as f: c = f.read()
-            c = _re.sub(r'php[\d.]+\-fpm\.sock', f'php{php_ver}-fpm.sock', c)
-            with open(conf, 'w') as f: f.write(c)
-            sh('nginx -t && systemctl reload nginx')
-            return jsonify({'ok': True})
-        return jsonify({'ok': False, 'error': 'Roundcube nginx config not found or PHP version missing'})
+def _st_save_optimization(mod_id, opts):
+    """Apply the Optimization tab of one app. Returns (ok, message)."""
+    if mod_id == 'memcached':
+        conf_path, fmt = _st_memcached_conf()
+        c = _st_read(conf_path)
+        vals = {}
+        for k in ('bind', 'port', 'cachesize', 'maxconn'):
+            if k not in opts or opts[k] == '':
+                continue
+            v = opts[k]
+            if k == 'bind':
+                if not all(_st_ip_or_net(x) for x in v.split(',')):
+                    return False, 'Invalid bind address.'
+            elif k == 'port':
+                if not _st_valid_port(v): return False, 'Invalid port.'
+            elif not _ST_INT_RE.match(v):
+                return False, f'Invalid value for {k}.'
+            vals[k] = v
+        if fmt == 'flags':
+            for k, flag in (('bind', 'l'), ('port', 'p'), ('cachesize', 'm'), ('maxconn', 'c')):
+                if k not in vals: continue
+                pat = re.compile(rf'^-{flag}\s+\S+[ \t]*\n?', re.M)
+                ms = list(pat.finditer(c))
+                if ms:
+                    first = ms[0]
+                    # keep the first occurrence, drop duplicates (two -l lines
+                    # with the same address make memcached fail to bind)
+                    for m_ in reversed(ms[1:]):
+                        c = c[:m_.start()] + c[m_.end():]
+                    c = c[:first.start()] + f'-{flag} {vals[k]}\n' + c[first.end():]
+                else:
+                    c = c.rstrip('\n') + f'\n-{flag} {vals[k]}\n'
+        else:
+            def setvar(c, key, val):
+                pat = re.compile(rf'^{key}=.*$', re.M)
+                line = f'{key}="{val}"'
+                return pat.sub(lambda _m: line, c, count=1) if pat.search(c) else c.rstrip('\n') + f'\n{line}\n'
+            if 'port' in vals: c = setvar(c, 'PORT', vals['port'])
+            if 'cachesize' in vals: c = setvar(c, 'CACHESIZE', vals['cachesize'])
+            if 'maxconn' in vals: c = setvar(c, 'MAXCONN', vals['maxconn'])
+            if 'bind' in vals:
+                m = re.search(r'^OPTIONS="?([^"\n]*)"?\s*$', c, re.M)
+                opt = m.group(1) if m else ''
+                opt = re.sub(r'-l\s+\S+', f'-l {vals["bind"]}', opt) if re.search(r'-l\s+\S+', opt) else (opt + f' -l {vals["bind"]}').strip()
+                c = setvar(c, 'OPTIONS', opt)
+        ok, msg = _st_apply({conf_path: c}, svc='memcached', action='restart')
+        return ok, msg or 'Saved and memcached restarted.'
 
-    return jsonify({'ok': False, 'error': 'Unknown action'})
+    if mod_id == 'apache2':
+        a = _st_apache()
+        changes, missing = {}, []
+        for path, keys in ((a['conf'], _APACHE_KEYS), (a['mpm'], _APACHE_MPM_KEYS)):
+            if not path or not os.path.exists(path):
+                missing += [k for k in keys if k in opts]
+                continue
+            c = _st_read(path)
+            for k in keys:
+                if k not in opts or opts[k] == '': continue
+                v = opts[k]
+                if not re.match(r'^(On|Off|on|off|\d{1,7})$', v):
+                    return False, f'Invalid value for {k}.'
+                new = _st_set_directive(c, k, v)
+                if new is None:
+                    missing.append(k)
+                else:
+                    c = new
+            changes[path] = c
+        if not changes:
+            return False, 'Apache configuration file not found.'
+        ok, msg = _st_apply(changes, test_cmd=a['test'], svc=a['svc'], action='reload')
+        if ok and missing:
+            msg = (msg + ' ' if msg else 'Saved. ') + 'Not present in the config (unchanged): ' + ', '.join(missing)
+        return ok, msg or 'Saved and Apache reloaded.'
+
+    if mod_id == 'openlitespeed':
+        c = _st_read(_OLS_CONF, None)
+        if c is None:
+            return False, f'{_OLS_CONF} not found.'
+        missing = []
+        for k, v in opts.items():
+            if k not in _OLS_KEYS:
+                continue
+            if not _ST_INT_RE.match(v):
+                return False, f'Invalid value for {k}.'
+            new = _st_set_directive(c, k, v)
+            if new is None:
+                missing.append(k)
+            else:
+                c = new
+        ok, msg = _st_apply({_OLS_CONF: c}, svc='lsws', action='restart')
+        if ok and missing:
+            msg = (msg + ' ' if msg else 'Saved. ') + 'Not present in the config (unchanged): ' + ', '.join(missing)
+        return ok, msg or 'Saved and OpenLiteSpeed restarted.'
+
+    if mod_id == 'nginx':
+        conf = _st_nginx_conf()
+        c = _st_read(conf, None)
+        if c is None:
+            return False, f'{conf} not found.'
+        for k, v in opts.items():
+            if k not in _NGINX_OPT:
+                continue
+            ctx, vre = _NGINX_OPT[k]
+            if not re.match(vre, v):
+                return False, f'Invalid value for {k}: {v}'
+            pat = re.compile(rf'^([ \t]*){k}[ \t]+[^;\n]*;', re.M)
+            if pat.search(c):
+                c = pat.sub(lambda m_: f'{m_.group(1)}{k} {v};', c, count=1)
+            elif ctx == 'main':
+                c = f'{k} {v};\n' + c
+            else:
+                m = re.search(rf'^[ \t]*{ctx}\s*\{{', c, re.M)
+                if not m:
+                    return False, f'No {ctx} {{ }} block in {conf}.'
+                c = c[:m.end()] + f'\n    {k} {v};' + c[m.end():]
+        ok, msg = _st_apply({conf: c}, test_cmd='nginx -t 2>&1', svc='nginx', action='reload')
+        return ok, msg or 'Saved and nginx reloaded.'
+
+    if mod_id in ('mysql', 'mariadb'):
+        flavor = _st_mysql_flavor(mod_id)
+        cnf = _st_mysql_cnf(flavor)
+        c = _st_read(cnf, None)
+        if c is None:
+            return False, f'{cnf} not found.'
+        for key, val in opts.items():
+            if key not in _MYSQL_OPT_KEYS or not val:
+                continue
+            if key == 'port':
+                if not _st_valid_port(val): return False, 'Invalid port.'
+            elif not _ST_SIZE_RE.match(val):
+                return False, f'Invalid value for {key}: {val}'
+            pat = re.compile(rf'^([ \t]*){key}[ \t]*=[^\n]*$', re.M)
+            if pat.search(c):
+                c = pat.sub(lambda m_: f'{m_.group(1)}{key} = {val}', c, count=1)
+            else:
+                m = re.search(r'^[ \t]*\[mysqld\][ \t]*$', c, re.M) or _MYSQLD_SECTION_RE.search(c)
+                if m:
+                    c = c[:m.end()] + f'\n{key} = {val}' + c[m.end():]
+                else:
+                    c = c.rstrip('\n') + f'\n\n[mysqld]\n{key} = {val}\n'
+        ok, msg = _st_apply({cnf: c}, svc=_st_mysql_svc(flavor), action='restart')
+        name = 'MariaDB' if flavor == 'mariadb' else 'MySQL'
+        return ok, msg or f'Saved to {cnf} and {name} restarted.'
+
+    if mod_id == 'redis':
+        conf = _st_redis_conf()
+        c = _st_read(conf, None)
+        if c is None:
+            return False, f'{conf} not found.'
+        checks = {'bind': r'^[0-9A-Fa-f:.\-* ]{1,200}$', 'port': r'^\d{1,5}$', 'timeout': r'^\d{1,9}$',
+                  'maxclients': r'^\d{1,9}$', 'databases': r'^\d{1,5}$', 'requirepass': r'^[^\s"\'\\]{0,128}$',
+                  'maxmemory': r'^\d{1,15}([kKmMgG][bB]?)?$'}
+        for k, v in opts.items():
+            if k not in checks:
+                continue
+            if not re.match(checks[k], v):
+                return False, f'Invalid value for {k}.'
+            pat = re.compile(rf'^[ \t]*{k}[ \t]+[^\n]*$', re.M)
+            if k == 'requirepass' and v == '':
+                c = pat.sub(lambda m_: '# ' + m_.group(0).strip(), c)
+                continue
+            if v == '':
+                continue
+            if pat.search(c):
+                c = pat.sub(lambda m_: f'{k} {v}', c, count=1)
+            else:
+                c = c.rstrip('\n') + f'\n{k} {v}\n'
+        ok, msg = _st_apply({conf: c}, svc='redis-server', action='restart')
+        return ok, msg or 'Saved and Redis restarted.'
+
+    return False, f'The Optimization tab is not supported for {mod_id}.'
+
+
+def _st_f2b_lists(black, raw):
+    """Save the fail2ban Black/White IP lists and apply them."""
+    entries = []
+    for x in raw.replace(',', '\n').split('\n'):
+        x = x.strip()
+        if not x or x.startswith('#'):
+            continue
+        if not _st_ip_or_net(x):
+            return False, f'Invalid IP address or range: {x}'
+        if x not in entries:
+            entries.append(x)
+    if not shutil.which('fail2ban-client'):
+        return False, 'fail2ban is not installed.'
+    list_file = _F2B_BLACK_FILE if black else _F2B_WHITE_FILE
+    old_entries = [l.strip() for l in _st_read(list_file).splitlines() if l.strip()]
+    changes = {list_file: '\n'.join(entries) + ('\n' if entries else '')}
+    if black:
+        changes[_F2B_BLACK_CONF] = (
+            '# Managed by VortexPanel (fail2ban Settings > Black IP)\n'
+            f'[{_F2B_BLACK_JAIL}]\nenabled   = true\nfilter    =\nbackend   = auto\n'
+            'banaction = %(banaction_allports)s\nbantime   = -1\n')
+    else:
+        changes[_F2B_WHITE_CONF] = (
+            '# Managed by VortexPanel (fail2ban Settings > White IP)\n'
+            '[DEFAULT]\nignoreip = 127.0.0.1/8 ::1' + ''.join(' ' + e for e in entries) + '\n')
+    ok, msg = _st_apply(changes, test_cmd='fail2ban-client -t 2>&1')
+    if not ok:
+        return False, msg
+    if not _svc_active('fail2ban'):
+        return True, 'Saved. fail2ban is not running, so the list takes effect when it starts.'
+    rc, out = _st_run('fail2ban-client reload 2>&1', 60)
+    if rc != 0:
+        return False, 'Saved, but fail2ban could not reload: ' + out[-500:]
+    if not black:
+        return True, 'White IP list saved; these addresses are never banned.'
+    failed = []
+    for ip in old_entries:
+        if ip not in entries and _st_ip_or_net(ip):
+            _st_run(f'fail2ban-client set {_F2B_BLACK_JAIL} unbanip {ip} 2>&1', 20)
+    for ip in entries:
+        rc, out = _st_run(f'fail2ban-client set {_F2B_BLACK_JAIL} banip {ip} 2>&1', 20)
+        if rc != 0:
+            failed.append(ip)
+    if failed:
+        return False, 'Saved, but fail2ban could not ban: ' + ', '.join(failed)
+    return True, f'Black IP list saved; {len(entries)} address(es) banned on all ports.'
+
+
+# --- Weekly OWASP CRS update (cron) ------------------------------------------------------
+def _cli_update_crs():
+    """Entry point of the weekly cron job (python3 -m panel.routes.modules
+    update-crs): runs the panel's own CRS update (security.modsec_update_crs:
+    newest release only, fresh directory, config test, previous ruleset
+    restored on failure). The old cron line fell back to CRS v4.0.0 when the
+    GitHub API was rate-limited, untarred over the live tree (stale rule
+    files from the previous release stayed) and reloaded without rollback."""
+    from flask import Flask
+    try:
+        from panel.routes import security as _sec
+    except ImportError:
+        import security as _sec
+    stamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    if not _sec._modsec_installed():
+        print(f'{stamp} ModSecurity is not installed -- nothing to update.')
+        return 0
+    latest = _sec._crs_latest_tag()
+    if latest and latest.lstrip('v') == _sec._crs_version():
+        print(f'{stamp} OWASP CRS {latest} is already installed.')
+        return 0
+    app = Flask('vortexpanel-crs-update')
+    app.secret_key = os.urandom(32)
+    with app.test_request_context('/api/security/modsecurity/update-crs', method='POST'):
+        session['user'] = 'cron'
+        rv = _sec.modsec_update_crs()
+        resp = rv[0] if isinstance(rv, tuple) else rv
+        data = resp.get_json(silent=True) or {}
+    if data.get('ok'):
+        print(f'{stamp} OWASP CRS updated to {data.get("version")} (config test passed, web server reloaded).')
+        return 0
+    print(f'{stamp} OWASP CRS update failed, the installed ruleset was kept: {data.get("error")}')
+    return 1
+
+
+def _migrate_crs_cron():
+    """Rewrite cron files written by older installs (shell pipeline with the
+    v4.0.0 fallback) to the panel-based job. Only files that still carry the
+    old generated line are touched."""
+    for path in ('/etc/cron.d/vortex-crs-update', '/etc/cron.d/vortex-crs-update-apache'):
+        try:
+            with open(path) as f:
+                old = f.read()
+        except OSError:
+            continue
+        if 'coreruleset/archive/refs/tags' not in old or 'update-crs' in old:
+            continue
+        try:
+            tmp = path + '.vp-tmp'
+            with open(tmp, 'w') as f:
+                f.write('# Managed by VortexPanel -- weekly OWASP CRS update (tested, rolled back on failure)\n'
+                        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
+                        + _CRS_CRON_LINE + '\n')
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+try:
+    _migrate_crs_cron()
+except Exception:
+    pass
+
+
+if __name__ == '__main__':
+    import sys
+    if sys.argv[1:2] == ['update-crs']:
+        sys.exit(_cli_update_crs())
+    print('usage: python3 -m panel.routes.modules update-crs')
+    sys.exit(2)

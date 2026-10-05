@@ -3,9 +3,51 @@ import subprocess, os, re
 
 mail_bp = Blueprint('mail', __name__)
 def req(): return 'user' in session
-def sh(c):
-    try: return subprocess.check_output(c,shell=True,text=True,stderr=subprocess.DEVNULL).strip()
-    except: return ''
+def sh(c, timeout=60):
+    """stdout of a shell command, also when it exits non-zero (check_output
+    raised on rc!=0, so `systemctl is-active postfix` for a stopped service
+    returned '' instead of 'inactive')."""
+    try: return subprocess.run(c, shell=True, text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, timeout=timeout).stdout.strip()
+    except Exception: return ''
+
+def run(args, input=None, timeout=60):
+    try:
+        r = subprocess.run(args, input=input, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, (r.stdout or '').strip(), (r.stderr or r.stdout or '').strip()
+    except FileNotFoundError:
+        return 127, '', f'{args[0]} not found'
+    except subprocess.TimeoutExpired:
+        return 124, '', f'{args[0]} timed out'
+
+_DOMAIN_RE = re.compile(r'^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$')
+_EMAIL_RE  = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
+
+def _valid_domain(d):
+    return bool(d) and bool(_DOMAIN_RE.match(d))
+
+def _write_private(path, text):
+    """Write a file that holds password hashes: 0600 from the start, atomic."""
+    tmp = path + '.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f: f.write(text)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+def _read_lines(path):
+    if not os.path.exists(path): return []
+    with open(path) as f: return f.readlines()
+
+def _first_token(line):
+    line = line.strip()
+    if not line or line.startswith('#'): return ''
+    return re.split(r'[\s:]', line, 1)[0].lower()
+
+def _hash_password(password):
+    rc, out, err = run(['doveadm', 'pw', '-s', 'SHA512-CRYPT', '-p', password])
+    if rc != 0 or not out.startswith('{'):
+        return None, ('doveadm is not installed (install dovecot)' if rc == 127 else (err or 'doveadm pw failed'))
+    return out, None
 
 # Mail users stored in /etc/vortexpanel/mail_users (format: user@domain:password_hash)
 MAIL_USERS_FILE = '/opt/vortexpanel/mail_users.txt'
@@ -27,6 +69,63 @@ def _mail_configured():
     return bool(base) and 'lmtp' in (transport or '').lower()
 
 
+def _dovecot_version():
+    """(major, minor) of the installed Dovecot, (0, 0) when unknown."""
+    rc, out, _ = run(['dovecot', '--version'], timeout=15)
+    m = re.match(r'\s*(\d+)\.(\d+)', out or '')
+    return (int(m.group(1)), int(m.group(2))) if (rc == 0 and m) else (0, 0)
+
+
+def _dovecot_conf(ver):
+    """The panel's Dovecot drop-in. Dovecot 2.4 (Debian 13, Fedora 42+, EL10)
+    rejects the 2.3 syntax outright (mail_location, passdb driver/args,
+    userdb args, %d/%n variables): `doveconf -n` failed and setup always
+    rolled back there."""
+    listeners = (
+        "service lmtp {\n"
+        "  unix_listener /var/spool/postfix/private/dovecot-lmtp {\n"
+        "    mode = 0600\n    user = postfix\n    group = postfix\n  }\n}\n\n"
+        "service auth {\n"
+        "  unix_listener /var/spool/postfix/private/auth {\n"
+        "    mode = 0660\n    user = postfix\n    group = postfix\n  }\n}\n\n"
+        "protocols = imap lmtp\n")
+    if ver >= (2, 4):
+        return (
+            "# Managed by VortexPanel -- virtual mailbox delivery (Dovecot 2.4 syntax). Do not edit by hand.\n"
+            "mail_driver = maildir\n"
+            f"mail_path = {VMAIL_BASE}/%{{user | domain}}/%{{user | username}}\n"
+            f"mail_home = {VMAIL_BASE}/%{{user | domain}}/%{{user | username}}\n"
+            # Debian 13's 10-mail.conf points INBOX at /var/mail/%{user} (mbox)
+            "mail_inbox_path =\n"
+            "mail_privileged_group = vmail\n"
+            "mail_uid = vmail\n"
+            "mail_gid = vmail\n\n"
+            "passdb passwd-file {\n"
+            f"  passwd_file_path = {DOVECOT_USERS_FILE}\n"
+            "}\n"
+            "userdb static {\n"
+            "  fields {\n"
+            "    uid = vmail\n"
+            "    gid = vmail\n"
+            f"    home = {VMAIL_BASE}/%{{user | domain}}/%{{user | username}}\n"
+            "  }\n"
+            "}\n\n" + listeners)
+    return (
+        "# Managed by VortexPanel -- virtual mailbox delivery. Do not edit by hand.\n"
+        f"mail_location = maildir:{VMAIL_BASE}/%d/%n\n"
+        "mail_privileged_group = vmail\n"
+        "mail_uid = vmail\n"
+        "mail_gid = vmail\n\n"
+        "passdb {\n"
+        "  driver = passwd-file\n"
+        f"  args = scheme=SHA512-CRYPT username_format=%u {DOVECOT_USERS_FILE}\n"
+        "}\n"
+        "userdb {\n"
+        "  driver = static\n"
+        f"  args = uid=vmail gid=vmail home={VMAIL_BASE}/%d/%n\n"
+        "}\n\n" + listeners)
+
+
 def _sync_dovecot_users():
     """Mirror the panel's user list into Dovecot's passwd-file.
 
@@ -44,9 +143,8 @@ def _sync_dovecot_users():
                 if line and ':' in line and '@' in line:
                     lines.append(line)
         os.makedirs(os.path.dirname(DOVECOT_USERS_FILE), exist_ok=True)
-        with open(DOVECOT_USERS_FILE, 'w') as f:
-            f.write('\n'.join(lines) + ('\n' if lines else ''))
-        sh(f'chown dovecot:dovecot {DOVECOT_USERS_FILE} 2>/dev/null; chmod 600 {DOVECOT_USERS_FILE}')
+        _write_private(DOVECOT_USERS_FILE, '\n'.join(lines) + ('\n' if lines else ''))
+        sh(f'chown dovecot:dovecot {DOVECOT_USERS_FILE} 2>/dev/null')
     except Exception:
         pass
 
@@ -70,6 +168,26 @@ def setup_mail():
     """
     if not req(): return jsonify({'ok':False}), 401
     log = []
+    if not os.path.isdir('/etc/postfix') or not os.path.isdir('/etc/dovecot'):
+        return jsonify({'ok':False,'error':'Postfix and Dovecot must be installed first '
+                        '(postfix, dovecot-imapd and dovecot-lmtpd on Debian/Ubuntu; postfix and dovecot on RHEL)'}), 400
+    main_cf = '/etc/postfix/main.cf'
+    dc_file = '/etc/dovecot/conf.d/99-vortexpanel.conf'
+    main_cf_backup = open(main_cf).read() if os.path.exists(main_cf) else None
+    dc_backup = open(dc_file).read() if os.path.exists(dc_file) else None
+
+    def rollback():
+        # Validation failed: put both configs back so the next restart (or
+        # reboot) does not come up with a broken mail server.
+        try:
+            if main_cf_backup is not None:
+                with open(main_cf, 'w') as f: f.write(main_cf_backup)
+            if dc_backup is not None:
+                with open(dc_file, 'w') as f: f.write(dc_backup)
+            elif os.path.exists(dc_file):
+                os.unlink(dc_file)
+        except OSError:
+            pass
 
     # 1. vmail user owns every virtual mailbox.
     sh('getent group vmail >/dev/null 2>&1 || groupadd -g 5000 vmail')
@@ -82,19 +200,27 @@ def setup_mail():
     log.append(f'vmail user ready (uid={vuid} gid={vgid})')
 
     # 2. Lookup tables must exist and be hashed BEFORE main.cf references them,
-    #    or postfix refuses to start.
+    #    or postfix refuses to start. The map type is Postfix's own default:
+    #    Fedora 40+ / EL10 Postfix has no Berkeley DB, so 'hash:' fails there
+    #    (default_database_type is lmdb).
+    dbtype = (sh('postconf -h default_database_type 2>/dev/null') or 'hash').strip() or 'hash'
+    if not re.fullmatch(r'[a-z0-9_]+', dbtype):
+        dbtype = 'hash'
     for t in ('virtual_mailbox_domains', 'virtual_mailbox_maps', 'virtual_alias_maps'):
         p = f'/etc/postfix/{t}'
         if not os.path.exists(p):
             open(p, 'a').close()
-        sh(f'postmap {p}')
-    log.append('Postfix lookup tables created and hashed')
+        rc, _, err = run(['postmap', f'{dbtype}:{p}'])
+        if rc != 0:
+            rollback()
+            return jsonify({'ok': False, 'error': f'postmap {dbtype}:{p} failed: {err}', 'log': log}), 500
+    log.append(f'Postfix lookup tables created ({dbtype})')
 
     # 3. The actual missing configuration.
     settings = [
-        'virtual_mailbox_domains = hash:/etc/postfix/virtual_mailbox_domains',
-        'virtual_mailbox_maps = hash:/etc/postfix/virtual_mailbox_maps',
-        'virtual_alias_maps = hash:/etc/postfix/virtual_alias_maps',
+        f'virtual_mailbox_domains = {dbtype}:/etc/postfix/virtual_mailbox_domains',
+        f'virtual_mailbox_maps = {dbtype}:/etc/postfix/virtual_mailbox_maps',
+        f'virtual_alias_maps = {dbtype}:/etc/postfix/virtual_alias_maps',
         f'virtual_mailbox_base = {VMAIL_BASE}',
         f'virtual_uid_maps = static:{vuid}',
         f'virtual_gid_maps = static:{vgid}',
@@ -104,8 +230,21 @@ def setup_mail():
         'smtpd_sasl_auth_enable = yes',
         'smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination',
     ]
-    for s in settings:
-        sh(f'postconf -e "{s}"')
+    # RHEL/Fedora ship inet_interfaces = localhost: Postfix never accepted mail
+    # from the internet, so no hosted domain could receive anything. With
+    # IPv6 disabled in the kernel, inet_protocols = all makes Postfix fail.
+    if (sh('postconf -h inet_interfaces 2>/dev/null') or '').strip() in ('localhost', 'loopback-only', '127.0.0.1'):
+        settings.append('inet_interfaces = all')
+        log.append('inet_interfaces changed from localhost to all (receive mail from the internet)')
+    if not os.path.exists('/proc/net/if_inet6') and \
+            (sh('postconf -h inet_protocols 2>/dev/null') or '').strip() in ('all', 'ipv4, ipv6', 'ipv6'):
+        settings.append('inet_protocols = ipv4')
+        log.append('inet_protocols set to ipv4 (IPv6 is disabled on this server)')
+    for st in settings:
+        rc, _, err = run(['postconf', '-e', st])
+        if rc != 0:
+            rollback()
+            return jsonify({'ok': False, 'error': f'postconf -e "{st}" failed, changes rolled back: {err}', 'log': log}), 500
     # A virtual domain must NOT also be in mydestination -- if it is, Postfix
     # treats it as a local domain and never consults the virtual maps at all.
     mydest = sh('postconf -h mydestination') or ''
@@ -113,62 +252,39 @@ def setup_mail():
 
     # 4. Dovecot: where mail lives, who the users are, and the two sockets
     #    Postfix needs (LMTP for delivery, auth for SASL submission).
-    dovecot_conf = f"""# Managed by VortexPanel -- virtual mailbox delivery. Do not edit by hand.
-mail_location = maildir:{VMAIL_BASE}/%d/%n
-mail_privileged_group = vmail
-mail_uid = vmail
-mail_gid = vmail
-
-passdb {{
-  driver = passwd-file
-  args = scheme=SHA512-CRYPT username_format=%u {DOVECOT_USERS_FILE}
-}}
-userdb {{
-  driver = static
-  args = uid=vmail gid=vmail home={VMAIL_BASE}/%d/%n
-}}
-
-service lmtp {{
-  unix_listener /var/spool/postfix/private/dovecot-lmtp {{
-    mode = 0600
-    user = postfix
-    group = postfix
-  }}
-}}
-
-service auth {{
-  unix_listener /var/spool/postfix/private/auth {{
-    mode = 0660
-    user = postfix
-    group = postfix
-  }}
-}}
-
-protocols = imap lmtp
-"""
+    dver = _dovecot_version()
     os.makedirs('/etc/dovecot/conf.d', exist_ok=True)
-    with open('/etc/dovecot/conf.d/99-vortexpanel.conf', 'w') as f:
-        f.write(dovecot_conf)
+    with open(dc_file, 'w') as f:
+        f.write(_dovecot_conf(dver))
     if not os.path.exists(DOVECOT_USERS_FILE):
         open(DOVECOT_USERS_FILE, 'a').close()
     _sync_dovecot_users()
     log.append('Dovecot configured (LMTP delivery + SASL auth sockets)')
 
     # 5. Validate before restarting -- never leave a broken mail server.
-    pf_check = subprocess.run('postfix check', shell=True, capture_output=True, text=True)
-    if pf_check.returncode != 0:
+    rc, _, err = run(['postfix', 'check'])
+    if rc != 0:
+        rollback()
         return jsonify({'ok': False,
-                        'error': f'Postfix config invalid, not restarting: {(pf_check.stderr or pf_check.stdout).strip()}',
+                        'error': f'Postfix config invalid, changes rolled back: {err}',
                         'log': log}), 500
-    dc_check = subprocess.run('doveconf -n', shell=True, capture_output=True, text=True)
-    if dc_check.returncode != 0:
+    rc, _, err = run(['doveconf', '-n'])
+    if rc != 0:
+        rollback()
         return jsonify({'ok': False,
-                        'error': f'Dovecot config invalid, not restarting: {(dc_check.stderr or dc_check.stdout).strip()}',
+                        'error': f'Dovecot config invalid, changes rolled back: {err}',
                         'log': log}), 500
     log.append('Both configs validated')
 
-    sh('systemctl restart dovecot 2>/dev/null || service dovecot restart 2>/dev/null')
-    sh('systemctl restart postfix 2>/dev/null || service postfix restart 2>/dev/null')
+    for svc in ('dovecot', 'postfix'):
+        rc, _, err = run(['systemctl', 'restart', svc], timeout=120)
+        if rc != 0:
+            # Never leave the mail server down: restore and restart both.
+            rollback()
+            for s2 in ('dovecot', 'postfix'):
+                run(['systemctl', 'restart', s2], timeout=120)
+            return jsonify({'ok': False, 'error': f'{svc} failed to restart with the new configuration, '
+                                                  f'the previous configuration was restored: {err}', 'log': log}), 500
     log.append('Services restarted')
 
     warn = None
@@ -203,13 +319,20 @@ def mail_domains():
 def add_domain():
     if not req(): return jsonify({'ok':False}),401
     d = request.get_json() or {}
-    domain = d.get('domain','').strip()
+    domain = (d.get('domain','') or '').strip().lower()
     if not domain: return jsonify({'ok':False,'error':'Domain required'}),400
+    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
+    if not os.path.isdir('/etc/postfix'):
+        return jsonify({'ok':False,'error':'Postfix is not installed'}),400
+    path = '/etc/postfix/virtual_mailbox_domains'
+    if any(_first_token(l) == domain for l in _read_lines(path)):
+        return jsonify({'ok':False,'error':'Domain already exists'}),400
     # Append to postfix virtual_mailbox_domains
-    with open('/etc/postfix/virtual_mailbox_domains','a') as f:
+    with open(path,'a') as f:
         f.write(f'{domain} OK\n')
-    sh('postmap /etc/postfix/virtual_mailbox_domains')
-    sh('systemctl reload postfix')
+    rc, _, err = run(['postmap', path])
+    if rc != 0: return jsonify({'ok':False,'error':f'postmap failed: {err}'}),500
+    run(['systemctl', 'reload', 'postfix'])
     return jsonify({'ok':True})
 
 @mail_bp.route('/api/mail/accounts')
@@ -237,26 +360,29 @@ def create_account():
     d = request.get_json() or {}
     email    = d.get('email','').strip()
     password = d.get('password','')
-    if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', email):
+    email = email.lower()
+    if not _EMAIL_RE.match(email) or '..' in email:
         return jsonify({'ok':False,'error':'Valid email required'}),400
+    if not password: return jsonify({'ok':False,'error':'Password required'}),400
+    if any(_first_token(l) == email for l in _read_lines(MAIL_USERS_FILE)):
+        return jsonify({'ok':False,'error':'Account already exists'}),400
     user, domain = email.split('@',1)
+    # Hash first: an empty hash used to be written as "email:" (an account
+    # with no usable password) whenever doveadm was missing.
+    pw_hash, err = _hash_password(password)
+    if not pw_hash: return jsonify({'ok':False,'error':err}),500
     # Create maildir
-    maildir = f'/var/mail/vhosts/{domain}/{user}/'
-    sh(f'mkdir -p {maildir}cur {maildir}new {maildir}tmp')
-    sh(f'chown -R vmail:vmail /var/mail/vhosts/ 2>/dev/null || true')
+    maildir = os.path.join(VMAIL_BASE, domain, user)
+    for sub in ('cur', 'new', 'tmp'):
+        os.makedirs(os.path.join(maildir, sub), exist_ok=True)
+    sh(f"chown -R vmail:vmail '{VMAIL_BASE}/{domain}' 2>/dev/null")
     # Add to postfix maps
     for f in ['/etc/postfix/virtual_mailbox_maps']:
         if os.path.exists(f):
             with open(f,'a') as fh: fh.write(f'{email} {domain}/{user}/\n')
-            sh(f'postmap {f}')
-    # Set dovecot password -- subprocess with an argument list instead of
-    # shell string interpolation eliminates the injection entirely rather
-    # than trying to escape the password correctly.
-    hash_proc = subprocess.run(['doveadm', 'pw', '-s', 'SHA512-CRYPT', '-p', password],
-                                capture_output=True, text=True)
-    pw_hash = hash_proc.stdout.strip()
+            run(['postmap', f])
     os.makedirs(os.path.dirname(MAIL_USERS_FILE), exist_ok=True)
-    with open(MAIL_USERS_FILE,'a') as f: f.write(f'{email}:{pw_hash}\n')
+    _write_private(MAIL_USERS_FILE, ''.join(_read_lines(MAIL_USERS_FILE)) + f'{email}:{pw_hash}\n')
     # Dovecot reads its own file, not the panel's -- without this the
     # account exists on paper but cannot authenticate.
     _sync_dovecot_users()
@@ -266,12 +392,18 @@ def create_account():
 @mail_bp.route('/api/mail/accounts/<path:email>', methods=['DELETE'])
 def delete_account(email):
     if not req(): return jsonify({'ok':False}),401
+    email = email.strip().lower()
+    if '@' not in email: return jsonify({'ok':False,'error':'Invalid email'}),400
     for f in ['/etc/postfix/virtual_mailbox_maps', MAIL_USERS_FILE]:
         if os.path.exists(f):
-            with open(f) as fh: lines = fh.readlines()
-            with open(f,'w') as fh:
-                fh.writelines(l for l in lines if not l.startswith(email))
-            if 'virtual' in f: sh(f'postmap {f}')
+            # exact match on the first field: startswith(email) also removed
+            # e.g. bob@x.com.au when deleting bob@x.com
+            kept = [l for l in _read_lines(f) if _first_token(l) != email]
+            if f == MAIL_USERS_FILE:
+                _write_private(f, ''.join(kept))
+            else:
+                with open(f,'w') as fh: fh.writelines(kept)
+                run(['postmap', f])
     # Remove from Dovecot too -- otherwise the deleted account can still log in.
     _sync_dovecot_users()
     sh('systemctl reload postfix dovecot 2>/dev/null')
@@ -283,22 +415,20 @@ def reset_mail_password(email):
     d = request.get_json() or {}
     password = d.get('password','')
     if not password: return jsonify({'ok':False,'error':'Password required'}),400
-    hash_proc = subprocess.run(['doveadm', 'pw', '-s', 'SHA512-CRYPT', '-p', password],
-                                capture_output=True, text=True)
-    pw_hash = hash_proc.stdout.strip()
-    if not pw_hash: return jsonify({'ok':False,'error':'Failed to hash password'}),500
+    email = email.strip().lower()
+    pw_hash, err = _hash_password(password)
+    if not pw_hash: return jsonify({'ok':False,'error':err}),500
     updated = False
-    if os.path.exists(MAIL_USERS_FILE):
-        with open(MAIL_USERS_FILE) as fh: lines = fh.readlines()
-        with open(MAIL_USERS_FILE,'w') as fh:
-            for line in lines:
-                if line.startswith(email+':'):
-                    fh.write(f'{email}:{pw_hash}\n')
-                    updated = True
-                else:
-                    fh.write(line)
-    if not updated:
-        with open(MAIL_USERS_FILE,'a') as fh: fh.write(f'{email}:{pw_hash}\n')
+    out = []
+    for line in _read_lines(MAIL_USERS_FILE):
+        if _first_token(line) == email:
+            out.append(f'{email}:{pw_hash}\n')
+            updated = True
+        else:
+            out.append(line)
+    # Do not silently create a brand-new account from a password reset.
+    if not updated: return jsonify({'ok':False,'error':'Account not found'}),404
+    _write_private(MAIL_USERS_FILE, ''.join(out))
     # Push the new hash to Dovecot -- otherwise the old password keeps working.
     _sync_dovecot_users()
     sh('systemctl reload dovecot 2>/dev/null')
@@ -319,6 +449,7 @@ def flush_queue():
 @mail_bp.route('/api/mail/dkim/<domain>')
 def get_dkim(domain):
     if not req(): return jsonify({'ok':False}),401
+    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
     key_file = f'/etc/opendkim/keys/{domain}/default.txt'
     if os.path.exists(key_file):
         with open(key_file) as f: return jsonify({'ok':True,'record':f.read()})
@@ -327,9 +458,16 @@ def get_dkim(domain):
 @mail_bp.route('/api/mail/dkim/<domain>', methods=['POST'])
 def gen_dkim(domain):
     if not req(): return jsonify({'ok':False}),401
-    sh(f'mkdir -p /etc/opendkim/keys/{domain}')
-    sh(f'opendkim-genkey -t -s default -d {domain} -D /etc/opendkim/keys/{domain}/')
-    key_file = f'/etc/opendkim/keys/{domain}/default.txt'
+    # domain was interpolated into a shell command unvalidated
+    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
+    key_dir = f'/etc/opendkim/keys/{domain}'
+    os.makedirs(key_dir, exist_ok=True)
+    rc, _, err = run(['opendkim-genkey', '-t', '-s', 'default', '-d', domain, '-D', key_dir + '/'])
+    if rc != 0:
+        return jsonify({'ok':False,'error':'opendkim-genkey failed: ' + (err or 'not installed (install opendkim-tools / opendkim)')})
+    # opendkim runs as its own user and must be able to read the private key
+    run(['chown', '-R', 'opendkim:opendkim', key_dir])
+    key_file = f'{key_dir}/default.txt'
     if os.path.exists(key_file):
         with open(key_file) as f: return jsonify({'ok':True,'record':f.read()})
     return jsonify({'ok':False,'error':'opendkim-genkey failed or not installed'})
@@ -343,9 +481,15 @@ def control_mail():
     if action not in ('start','stop','restart','reload','status'):
         return jsonify({'ok': False, 'error': 'Invalid action'}), 400
     svc_map = {'postfix':'postfix', 'dovecot':'dovecot', 'opendkim':'opendkim'}
-    svc = svc_map.get(service, service)
+    # Unknown names used to fall through verbatim into a shell command
+    # (any service - or any shell code - could be passed here).
+    svc = svc_map.get(service)
+    if not svc: return jsonify({'ok': False, 'error': 'Invalid service'}), 400
     if action != 'status':
-        sh(f'systemctl {action} {svc} 2>&1')
+        rc, _, err = run(['systemctl', action, svc], timeout=120)
+        if rc != 0:
+            return jsonify({'ok': False, 'error': err or f'systemctl {action} {svc} failed',
+                            'status': sh(f'systemctl is-active {svc} 2>/dev/null')})
     st_out = sh(f'systemctl is-active {svc} 2>/dev/null')
     return jsonify({'ok': True, 'status': st_out.strip()})
 
@@ -374,16 +518,22 @@ def add_forwarding():
     d = request.get_json() or {}
     source = (d.get('source') or '').strip().lower()
     dest   = (d.get('destination') or '').strip().lower()
-    if not source or not dest or '@' not in source or '@' not in dest:
+    dests  = [x.strip() for x in dest.split(',') if x.strip()]
+    # source may be a catch-all (@domain); destination may be a comma list.
+    # Whitespace/newlines would inject extra entries into the Postfix map.
+    src_ok = _EMAIL_RE.match(source) or (source.startswith('@') and _valid_domain(source[1:]))
+    if not src_ok or not dests or not all(_EMAIL_RE.match(x) for x in dests):
         return jsonify({'ok':False,'error':'Valid source and destination email addresses required'}),400
+    dest = ','.join(dests)
     lines = []
     if os.path.exists(VIRTUAL_ALIAS_FILE):
         with open(VIRTUAL_ALIAS_FILE) as f: lines = f.readlines()
     lines = [l for l in lines if not l.strip().startswith(source+' ') and not l.strip().startswith(source+'\t')]
     lines.append(f'{source}\t{dest}\n')
     with open(VIRTUAL_ALIAS_FILE,'w') as f: f.writelines(lines)
-    sh(f'postmap {VIRTUAL_ALIAS_FILE}')
-    sh('systemctl reload postfix 2>/dev/null')
+    rc, _, err = run(['postmap', VIRTUAL_ALIAS_FILE])
+    if rc != 0: return jsonify({'ok':False,'error':f'postmap failed: {err}'}),500
+    run(['systemctl', 'reload', 'postfix'])
     return jsonify({'ok':True})
 
 @mail_bp.route('/api/mail/forwarding', methods=['DELETE'])

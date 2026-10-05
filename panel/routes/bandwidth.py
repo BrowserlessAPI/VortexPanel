@@ -1,5 +1,5 @@
-from flask import Blueprint, jsonify, request, session
-import subprocess, re, os, time
+from flask import Blueprint, jsonify
+import subprocess, re, os, time, shlex
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, pkg_remove
 except ImportError:
@@ -13,7 +13,9 @@ except ImportError:
 
 
 bandwidth_bp = Blueprint('bandwidth', __name__)
-def req(): return 'user' in session
+def req():
+    from panel.routes.auth import check_ip_and_session
+    return check_ip_and_session()
 def sh(c, t=10):
     try:
         r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
@@ -21,11 +23,34 @@ def sh(c, t=10):
     except: return ''
 
 def get_interface():
-    """Get primary network interface"""
-    out = sh("ip route | grep default | awk '{print $5}' | head -1")
-    if out: return out
-    out = sh("ls /sys/class/net/ | grep -v lo | head -1")
-    return out or 'eth0'
+    """Primary network interface: the one carrying the default route (IPv4,
+    then IPv6 for v6-only hosts). `awk '{print $5}'` returned 'scope' or
+    'proto' for routes without a 'via' hop (point-to-point / some VPS)."""
+    for cmd in ('ip -4 route show default 2>/dev/null', 'ip -6 route show default 2>/dev/null'):
+        m = re.search(r'\bdev\s+(\S+)', sh(cmd))
+        if m:
+            return m.group(1)
+    try:
+        for n in sorted(os.listdir('/sys/class/net')):
+            if n != 'lo' and not n.startswith(('veth', 'docker', 'br-', 'virbr')):
+                return n
+    except Exception:
+        pass
+    return 'eth0'
+
+
+def _iface_bytes(iface):
+    """(rx, tx) for exactly this interface. `grep eth0` also matched veth0...
+    lines, so the first (wrong) match could be used."""
+    try:
+        for line in open('/proc/net/dev').readlines()[2:]:
+            name, _, rest = line.partition(':')
+            if name.strip() == iface:
+                f = rest.split()
+                return int(f[0]), int(f[8])
+    except Exception:
+        pass
+    return None
 
 @bandwidth_bp.route('/api/bandwidth/summary')
 def summary():
@@ -37,8 +62,6 @@ def summary():
     if vnstat:
         # Install if not running
         sh('systemctl start vnstat 2>/dev/null || true')
-        daily  = sh(f'vnstat -i {iface} --json d 2>/dev/null')
-        monthly = sh(f'vnstat -i {iface} --json m 2>/dev/null')
         total  = sh(f'vnstat -i {iface} --json 2>/dev/null')
         try:
             import json
@@ -75,11 +98,9 @@ def summary():
         except: pass
 
     # Fallback: /proc/net/dev
-    proc = sh(f'cat /proc/net/dev 2>/dev/null | grep {iface}')
-    if proc:
-        parts = proc.split()
-        rx = int(parts[1]) if len(parts)>1 else 0
-        tx = int(parts[9]) if len(parts)>9 else 0
+    b = _iface_bytes(iface)
+    if b:
+        rx, tx = b
         return jsonify({'ok':True,'source':'proc','interface':iface,
                        'total_rx':rx,'total_tx':tx,'monthly':[],'daily':[]})
 
@@ -92,10 +113,7 @@ def realtime():
     iface = get_interface()
 
     def read_bytes():
-        p = sh(f'cat /proc/net/dev | grep {iface}')
-        if not p: return 0, 0
-        parts = p.split()
-        return int(parts[1]) if len(parts)>1 else 0, int(parts[9]) if len(parts)>9 else 0
+        return _iface_bytes(iface) or (0, 0)
 
     rx1, tx1 = read_bytes()
     time.sleep(1)
@@ -107,23 +125,30 @@ def realtime():
 @bandwidth_bp.route('/api/bandwidth/domains')
 def domain_bandwidth():
     if not req(): return jsonify({'ok':False}), 401
-    domains = []
-    log_dir = '/var/log/nginx'
-    if not os.path.isdir(log_dir):
-        return jsonify({'ok':True,'domains':[],'note':'No Nginx access logs found'})
+    domains = {}
+    # Per-site access logs written by the panel: nginx and Apache (both use
+    # the "combined" format, where $10 is the response size).
+    log_dirs = [d for d in ('/var/log/nginx', '/var/log/apache2', '/var/log/httpd') if os.path.isdir(d)]
+    if not log_dirs:
+        return jsonify({'ok':True,'domains':[],'note':'No Nginx/Apache access logs found'})
 
-    for f in os.listdir(log_dir):
-        if not f.endswith('.access.log'): continue
-        domain = f.replace('.access.log','')
-        fp = os.path.join(log_dir, f)
-        if not os.path.exists(fp): continue
-        # Count requests and sum bytes from nginx log
-        # Nginx default format: $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent
-        out = sh(f'awk \'{{requests++; bytes+=$10}} END {{print requests, bytes}}\' {fp} 2>/dev/null')
-        parts = out.split()
-        requests = int(parts[0]) if len(parts)>0 and parts[0].isdigit() else 0
-        bytes_sent = int(parts[1]) if len(parts)>1 and parts[1].isdigit() else 0
-        domains.append({'domain':domain,'requests':requests,'bytes':bytes_sent})
+    for log_dir in log_dirs:
+        for f in os.listdir(log_dir):
+            if not f.endswith('.access.log'): continue
+            domain = f[:-len('.access.log')]
+            fp = os.path.join(log_dir, f)
+            if not os.path.isfile(fp): continue
+            # Only count numeric size fields: "-" (no body) and lines in a
+            # non-combined format would otherwise be summed as garbage. awk
+            # prints with %d so big totals are not shown as 1.2e+10.
+            out = sh(f'awk \'{{requests++; if ($10 ~ /^[0-9]+$/) bytes+=$10}} END {{printf "%.0f %.0f\\n", requests, bytes}}\' '
+                     f'{shlex.quote(fp)} 2>/dev/null', t=60)
+            parts = out.split()
+            requests = int(parts[0]) if len(parts)>0 and parts[0].isdigit() else 0
+            bytes_sent = int(parts[1]) if len(parts)>1 and parts[1].isdigit() else 0
+            e = domains.setdefault(domain, {'domain':domain,'requests':0,'bytes':0})
+            e['requests'] += requests; e['bytes'] += bytes_sent
+    domains = list(domains.values())
 
     domains.sort(key=lambda x: x['bytes'], reverse=True)
     return jsonify({'ok':True,'domains':domains})
@@ -140,6 +165,6 @@ def install_vnstat():
     cmds.append(pkg_install('vnstat'))
     cmds.append('systemctl enable vnstat 2>/dev/null || true')
     cmds.append('systemctl start vnstat 2>/dev/null || true')
-    out = sh(' && '.join(cmds) + ' 2>&1', t=120)
+    out = sh(' && '.join(cmds) + ' 2>&1', t=600)
     installed = bool(sh('which vnstat 2>/dev/null'))
     return jsonify({'ok':installed,'output':out[-300:]})

@@ -4,7 +4,9 @@ function vpEsc(t){ return String(t==null?'':t).replace(/[&<>"']/g, c=>({'&':'&am
 function vpIcon(n){
   if(!n) return '';
   n = String(n);
-  if(n.startsWith('<svg')) return n;
+  // Raw SVG pass-through only for markup without script/handlers (icons can
+  // come from server data, and this result is rendered with x-html).
+  if(n.startsWith('<svg') && !/<script|\son\w+\s*=|javascript:/i.test(n)) return n;
   const p = VP_ICONS[n];
   if(p) return '<svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
   return vpEsc(n);
@@ -46,6 +48,64 @@ const post = (url, b)  => api('POST', url, b);
 const put  = (url, b)  => api('PUT', url, b);
 const del  = (url, b)  => api('DELETE', url, b);
 
+// Current page of the root app, or null while logged out. Page components are
+// all mounted at once (x-show, not x-if), so polling timers must check this
+// themselves -- otherwise every page keeps hitting the server in the
+// background forever.
+function vpActivePage() {
+  try {
+    const el = document.getElementById('vortex-root');
+    const d = el && window.Alpine ? Alpine.$data(el) : null;
+    return d && d.loggedIn ? d.page : null;
+  } catch (e) { return null; }
+}
+
+// Poll a background-job status URL until it reports done. Several job
+// endpoints keep their state in the memory of one gunicorn worker, so a poll
+// can land on a worker that has never seen the job and get "not found";
+// those misses are tolerated for a while instead of freezing the job window
+// on "Working..." forever. onUpdate(j) gets every successful response;
+// onDone(j) is called exactly once (j.ok false + j.error when it gave up).
+function vpPollJob(url, onUpdate, onDone, opts) {
+  const o = Object.assign({interval: 800, maxMisses: 60, active: null}, opts || {});
+  let misses = 0, stopped = false;
+  const tick = async () => {
+    if (stopped) return;
+    if (o.active && !o.active()) { stopped = true; return; }
+    const j = await get(url);
+    if (j && j.ok) {
+      misses = 0;
+      try { onUpdate && onUpdate(j); } catch (e) {}
+      if (j.done) { stopped = true; onDone && onDone(j); return; }
+    } else if (++misses > o.maxMisses) {
+      stopped = true;
+      onDone && onDone({ok:false, done:true, success:false,
+        error: (j && j.error ? j.error + ' -- ' : '') + 'lost track of the job. It may still be running on the server; refresh in a minute to see the result.'});
+      return;
+    }
+    setTimeout(tick, o.interval);
+  };
+  setTimeout(tick, Math.min(500, o.interval));
+  return () => { stopped = true; };
+}
+
+// Register a component's global event listeners only once. init() is called
+// again on every 'vortex-logged-in', and re-adding listeners there doubled
+// them on each login (two project creations per click, double reloads,
+// multiplied polling timers).
+// Keyed by the component's own method object (a fresh function per component
+// instance), NOT by a flag on `this`: Alpine merges nested x-data scopes, so a
+// flag set on the root app was visible from every page component and made
+// them all skip their listeners (pages then never loaded after login).
+const _vpOnceSeen = new WeakSet();
+function vpOnce(self, key) {
+  const fn = self ? self[key] : null;
+  const token = (typeof fn === 'function') ? fn : self;
+  if (!token || _vpOnceSeen.has(token)) return false;
+  _vpOnceSeen.add(token);
+  return true;
+}
+
 
 // Store init — must be before function definitions
 document.addEventListener('alpine:init', () => {
@@ -82,7 +142,7 @@ document.addEventListener('alpine:init', () => {
     // component, not children, and cannot reach a page's own x-data.
     security: {
       show2FA:false, showPw:false, showIP:false, showAudit:false,
-      twofa: {enabled:false, secret:'', qr_url:'', code:'', err:'',
+      twofa: {enabled:false, secret:'', qr_svg:'', code:'', err:'',
               setupLoading:false, enabling:false,
               disableConfirm:false, disablePw:'', disabling:false},
       pwForm: {current:'', newpw:'', confirm:''},
@@ -95,8 +155,10 @@ document.addEventListener('alpine:init', () => {
 function toast(msg, type='info') {
   const c = document.getElementById('toast-container');
   const d = document.createElement('div');
+  if (type === 'warn') type = 'warning';
+  if (!['success','error','info','warning'].includes(type)) type = 'info';
   d.className = `toast toast-${type}`;
-  d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'') + msg;
+  d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'') + (msg == null ? '' : msg);
   c.appendChild(d);
   setTimeout(() => d.remove(), 3500);
 }
@@ -128,12 +190,27 @@ async function loadLoginAuditLog() {
 // original settingsPage() methods (same endpoints, same field names, same
 // client-side validation) -- only `this.x` became `s.x` (the store) so
 // portal-based modals can call these too. Not reimplemented from scratch.
+// Render an otpauth:// URI as an inline SVG QR code with the vendored
+// qrcode-generator (MIT) - the TOTP secret never leaves the browser (it used
+// to be sent to api.qrserver.com as an <img> URL). '' if it cannot render.
+function vpQrSvg(text) {
+  try {
+    if (!text || typeof qrcode !== 'function') return '';
+    const q = qrcode(0, 'M');
+    q.addData(String(text));
+    q.make();
+    return q.createSvgTag({cellSize: 4, margin: 2, scalable: true});
+  } catch (e) { return ''; }
+}
+
 async function setup2FA() {
   const s = Alpine.store('vp').security;
   s.twofa.setupLoading=true;
   const r = await post('/api/auth/2fa/setup', {});
   s.twofa.setupLoading=false;
-  if (r.ok) { s.twofa.secret=r.secret; s.twofa.qr_url=r.qr_url; s.twofa.code=''; s.twofa.err=''; }
+  if (r.ok) {
+    s.twofa.secret=r.secret; s.twofa.qr_svg=vpQrSvg(r.uri || ''); s.twofa.code=''; s.twofa.err='';
+  }
   else toast(r.error||'Failed','error');
 }
 
@@ -143,7 +220,7 @@ async function enable2FA() {
   s.twofa.enabling=true; s.twofa.err='';
   const r = await post('/api/auth/2fa/enable', {code:s.twofa.code});
   s.twofa.enabling=false;
-  if (r.ok) { s.twofa.enabled=true; s.twofa.secret=''; s.twofa.qr_url=''; s.twofa.code=''; toast('2FA enabled','success'); }
+  if (r.ok) { s.twofa.enabled=true; s.twofa.secret=''; s.twofa.qr_svg=''; s.twofa.code=''; toast('2FA enabled','success'); }
   else { s.twofa.err=r.error||'Invalid code'; }
 }
 
@@ -160,14 +237,15 @@ async function disable2FA() {
 async function saveIPAllowlist() {
   const s = Alpine.store('vp').security;
   const ips = s.allowlistText.split('\n').map(x=>x.trim()).filter(Boolean);
+  if (ips.length && !confirm('Only these IPs will be able to reach the panel:\n\n'+ips.join('\n')+'\n\nMake sure your own current IP is included, or you will be locked out. Continue?')) return;
   const r = await post('/api/auth/security-settings', {allowed_ips:ips});
-  toast(r.ok?'Allowlist saved':'Failed', r.ok?'success':'error');
+  toast(r.ok?'Allowlist saved':(r.error||'Failed'), r.ok?'success':'error');
 }
 
 async function saveSessionTimeout() {
   const s = Alpine.store('vp').security;
-  const r = await post('/api/auth/security-settings', {session_hours:parseInt(s.sessionHours)||24});
-  toast(r.ok?'Session timeout saved':'Failed', r.ok?'success':'error');
+  const r = await post('/api/auth/security-settings', {session_hours:parseInt(s.sessionHours,10)||24});
+  toast(r.ok?'Session timeout saved':(r.error||'Failed'), r.ok?'success':'error');
 }
 
 async function changePanelPassword() {
@@ -260,7 +338,7 @@ async function importExecute() {
   }
   const es = new EventSource(`/api/import/job/${r.job_id}`);
   es.onmessage = (e) => {
-    const d = JSON.parse(e.data);
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
     if (d.line) w.jobLines.push(d.line);
     if (d.done) {
       es.close();
@@ -272,13 +350,21 @@ async function importExecute() {
         toast('Import failed — check the log', 'error');
       }
     }
-    if (d.error) { es.close(); w.executing=false; toast(d.error, 'error'); }
+    if (d.error) { es.close(); w.executing=false; w.jobDone=true; w.jobSuccess=false; w.jobLines.push('[ERROR] '+d.error); toast(d.error, 'error'); }
     setTimeout(()=>{
       const t=document.querySelector('.import-job-terminal');
       if(t) t.scrollTop=t.scrollHeight;
     }, 50);
   };
-  es.onerror = () => { es.close(); w.executing = false; };
+  es.onerror = () => {
+    es.close();
+    if (w.jobDone) return;
+    // The stream ended without a final "done" (proxy timeout, panel restart,
+    // 10-minute stream limit). Unlock the wizard instead of leaving the
+    // "Importing..." button disabled forever.
+    w.executing = false; w.jobDone = true; w.jobSuccess = false;
+    w.jobLines.push('[WARN] Lost the connection to the import log. The import may still be running on the server -- check the Websites page in a few minutes.');
+  };
 }
 
 function importClose() {
@@ -432,7 +518,7 @@ function rootApp() {
       const validPages = ['dashboard','websites','databases','files','modules',
                           'services','firewall','terminal','backups','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy',
-                          'cdn','logs','settings','node-projects','go-projects','wp'];
+                          'cdn','logs','settings','node-projects','go-projects','wp','waf'];
       if (hash && validPages.includes(hash)) {
         this.page = hash;
       }
@@ -480,7 +566,12 @@ function rootApp() {
 
     logout() {
       fetch('/api/auth/logout', {method:'POST'})
-        .then(() => { this.loggedIn=false; this.loginUser=''; this.loginPass=''; this.loginErr=''; });
+        .catch(() => {})
+        .then(() => {
+          this.loggedIn=false; this.loginUser=''; this.loginPass=''; this.loginErr='';
+          this.show2fa=false; this.totpCode='';
+          document.dispatchEvent(new CustomEvent('vortex-logged-out'));
+        });
     },
 
     // --- Update -----------------------------------------------------------------
@@ -544,8 +635,11 @@ function dashboardPage() {
       }
       this._waitForChartJs();
       this.loadSecurityUpdates();  // non-blocking -- runs real apt/dnf commands, don't hold up the page for it
-      setInterval(()=>this.loadStats(),5000);
-      setInterval(()=>this.loadSslAlerts(),60000); // recheck every minute, not every 5s
+      if (!vpOnce(this, 'init')) return;
+      // Poll only while the dashboard is the visible page (all pages stay
+      // mounted, so an unconditional timer kept polling on every page).
+      setInterval(()=>{ if (vpActivePage()==='dashboard' && !document.hidden) this.loadStats(); },5000);
+      setInterval(()=>{ if (vpActivePage()==='dashboard' && !document.hidden) this.loadSslAlerts(); },60000); // recheck every minute, not every 5s
       document.addEventListener("vortex-logged-in", () => { this.init(); });
       window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); this.loadSslAlerts(); this.loadSecurityUpdates(); } });
     },
@@ -563,7 +657,11 @@ function dashboardPage() {
     },
     async loadStats() {
       const r = await get('/api/dashboard/stats').catch(()=>({ok:false}));
-      if(r.ok) { this.stats=r; this._pushHistory(r); }
+      if(r.ok) {
+        this.stats=r;
+        this.wsConflict = r.webserver_conflict || {conflict:false, active:[], message:''};
+        this._pushHistory(r);
+      }
     },
     async loadServices() {
       const r = await get('/api/services').catch(()=>({ok:false}));
@@ -582,14 +680,16 @@ function dashboardPage() {
       h.ram.push(this.ramPct());
       // Compute network rate (bytes/sec) from cumulative counters
       const rx = r.net?.rx || 0, tx = r.net?.tx || 0;
+      const t = Date.now();
       if (this._prevNet) {
-        const dt = 5; // poll interval seconds
+        // Real elapsed time: polling pauses while another page is shown.
+        const dt = Math.max(1, (t - (this._prevNet.t || t - 5000)) / 1000);
         h.netRx.push(Math.max(0, (rx - this._prevNet.rx) / dt));
         h.netTx.push(Math.max(0, (tx - this._prevNet.tx) / dt));
       } else {
         h.netRx.push(0); h.netTx.push(0);
       }
-      this._prevNet = {rx, tx};
+      this._prevNet = {rx, tx, t};
       const CAP = 30;
       if (h.labels.length > CAP) {
         h.labels.shift(); h.cpu.shift(); h.ram.shift(); h.netRx.shift(); h.netTx.shift();
@@ -731,11 +831,23 @@ function websitesPage() {
       {id:'logs',label:'Response Log'},
       {id:'integrity',label:'Tamper-proof'},
     ],
+    // Tabs that edit nginx configs only; hidden for sites served by Apache,
+    // OpenLiteSpeed or Caddy (their Config tab edits the real vhost instead).
+    // Default Doc is also supported for Apache sites (backend _set_index).
+    _nginxOnlyTabs:['rewrite','proxy','redirect','limit','hotlink','nodejs','maintenance'],
+    siteDrawerTabs() {
+      const ws = this.drawer?.site?.webserver || 'nginx';
+      if (ws === 'nginx') return this.drawerTabs;
+      return this.drawerTabs.filter(t => !this._nginxOnlyTabs.includes(t.id)
+        && !(t.id==='defaultdoc' && ws!=='apache')
+        && !(ws==='openlitespeed' && t.id==='php'));
+    },
     async init() {
       const wr=await get('/api/websites/webroot').catch(()=>({ok:false}));
       if(wr.ok) this.webroot=wr.path;
       await this.refreshPhpVersions();
       await this.load();
+      if (!vpOnce(this, 'init')) return;
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="websites") { this.load(); this.refreshPhpVersions(); } });
     },
     async refreshPhpVersions() {
@@ -804,9 +916,10 @@ function websitesPage() {
       else toast(r.error||'Failed','error');
     },
     async del(domain) {
-      if(!confirm('Delete '+domain+'?')) return;
+      if(!confirm('Delete '+domain+'?\n\nThe site configuration is removed from the web server. This cannot be undone.')) return;
       const r=await del('/api/websites/'+domain);
       if(r.ok){toast('Deleted','success');await this.load();}
+      else toast(r.error||'Delete failed','error');
     },
     async loadDeployApps() {
       const r=await get('/api/websites/deploy-apps');
@@ -835,6 +948,9 @@ function websitesPage() {
         directory: {path:'', antixss:false, accesslog:false},
         hotlink: {enabled:false, suffixes:'jpg,jpeg,gif,png,js,css', domains:'', response:'404'},
         limitRules: [], limitForm: {name:'', path:'/admin', user:'', pass:''},
+        composerAction:'install', composerPkg:'', composerPhp:'', composerOutput:'', composerRunning:false,
+        logType:'access', accessLog:'', errorLog:'', defaultDoc:'', domains:[], domainInput:'',
+        rewriteContent:'', rewriteTemplates:[], showLimitAdd:false, confError:'',
       };
       this.refreshPhpVersions();
       this.loadDrawerTab();
@@ -880,7 +996,8 @@ function websitesPage() {
       }
       else if(d.tab==='maintenance'){const r=await get('/api/websites/'+domain+'/maintenance');if(r.ok)d.maintEnabled=r.enabled;}
       else if(d.tab==='domains'){const r=await get('/api/websites/'+domain+'/domains');if(r.ok)d.domains=r.domains||[];}
-      else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok)d.directory.path=r.path||d.site?.path||''; this.loadDiskUsage();}
+      else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok){d.directory.path=r.path||d.site?.path||'';d.directory.antixss=!!r.antixss;d.directory.accesslog=!!r.accesslog;} this.loadDiskUsage();}
+      else if(d.tab==='defaultdoc'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok){const ix=Array.isArray(r.indexes)?r.indexes:String(r.indexes||'').split(/[\s,]+/);d.defaultDoc=ix.map(x=>String(x).trim()).filter(Boolean).join('\n');}else toast(r.error||'Could not load the default documents','error');}
       else if(d.tab==='rewrite'){const r=await get('/api/websites/'+domain+'/rewrite');if(r.ok)d.rewriteContent=r.content||'';const rt=await get('/api/websites/'+domain+'/rewrite/templates');if(rt.ok)d.rewriteTemplates=rt.templates||[];}
       else if(d.tab==='hotlink'){const r=await get('/api/websites/'+domain+'/hotlink');if(r.ok){d.hotlink.enabled=r.enabled||false;d.hotlink.suffixes=r.suffixes||'jpg,jpeg,gif,png,js,css';d.hotlink.domains=r.access_domain||'';d.hotlink.response=r.response||'404';}}
       else if(d.tab==='limit'){const r=await get('/api/websites/'+domain+'/limit-access');if(r.ok)d.limitRules=r.rules||[];}
@@ -928,6 +1045,7 @@ function websitesPage() {
       if (!confirm('Disable tamper-proof monitoring for '+domain+'? This removes the baseline.')) return;
       const r = await del('/api/websites/'+domain+'/integrity/baseline');
       if (r.ok) { toast('Disabled','success'); await this.loadIntegrityStatus(); }
+      else toast(r.error||'Failed','error');
     },
     async saveConf(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/config',{content:this.drawer.confContent});toast(r.ok?'Saved':(r.error||'Failed'),r.ok?'success':'error');},
     async enableWaf(){
@@ -943,8 +1061,8 @@ function websitesPage() {
     async issueLetsEncrypt(){
       this.drawer.loading=true;
       const r=await post('/api/websites/'+this.drawer.site?.domain+'/ssl/letsencrypt',{email:this.drawer.sslEmail});
-      this.drawer.loading=false; this.drawer.sslOutput=r.output||'';
-      toast(r.ok?'SSL issued!':'Failed',r.ok?'success':'error');
+      this.drawer.loading=false; this.drawer.sslOutput=r.output||r.error||'';
+      toast(r.ok?'SSL issued!':(r.error||'SSL issuance failed - see the output below'),r.ok?'success':'error');
       if(r.ok){ this.loadDrawerTab(); this.load(); }
     },
     async disableSSL(){
@@ -988,13 +1106,24 @@ function websitesPage() {
         toast(r.error||'Upgrade failed','error');
       }
     },
-    async savePhpVer(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/php',{version:this.drawer.phpVer});toast(r.ok?'PHP applied':'Failed',r.ok?'success':'error');if(r.ok)await this.load();},
-    async addProxy(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/proxy',this.drawer.proxyForm);if(r.ok){toast('Proxy added','success');this.drawer.showAddProxy=false;await this.loadDrawerTab();}else toast(r.error||'Failed','error');},
-    async delProxy(name){const r=await del('/api/websites/'+this.drawer.site?.domain+'/proxy/'+name);if(r.ok){toast('Removed','success');await this.loadDrawerTab();}},
-    async saveRedirect(){const form={...this.drawer.redirectForm,keep_uri:this.drawer.redirectForm.keep_uri==='true'};const r=await post('/api/websites/'+this.drawer.site?.domain+'/redirect',form);toast(r.ok?'Redirect set':'Failed',r.ok?'success':'error');},
-    async delRedirect(){const r=await del('/api/websites/'+this.drawer.site?.domain+'/redirect');toast(r.ok?'Removed':'Failed',r.ok?'success':'error');},
-    async enableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{...this.drawer.nodejsForm,enable:true});toast(r.ok?'Node.js enabled':'Failed',r.ok?'success':'error');if(r.ok){this.drawer.nodejsEnabled=true;await this.load();await this.loadEnvVars();}},
-    async disableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{enable:false});if(r.ok){toast('Disabled','success');this.drawer.nodejsEnabled=false;await this.load();}},
+    async savePhpVer(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/php',{version:this.drawer.phpVer});toast(r.ok?'PHP applied':(r.error||'Failed'),r.ok?'success':'error');if(r.ok)await this.load();},
+    async addProxy(){
+      const f={...this.drawer.proxyForm};
+      // The proxy name is the marker the delete button uses; an empty name
+      // made every rule share the same marker and left them undeletable.
+      if(!(f.name||'').trim()) f.name='proxy_'+((f.path||'/').replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'')||'root')+'_'+Date.now().toString(36);
+      const r=await post('/api/websites/'+this.drawer.site?.domain+'/proxy',f);
+      if(r.ok){toast('Proxy added','success');this.drawer.showAddProxy=false;this.drawer.proxyForm={name:'',path:'/',target:'',sent_domain:'$host'};await this.loadDrawerTab();}else toast(r.error||'Failed','error');
+    },
+    async delProxy(name){
+      if(!confirm('Remove proxy rule '+name+'?')) return;
+      const r=await del('/api/websites/'+this.drawer.site?.domain+'/proxy/'+encodeURIComponent(name));
+      if(r.ok){toast('Removed','success');await this.loadDrawerTab();} else toast(r.error||'Failed','error');
+    },
+    async saveRedirect(){const k=this.drawer.redirectForm.keep_uri;const form={...this.drawer.redirectForm,keep_uri:(k===true||k==='true')};const r=await post('/api/websites/'+this.drawer.site?.domain+'/redirect',form);toast(r.ok?'Redirect set':(r.error||'Failed'),r.ok?'success':'error');},
+    async delRedirect(){if(!confirm('Remove the redirect for '+this.drawer.site?.domain+'?')) return;const r=await del('/api/websites/'+this.drawer.site?.domain+'/redirect');toast(r.ok?'Removed':(r.error||'Failed'),r.ok?'success':'error');},
+    async enableNodejs(){const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{...this.drawer.nodejsForm,port:parseInt(this.drawer.nodejsForm.port)||this.drawer.nodejsForm.port,enable:true});toast(r.ok?'App enabled':(r.error||'Failed'),r.ok?'success':'error');if(r.ok){this.drawer.nodejsEnabled=true;await this.load();await this.loadEnvVars();}},
+    async disableNodejs(){if(!confirm('Stop and disable the app for '+this.drawer.site?.domain+'?')) return;const r=await post('/api/websites/'+this.drawer.site?.domain+'/nodejs',{enable:false});if(r.ok){toast('Disabled','success');this.drawer.nodejsEnabled=false;await this.load();} else toast(r.error||'Failed','error');},
 
     async loadEnvVars(){
       const domain=this.drawer.site?.domain; if(!domain) return;
@@ -1037,13 +1166,105 @@ function websitesPage() {
       });
       if(!r.ok){toast(r.error||'Failed','error');d.composerRunning=false;return;}
       d.composerJobId=r.job_id;
-      const poll=setInterval(async()=>{
-        const j=await get('/api/websites/'+d.site?.domain+'/composer/job/'+d.composerJobId);
-        if(j.ok){d.composerOutput=j.output||'';}
-        if(j.done||!j.ok){clearInterval(poll);d.composerRunning=false;toast(j.exit===0?'Done':'Failed',j.exit===0?'success':'error');}
-      },1000);
+      vpPollJob('/api/websites/'+d.site?.domain+'/composer/job/'+d.composerJobId,
+        (j)=>{ d.composerOutput=j.output||''; },
+        (j)=>{
+          d.composerRunning=false;
+          if(!j.ok){ d.composerOutput=(d.composerOutput?d.composerOutput+'\n':'')+j.error; toast('Composer status unavailable','error'); return; }
+          if(j.error) d.composerOutput=(d.composerOutput?d.composerOutput+'\n':'')+j.error;
+          toast(j.exit===0?'Composer finished':'Composer failed (exit '+(j.exit??'?')+')',j.exit===0?'success':'error');
+        }, {interval:1000, maxMisses:120});
     },
-    async toggleMaintenance(enable){const r=await post('/api/websites/'+this.drawer.site?.domain+'/maintenance',{enable,message:this.drawer.maintMessage});toast(r.ok?(enable?'Maintenance ON':'Site LIVE'):'Failed',r.ok?'success':'error');if(r.ok)this.drawer.maintEnabled=enable;},
+    async toggleMaintenance(enable){const r=await post('/api/websites/'+this.drawer.site?.domain+'/maintenance',{enable,message:this.drawer.maintMessage});toast(r.ok?(enable?'Maintenance ON':'Site LIVE'):(r.error||'Failed'),r.ok?'success':'error');if(r.ok)this.drawer.maintEnabled=enable;},
+
+    // --- Domain manager / directory / rewrite / limit-access helpers --------
+    async addDomainBinding(){
+      const d=this.drawer; const dom=(d.domainInput||'').trim();
+      if(!dom){toast('Enter a domain','error');return;}
+      const r=await post('/api/websites/'+d.site?.domain+'/domains',{domain:dom});
+      if(r.ok){toast('Domain added','success');d.domainInput='';this.loadDrawerTab();}
+      else toast(r.error||'Failed','error');
+    },
+    async removeDomainBinding(target){
+      const d=this.drawer;
+      if(!confirm('Remove '+target+' from '+d.site?.domain+'?')) return;
+      const r=await del('/api/websites/'+d.site?.domain+'/domains/'+encodeURIComponent(target));
+      if(r.ok){toast('Removed','success');this.loadDrawerTab();}
+      else toast(r.error||'Failed','error');
+    },
+    async saveDirectory(){
+      const d=this.drawer;
+      if(!(d.directory.path||'').trim()){toast('Enter the site directory','error');return;}
+      const r=await put('/api/websites/'+d.site?.domain+'/directory',{path:d.directory.path.trim()});
+      toast(r.ok?'Site directory saved':(r.error||'Failed'),r.ok?'success':'error');
+      if(r.ok) this.load();
+    },
+    async toggleDirectoryOption(kind){
+      // kind: 'antixss' | 'accesslog' -- the checkbox has already flipped.
+      const d=this.drawer; const enabled=!!d.directory[kind];
+      const r=await post('/api/websites/'+d.site?.domain+'/directory/'+kind,{enabled});
+      if(r.ok){
+        toast((kind==='antixss'?'Anti-XSS (open_basedir) ':'Access log ')+(enabled?'enabled':'disabled'),'success');
+        if(r.warning) toast(r.warning,'warning');
+      } else { d.directory[kind]=!enabled; toast(r.error||'Failed','error'); }
+    },
+    async saveDefaultDoc(){
+      const d=this.drawer;
+      const idx=(d.defaultDoc||'').split(/[\s,]+/).map(x=>x.trim()).filter(Boolean);
+      if(!idx.length){toast('Enter at least one index file','error');return;}
+      const r=await put('/api/websites/'+d.site?.domain+'/config',{action:'set_index',indexes:idx.join(' ')});
+      toast(r.ok?'Default document saved':(r.error||'Failed'),r.ok?'success':'error');
+    },
+    // Fallback copies of the built-in nginx rewrite templates. Older backends
+    // treated {template:id} as a save with EMPTY content (wiping the site's
+    // "location /" block); the loaded text is only saved on Save.
+    _rewriteTemplates:{
+      wordpress:'location / {\n    try_files $uri $uri/ /index.php?$args;\n}',
+      laravel:'location / {\n    try_files $uri $uri/ /index.php?$query_string;\n}',
+      codeigniter:'location / {\n    try_files $uri $uri/ /index.php?/$request_uri;\n}',
+      thinkphp:'location / {\n    if (!-e $request_filename) {\n        rewrite ^(.*)$ /index.php?s=$1 last;\n        break;\n    }\n}',
+    },
+    async applyRewriteTemplate(id, el){
+      if(el) el.value='';
+      if(!id) return;
+      if(id==='current'){ await this.loadDrawerTab(); return; }
+      // {template:id} without "content" only returns the template text.
+      const r=await post('/api/websites/'+this.drawer.site?.domain+'/rewrite',{template:id});
+      const t=(r.ok && typeof r.content==='string') ? r.content : this._rewriteTemplates[id];
+      if(!t){ toast(r.error||'Template not found','error'); return; }
+      this.drawer.rewriteContent=t;
+      toast('Template loaded - click Save to apply it','info');
+    },
+    async saveRewrite(){
+      const d=this.drawer;
+      if(!(d.rewriteContent||'').trim() && !confirm('Save EMPTY rewrite rules? This removes the site\'s "location /" rules.')) return;
+      const r=await post('/api/websites/'+d.site?.domain+'/rewrite',{content:d.rewriteContent||''});
+      toast(r.ok?'Rewrite rules saved':(r.error||'Failed'),r.ok?'success':'error');
+    },
+    async addLimitRule(){
+      const d=this.drawer; const f=d.limitForm;
+      // The backend uses the rule name as the HTTP basic-auth username and
+      // reads the password from "password" (the form's "pass" field was
+      // ignored, so every rule silently got the password "changeme").
+      const user=(f.user||f.name||'').trim();
+      if(!user||!(f.path||'').trim()||!f.pass){toast('Username, path and password are required','error');return;}
+      if(!/^[A-Za-z0-9_.-]+$/.test(user)){toast('Username may only contain letters, digits, dot, dash and underscore','error');return;}
+      const r=await post('/api/websites/'+d.site?.domain+'/limit-access',{action:'add_rule',name:user,path:f.path.trim(),password:f.pass});
+      if(r.ok){toast('Access limit added','success');d.showLimitAdd=false;d.limitForm={name:'',path:'/admin',user:'',pass:''};this.loadDrawerTab();}
+      else toast(r.error||'Failed','error');
+    },
+    async delLimitRule(rule){
+      const d=this.drawer;
+      if(!confirm('Remove the access limit on '+rule.path+'?')) return;
+      const r=await del('/api/websites/'+d.site?.domain+'/limit-access/'+encodeURIComponent(rule.name)+'?path='+encodeURIComponent(rule.path||''));
+      if(r.ok){toast('Deleted','success');this.loadDrawerTab();}
+      else toast(r.error||'Failed','error');
+    },
+    async saveHotlink(){
+      const d=this.drawer, h=d.hotlink;
+      const r=await post('/api/websites/'+d.site?.domain+'/hotlink',{enable:!!h.enabled,suffixes:h.suffixes,access_domain:h.domains,response:h.response});
+      toast(r.ok?'Hotlink protection saved':(r.error||'Failed'),r.ok?'success':'error');
+    },
   };
 }
 
@@ -1070,6 +1291,7 @@ function wpPage() {
     },
     async init() {
       await this.load();
+      if (!vpOnce(this, 'init')) return;
       document.addEventListener('vortex-logged-in', () => { this.init(); });
       window.addEventListener("vp:page", (e) => { if(e.detail==="wp") this.load(); });
     },
@@ -1119,6 +1341,9 @@ function wpPage() {
     },
     async openDrawer(site, tab) {
       this.drawer = { show: true, site, tab: tab || 'overview' };
+      // Clear the previous site's lists -- switchDrawerTab() only loads when
+      // a list is empty, so another site's plugins/themes were shown.
+      this.plugins = []; this.themes = []; this.backups = []; this.security = null;
       if (tab === 'plugins' || tab === 'overview') await this.loadPlugins();
       if (tab === 'themes') await this.loadThemes();
       if (tab === 'backups') await this.loadBackups();
@@ -1160,16 +1385,19 @@ function wpPage() {
       this.secScanning = false;
     },
     async pluginAction(plugin, action) {
+      if (action === 'delete' && !confirm(`Delete plugin "${plugin}" and its files?`)) return;
       const r = await post(`/api/wp/${this.drawer.site.domain}/plugins/${plugin}`, { action, path: this.drawer.site.path });
       toast(r.ok ? `Plugin ${action}d` : 'Failed: '+(r.error||''), r.ok?'success':'error');
       if (r.ok) await this.loadPlugins();
     },
     async updateAllPlugins() {
+      if (!confirm('Update all plugins on '+this.drawer.site.domain+'? Consider taking a backup first.')) return;
       const r = await post(`/api/wp/${this.drawer.site.domain}/plugins/update-all`, { path: this.drawer.site.path });
       toast(r.ok ? 'All plugins updated' : 'Failed: '+(r.error||''), r.ok?'success':'error');
       if (r.ok) await this.loadPlugins();
     },
     async themeAction(theme, action) {
+      if (action === 'delete' && !confirm(`Delete theme "${theme}" and its files?`)) return;
       const r = await post(`/api/wp/${this.drawer.site.domain}/themes/${theme}`, { action, path: this.drawer.site.path });
       toast(r.ok ? `Theme ${action}d` : 'Failed: '+(r.error||''), r.ok?'success':'error');
       if (r.ok) await this.loadThemes();
@@ -1188,12 +1416,13 @@ function wpPage() {
     },
     async deleteBackup(filename) {
       if (!confirm('Delete this backup?')) return;
-      await del(`/api/wp/${this.drawer.site.domain}/backups/${filename}`);
+      const r = await del(`/api/wp/${this.drawer.site.domain}/backups/${encodeURIComponent(filename)}`);
+      if (!r.ok) toast(r.error||'Delete failed','error');
       await this.loadBackups();
     },
     async applyFix(fix) {
       const r = await post(`/api/wp/${this.drawer.site.domain}/security/fix`, { fix, path: this.drawer.site.path });
-      toast(r.ok ? 'Fix applied' : 'Failed', r.ok?'success':'error');
+      toast(r.ok ? 'Fix applied' : 'Failed: '+(r.error||r.output||''), r.ok?'success':'error');
       if (r.ok) await this.runSecurityScan();
     },
     async cloneSite() {
@@ -1222,13 +1451,13 @@ function wpPage() {
     async deleteSite(site) {
       if (!confirm(`Delete ${site.domain} and all its data? This cannot be undone.`)) return;
       const r = await del(`/api/wp/${site.domain}`, { path: site.path, delete_db: true });
-      toast(r.ok ? 'Site deleted' : 'Failed', r.ok?'success':'error');
+      toast(r.ok ? 'Site deleted' : 'Failed: '+(r.error||''), r.ok?'success':'error');
       if (r.ok) { this.drawer.show = false; await this.load(); }
     },
     async oneClickLogin(site) {
       const r = await get(`/api/wp/${site.domain}/login?path=${encodeURIComponent(site.path)}`);
       if (r.ok && r.login_url) window.open(r.login_url, '_blank');
-      else toast('Login failed — wp-cli may not be installed','error');
+      else toast(r.error||'Login failed — wp-cli may not be installed','error');
     },
     async openInstallModal() {
       this.showInstall = true; this.installResult = null; this.installLog = '';
@@ -1250,7 +1479,7 @@ function wpPage() {
       const start = await post('/api/wp/install', this.installForm);
       if (!start.ok) {
         this.installing = false;
-        this.installLog += '✗ Failed: ' + (start.error || 'Unknown error');
+        this.installLog += 'Failed: ' + (start.error || 'Unknown error');
         toast('Installation failed: '+(start.error||''),'error');
         return;
       }
@@ -1267,22 +1496,22 @@ function wpPage() {
           this.installing = false;
           if (st.success) {
             this.installResult = st;
-            this.installLog += `✓ WordPress installed at ${st.site_url}\n✓ Admin: ${st.admin_user} / ${st.admin_pass}\n✓ DB: ${st.db_name}`;
+            this.installLog += `WordPress installed at ${st.site_url}\nAdmin: ${st.admin_user} / ${st.admin_pass}\nDB: ${st.db_name}`;
             await this.load();
           } else {
-            this.installLog += '✗ Failed: ' + (st.error || 'Unknown error');
+            this.installLog += 'Failed: ' + (st.error || 'Unknown error');
             toast('Installation failed: '+(st.error||''),'error');
           }
           return;
         }
       }
       this.installing = false;
-      this.installLog += '✗ Timed out waiting for installation to finish — check the server manually.';
+      this.installLog += 'Timed out waiting for installation to finish — check the server manually.';
       toast('Installation timed out','error');
     },
     async installWpCli() {
       const r = await post('/api/wp/install-wpcli', {});
-      toast(r.ok ? 'wp-cli installed: '+r.version : 'Failed to install wp-cli', r.ok?'success':'error');
+      toast(r.ok ? 'wp-cli installed: '+r.version : (r.error||'Failed to install wp-cli'), r.ok?'success':'error');
       if (r.ok) { this.wpcliInstalled = true; }
     },
     async saveSettings(settings) {
@@ -1318,12 +1547,14 @@ function databasesPage() {
     get isPg(){ return this.activeEngine==='postgresql'; },
     async init(){
       await this.load();
+      if (!vpOnce(this, 'init')) return;
       document.addEventListener('vortex-logged-in', () => { this.init(); });
       window.addEventListener("vp:page", (e) => { if(e.detail==="databases") this.load(); });
       // Listen for modal submit event from global portal
       window.addEventListener('vp-submit-nodejs-add', async () => {
         const s = Alpine.store('vp').nodeAdd;
-        if(!s.name || !s.path){ window._toast && window._toast('Name and path required','error'); return; }
+        if(s.loading) return;
+        if(!s.name || !s.path){ toast('Name and path required','error'); return; }
         s.loading = true;
         const r = await post('/api/nodejs/projects', {
           name:s.name, path:s.path, pm2:s.mode==='pm2',
@@ -1334,7 +1565,13 @@ function databasesPage() {
           env_vars:s.env_vars, remark:s.remark,
         });
         s.loading = false;
-        if(r.ok){ s.show=false; toast('Project created successfully','success'); await this.load(); }
+        if(r.ok){
+          s.show=false; toast('Project created successfully','success');
+          // Refresh the Node.js projects page (this handler lives here for
+          // historical reasons; this.load() only reloaded the database list).
+          window.dispatchEvent(new CustomEvent('vp:page', {detail:'node-projects'}));
+          if(r.proxy_warning) toast(r.proxy_warning,'warning');
+        }
         else toast(r.error||'Failed to create project','error');
       });
     },
@@ -1365,8 +1602,9 @@ function databasesPage() {
     },
     async drop(db){
       if(!confirm('Drop database "'+db+'"? This cannot be undone.')) return;
-      const r=await del('/api/databases/'+db+'?engine='+this.activeEngine);
+      const r=await del('/api/databases/'+encodeURIComponent(db)+'?engine='+this.activeEngine);
       if(r.ok){toast('Dropped','success');await this.load();}
+      else toast(r.error||'Drop failed','error');
     },
     exportDb(name){ window.open('/api/databases/'+name+'/export?engine='+this.activeEngine,'_blank'); },
     toolboxTitle() {
@@ -1396,6 +1634,7 @@ function databasesPage() {
       else toast(r.error||'Could not load tables','error');
     },
     async runTableAction(table, action) {
+      if ((action==='innodb'||action==='myisam') && !confirm('Convert table '+table.name+' to '+(action==='innodb'?'InnoDB':'MyISAM')+'? The table is locked while it is rebuilt; take a backup first.')) return;
       const labels = {repair:'Repairing',optimize:'Optimizing',innodb:'Converting to InnoDB',myisam:'Converting to MyISAM',
                       reindex:'Reindexing',vacuum:'Vacuuming',analyze:'Analyzing',validate:'Validating',compact:'Compacting'};
       toast((labels[action]||'Working on')+' '+table.name+'…','info');
@@ -1416,8 +1655,11 @@ function databasesPage() {
     async doImport(){
       if(!this.importFile||!this.importTargetDb){toast('Select file and database','error');return;}
       const fd=new FormData(); fd.append('file',this.importFile);
-      const r=await fetch('/api/databases/'+this.importTargetDb+'/import?engine='+this.activeEngine,{method:'POST',body:fd});
-      const j=await r.json();
+      let j;
+      try {
+        const r=await fetch('/api/databases/'+encodeURIComponent(this.importTargetDb)+'/import?engine='+this.activeEngine,{method:'POST',body:fd});
+        j=await r.json();
+      } catch(e) { j={ok:false,error:'Import failed: '+e.message}; }
       if(j.ok){toast('Imported successfully','success');this.showImport=false;await this.load();}
       else toast(j.error||'Import failed','error');
     },
@@ -1426,22 +1668,28 @@ function databasesPage() {
       if(r.ok){toast('User created','success');this.showAddUser=false;this.userForm={name:'',pass:'',host:'localhost'};await this.load();}
       else toast(r.error||'Failed','error');
     },
+    // u is a user row {user, host}: MySQL accounts are user@host, and
+    // without the host the backend dropped 'user'@'localhost' (often a
+    // different account, or none - "DROP USER IF EXISTS" then reported success).
     async dropUser(u){
-      if(!confirm('Drop user "'+u+'"?')) return;
-      const r=await del('/api/databases/users/'+u+'?engine='+this.activeEngine);
-      if(r.ok){toast('Dropped','success');await this.load();}
+      const name = (u && typeof u === 'object') ? u.user : u;
+      const host = (u && typeof u === 'object') ? (u.host || '') : ((this.selUser && this.selUser.user === u) ? (this.selUser.host || '') : '');
+      if(!name) return;
+      if(!confirm('Drop user "'+name+(host?'@'+host:'')+'"? Applications using this account lose database access.')) return;
+      const r=await del('/api/databases/users/'+encodeURIComponent(name)+'?engine='+encodeURIComponent(this.activeEngine)+(host?'&host='+encodeURIComponent(host):''));
+      if(r.ok){toast('User '+name+' dropped','success');this.showUserDetail=false;this.selUser=null;await this.load();}
+      else toast(r.error||'Drop failed','error');
     },
     async changePass(user){
       if(!this.newPass){toast('Enter new password','error');return;}
-      const r=await fetch('/api/databases/users/'+user+'/password',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:this.newPass,engine:this.activeEngine,host:this.selUser?.host})});
-      const j=await r.json();
-      toast(j.ok?'Password changed':'Failed',j.ok?'success':'error');
+      const j=await put('/api/databases/users/'+encodeURIComponent(user)+'/password',{password:this.newPass,engine:this.activeEngine,host:this.selUser?.host});
+      toast(j.ok?'Password changed':(j.error||'Failed'),j.ok?'success':'error');
       if(j.ok) this.newPass='';
     },
     async grantAccess(user){
       if(!this.grantDb){toast('Select database','error');return;}
-      const r=await post('/api/databases/users/'+user+'/grant',{database:this.grantDb,host:this.selUser?.host||'localhost',engine:this.activeEngine});
-      toast(r.ok?'Access granted':'Failed',r.ok?'success':'error');
+      const r=await post('/api/databases/users/'+encodeURIComponent(user)+'/grant',{database:this.grantDb,host:this.selUser?.host||'localhost',engine:this.activeEngine});
+      toast(r.ok?'Access granted':(r.error||'Failed'),r.ok?'success':'error');
     },
   };
 }
@@ -1516,6 +1764,11 @@ function filesPage() {
     },
 
     async init() {
+      // Listeners first: the loop below returns early on success, which used
+      // to skip registering them (the page never refreshed on revisit).
+      if (vpOnce(this, 'init')) {
+        document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="files") this.loadDir(this.path||this.webroot); });
+      }
       // Find first accessible webroot silently
       for (const p of ['/www/wwwroot', '/var/www/html', '/var/www', '/root', '/tmp']) {
         const r = await get('/api/files/list?path=' + encodeURIComponent(p));
@@ -1523,7 +1776,6 @@ function filesPage() {
       }
       // Fallback: load root without toast error
       await this.loadDirSilent('/');
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="files") this.loadDir(this.path||this.webroot); });
     },
 
     async loadDirSilent(p) {
@@ -1795,7 +2047,7 @@ function filesPage() {
       if (r.ok) {
         this.activeTab.original = content;
         this.activeTab.modified = false;
-        toast('✓ Saved: ' + this.activeTab.name, 'success');
+        toast('Saved: ' + this.activeTab.name, 'success');
         await this.lintCurrentFile();
       } else {
         toast('Save failed: ' + (r.error || ''), 'error');
@@ -1807,11 +2059,14 @@ function filesPage() {
         this.activeTab.content = _editorCM.getValue();
         this.activeTab.modified = this.activeTab.content !== this.activeTab.original;
       }
+      const failed = [];
       for (const tab of this.editorTabs.filter(t => t.modified)) {
-        await post('/api/files/write', { path: tab.path, content: tab.content });
-        tab.original = tab.content; tab.modified = false;
+        const r = await post('/api/files/write', { path: tab.path, content: tab.content });
+        if (r.ok) { tab.original = tab.content; tab.modified = false; }
+        else failed.push(tab.name + (r.error ? ' (' + r.error + ')' : ''));
       }
-      toast('All files saved', 'success');
+      if (failed.length) toast('Could not save: ' + failed.join(', '), 'error');
+      else toast('All files saved', 'success');
     },
 
     async lintCurrentFile() {
@@ -1820,7 +2075,7 @@ function filesPage() {
       if (r.ok) {
         this.lintErrors = r.errors;
         this.showLintPanel = r.errors.length > 0;
-        if (r.clean) toast('✓ No syntax errors', 'success');
+        if (r.clean) toast('No syntax errors', 'success');
         else toast('' + r.errors.length + ' error(s) found', 'error');
       }
     },
@@ -1949,10 +2204,13 @@ function filesPage() {
     async deleteSelected() {
       if (!this.selected.length) return;
       if (!confirm('Delete ' + this.selected.length + ' selected items?')) return;
+      let ok = 0; const failed = [];
       for (const p of this.selected) {
-        await post('/api/files/delete', { path: p });
+        const r = await post('/api/files/delete', { path: p });
+        if (r.ok) ok++; else failed.push(p.split('/').pop());
       }
-      toast('Deleted ' + this.selected.length + ' items', 'success');
+      if (failed.length) toast('Deleted ' + ok + ', failed: ' + failed.join(', '), 'error');
+      else toast('Deleted ' + ok + ' items', 'success');
       this.selected = [];
       await this.loadDir(this.path);
     },
@@ -1975,13 +2233,16 @@ function filesPage() {
 
     async pasteHere() {
       if (!this.clipboard) return;
+      const failed = [];
       for (const src of this.clipboard) {
         const name = src.split('/').pop();
-        const dst  = this.path + '/' + name;
-        if (this.clipboardOp === 'copy') await post('/api/files/copy', { src, dst });
-        else                             await post('/api/files/move', { src, dst });
+        const dst  = this.path.replace(/\/$/, '') + '/' + name;
+        const r = this.clipboardOp === 'copy' ? await post('/api/files/copy', { src, dst })
+                                              : await post('/api/files/move', { src, dst });
+        if (!r.ok) failed.push(name + (r.error ? ' (' + r.error + ')' : ''));
       }
-      toast('Pasted ' + this.clipboard.length + ' item(s)', 'success');
+      if (failed.length) toast('Paste failed for: ' + failed.join(', '), 'error');
+      else toast('Pasted ' + this.clipboard.length + ' item(s)', 'success');
       if (this.clipboardOp === 'cut') this.clipboard = null;
       await this.loadDir(this.path);
     },
@@ -1991,9 +2252,10 @@ function filesPage() {
     },
 
     async compressItem(f, fmt) {
-      const name = f.name + '.zip';
+      fmt = fmt || 'zip';
+      const name = f.name + (fmt === 'zip' ? '.zip' : '.tar.gz');
       const out  = this.path + '/' + name;
-      const r    = await post('/api/files/compress', { paths: [f.path], output: out, format: fmt||'zip' });
+      const r    = await post('/api/files/compress', { paths: [f.path], output: out, format: fmt });
       if (r.ok) { toast('Compressed: ' + name, 'success'); await this.loadDir(this.path); }
       else toast(r.error || 'Failed', 'error');
     },
@@ -2022,6 +2284,7 @@ function filesPage() {
       if (this.newFileIsFolder) {
         const r = await post('/api/files/mkdir', { path: p });
         if (r.ok) { toast('Folder created', 'success'); this.showNewFileModal = false; await this.loadDir(this.path); }
+        else toast(r.error || 'Could not create folder', 'error');
       } else {
         const r = await post('/api/files/write', { path: p, content: '' });
         if (r.ok) {
@@ -2029,14 +2292,15 @@ function filesPage() {
           this.showNewFileModal = false;
           await this.loadDir(this.path);
           // Open in editor
-          await this.openEditor({ path: p, name: this.newFileName, type: 'file' });
-        }
+          if (this.isEditable(this.newFileName)) await this.openEditor({ path: p, name: this.newFileName, type: 'file' });
+        } else toast(r.error || 'Could not create file', 'error');
       }
     },
 
     async showProps(f) {
       const r = await get('/api/files/properties?path=' + encodeURIComponent(f.path));
       if (r.ok) { this.props = r.props; this.showPropsModal = true; }
+      else toast(r.error || 'Could not read properties', 'error');
     },
 
     chmodItem(f) { this.chmodTarget = f; this.chmodValue = f.perms || '755'; this.showChmodModal = true; },
@@ -2061,8 +2325,9 @@ function filesPage() {
                           '&q=' + encodeURIComponent(this.searchQuery) +
                           '&content=' + (this.searchInContent ? 'true' : 'false'));
       this.searching = false;
-      if (r.ok) this.searchResults = r.results;
-      if (!r.results?.length) toast('No files found', 'info');
+      if (r.ok) this.searchResults = r.results || [];
+      if (!r.ok) toast(r.error || 'Search failed', 'error');
+      else if (!r.results?.length) toast('No files found', 'info');
     },
 
     // --- Upload -----------------------------------------------------------------
@@ -2085,11 +2350,12 @@ function filesPage() {
           const r = await fetch('/api/files/upload', { method: 'POST', body: fd });
           const j = await r.json();
           item.status = j.ok ? 'done' : 'error';
+          if (!j.ok && j.error) item.status = 'error: ' + j.error;
         } catch { item.status = 'error'; }
       }
       this.uploading = false;
       const done = this.uploadQueue.filter(i => i.status === 'done').length;
-      toast('Uploaded ' + done + '/' + this.uploadQueue.length + ' files', 'success');
+      toast('Uploaded ' + done + '/' + this.uploadQueue.length + ' files', done === this.uploadQueue.length ? 'success' : 'error');
       await this.loadDir(this.path);
     },
 
@@ -2157,7 +2423,7 @@ function aiAssistant() {
 
     contextOptions: [
       { id:'server',   icon:'monitor', label:'Server Info' },
-      { id:'nginx',    icon:'globe', label:'Nginx Logs' },
+      { id:'nginx',    icon:'globe', label:'Web Server Logs' },
       { id:'php',      icon:'database', label:'PHP Errors' },
       { id:'mysql',    icon:'database', label:'MySQL Status' },
     ],
@@ -2165,7 +2431,13 @@ function aiAssistant() {
     async init() {
       const chk = await get('/api/auth/check').catch(()=>({ok:false}));
       this.loggedIn = !!(chk.ok && chk.logged_in);
-      document.addEventListener('vortex-logged-in', () => { this.loggedIn = true; });
+      if (!vpOnce(this, 'init')) return;
+      document.addEventListener('vortex-logged-in', async () => {
+        this.loggedIn = true;
+        // The config fetch at page load ran before login and got a 401.
+        const c = await get('/api/ai/config').catch(()=>({ok:false}));
+        if (c.ok) { this.configured = c.config.enabled && !!c.config.api_key; this.modelName = c.config.model || 'NeonCodex'; }
+      });
       document.addEventListener('vortex-logged-out', () => { this.loggedIn = false; });
       // Listen for sidebar button toggle
       document.addEventListener('vortex-toggle-ai', () => {
@@ -2174,7 +2446,8 @@ function aiAssistant() {
       });
       const r = await get('/api/ai/config').catch(()=>({ok:false}));
       if (r.ok) {
-        this.configured = r.config.enabled && !!r.config.api_key && r.config.api_key !== '***';
+        // The backend masks a saved key as '***' -- that still means a key is set.
+        this.configured = r.config.enabled && !!r.config.api_key;
         this.modelName  = r.config.model || 'NeonCodex';
       }
     },
@@ -2192,21 +2465,22 @@ function aiAssistant() {
       if (this.activeContexts.includes('server')) {
         try {
           const r = await get('/api/dashboard/stats');
-          if (r.ok) ctx += `Server Stats: CPU ${r.cpu}%, RAM ${r.ram}, Disk ${r.disk}\n`;
+          const pair = (o) => (o && typeof o === 'object') ? fmtBytes(o.used)+' / '+fmtBytes(o.total) : (o ?? '?');
+          if (r.ok) ctx += `Server Stats: CPU ${r.cpu}%, RAM ${pair(r.ram)}, Disk ${pair(r.disk)}, Load ${(r.load||[]).join(' ')}, Uptime ${r.uptime||'?'}\n`;
         } catch {}
       }
       if (this.activeContexts.includes('nginx')) {
         try {
-          const r = await fetch('/api/terminal/exec', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'tail -50 /var/log/nginx/error.log 2>/dev/null || echo "No nginx error log"',cwd:'/'})});
+          const r = await fetch('/api/terminal/exec', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'found=0; for f in /var/log/nginx/error.log /var/log/apache2/error.log /var/log/httpd/error_log /usr/local/lsws/logs/error.log /var/log/caddy/caddy.log; do if [ -f "$f" ]; then found=1; echo "== $f"; tail -50 "$f"; fi; done; [ "$found" = 1 ] || echo "No web server error log found"',cwd:'/'})});
           const d = await r.json();
-          if (d.ok) ctx += `\nNginx Error Log (last 50 lines):\n${d.output}\n`;
+          if (d.ok) ctx += `\nWeb Server Error Log (last 50 lines):\n${(d.stdout||'')+(d.stderr||'')}\n`;
         } catch {}
       }
       if (this.activeContexts.includes('php')) {
         try {
           const r = await fetch('/api/terminal/exec', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'find /var/log -name "php*error*" 2>/dev/null | head -1 | xargs tail -30 2>/dev/null || echo "No PHP error log found"',cwd:'/'})});
           const d = await r.json();
-          if (d.ok) ctx += `\nPHP Error Log:\n${d.output}\n`;
+          if (d.ok) ctx += `\nPHP Error Log:\n${(d.stdout||'')+(d.stderr||'')}\n`;
         } catch {}
       }
       return ctx;
@@ -2286,10 +2560,12 @@ function aiAssistant() {
     // Format assistant messages with basic markdown
     formatMsg(content) {
       if (!content) return '';
-      return content
+      // Rendered with x-html: escape EVERYTHING first (model output can echo
+      // log lines or prompt-injected markup), then add the few tags below.
+      return vpEsc(content)
         // Code blocks
         .replace(/```(\w+)?\n?([\s\S]*?)```/g, (_, lang, code) =>
-          `<pre style="background:#0f1117;border:1px solid #2a2b3a;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;overflow-x:auto;margin:6px 0;white-space:pre-wrap;color:#e2e8f0">${code.trim().replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`)
+          `<pre style="background:#0f1117;border:1px solid #2a2b3a;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;overflow-x:auto;margin:6px 0;white-space:pre-wrap;color:#e2e8f0">${code.trim()}</pre>`)
         // Inline code
         .replace(/`([^`]+)`/g, '<code style="background:rgba(88,101,242,.15);border:1px solid rgba(88,101,242,.3);border-radius:3px;padding:1px 5px;font-family:monospace;font-size:11px;color:#7c8af7">$1</code>')
         // Bold
@@ -2332,7 +2608,7 @@ function phpPage() {
         this.selVer   = r.versions[0].version;
         await this.loadTab();
       }
-      document.addEventListener("vortex-logged-in", () => { this.init(); });
+      if (vpOnce(this, 'init')) document.addEventListener("vortex-logged-in", () => { this.init(); });
     },
 
     async selectVer(v) { this.selVer = v; await this.loadTab(); },
@@ -2354,8 +2630,8 @@ function phpPage() {
       e.loading = true;
       const r = await post(`/api/php/${this.selVer}/extensions/${e.name}/install`);
       e.loading = false;
-      if (r.ok) { e.installed = true; toast(e.name+' installed','success'); }
-      else toast(r.error||'Failed','error');
+      if (r.ok && r.installed !== false) { e.installed = true; toast(e.name+' installed','success'); }
+      else toast(r.error||('Could not install '+e.name+((r.message||r.output)?': '+(r.message||r.output):'')),'error');
     },
 
     async uninstallExt(e) {
@@ -2366,24 +2642,19 @@ function phpPage() {
     },
 
     async loadConfig() {
-      const r = await get(`/api/php/${this.selVer}/ini`);
-      if (r.ok) this.config = r.config || r.ini || {};
+      const r = await get(`/api/php/${this.selVer}/config`);
+      if (r.ok) this.config = r.config || {};
     },
 
     async saveConfig() {
-      const r = await post(`/api/php/${this.selVer}/ini`, {config: this.config});
+      const r = await put(`/api/php/${this.selVer}/config`, {config: this.config});
       if (r.ok) { toast('Saved & FPM reloaded','success'); }
       else toast(r.error||'Failed','error');
     },
 
     async loadFpm() {
-      const r = await get(`/api/php/${this.selVer}/fpm`);
-      if (r.ok) {
-        this.fpmProfile = r.profile || {};
-        // Update the version status
-        const v = this.versions.find(v=>v.version===this.selVer);
-        if (v && r.status) v.status = r.status;
-      }
+      const r = await get(`/api/php/${this.selVer}/fpmprofile`);
+      if (r.ok) this.fpmProfile = r.config || {};
     },
 
     // Called from HTML button: fpmAction('start') etc
@@ -2419,14 +2690,14 @@ function phpPage() {
 
     async loadPhpinfo() {
       const r = await get(`/api/php/${this.selVer}/phpinfo`);
-      if (r.ok) this.phpinfo = r.output || '';
+      if (r.ok) this.phpinfo = r.content || r.output || '';
     },
 
     // Opens the raw php.ini editor modal
     async openIni() {
-      const r = await get(`/api/php/${this.selVer}/ini/raw`);
+      const r = await get(`/api/php/${this.selVer}/ini`);
       if (r.ok) {
-        this.iniModal = {show:true, version:this.selVer, content: r.content||''};
+        this.iniModal = {show:true, version:this.selVer, content: r.content||'', path: r.path||''};
       } else {
         // fallback: stringify config object
         const entries = Object.entries(this.config).map(([k,v])=>k+' = '+v).join('\n');
@@ -2435,7 +2706,8 @@ function phpPage() {
     },
 
     async saveIni() {
-      const r = await post(`/api/php/${this.selVer}/ini/raw`, {content: this.iniModal.content});
+      if (!this.iniModal.path) { toast('php.ini path unknown - reload the editor','error'); return; }
+      const r = await put(`/api/php/${this.selVer}/ini`, {path: this.iniModal.path, content: this.iniModal.content});
       if (r.ok) { toast('php.ini saved & FPM reloaded','success'); this.iniModal.show=false; }
       else toast(r.error||'Failed','error');
     },
@@ -2447,7 +2719,7 @@ function servicesPage() {
   return {
     services: [],
 
-    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="services") this.load(); }); },
+    async init() { await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="services") this.load(); }); },
     serviceIcon(name) {
       const m = {nginx:'globe',apache2:'globe',caddy:'globe',mysql:'database',mariadb:'database',postgresql:'database',mongodb:'database',redis:'zap',docker:'package',supervisor:'eye',ufw:'shield',fail2ban:'lock',clamav:'bug',bind9:'wifi',ssh:'key',sshd:'key',php:'database',vortexpanel:'refresh'};
       for(const[k,v]of Object.entries(m)){if(name.toLowerCase().includes(k))return v;}
@@ -2460,7 +2732,8 @@ function servicesPage() {
     },
 
     async control(name, action) {
-      const r = await post(`/api/services/${name}/${action}`);
+      if (action === 'stop' && !confirm('Stop '+name+'?'+(/ssh|vortexpanel/i.test(name)?'\n\nStopping this service can cut off your access to the server or this panel.':''))) return;
+      const r = await post(`/api/services/${encodeURIComponent(name)}/${action}`, {});
       if (r.ok) { toast(`${action} ${name}`,'success'); await this.load(); }
       else toast(r.error||'Failed','error');
     },
@@ -2482,7 +2755,7 @@ function modulesPage() {
     f2bWebsiteJails: [], f2bServerJails: [], f2bServerPresets: [], websitesForF2b: [],
     f2bWebsiteForm: {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:30, findtime:300, bantime:600},
     f2bServerForm:  {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600},
-    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
+    async init() { await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
 
     catalogRefreshing: false,
     async refreshCatalog() {
@@ -2667,6 +2940,79 @@ function modulesPage() {
     async control(m, action) {
       const r = await post(`/api/modules/${m.id}/control`, {action});
       if (r.ok) { m.svcStatus=r.status; toast(`${action} ${m.name}`,'success'); }
+      else toast(r.error||`${action} ${m.name} failed`,'error');
+    },
+
+    // --- PHP settings helpers (the settings modal used to post actions
+    // 'install_php_ext' / 'uninstall_php_ext' / 'save_php_config' /
+    // 'save_fpm_profile' to /api/modules/php/settings, which has no such
+    // actions and answered "Unknown action" -- these use the real routes).
+    _phpVer() { return this.settingsModal.selPhpVer || this.settingsModal.version || ''; },
+    async phpExtAction(ext, install) {
+      const ver = this._phpVer();
+      if (!ver) { toast('Select a PHP version first','error'); return; }
+      if (!install && !confirm('Uninstall '+ext.name+' from PHP '+ver+'?')) return;
+      ext._busy = true;
+      const r = await post(`/api/php/${ver}/extensions/${encodeURIComponent(ext.name)}/${install?'install':'uninstall'}`, {});
+      ext._busy = false;
+      if (!r.ok) { toast(r.error||'Failed','error'); return; }
+      if (install) {
+        if (r.installed === false) { const m=r.message||r.output||''; toast('Could not install '+ext.name+(m?': '+String(m).slice(-200):''),'error'); return; }
+        ext.installed = true; toast(ext.name+' installed','success');
+      } else { ext.installed = false; toast(ext.name+' removed','success'); }
+    },
+    async phpSaveConfig(keys) {
+      const ver = this._phpVer();
+      if (!ver) { toast('Select a PHP version first','error'); return; }
+      const all = this.settingsModal.phpConfig || {};
+      const cfg = {};
+      (keys || Object.keys(all)).forEach(k => { if (all[k] !== undefined) cfg[k] = all[k]; });
+      const r = await put(`/api/php/${ver}/config`, {config: cfg});
+      toast(r.ok?'PHP configuration saved, PHP-FPM reloaded':(r.error||'Save failed'), r.ok?'success':'error');
+    },
+    async phpSaveFpmProfile(keys) {
+      // No dedicated save route exists: patch the keys into the pool file
+      // text loaded by the settings call and save it via save_fpm_content.
+      const sm = this.settingsModal;
+      if (!sm.fpmConf || !sm.fpmContent) { toast('FPM pool file not loaded - open the FPM Profile tab first','error'); return; }
+      let txt = sm.fpmContent;
+      const prof = sm.fpmProfile || {};
+      for (const k of (keys || Object.keys(prof))) {
+        const v = prof[k];
+        if (v === undefined || v === null || String(v).trim() === '') continue;
+        if (/[\r\n;]/.test(String(v))) { toast('Invalid value for '+k,'error'); return; }
+        const esc = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Prefer the active line; fall back to uncommenting a ';key =' one.
+        const reActive = new RegExp('^[ \\t]*' + esc + '\\s*=.*$', 'm');
+        const reComment = new RegExp('^[ \\t]*;[ \\t]*' + esc + '\\s*=.*$', 'm');
+        const line = k + ' = ' + String(v).trim();
+        if (reActive.test(txt)) txt = txt.replace(reActive, line);
+        else if (reComment.test(txt)) txt = txt.replace(reComment, line);
+        else txt = txt.replace(/\s*$/, '\n' + line + '\n');
+      }
+      const r = await post('/api/modules/php/settings', {action:'save_fpm_content', version:this._phpVer(), conf_path:sm.fpmConf, content:txt});
+      if (r.ok) { sm.fpmContent = txt; toast('FPM profile saved, PHP-FPM reloaded','success'); }
+      else toast(r.error||'Save failed','error');
+    },
+    async ftpAddUser() {
+      const sm = this.settingsModal;
+      if (!sm.ftpUser || !sm.ftpPass) { toast('Username and password are required','error'); return; }
+      const r = await post('/api/ftp/accounts', {user:sm.ftpUser, password:sm.ftpPass, home:sm.ftpHome||'/www/wwwroot'});
+      if (r.ok) { toast('FTP user added','success'); sm.showFtpAdd=false; sm.ftpUser=''; sm.ftpPass=''; sm.ftpHome=''; this.openSettings(sm.mod); }
+      else toast(r.error||'Failed','error');
+    },
+    async ftpDelUser(u) {
+      if (!confirm('Delete FTP user '+u.user+'?')) return;
+      const r = await del('/api/ftp/accounts/'+encodeURIComponent(u.user));
+      if (r.ok) { toast('Deleted','success'); this.openSettings(this.settingsModal.mod); }
+      else toast(r.error||'Failed','error');
+    },
+    async uninstallPhpVersion() {
+      const ver = this.phpUninstallModal.selVer;
+      this.phpUninstallModal.show = false;
+      const m = this.modules.find(x => x.id === 'php');
+      if (!m || !ver) return;
+      await this._startJob(m, 'uninstall', ver);
     },
 
     // --- App Settings Modal -----------------------------------------------------
@@ -2750,7 +3096,7 @@ function modulesPage() {
         this.settingsModal.confChanged    = false;
         this.settingsModal.caddyOpts      = r.global_opts     || {};
         this.settingsModal.caddyCerts     = r.tls_certs       || '';
-        this.settingsModal.phpServiceName  = m.id==='php' ? 'php'+(r.sel_ver||'')+ '-fpm' : '';
+        this.settingsModal.phpServiceName  = m.id==='php' ? (r.service || '') : '';
         this.settingsModal.ddnsDomains     = r.domains        || [];
         this.settingsModal.dnsZones        = r.zones          || [];
         this.settingsModal.dnsRecords      = r.records        || [];
@@ -2948,6 +3294,69 @@ function modulesPage() {
       toast(r.ok?'Optimization saved':'Failed: '+(r.error||''), r.ok?'success':'error');
     },
 
+    // Redis "Set Persistence": no dedicated backend action exists, so patch
+    // the keys into redis.conf (loaded by the settings call) and save it via
+    // the generic save_config action - that one restarts Redis and restores
+    // the previous file if Redis does not come back.
+    async redisSavePersistence(keys) {
+      const sm = this.settingsModal;
+      if (!sm.confPath || !sm.confContent) { toast('redis.conf was not loaded - reopen the settings','error'); return; }
+      const p = sm.persistence || {};
+      const vals = {};
+      for (const k of keys) {
+        let v = k === 'appendonly' ? p.aof_enabled : p[k];
+        v = String(v == null ? '' : v).trim();
+        if (k === 'dir' && !/^\/[^\s"'\\]*$/.test(v)) { toast('Storage path must be an absolute path without spaces or quotes','error'); return; }
+        if (k === 'appendonly' && !['yes','no'].includes(v)) { toast('Invalid append-only value','error'); return; }
+        if (k === 'appendfsync' && !['always','everysec','no'].includes(v)) { toast('Invalid appendfsync value','error'); return; }
+        vals[k] = v;
+      }
+      if (vals.dir && !confirm('Move Redis persistence to '+vals.dir+'?\n\nThe directory must already exist and be writable by the redis user; existing dump/AOF files are NOT moved. Redis restarts now.')) return;
+      let txt = sm.confContent;
+      for (const [k, v] of Object.entries(vals)) {
+        const re = new RegExp('^[ \\t]*' + k + '[ \\t]+[^\\n]*$', 'm');
+        const reC = new RegExp('^[ \\t]*#[ \\t]*' + k + '[ \\t]+[^\\n]*$', 'm');
+        const line = k + ' ' + v;
+        if (re.test(txt)) txt = txt.replace(re, line);
+        else if (reC.test(txt)) txt = txt.replace(reC, line);
+        else txt = txt.replace(/\s*$/, '\n' + line + '\n');
+      }
+      sm.saving = true;
+      const r = await post('/api/modules/'+sm.mod.id+'/settings', {action:'save_config', conf_path: sm.confPath, content: txt});
+      sm.saving = false;
+      if (r.ok) { sm.confContent = txt; toast(r.message || 'Persistence saved, Redis restarted','success'); }
+      else toast(r.error || 'Save failed','error');
+    },
+
+    // Port tab: MySQL/MariaDB use save_optimization {port}. pure-ftpd has no
+    // backend port action; on RHEL its port is the "Bind" line of
+    // pure-ftpd.conf, which the generic save_config action can write. On
+    // Debian the port lives in /etc/pure-ftpd/conf/Bind, which no endpoint
+    // edits.
+    async settingsSavePort() {
+      const sm = this.settingsModal;
+      const port = parseInt(sm.port, 10);
+      if (!(port > 0 && port < 65536)) { toast('Port must be 1-65535','error'); return; }
+      const id = sm.mod?.id || 'mysql';
+      let r;
+      sm.saving = true;
+      if (id === 'pure-ftpd' || id === 'pure_ftpd') {
+        const re = /^([ \t]*Bind[ \t]+)([^\n,]*,)?\d+[ \t]*$/m;
+        if (!sm.confContent || !re.test(sm.confContent)) {
+          sm.saving = false;
+          toast('This server keeps the FTP port in /etc/pure-ftpd/conf/Bind, which the panel cannot edit yet - change it there and restart pure-ftpd','error');
+          return;
+        }
+        const txt = sm.confContent.replace(re, (m0, a, b) => a + (b || '') + port);
+        r = await post('/api/modules/'+id+'/settings', {action:'save_config', conf_path: sm.confPath, content: txt});
+        if (r.ok) sm.confContent = txt;
+      } else {
+        r = await post('/api/modules/'+id+'/settings', {action:'save_optimization', optimization:{port:String(port)}});
+      }
+      sm.saving = false;
+      toast(r.ok ? (r.message || 'Port updated') : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+    },
+
     async settingsPmaSetPort() {
       const sm = this.settingsModal;
       const r = await post('/api/modules/phpmyadmin/settings', {
@@ -2968,6 +3377,7 @@ function modulesPage() {
       const sm = this.settingsModal;
       if (!sm.switchVer) { toast('Select a version first','error'); return; }
       const modName = sm.mod?.name || sm.mod?.id;
+      if (!confirm(`Switch ${modName} to version ${sm.switchVer}? The service restarts during the switch.`)) return;
       const label   = `Switching ${modName} to v${sm.switchVer}`;
       const r = await post(`/api/modules/${sm.mod.id}/settings`, {
         action: 'switch_version', version: sm.switchVer,
@@ -3049,33 +3459,52 @@ function modulesPage() {
 // --- FIREWALL -------------------------------------------------------------------
 function firewallPage() {
   return {
-    rules: [], status: '', showAdd: false,
+    rules: [], status: '', showAdd: false, backend: '', fwError: '',
     form: {port:'', protocol:'tcp', action:'allow', comment:''},
 
-    async init() { await this.load(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="firewall") this.load(); }); },
+    async init() { await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="firewall") this.load(); }); },
 
     async load() {
       const r = await get('/api/firewall');
       if (r.ok) {
-        this.rules  = r.rules  || [];
-        this.status = r.status || '';
-      }
+        this.rules   = r.rules  || [];
+        this.status  = r.status || '';
+        this.backend = r.backend || '';
+        this.fwError = r.error || '';
+      } else if (r.error) this.fwError = r.error;
     },
 
+    get backendLabel() { return this.backend === 'firewalld' ? 'firewalld' : this.backend === 'ufw' ? 'UFW' : 'No firewall manager'; },
+
+    // The backend refuses to block/delete the rule that keeps SSH or the
+    // panel port reachable unless the request carries force=true.
+    _fwNeedsForce(r) { return !!(r && !r.ok && /force=true/.test(String(r.error || ''))); },
+
     async add() {
-      if (!this.form.port) { toast('Port required','error'); return; }
-      const r = await post('/api/firewall/rules', this.form);
+      if (!String(this.form.port).trim()) { toast('Port required','error'); return; }
+      const body = {...this.form, port:String(this.form.port).trim()};
+      let r = await post('/api/firewall/rules', body);
+      if (this._fwNeedsForce(r) && confirm(String(r.error).replace(/\s*Send force=true to override\.?/, '') + '\n\nAdd the rule anyway? You may lose access to SSH or this panel.')) {
+        r = await post('/api/firewall/rules', {...body, force:true});
+      } else if (this._fwNeedsForce(r)) return;
       if (r.ok) { toast('Rule added','success'); this.showAdd=false; await this.load(); }
       else toast(r.error||'Failed','error');
     },
 
     async del(num) {
-      if (!confirm('Delete this rule?')) return;
-      const r = await del(`/api/firewall/rules/${num}`);
+      if (!confirm('Delete firewall rule #'+num+'?')) return;
+      const n = parseInt(num,10);
+      let r = await del(`/api/firewall/rules/${n}`);
+      if (this._fwNeedsForce(r)) {
+        if (!confirm(String(r.error).replace(/\s*Send force=true to override\.?/, '') + '\n\nDelete it anyway? You may lose access to SSH or this panel.')) return;
+        r = await del(`/api/firewall/rules/${n}?force=1`);
+      }
       if (r.ok) { toast('Rule removed','success'); await this.load(); }
+      else { toast(r.error||'Failed to remove rule','error'); await this.load(); }
     },
 
     async toggleFirewall(enable) {
+      if (!enable && !confirm('Disable the firewall? All ports become reachable.')) return;
       const r = await post('/api/firewall/toggle', {enable});
       if (r.ok) { toast(enable?'Firewall enabled':'Firewall disabled','success'); await this.load(); }
       else toast(r.error||'Failed','error');
@@ -3090,7 +3519,14 @@ function terminalPage() {
     term: null, fitAddon: null, ws: null,
     init() {
      try {
+      // Alpine calls init() at page load for every (hidden) page; only build
+      // the terminal and open the PTY socket once the Terminal page is
+      // actually shown (x-effect calls init() again on navigation). Opening
+      // it at load time hit the socket before login, so the first visit
+      // always showed "[Connection closed]".
+      if (vpActivePage() !== 'terminal') return;
       if (this.term) {
+        if (!this.ws || this.ws.readyState > 1) this.reconnect();
         setTimeout(()=>this.fitAddon.fit(), 50);
         setTimeout(()=>this.fitAddon.fit(), 300);
         return;
@@ -3166,7 +3602,7 @@ function backupsPage() {
     uploading:    false,
     form: {website:{domain:''}, db:{name:''}},
 
-    async init() { await Promise.all([this.load(), this.loadInfo()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="backups") this.load(); }); },
+    async init() { await Promise.all([this.load(), this.loadInfo()]); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="backups") this.load(); }); },
 
     async load() {
       const r = await get('/api/backups');
@@ -3192,6 +3628,7 @@ function backupsPage() {
       if (!confirm('Disconnect cloud storage? Local config will be removed.')) return;
       const r = await del('/api/backups/cloud/config');
       if (r.ok) { toast('Disconnected','success'); this.cloudConfig={connected:false}; this.cloudList=[]; }
+      else toast(r.error||'Failed','error');
     },
     async loadCloudList() {
       if (!this.cloudConfig.connected) return;
@@ -3199,19 +3636,20 @@ function backupsPage() {
       if (r.ok) this.cloudList = r.items || [];
     },
     async uploadToCloud(name) {
-      const r = await post('/api/backups/cloud/upload/'+name, {});
+      const r = await post('/api/backups/cloud/upload/'+encodeURIComponent(name), {});
       if (r.ok) { toast('Upload started','success'); setTimeout(()=>this.loadCloudList(), 3000); }
       else toast(r.error||'Failed','error');
     },
     async downloadFromCloud(name) {
-      const r = await post('/api/backups/cloud/download/'+name, {});
+      const r = await post('/api/backups/cloud/download/'+encodeURIComponent(name), {});
       if (r.ok) { toast('Downloaded to server','success'); await this.load(); }
       else toast(r.error||'Failed','error');
     },
     async deleteCloudBackup(name) {
       if (!confirm('Delete '+name+' from cloud storage?')) return;
-      const r = await del('/api/backups/cloud/'+name);
+      const r = await del('/api/backups/cloud/'+encodeURIComponent(name));
       if (r.ok) { toast('Deleted','success'); await this.loadCloudList(); }
+      else toast(r.error||'Failed','error');
     },
 
     async createBackup(type, domain, dbName) {
@@ -3219,17 +3657,15 @@ function backupsPage() {
       const r = await post('/api/backups/create', {type, domain, database:dbName});
       if (!r.ok) { this.creating=''; toast(r.error||'Failed','error'); return; }
       this.jobModal = {show:true, title:`Creating ${type} backup…`, lines:[], done:false, success:false, error:''};
-      const poll = async () => {
-        const j = await get(`/api/backups/job/${r.job_id}`);
-        if (!j.ok) { this.creating=''; return; }
-        this.jobModal.lines = j.lines || [];
-        if (j.done) {
+      vpPollJob(`/api/backups/job/${r.job_id}`,
+        (j) => { this.jobModal.lines = j.lines || []; },
+        async (j) => {
           this.creating='';
-          this.jobModal = {...this.jobModal, done:true, success:j.success, error:j.error||''};
-          if (j.success) await this.load();
-        } else setTimeout(poll, 800);
-      };
-      setTimeout(poll, 500);
+          const lines = [...(this.jobModal.lines||[])];
+          if (j.error) lines.push('Error: '+j.error);
+          this.jobModal = {...this.jobModal, lines, done:true, success:!!j.success, error:j.error||''};
+          if (j.success) await this.load(); else toast(j.error||'Backup failed','error');
+        });
     },
 
     downloadBackup(name) {
@@ -3249,16 +3685,14 @@ function backupsPage() {
       const r = await post('/api/backups/restore', {name:this.restoreModal.name, type:this.restoreModal.type, target});
       if (!r.ok) { toast(r.error||'Failed','error'); return; }
       this.jobModal = {show:true, title:'Restoring…', lines:[], done:false, success:false, error:''};
-      const poll = async () => {
-        const j = await get(`/api/backups/job/${r.job_id}`);
-        if (!j.ok) return;
-        this.jobModal.lines = j.lines||[];
-        if (j.done) {
-          this.jobModal = {...this.jobModal, done:true, success:j.success, error:j.error||''};
-          if (j.success) toast('Restored!','success');
-        } else setTimeout(poll, 800);
-      };
-      setTimeout(poll, 500);
+      vpPollJob(`/api/backups/job/${r.job_id}`,
+        (j) => { this.jobModal.lines = j.lines||[]; },
+        (j) => {
+          const lines = [...(this.jobModal.lines||[])];
+          if (j.error) lines.push('Error: '+j.error);
+          this.jobModal = {...this.jobModal, lines, done:true, success:!!j.success, error:j.error||''};
+          if (j.success) toast('Restored!','success'); else toast(j.error||'Restore failed','error');
+        });
     },
 
     handleDrop(e) {
@@ -3276,7 +3710,7 @@ function backupsPage() {
       try {
         const resp = await fetch('/api/backups/upload', {method:'POST', body:fd});
         const r = await resp.json();
-        if (r.ok) { toast('Upload started!','success'); this.showUpload=false; }
+        if (r.ok) { toast(r.message||'Upload complete','success'); this.showUpload=false; await this.load(); }
         else toast(r.error||'Failed','error');
       } catch(e) { toast('Upload failed: '+e.message,'error'); }
       this.uploading = false;
@@ -3284,8 +3718,9 @@ function backupsPage() {
 
     async del(name) {
       if (!confirm(`Delete backup "${name}"?`)) return;
-      const r = await del(`/api/backups/${name}`);
+      const r = await del(`/api/backups/${encodeURIComponent(name)}`);
       if (r.ok) { toast('Deleted','success'); await this.load(); }
+      else toast(r.error||'Delete failed','error');
     },
 
     fmtSize: fmtBytes, fmtDate,
@@ -3300,7 +3735,7 @@ function dnsPage() {
     zoneForm:  {domain:'', ip:''},
     recForm:   {type:'A', name:'', value:'', ttl:'3600'},
 
-    async init() { await this.loadZones(); document.addEventListener("vortex-logged-in", () => { this.init(); }); },
+    async init() { await this.loadZones(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); },
 
     async loadZones() {
       const r = await get('/api/dns/zones');
@@ -3317,6 +3752,7 @@ function dnsPage() {
       if (!confirm(`Delete zone ${z.domain}?`)) return;
       const r = await del(`/api/dns/zones/${z.domain}`);
       if (r.ok) { toast('Deleted','success'); this.selZone=null; await this.loadZones(); }
+      else toast(r.error||'Failed','error');
     },
 
     async selectZone(z) {
@@ -3331,9 +3767,11 @@ function dnsPage() {
       else toast(r.error||'Failed','error');
     },
 
-    async delRecord(rec) {
-      const r = await del(`/api/dns/zones/${this.selZone.domain}/records/${rec.id}`);
+    async delRecord(rec, idx) {
+      if (!confirm('Delete this DNS record?')) return;
+      const r = await post(`/api/dns/zones/${this.selZone.domain}/records/delete`, {index: rec.index ?? idx});
       if (r.ok) { toast('Deleted','success'); await this.selectZone(this.selZone); }
+      else toast(r.error||'Failed','error');
     },
   };
 }
@@ -3351,7 +3789,7 @@ function mailPage() {
 
     forwardingRules:[], showAddForward:false, forwardForm:{source:'',destination:''},
     logFilter:'mail', logLines:'100', logSearch:'', mailLogOutput:'', filteredMailLog:'',
-    async init() { await this.loadStatus(); await this.loadDomains(); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="mail") { this.loadStatus(); this.loadDomains(); } }); },
+    async init() { await this.loadStatus(); await this.loadDomains(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="mail") { this.loadStatus(); this.loadDomains(); } }); },
 
     async loadStatus() {
       const r = await get('/api/mail/status');
@@ -3371,7 +3809,7 @@ function mailPage() {
 
     async loadAccounts(domain) {
       this.selDomain = domain;
-      const r = await get(`/api/mail/accounts?domain=${domain}`);
+      const r = await get(`/api/mail/accounts?domain=${encodeURIComponent(domain)}`);
       if (r.ok) this.accounts = r.accounts || [];
     },
 
@@ -3387,13 +3825,14 @@ function mailPage() {
 
     async delAccount(email) {
       if (!confirm(`Delete ${email}?`)) return;
-      const r = await del(`/api/mail/accounts/${email}`);
+      const r = await del(`/api/mail/accounts/${encodeURIComponent(email)}`);
       if (r.ok) { toast('Deleted','success'); await this.loadAccounts(this.selDomain); }
+      else toast(r.error||'Delete failed','error');
     },
 
     async loadQueue() { this.queueLoading=true; const r=await get('/api/mail/queue'); this.queueLoading=false; this.queueOutput=r.ok?(r.output||'Queue empty'):''; },
-    async flushQueue() { const r=await post('/api/mail/queue/flush',{}); if(r.ok){toast('Flush requested','success'); await this.loadQueue();} },
-    async resetPassword() { if(!this.resetPassValue){toast('Enter new password','error');return;} const r=await post('/api/mail/accounts/'+this.resetPassTarget+'/password',{password:this.resetPassValue}); if(r.ok){toast('Password updated','success');this.showResetPass=false;this.resetPassValue='';}else toast(r.error||'Failed','error'); },
+    async flushQueue() { const r=await post('/api/mail/queue/flush',{}); if(r.ok){toast('Flush requested','success'); await this.loadQueue();} else toast(r.error||'Failed','error'); },
+    async resetPassword() { if(!this.resetPassValue){toast('Enter new password','error');return;} const r=await put('/api/mail/accounts/'+encodeURIComponent(this.resetPassTarget)+'/password',{password:this.resetPassValue}); if(r.ok){toast('Password updated','success');this.showResetPass=false;this.resetPassValue='';}else toast(r.error||'Failed','error'); },
     async loadForwarding() {
       const r = await get('/api/mail/forwarding?domain='+(this.selDomain||''));
       if (r.ok) this.forwardingRules = r.rules || [];
@@ -3411,6 +3850,7 @@ function mailPage() {
       if (!confirm('Remove forwarding for '+source+'?')) return;
       const r = await del('/api/mail/forwarding', {source});
       if (r.ok) { toast('Removed','success'); await this.loadForwarding(); }
+      else toast(r.error||'Failed','error');
     },
     async loadMailLogs() {
       const r = await get('/api/mail/logs?which='+this.logFilter+'&lines='+(this.logLines||'100'));
@@ -3421,7 +3861,7 @@ function mailPage() {
       if (!q) { this.filteredMailLog = ''; return; }
       this.filteredMailLog = (this.mailLogOutput||'').split('\n').filter(l=>l.toLowerCase().includes(q)).join('\n') || 'No matching entries.';
     },
-    async loadDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await get('/api/mail/dkim/'+this.dkimDomain); this.dkimLoading=false; this.dkimRecord=r.ok?r.record:''; },
+    async loadDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await get('/api/mail/dkim/'+this.dkimDomain); this.dkimLoading=false; this.dkimRecord=r.ok?r.record:''; if(!r.ok) toast(r.error||'No DKIM key for this domain yet','error'); },
     async genDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await post('/api/mail/dkim/'+this.dkimDomain,{}); this.dkimLoading=false; if(r.ok){this.dkimRecord=r.record;toast('DKIM generated','success');}else toast(r.error||'Failed','error'); },
     async control(svc, action) {
       const r = await post('/api/mail/control', {service:svc, action});
@@ -3443,6 +3883,7 @@ function ftpPage() {
       await this.load();
       const ws = await get('/api/websites');
       if (ws.ok) this.sites = ws.sites || [];
+      if (!vpOnce(this, 'init')) return;
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="ftp") this.load(); });
     },
 
@@ -3456,7 +3897,9 @@ function ftpPage() {
     },
 
     onDomainChange() {
-      if (this.form.selectedDomain) this.form.home = `/www/wwwroot/${this.form.selectedDomain}`;
+      if (!this.form.selectedDomain) return;
+      const site = this.sites.find(x => x.domain === this.form.selectedDomain);
+      this.form.home = (site && site.path) || `/www/wwwroot/${this.form.selectedDomain}`;
     },
 
     async create() {
@@ -3473,15 +3916,16 @@ function ftpPage() {
 
     async del(user) {
       if (!confirm(`Delete FTP account "${user}"?`)) return;
-      const r = await del(`/api/ftp/accounts/${user}`);
+      const r = await del(`/api/ftp/accounts/${encodeURIComponent(user)}`);
       if (r.ok) { toast('Deleted','success'); await this.load(); }
+      else toast(r.error||'Delete failed','error');
     },
 
     changePw(user) { this.pwModal = {show:true, user, password:''}; },
 
     async savePw() {
       if (this.pwModal.password.length < 6) { toast('Min 6 characters','error'); return; }
-      const r = await put(`/api/ftp/accounts/${this.pwModal.user}/password`, {password:this.pwModal.password});
+      const r = await put(`/api/ftp/accounts/${encodeURIComponent(this.pwModal.user)}/password`, {password:this.pwModal.password});
       if (r.ok) { toast('Password changed','success'); this.pwModal.show=false; }
       else toast(r.error||'Failed','error');
     },
@@ -3497,19 +3941,25 @@ function settingsPage() {
     ssl: {enabled:false, type:'none', days_left:-1, expiry:'', loading:false, msg:'', ok:false, type_loading:''},
     sslDomain: '',
     newPort: '',
+    portApplying: false, portMsg: '', portMsgOk: true,
     newHostname: '',
     scanPath: '',
     scanPaths: [],
     scanner: {loading:false, done:false, scanned:0, total:0, critical:0, high:0, medium:0, findings:[], current:''}, _scanTimer:null,
     aiConfig: {enabled:true, api_key:'', base_url:'https://neoncodex.io/api/v1', model:'neoncodex-default', max_tokens:2048},
-    aiModels: [], showApiKey: false,
+    aiModels: [], showApiKey: false, aiKeySet: false,
     aiTesting: false, aiTestResult: '', aiTestOk: false,
     securityUpdates: {total:0, critical:0, packages:[], checked:false, loading:false},
+    livepatch: {loaded:false, loading:false, data:null, provider:'', token:'', busy:'', log:'', output:''},
     applyingSecurityUpdates: false, securityUpdateOutput: '', securityUpdatePollTimer: null,
 
     async init() {
       await this.loadSettings();
+      // Was never called: the AI form showed defaults and "Save AI Config"
+      // overwrote the stored model/base URL (and the key) with them.
+      this.loadAiConfig();
       this.loadSecurityUpdates();
+      this.loadLivepatch();
       const s = Alpine.store('vp').security;
       const r2 = await get('/api/auth/2fa/status').catch(()=>({ok:false}));
       if (r2.ok) s.twofa.enabled = r2.enabled;
@@ -3520,7 +3970,8 @@ function settingsPage() {
       if (this.scanPaths.length && !this.scanPath) this.scanPath = this.scanPaths[0].path;
       const ss = await get('/api/settings/webshell-scan/status').catch(()=>({ok:false}));
       if (ss.ok && (ss.running || ss.done)) { this.applyScanState(ss); if (ss.running) this.pollWebshellScan(); }
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); this.loadSecurityUpdates(); } });
+      if (!vpOnce(this, 'init')) return;
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="settings") { this.loadSettings(); this.loadSecurityUpdates(); this.loadLivepatch(); } });
     },
 
     async loadSecurityUpdates(force) {
@@ -3551,9 +4002,15 @@ function settingsPage() {
 
     pollSecurityUpdates() {
       clearInterval(this.securityUpdatePollTimer);
+      let misses = 0;
       this.securityUpdatePollTimer = setInterval(async () => {
         const s = await get('/api/settings/security-updates/status').catch(()=>({ok:false}));
-        if (!s.ok) return;
+        if (!s.ok) {
+          // Stop after ~5 minutes without an answer (logged out, panel gone)
+          if (++misses > 150) { clearInterval(this.securityUpdatePollTimer); this.applyingSecurityUpdates = false; toast('Lost contact with the update job - reload the page to see its state','error'); }
+          return;
+        }
+        misses = 0;
         this.securityUpdateOutput = s.output || '';
         if (s.done) {
           clearInterval(this.securityUpdatePollTimer);
@@ -3581,43 +4038,101 @@ function settingsPage() {
 
     async saveSettings() {
       const r = await put('/api/settings', {panel_name:this.cfg.panel_name, auto_update:this.cfg.auto_update, timezone:this.cfg.timezone, panel_domain:this.cfg.panel_domain});
-      toast(r.ok?'Settings saved':'Failed', r.ok?'success':'error');
+      toast(r.ok?'Settings saved':(r.error||'Failed'), r.ok?'success':'error');
     },
 
     async savePanelName() {
       const r = await put('/api/settings', {panel_name:this.cfg.panel_name});
-      toast(r.ok?'Panel name saved':'Failed', r.ok?'success':'error');
+      toast(r.ok?'Panel name saved':(r.error||'Failed'), r.ok?'success':'error');
     },
 
     async changePort() {
       const p = parseInt(this.newPort);
       if (!p || p<1024||p>65535) { toast('Port must be 1024–65535','error'); return; }
+      if (!confirm('Move the panel to port '+p+'? Make sure this port is open in the firewall (and any cloud security group) first, or you will lock yourself out.')) return;
+      this.portApplying = true; this.portMsg = ''; this.portMsgOk = true;
       const r = await post('/api/settings/port', {port:p});
-      toast(r.ok?(r.message||'Port changed'):'Failed: '+(r.error||''), r.ok?'success':'error');
-      if (r.ok) { this.cfg.port=p; }
+      if (!r.ok) { this.portApplying = false; this.portMsgOk = false; this.portMsg = r.error || 'Failed'; toast('Failed: '+(r.error||''), 'error'); return; }
+      if (!r.apply_id) { this.portApplying = false; toast(r.message || 'Port unchanged', 'success'); return; }
+      this.portMsg = r.message || ('Moving the panel to port ' + p + '...');
+      await this.pollPortApply(r.apply_id, p);
+    },
+
+    // Same detached verify-and-roll-back helper as the HTTPS switch
+    // (pollSslApply): the panel restarts on the new port, and only if it does
+    // not answer there is the old port restored - in which case this tab can
+    // reach apply-log again and show why. The page CSP (connect-src 'self')
+    // forbids probing the new port with fetch, so the new port is detected
+    // with an image probe where the CSP allows it (https) and otherwise by the
+    // old port staying down past the helper's rollback window.
+    async pollPortApply(applyId, newPort) {
+      const scheme = window.location.protocol.replace(':', '');
+      const targetUrl = `${scheme}://${window.location.hostname}:${newPort}/#settings`;
+      let answered = false;
+      const probe = () => new Promise(res => {
+        if (scheme !== 'https') return res(false);
+        const img = new Image(); const tm = setTimeout(() => { img.src = ''; res(false); }, 2500);
+        img.onload = () => { clearTimeout(tm); res(true); };
+        img.onerror = () => { clearTimeout(tm); res(false); };
+        img.src = `${targetUrl.replace('/#settings', '')}/static/icons/docker.svg?_=${Date.now()}`;
+      });
+      let downSince = 0;
+      for (let i = 0; i < 80 && !answered; i++) {
+        await new Promise(r => setTimeout(r, 1500));
+        let log = null;
+        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 2500);
+        try { log = await (await fetch('/api/settings/ssl/apply-log', {cache:'no-store', signal:ctl.signal})).json(); } catch (e) { log = null; }
+        clearTimeout(tm);
+        if (log && log.id === applyId && log.status === 'failed') {
+          this.portApplying = false; this.portMsgOk = false;
+          this.portMsg = (log.error || 'Port change failed') + (log.log ? '\n\n' + log.log : '');
+          toast('The panel did not come up on port ' + newPort + ' - the previous port was restored', 'error');
+          this.loadSettings();
+          return;
+        }
+        if (log && log.id === applyId && log.status === 'ok') { answered = true; break; }
+        if (!log) {
+          if (!downSince) downSince = Date.now();
+          if (await probe()) { answered = true; break; }
+          // The helper gives the new port ~20 probes before rolling back;
+          // once the old port has stayed down well past that, it worked.
+          if (Date.now() - downSince > 35000) { answered = true; break; }
+        } else downSince = 0;
+      }
+      if (!answered) {
+        this.portApplying = false; this.portMsgOk = false;
+        this.portMsg = 'No result from the port change yet. Try ' + targetUrl.replace('/#settings', '') + ' or reload this page.';
+        return;
+      }
+      this.portMsg = 'Panel moved to port ' + newPort + ' - redirecting...';
+      toast('Reconnecting on port ' + newPort + '...', 'success');
+      await new Promise(r => setTimeout(r, 1200));
+      window.location.href = targetUrl;
     },
 
     async setHostname() {
       if (!this.newHostname) return;
-      const r = await post('/api/settings/hostname', {hostname:this.newHostname});
-      toast(r.ok?'Hostname changed':'Failed', r.ok?'success':'error');
+      const r = await post('/api/settings/hostname', {hostname:this.newHostname.trim()});
+      toast(r.ok?'Hostname changed':(r.error||'Failed'), r.ok?'success':'error');
       if (r.ok) { this.system.hostname=this.newHostname; this.newHostname=''; }
     },
 
     async syncTime() {
       const r = await post('/api/settings/sync-time', {});
-      toast(r.ok?'Time synced: '+r.time:'Failed', r.ok?'success':'error');
+      toast(r.ok?'Time synced: '+r.time:(r.error||'Failed'), r.ok?'success':'error');
       if (r.ok) this.system.server_time = r.time;
     },
 
     async systemUpdate() {
+      if (!confirm('Upgrade all system packages now? Services may restart while it runs.')) return;
       const r = await post('/api/settings/update', {});
-      toast(r.ok?'System update started in background':'Failed', r.ok?'success':'error');
+      toast(r.ok?(r.message||'System update started in background'):(r.error||'Failed'), r.ok?'success':'error');
     },
 
     async reboot() {
+      if (!confirm('Reboot the server now? All sites and services go offline until it is back.')) return;
       const r = await post('/api/settings/reboot', {});
-      toast(r.ok?'Rebooting in 3 seconds…':'Failed', r.ok?'success':'error');
+      toast(r.ok?'Rebooting in 3 seconds…':(r.error||'Failed'), r.ok?'success':'error');
     },
 
     // --- SSL --------------------------------------------------------------------
@@ -3694,9 +4209,14 @@ function settingsPage() {
 
     pollWebshellScan() {
       clearInterval(this._scanTimer);
+      let misses = 0;
       this._scanTimer = setInterval(async () => {
         const st = await get('/api/settings/webshell-scan/status').catch(()=>({ok:false}));
-        if (!st.ok) return;
+        if (!st.ok) {
+          if (++misses > 200) { clearInterval(this._scanTimer); this.scanner.loading = false; toast('Lost contact with the scan - reload the page to see its state','error'); }
+          return;
+        }
+        misses = 0;
         this.applyScanState(st);
         if (!st.running) {
           clearInterval(this._scanTimer);
@@ -3708,14 +4228,90 @@ function settingsPage() {
       }, 1500);
     },
 
+    // --- Kernel live patching (Canonical Livepatch / TuxCare KernelCare) --------
+    async loadLivepatch() {
+      const lp = this.livepatch;
+      lp.loading = true;
+      const r = await get('/api/livepatch/status').catch(() => ({ok:false}));
+      lp.loading = false;
+      if (!r.ok) return;
+      lp.data = r; lp.loaded = true;
+      const av = r.available || [];
+      if (!av.find(a => a.id === lp.provider)) lp.provider = av.length ? av[0].id : '';
+    },
+
+    get livepatchActiveName() {
+      const p = (this.livepatch.data && this.livepatch.data.providers) || {};
+      if (p.kernelcare && p.kernelcare.enabled) return 'TuxCare KernelCare';
+      if (p.canonical && p.canonical.enabled) return 'Canonical Livepatch';
+      return '';
+    },
+
+    get livepatchInstalled() {
+      const p = (this.livepatch.data && this.livepatch.data.providers) || {};
+      return !!((p.kernelcare && p.kernelcare.installed) || (p.canonical && p.canonical.installed));
+    },
+
+    async enableLivepatch() {
+      const lp = this.livepatch;
+      if (!lp.provider) { toast('No live patching provider is available for this server','error'); return; }
+      const tok = (lp.token || '').trim();
+      if (!tok) { toast('Enter the token / licence key from the provider','error'); return; }
+      const name = lp.provider === 'canonical' ? 'Canonical Livepatch' : 'TuxCare KernelCare';
+      if (!confirm('Install and enable ' + name + ' with this key? This can take a few minutes.')) return;
+      lp.busy = 'install'; lp.log = ''; lp.output = '';
+      const r = await post('/api/livepatch/install', {provider: lp.provider, token: tok});
+      lp.busy = '';
+      lp.log = (r.log || []).join('\n');
+      if (r.ok) {
+        lp.token = '';
+        if (r.status && r.status.ok) lp.data = r.status;
+        toast(name + ' enabled', 'success');
+        await this.loadLivepatch();
+      } else toast(r.error || 'Enabling live patching failed', 'error');
+    },
+
+    async updateLivepatch() {
+      const lp = this.livepatch;
+      lp.busy = 'update'; lp.output = '';
+      const r = await post('/api/livepatch/update', {});
+      lp.busy = '';
+      lp.output = r.output || r.error || '';
+      if (r.ok) toast('Live patch check finished', 'success');
+      else toast(r.error || (r.output ? 'Patch check failed - see output' : 'Patch check failed'), 'error');
+      await this.loadLivepatch();
+    },
+
+    async disableLivepatch() {
+      if (!confirm('Turn off live kernel patching? The licence or subscription is not cancelled.')) return;
+      const lp = this.livepatch;
+      lp.busy = 'disable'; lp.output = '';
+      const r = await post('/api/livepatch/disable', {});
+      lp.busy = '';
+      lp.output = r.output || r.error || '';
+      if (r.ok) toast('Live patching disabled', 'success');
+      else toast(r.error || 'Disabling live patching failed', 'error');
+      await this.loadLivepatch();
+    },
+
     // --- AI ---------------------------------------------------------------------
     async loadAiConfig() {
       const r = await get('/api/ai/config');
-      if (r.ok) { this.aiConfig={...this.aiConfig,...r.config}; if(this.aiConfig.api_key==='***')this.aiConfig.api_key=''; }
+      if (r.ok) { this.aiConfig={...this.aiConfig,...r.config}; this.aiKeySet=(this.aiConfig.api_key==='***'); if(this.aiKeySet)this.aiConfig.api_key=''; }
+    },
+
+    // The backend masks a saved key as '***'; the field is shown empty, and
+    // sending that empty value back used to erase the stored key whenever
+    // any other AI setting was saved.
+    _aiPayload() {
+      const p = {...this.aiConfig};
+      if (!p.api_key && this.aiKeySet) delete p.api_key;
+      return p;
     },
 
     async saveAiConfig() {
-      const r = await put('/api/ai/config', this.aiConfig);
+      const r = await put('/api/ai/config', this._aiPayload());
+      if (r.ok && this.aiConfig.api_key) this.aiKeySet = true;
       if (r.ok) toast('AI settings saved','success');
       else toast(r.error||'Failed','error');
     },
@@ -3728,11 +4324,11 @@ function settingsPage() {
 
     async testAiConnection() {
       this.aiTesting=true; this.aiTestResult='';
-      await put('/api/ai/config', this.aiConfig);
-      const r = await post('/api/ai/chat', {messages:[{role:'user',content:'Reply with just: \"VortexPanel AI connected ✓\"'}]});
+      await put('/api/ai/config', this._aiPayload());
+      const r = await post('/api/ai/chat', {messages:[{role:'user',content:'Reply with just: \"VortexPanel AI connected\"'}]});
       this.aiTesting=false;
       this.aiTestOk=r.ok;
-      this.aiTestResult=r.ok?'✓ '+r.content?.substring(0,80):'✗ '+(r.error||'Connection failed');
+      this.aiTestResult=r.ok?'Connected: '+(r.content||'').substring(0,80):'Failed: '+(r.error||'Connection failed');
     },
   };
 }
@@ -3742,10 +4338,16 @@ function monitoringPage() {
     stats: {cpu:0,ram:'',ramPct:0,disk:0,diskStr:'',uptime:'',load:''},
     processes: [],
 
-    async init() { await this.load(); setInterval(()=>this.load(), 5000); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="monitoring") this.load(); }); },
+    wsConflict: {conflict:false, active:[]},
+    async init() {
+      await this.load();
+      if (!vpOnce(this, 'init')) return;
+      setInterval(()=>{ if (vpActivePage()==='monitoring' && !document.hidden) this.load(); }, 5000);
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="monitoring") this.load(); });
+    },
     async killProcess(pid) {
       if (!confirm('Kill process PID '+pid+'?')) return;
-      const r = await post('/api/monitoring/processes/kill', {pid});
+      const r = await post('/api/monitoring/processes/kill', {pid: parseInt(pid,10)});
       if (r.ok) { toast('Signal sent to PID '+pid,'success'); setTimeout(()=>this.load(), 1000); }
       else toast(r.error||'Failed','error');
     },
@@ -3798,8 +4400,9 @@ function bandwidthPage() {
     async init() {
       await this.loadSummary();
       await this.loadDomains();
+      if (!vpOnce(this, 'init')) return;
       if (this._rtInterval) clearInterval(this._rtInterval);
-      this._rtInterval = setInterval(()=>this.loadRealtime(), 3000);
+      this._rtInterval = setInterval(()=>{ if (vpActivePage()==='bandwidth' && !document.hidden) this.loadRealtime(); }, 3000);
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="bandwidth") { this.loadSummary(); this.loadDomains(); } });
     },
 
@@ -3820,8 +4423,8 @@ function bandwidthPage() {
 
     async installVnstat() {
       toast('Installing vnstat…','info');
-      const r = await post('/api/bandwidth/install-vnstat');
-      toast(r.ok?'vnstat installed!':'Failed', r.ok?'success':'error');
+      const r = await post('/api/bandwidth/install-vnstat', {});
+      toast(r.ok?'vnstat installed!':(r.error||'vnstat installation failed'), r.ok?'success':'error');
       if (r.ok) await this.loadSummary();
     },
 
@@ -3852,13 +4455,25 @@ function securityPage() {
     sites: [],
 
     async init() {
-      if (window.__vpPendingSecurityTab) { this.tab = window.__vpPendingSecurityTab; window.__vpPendingSecurityTab = null; }
+      if (window.__vpPendingSecurityTab) { this.tab = window.__vpPendingSecurityTab; window.__vpPendingSecurityTab = null; if (this.tab === 'modsec') this.loadModsec(); }
       const sr = await get('/api/websites').catch(()=>({ok:false}));
       if (sr.ok) this.sites = sr.sites || [];
-      await Promise.all([this.loadScore(), this.loadSSH()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="security") { this.loadScore(); this.loadSSH(); } });
+      await Promise.all([this.loadScore(), this.loadSSH()]);
+      if (!vpOnce(this, 'init')) return;
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => {
+        if(e.detail!=="security") return;
+        this.loadScore(); this.loadSSH();
+        // Set by "Open WAF Controls" in the App Store (read only at load before)
+        if (window.__vpPendingSecurityTab) {
+          this.tab = window.__vpPendingSecurityTab; window.__vpPendingSecurityTab = null;
+          if (this.tab === 'modsec') this.loadModsec();
+        }
+      });
       window.addEventListener('vp:module-changed', (e) => {
         if (e.detail?.id === 'modsecurity') this.loadModsec();
-        if (e.detail?.id === 'fail2ban') { this.loadF2bWebsiteJails(); this.loadF2bServerJails(); }
+        // (this page has no loadF2bWebsiteJails/loadF2bServerJails -- calling
+        // them threw a TypeError every time fail2ban was installed/removed)
+        if (e.detail?.id === 'fail2ban' && this.f2bAvailable !== null) this.loadFail2ban();
       });
     },
 
@@ -3873,6 +4488,10 @@ function securityPage() {
     },
 
     async saveSSHConfig() {
+      const port = parseInt(this.ssh.port, 10);
+      if (!port || port < 1 || port > 65535) { toast('SSH port must be 1-65535','error'); return; }
+      if (String(port) !== String(this.ssh.active_port||'') && !confirm('Change the SSH port to '+port+'? Open it in the firewall (and any cloud security group) first, or SSH access will be lost.')) return;
+      if (this.ssh.password_auth === 'no' && !this.ssh.keys_exist && !confirm('Disable password login although no SSH key is installed for root? You may lock yourself out of SSH.')) return;
       this.ssh.saving = true;
       const r = await put('/api/security/ssh', {
         port:          this.ssh.port,
@@ -3917,7 +4536,7 @@ function securityPage() {
       this.newUser.loading = false;
       this.newUser.ok      = r.ok;
       this.newUser.result  = r.ok
-        ? `✓ User "${this.newUser.username}" created and added to ${r.sudo_group} group`
+        ? `User "${this.newUser.username}" created and added to ${r.sudo_group} group`
         : (r.error || 'Failed');
       if (r.ok) {
         this.newUser.username = '';
@@ -3939,14 +4558,15 @@ function securityPage() {
     async unbanIP(ip, jail) {
       const r = await post('/api/security/fail2ban/unban', {ip, jail});
       if (r.ok) { toast(`Unbanned ${ip}`,'success'); await this.loadFail2ban(); }
-      else toast('Failed','error');
+      else toast(r.error||'Unban failed','error');
     },
 
     async banIP(ip, jail) {
+      ip = (ip||'').trim();
       if (!ip) return;
       const r = await post('/api/security/fail2ban/ban', {ip, jail});
       if (r.ok) { toast(`Banned ${ip}`,'success'); await this.loadFail2ban(); }
-      else toast('Failed','error');
+      else toast(r.error||'Ban failed','error');
     },
 
     async loadAttempts() {
@@ -3993,7 +4613,12 @@ function securityPage() {
 
     async saveCaddyWafSettings() {
       this.caddywaf.saving = true; this.caddywaf.saveMessage = '';
-      const r = await post('/api/security/caddywaf/settings', this.caddywaf.settings);
+      const cs = this.caddywaf.settings || {};
+      const num = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : d; };
+      const r = await post('/api/security/caddywaf/settings', {...cs,
+        anomaly_threshold: num(cs.anomaly_threshold, 20),
+        rate_limit_requests: num(cs.rate_limit_requests, 100),
+        rate_limit_window: num(cs.rate_limit_window, 10)});
       this.caddywaf.saving = false;
       if (r.ok) {
         const upd = r.updated_sites || [], fail = r.failed_sites || [];
@@ -4098,6 +4723,7 @@ function securityPage() {
       if (!confirm('Remove load balancer config?')) return;
       const r = await del('/api/security/loadbalancer');
       if (r.ok) { toast('Removed','success'); this.lb.configured=false; }
+      else toast(r.error||'Failed','error');
     },
 
     // --- TCP / Stream Load Balancer ----------------------------------------------
@@ -4143,6 +4769,7 @@ function securityPage() {
       if (!confirm('Remove TCP load balancer config?')) return;
       const r = await del('/api/security/loadbalancer/tcp');
       if (r.ok) { toast('Removed','success'); this.tcpLb.configured=false; }
+      else toast(r.error||'Failed','error');
     },
 
     // --- Active Health Checks ----------------------------------------------------
@@ -4157,7 +4784,10 @@ function securityPage() {
     },
 
     async saveHealthCheck() {
-      const r = await put('/api/security/loadbalancer/health', this.health.config);
+      const c = this.health.config, n = (v, d) => { const x = parseInt(v, 10); return Number.isFinite(x) ? x : d; };
+      const r = await put('/api/security/loadbalancer/health', {...c,
+        interval_seconds: n(c.interval_seconds, 10), timeout_seconds: n(c.timeout_seconds, 3),
+        unhealthy_threshold: n(c.unhealthy_threshold, 3), healthy_threshold: n(c.healthy_threshold, 2)});
       if (r.ok) {
         toast(this.health.config.enabled ? 'Health checking enabled' : 'Health checking disabled', 'success');
         this.health.config = {...this.health.config, ...r.config};
@@ -4466,10 +5096,12 @@ function wafPage() {
     async init() {
       const r = await get('/api/security/modsecurity');
       this.modsecInstalled = !!(r.ok && r.installed);
+      if (r.ok) await this.wafLoad2();
       this.loading = false;
       if (this.modsecInstalled) {
         await this.loadStats();
       }
+      if (!vpOnce(this, 'init')) return;
       window.addEventListener('vp:page', async (e) => {
         if (e.detail !== 'waf') return;
         // Always re-check install status on returning to this page --
@@ -4480,19 +5112,22 @@ function wafPage() {
         const wasInstalled = this.modsecInstalled;
         const r2 = await get('/api/security/modsecurity');
         this.modsecInstalled = !!(r2.ok && r2.installed);
+        await this.wafLoad2();
         if (this.modsecInstalled) {
           if (!wasInstalled || this.wtab === 'overview') this.loadStats();
-          else this.loadBlockadeLog();
         }
+        // (not 'lists': reloading it would discard unsaved textarea edits)
+        if (this.wtab !== 'overview' && this.wtab !== 'lists') this.wafOpenTab(this.wtab);
       });
       window.addEventListener('vp:module-changed', async (e) => {
         // Real-time update the moment an install/uninstall actually
         // completes, matching the same pattern already used on the
         // Security page's WAF tab -- don't make the user navigate away
         // and back just to see a fresh install take effect.
-        if (e.detail?.id !== 'modsecurity') return;
+        if (e.detail?.id !== 'modsecurity' && e.detail?.id !== 'caddy') return;
         const r3 = await get('/api/security/modsecurity');
         this.modsecInstalled = !!(r3.ok && r3.installed);
+        await this.wafLoad2();
         if (this.modsecInstalled) this.loadStats();
       });
     },
@@ -4540,10 +5175,371 @@ function wafPage() {
       const r = await post('/api/security/modsecurity/lists', body);
       this.listsSaving = false;
       if (r.ok) {
-        toast('Saved — nginx reloaded with the updated rules', 'success');
+        toast('Saved — web server reloaded with the updated rules', 'success');
       } else {
         toast(r.error || 'Save failed — nothing on the server was changed', 'error');
       }
+    },
+
+    // --- WAF 2.0 (exceptions, per-site mode, region, custom rules, rate
+    // limits, list import/export, Caddy/Coraza) ---------------------------------
+    // All state is declared up front: Alpine merges nested x-data scopes, so a
+    // property created later on `this` could leak to / collide with the root.
+    wafSites: [],                       // [{domain, webserver}]
+    wafOv: {exists:false, engine:'Off', paranoia:0, geoip_installed:false, malicious:0},
+    wafCaddy: {installed:false, wired_sites:[], in_sync:true, geoip_note:''},
+    wafCaddyBusy: '',
+    wafHits: [], wafHitsExists: true, wafHitsDomain: '', wafHitsLoading: false,
+    wafExcModel: {}, wafExcLoading: false,
+    wafCatalog: {categories:[], rules:{}, protected:[], always_block:[]},
+    wafExcForm: {show:false, saving:false, domain:'', url_prefix:'', methods:'', client_ips:'', rule_ids:'', note:'', force:false,
+                 pickCat:'', pickSearch:''},
+    wafModeBusy: '',
+    wafGeo: {rules:[], geoip_installed:false, geoip_db:''},
+    wafGeoForm: {country:'', action:'block', status:'403', note:'', saving:false},
+    wafGeoInstalling: false, wafGeoInstallLog: '',
+    wafCustom: {rules:[], fields:[]},
+    wafCustomForm: {show:false, saving:false, name:'', domain:'', action:'block', status:'403', enabled:true,
+                    conditions:[{field:'uri_prefix', value:''}]},
+    wafRl: {rules:[], nginx:false},
+    wafRlForm: {name:'', url:'/', rps:10, burst:'', status:'503', domain:'', saving:false},
+    wafRlWarning: '',
+    wafImport: {text:'', mode:'merge', saving:false},
+    wafStatusCodes: ['400','403','404','406','429','451','503'],
+    wafFieldHints: {
+      ip:'Comma-separated IPs or CIDRs', country:'2-letter ISO code (needs GeoIP)', method:'GET, POST, ...',
+      uri_prefix:'Path prefix, e.g. /admin', uri_contains:'Text anywhere in the URI', uri_regex:'Regular expression on the URI',
+      query:'Text in the query string', user_agent:'Regular expression on the User-Agent', referer:'Regular expression on the Referer',
+    },
+
+    get wafEngineReady() { return this.modsecInstalled || this.wafCaddy.installed; },
+
+    // Every domain the WAF can be configured for: hosted sites plus any domain
+    // that already has WAF settings (a removed site's entries stay visible).
+    get wafDomains() {
+      const s = new Set(this.wafSites.map(x => x.domain));
+      Object.keys(this.wafExcModel || {}).forEach(d => s.add(d));
+      return [...s].sort();
+    },
+
+    get wafExcRows() {
+      const rows = [];
+      for (const [dom, entry] of Object.entries(this.wafExcModel || {})) {
+        for (const e of ((entry && entry.exceptions) || [])) rows.push({...e, domain: dom});
+      }
+      return rows;
+    },
+
+    get wafCounts() {
+      return {
+        exceptions: this.wafExcRows.length,
+        region: (this.wafGeo.rules || []).length,
+        custom: (this.wafCustom.rules || []).length,
+        ratelimit: (this.wafRl.rules || []).length,
+      };
+    },
+
+    wafSiteMode(domain) {
+      const e = (this.wafExcModel || {})[domain];
+      return (e && e.site_mode) || 'enforce';
+    },
+
+    wafSiteServer(domain) {
+      const s = this.wafSites.find(x => x.domain === domain);
+      return s ? (s.webserver || '') : '';
+    },
+
+    wafRuleClass(rid) {
+      const n = parseInt(rid, 10);
+      const inR = (list) => (list || []).some(r => n >= r.from && n <= r.to);
+      if (inR(this.wafCatalog.protected)) return 'protected';
+      if (inR(this.wafCatalog.always_block)) return 'always_block';
+      return '';
+    },
+
+    wafRuleCategory(rid) {
+      const n = parseInt(rid, 10);
+      const c = (this.wafCatalog.categories || []).find(c => n >= c.from && n <= c.to);
+      return c ? c.name : '';
+    },
+
+    // Rules from the installed CRS for the picker, filtered by category/search.
+    get wafPickRules() {
+      const f = this.wafExcForm;
+      const q = (f.pickSearch || '').toLowerCase().trim();
+      const cat = (this.wafCatalog.categories || []).find(c => String(c.from) === String(f.pickCat));
+      const out = [];
+      for (const [id, msg] of Object.entries(this.wafCatalog.rules || {})) {
+        const n = parseInt(id, 10);
+        if (cat && (n < cat.from || n > cat.to)) continue;
+        if (q && !id.includes(q) && !String(msg).toLowerCase().includes(q)) continue;
+        out.push({id, msg, cls: this.wafRuleClass(id)});
+        if (out.length >= 80) break;
+      }
+      return out.sort((a, b) => a.id.localeCompare(b.id));
+    },
+
+    get wafExcIds() {
+      return String(this.wafExcForm.rule_ids || '').split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
+    },
+
+    get wafExcNeedsForce() { return this.wafExcIds.some(id => this.wafRuleClass(id) === 'always_block'); },
+
+    async wafLoad2() {
+      // Everything WAF 2.0 shows in the overview strip; the tab data loads on demand.
+      const [ws, ov, cs, ex, geo, cr, rl] = await Promise.all([
+        get('/api/websites'), get('/api/security/waf/overview'), get('/api/security/waf/caddy/status'),
+        get('/api/security/waf/exceptions'), get('/api/security/waf/geo'),
+        get('/api/security/waf/custom-rules-builder'), get('/api/security/waf/ratelimit'),
+      ]);
+      if (ws.ok) this.wafSites = (ws.sites || []).map(s => ({domain: s.domain, webserver: s.webserver || ''}));
+      if (ov.ok) this.wafOv = {...this.wafOv, ...ov};
+      if (cs.ok) this.wafCaddy = {...this.wafCaddy, ...cs};
+      if (ex.ok) this.wafExcModel = ex.sites || {};
+      if (geo.ok) this.wafGeo = {rules: geo.rules || [], geoip_installed: !!geo.geoip_installed, geoip_db: geo.geoip_db || ''};
+      if (cr.ok) this.wafCustom = {rules: cr.rules || [], fields: cr.fields || []};
+      if (rl.ok) this.wafRl = {rules: rl.rules || [], nginx: !!rl.nginx};
+    },
+
+    wafOpenTab(id) {
+      this.wtab = id;
+      if (id === 'blockade') this.loadBlockadeLog();
+      else if (id === 'lists') this.loadLists();
+      else if (id === 'hits') this.wafLoadHits();
+      else if (id === 'exceptions') { this.wafLoadExceptions(); this.wafLoadCatalog(); }
+      else if (id === 'region') this.wafLoadGeo();
+      else if (id === 'custom') this.wafLoadCustom();
+      else if (id === 'ratelimit') this.wafLoadRl();
+    },
+
+    async wafLoadHits() {
+      this.wafHitsLoading = true;
+      const q = this.wafHitsDomain ? '?domain=' + encodeURIComponent(this.wafHitsDomain) : '';
+      const r = await get('/api/security/waf/recent-hits' + q);
+      this.wafHitsLoading = false;
+      if (r.ok) { this.wafHits = r.hits || []; this.wafHitsExists = r.exists !== false; }
+      else toast(r.error || 'Could not load recent hits', 'error');
+    },
+
+    async wafLoadExceptions() {
+      this.wafExcLoading = true;
+      const [r, ws] = await Promise.all([get('/api/security/waf/exceptions'), get('/api/websites')]);
+      this.wafExcLoading = false;
+      if (ws.ok) this.wafSites = (ws.sites || []).map(s => ({domain: s.domain, webserver: s.webserver || ''}));
+      if (r.ok) this.wafExcModel = r.sites || {};
+      else toast(r.error || 'Could not load exceptions', 'error');
+    },
+
+    async wafLoadCatalog() {
+      if ((this.wafCatalog.categories || []).length) return;
+      const r = await get('/api/security/waf/rule-catalog');
+      if (r.ok) this.wafCatalog = {categories: r.categories || [], rules: r.rules || {},
+                                   protected: r.protected || [], always_block: r.always_block || []};
+    },
+
+    wafNewException(hit) {
+      this.wafLoadCatalog();
+      let path = '';
+      if (hit && hit.uri) { path = String(hit.uri).split('?')[0]; }
+      this.wafExcForm = {show:true, saving:false,
+        domain: (hit && hit.domain) || this.wafHitsDomain || (this.wafDomains[0] || ''),
+        url_prefix: path, methods: (hit && hit.method) || '', client_ips: '',
+        rule_ids: (hit && hit.rule_id) ? String(hit.rule_id) : '', note: hit ? 'From WAF hit ' + (hit.timestamp || '') : '',
+        force: false, pickCat: '', pickSearch: ''};
+    },
+
+    wafPickRule(id) {
+      if (this.wafRuleClass(id) === 'protected') { toast('Rule ' + id + ' is a protected protocol-integrity rule and cannot be excepted', 'error'); return; }
+      const ids = this.wafExcIds;
+      if (!ids.includes(String(id))) ids.push(String(id));
+      this.wafExcForm.rule_ids = ids.join(', ');
+    },
+
+    async wafSaveException() {
+      const f = this.wafExcForm;
+      if (!f.domain) { toast('Choose a site', 'error'); return; }
+      const split = (s) => String(s || '').split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
+      const body = {domain: f.domain, url_prefix: (f.url_prefix || '').trim(), methods: split(f.methods).map(m => m.toUpperCase()),
+                    client_ips: split(f.client_ips), rule_ids: this.wafExcIds, note: f.note || '', force: !!f.force};
+      f.saving = true;
+      const r = await post('/api/security/waf/exceptions', body);
+      f.saving = false;
+      if (r.ok) { toast('Exception added and applied', 'success'); f.show = false; await this.wafLoadExceptions(); }
+      else toast(r.error || 'Could not add the exception', 'error');
+    },
+
+    async wafDeleteException(row) {
+      if (!confirm('Remove this exception for ' + row.domain + ' (' + row.url_prefix + ')? The excepted rules apply again.')) return;
+      const r = await del('/api/security/waf/exceptions/' + encodeURIComponent(row.id) + '?domain=' + encodeURIComponent(row.domain));
+      if (r.ok) { toast('Exception removed', 'success'); await this.wafLoadExceptions(); }
+      else toast(r.error || 'Could not remove the exception', 'error');
+    },
+
+    async wafSetSiteMode(domain, mode, el) {
+      const prev = this.wafSiteMode(domain);
+      if (mode === prev) return;
+      if (mode === 'off' && !confirm('Turn the WAF off for ' + domain + '? Requests to this site are no longer inspected.')) { if (el) el.value = prev; return; }
+      this.wafModeBusy = domain;
+      const r = await post('/api/security/waf/site-mode', {domain, mode});
+      this.wafModeBusy = '';
+      if (r.ok) { toast(domain + ': WAF ' + (mode === 'enforce' ? 'enforcing' : mode === 'detect' ? 'detection only' : 'off'), 'success'); }
+      else { toast(r.error || 'Could not change the mode', 'error'); if (el) el.value = prev; }
+      await this.wafLoadExceptions();
+    },
+
+    async wafCaddySync() {
+      this.wafCaddyBusy = 'sync';
+      const r = await post('/api/security/waf/caddy/sync', {});
+      this.wafCaddyBusy = '';
+      if (r.ok) toast('Caddy WAF configuration regenerated', 'success');
+      else toast(r.error || 'Sync failed', 'error');
+      const cs = await get('/api/security/waf/caddy/status');
+      if (cs.ok) this.wafCaddy = {...this.wafCaddy, ...cs};
+    },
+
+    async wafCaddySite(domain, enable) {
+      if (!enable && !confirm('Stop running the WAF on the Caddy site ' + domain + '?')) return;
+      this.wafCaddyBusy = domain;
+      const r = enable ? await post('/api/security/waf/caddy/site', {domain})
+                       : await del('/api/security/waf/caddy/site?domain=' + encodeURIComponent(domain));
+      this.wafCaddyBusy = '';
+      if (r.ok) toast(r.message || (domain + (enable ? ': WAF enabled on Caddy' : ': WAF removed from Caddy')), 'success');
+      else toast(r.error || 'Failed', 'error');
+      const cs = await get('/api/security/waf/caddy/status');
+      if (cs.ok) this.wafCaddy = {...this.wafCaddy, ...cs};
+    },
+
+    async wafLoadGeo() {
+      const r = await get('/api/security/waf/geo');
+      if (r.ok) this.wafGeo = {rules: r.rules || [], geoip_installed: !!r.geoip_installed, geoip_db: r.geoip_db || ''};
+      else toast(r.error || 'Could not load region rules', 'error');
+    },
+
+    async wafInstallGeoDb() {
+      if (!confirm('Download and install a free country GeoIP database (DB-IP Country Lite, CC BY 4.0) on this server?')) return;
+      this.wafGeoInstalling = true; this.wafGeoInstallLog = '';
+      const r = await post('/api/security/waf/geo/install-db', {});
+      this.wafGeoInstalling = false;
+      this.wafGeoInstallLog = [...(r.log || []), r.attribution || ''].filter(Boolean).join('\n');
+      if (r.ok) toast('GeoIP database installed: ' + (r.db || ''), 'success');
+      else toast(r.error || 'Could not install a GeoIP database', 'error');
+      await this.wafLoadGeo();
+    },
+
+    async wafAddGeo() {
+      const f = this.wafGeoForm;
+      const cc = (f.country || '').trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(cc)) { toast('Enter a 2-letter country code, e.g. CN', 'error'); return; }
+      f.saving = true;
+      const r = await post('/api/security/waf/geo', {country: cc, action: f.action, status: f.status, note: f.note});
+      f.saving = false;
+      if (r.ok) { toast('Region rule for ' + cc + ' applied', 'success'); this.wafGeoForm = {country:'', action:'block', status:'403', note:'', saving:false}; await this.wafLoadGeo(); }
+      else toast(r.error || 'Could not save the region rule', 'error');
+    },
+
+    async wafDeleteGeo(code) {
+      if (!confirm('Remove the region rule for ' + code + '?')) return;
+      const r = await del('/api/security/waf/geo/' + encodeURIComponent(code));
+      if (r.ok) { toast('Region rule removed', 'success'); await this.wafLoadGeo(); }
+      else toast(r.error || 'Could not remove the region rule', 'error');
+    },
+
+    async wafLoadCustom() {
+      const r = await get('/api/security/waf/custom-rules-builder');
+      if (r.ok) this.wafCustom = {rules: r.rules || [], fields: r.fields || []};
+      else toast(r.error || 'Could not load custom rules', 'error');
+    },
+
+    wafNewCustom() {
+      this.wafCustomForm = {show:true, saving:false, name:'', domain:'', action:'block', status:'403', enabled:true,
+                            conditions:[{field:'uri_prefix', value:''}]};
+    },
+
+    async wafSaveCustom() {
+      const f = this.wafCustomForm;
+      const conds = (f.conditions || []).filter(c => String(c.value || '').trim()).map(c => ({field: c.field, value: String(c.value).trim()}));
+      if (!f.name.trim()) { toast('Give the rule a name', 'error'); return; }
+      if (!conds.length) { toast('Add at least one condition with a value', 'error'); return; }
+      f.saving = true;
+      const r = await post('/api/security/waf/custom-rules-builder', {name: f.name, domain: f.domain, action: f.action,
+                                                                     status: f.status, enabled: !!f.enabled, conditions: conds});
+      f.saving = false;
+      if (r.ok) { toast('Custom rule added and applied', 'success'); f.show = false; await this.wafLoadCustom(); }
+      else toast(r.error || 'Could not add the rule', 'error');
+    },
+
+    async wafDeleteCustom(rule) {
+      if (!confirm('Delete the custom rule "' + rule.name + '"?')) return;
+      const r = await del('/api/security/waf/custom-rules-builder/' + encodeURIComponent(rule.id));
+      if (r.ok) { toast('Custom rule deleted', 'success'); await this.wafLoadCustom(); }
+      else toast(r.error || 'Could not delete the rule', 'error');
+    },
+
+    async wafLoadRl() {
+      const r = await get('/api/security/waf/ratelimit');
+      if (r.ok) this.wafRl = {rules: r.rules || [], nginx: !!r.nginx};
+      else toast(r.error || 'Could not load rate limits', 'error');
+    },
+
+    async wafAddRl() {
+      const f = this.wafRlForm;
+      if (!/^[A-Za-z0-9_]{1,32}$/.test(f.name || '')) { toast('Name: letters, digits and underscore only (max 32)', 'error'); return; }
+      f.saving = true; this.wafRlWarning = '';
+      const body = {name: f.name, url: (f.url || '/').trim(), rps: parseInt(f.rps, 10), status: f.status, domain: f.domain};
+      if (String(f.burst).trim() !== '') body.burst = parseInt(f.burst, 10);
+      const r = await post('/api/security/waf/ratelimit', body);
+      f.saving = false;
+      if (r.ok) {
+        toast('Rate limit zone created. Add the shown limit_req line to the site to activate it.', 'success');
+        this.wafRlWarning = r.warning || '';
+        this.wafRlForm = {name:'', url:'/', rps:10, burst:'', status:'503', domain:'', saving:false};
+        await this.wafLoadRl();
+      } else toast(r.error || 'Could not create the rate limit', 'error');
+    },
+
+    async wafDeleteRl(rule) {
+      if (!confirm('Delete the rate limit "' + rule.name + '"? Remove its limit_req line from the site first, or nginx will refuse the change.')) return;
+      const r = await del('/api/security/waf/ratelimit/' + encodeURIComponent(rule.id));
+      if (r.ok) { toast('Rate limit deleted', 'success'); await this.wafLoadRl(); }
+      else toast(r.error || 'Could not delete the rate limit', 'error');
+    },
+
+    wafCopy(text) {
+      if (!navigator.clipboard) { toast('Clipboard not available - select the text and copy it', 'error'); return; }
+      navigator.clipboard.writeText(text).then(() => toast('Copied', 'success'), () => toast('Copy failed', 'error'));
+    },
+
+    async wafExportLists() {
+      const r = await get('/api/security/waf/lists/export');
+      if (!r.ok) { toast(r.error || 'Export failed', 'error'); return; }
+      const blob = new Blob([JSON.stringify({lists: r.lists || {}}, null, 2)], {type: 'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'vortexpanel-waf-lists-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    },
+
+    wafImportFile(ev) {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      const rd = new FileReader();
+      rd.onload = () => { this.wafImport.text = String(rd.result || ''); };
+      rd.readAsText(file);
+      ev.target.value = '';
+    },
+
+    async wafImportLists() {
+      let data;
+      try { data = JSON.parse(this.wafImport.text || ''); } catch (e) { toast('Not valid JSON: ' + e.message, 'error'); return; }
+      const lists = (data && typeof data.lists === 'object' && data.lists) ? data.lists : data;
+      if (!lists || typeof lists !== 'object' || Array.isArray(lists)) { toast('Expected an object with ip_whitelist / ip_blacklist / ua_blacklist / url_blacklist', 'error'); return; }
+      if (this.wafImport.mode === 'replace' && !confirm('Replace ALL current list entries with the imported ones?')) return;
+      this.wafImport.saving = true;
+      const r = await post('/api/security/waf/lists/import', {lists, mode: this.wafImport.mode});
+      this.wafImport.saving = false;
+      if (r.ok) { toast('Lists imported and applied', 'success'); this.wafImport.text = ''; await this.loadLists(); }
+      else toast(r.error || 'Import failed', 'error');
     },
 
     _renderTimeline() {
@@ -4596,7 +5592,8 @@ function dockerPage() {
       await this.loadStatus();
       if (this.status.running) await Promise.all([this.loadContainers(), this.loadImages()]);
       this.loading = false;
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="docker") { this.loadStatus(); if(this.status.running){ this.loadContainers(); this.loadImages(); } } });
+      if (!vpOnce(this, 'init')) return;
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", async (e) => { if(e.detail==="docker") { await this.loadStatus(); if(this.status.running){ this.loadContainers(); this.loadImages(); } } });
       window.addEventListener('vp-docker-domain-save', () => this.saveDomain());
       window.addEventListener('vp-docker-domain-remove', () => this.removeDomain());
     },
@@ -4656,16 +5653,14 @@ function dockerPage() {
         cmd:     this.runForm.cmd||'',
       });
       if (!r.ok) { this.jobModal.lines=[r.error||'Failed']; this.jobModal.done=true; return; }
-      const poll = async () => {
-        const j = await get(`/api/docker/job/${r.job_id}`);
-        if (!j.ok) return;
-        this.jobModal.lines = j.lines||[];
-        if (j.done) {
-          this.jobModal.done=true; this.jobModal.success=j.success;
-          if (j.success) { toast(this.runTarget.name+' deployed!','success'); await Promise.all([this.loadContainers(),this.loadImages()]); }
-        } else setTimeout(poll, 600);
-      };
-      setTimeout(poll, 400);
+      const target = this.runTarget;
+      vpPollJob(`/api/docker/job/${r.job_id}`,
+        (j) => { this.jobModal.lines = j.lines||[]; },
+        async (j) => {
+          if (j.error) this.jobModal.lines = [...(this.jobModal.lines||[]), j.error];
+          this.jobModal.done=true; this.jobModal.success=!!j.success;
+          if (j.success) { toast(target.name+' deployed!','success'); await Promise.all([this.loadContainers(),this.loadImages()]); }
+        }, {interval:600, maxMisses:200});
     },
 
     async containerAction(ct, action) {
@@ -4678,24 +5673,27 @@ function dockerPage() {
     async showLogs(ct) {
       const r = await get(`/api/docker/containers/${ct.id}/logs`);
       if (r.ok) this.logsModal = {show:true, name:ct.name, content:r.logs};
+      else toast(r.error||'Could not load logs','error');
     },
 
     async showStats(ct) {
       const r = await get(`/api/docker/containers/${ct.id}/stats`);
       if (r.ok) this.statsModal = {show:true, name:ct.name, stats:r};
+      else toast(r.error||'Could not load stats','error');
     },
 
     async removeImage(img) {
       if (!confirm(`Remove ${img.repository}:${img.tag}?`)) return;
-      const r = await del(`/api/docker/images/${img.id}`);
+      const r = await del(`/api/docker/images/${encodeURIComponent(img.id)}`);
       if (r.ok) { toast('Removed','success'); await this.loadImages(); }
       else toast(r.error||'Failed (may be in use)','error');
     },
 
     async prune() {
       if (!confirm('Remove stopped containers + unused images and networks?')) return;
-      const r = await post('/api/docker/system/prune');
+      const r = await post('/api/docker/system/prune', {});
       if (r.ok) { toast('System pruned','success'); await Promise.all([this.loadContainers(),this.loadImages()]); }
+      else toast(r.error||'Prune failed','error');
     },
 
     async openDomainModal(ct) {
@@ -4709,6 +5707,7 @@ function dockerPage() {
       s.loading       = false;
       const wsInfo = await get('/api/docker/webserver');
       s.webserver = wsInfo.webserver || '';
+      if (!wsInfo.ok && wsInfo.message) toast(wsInfo.message,'error');
       // Pre-fill existing port if editing
       if (ct.domain) {
         const d = await get(`/api/docker/containers/${encodeURIComponent(ct.name)}/domain`);
@@ -4770,6 +5769,7 @@ function cronPage() {
       if (r.ok) { this.templates=r.templates||[]; this.schedulePresets=r.schedules||[]; }
       this.selectedTemplate = this.templates.find(t=>t.id==='shell')||null;
       await this.load();
+      if (!vpOnce(this, 'init')) return;
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="cron") this.load(); });
     },
 
@@ -4834,35 +5834,40 @@ function cronPage() {
     async toggleJob(j, enable) {
       const r = await post(`/api/cron/jobs/${j.id}/toggle`, {enable});
       if (r.ok) { j.enabled=enable; toast(enable?'Enabled':'Disabled','success'); }
-      else toast('Failed','error');
+      else toast(r.error||'Failed','error');
     },
 
     async del(j) {
       if (!confirm(`Delete task "${j.name||j.command}"?`)) return;
       const r = await del(`/api/cron/jobs/${j.id}`);
       if (r.ok) { toast('Deleted','success'); await this.load(); }
+      else toast(r.error||'Delete failed','error');
     },
 
     async runNow(j) {
       this.runModal = {show:true, name:j.name||'Task', cmd:j.command, lines:[], done:false, exit:null};
-      const r = await post(`/api/cron/jobs/${j.id}/run`);
-      if (!r.ok) { this.runModal.lines=['✗ '+(r.error||'Failed')]; this.runModal.done=true; return; }
-      this._pollTimer = setInterval(async ()=>{
-        const s = await get(`/api/cron/run/${r.run_id}`);
-        if (!s.ok) return;
-        this.runModal.lines=s.lines||[];
-        this.$nextTick(()=>{ if(this.$refs.runTerminal) this.$refs.runTerminal.scrollTop=this.$refs.runTerminal.scrollHeight; });
-        if (s.done) {
-          clearInterval(this._pollTimer);
-          this.runModal.done=true; this.runModal.exit=s.exit_code;
+      const r = await post(`/api/cron/jobs/${j.id}/run`, {});
+      if (!r.ok) { this.runModal.lines=['Error: '+(r.error||'Failed')]; this.runModal.done=true; return; }
+      // The old setInterval kept polling forever (500 ms, even after the
+      // modal was closed) whenever the run status was not found.
+      if (this._stopRunPoll) this._stopRunPoll();
+      const modal = this.runModal;
+      this._stopRunPoll = vpPollJob(`/api/cron/run/${r.run_id}`,
+        (s) => {
+          modal.lines=s.lines||[];
+          this.$nextTick(()=>{ if(this.$refs.runTerminal) this.$refs.runTerminal.scrollTop=this.$refs.runTerminal.scrollHeight; });
+        },
+        async (s) => {
+          if (!s.ok) modal.lines=[...(modal.lines||[]), 'Error: '+s.error];
+          modal.done=true; modal.exit=s.ok ? s.exit_code : null;
           await this.load();
-        }
-      }, 500);
+        }, {interval:700, maxMisses:120, active:()=>this.runModal===modal && modal.show});
     },
 
     async openLogs(j) {
       const r = await get(`/api/cron/jobs/${j.id}/logs`);
       if (r.ok) this.logModal={show:true, name:j.name||j.command, log:r.log, last_run:r.last_run, last_exit:r.last_exit};
+      else toast(r.error||'Could not load the log','error');
     },
   };
 }
@@ -4878,7 +5883,7 @@ function caddyPage() {
     form: {domain:'', path:'', type:'static', php:'8.3', proxy_target:''},
     drawerShow: false, drawerSite: null, drawerConf: '',
 
-    async init() { await Promise.all([this.loadStatus(), this.loadSites()]); document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="caddy") { this.loadStatus(); this.loadSites(); } }); },
+    async init() { await Promise.all([this.loadStatus(), this.loadSites()]); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="caddy") { this.loadStatus(); this.loadSites(); } }); },
 
     async loadStatus() {
       const r = await get('/api/caddy/status');
@@ -4905,12 +5910,22 @@ function caddyPage() {
       if (!confirm(`Delete site ${domain}?`)) return;
       const r = await del(`/api/caddy/sites/${domain}`);
       if (r.ok) { toast('Deleted','success'); await this.loadSites(); }
+      else toast(r.error||'Delete failed','error');
+    },
+
+    async sslInfo(domain) {
+      // Referenced by the SSL badge in the Caddy sites table but never
+      // defined (clicking it threw "sslInfo is not defined").
+      const r = await get(`/api/caddy/sites/${domain}/ssl`);
+      if (r.ok) alert('SSL certificate for '+domain+(r.path?'\n'+r.path:'')+'\n\n'+(r.info||'Caddy manages this certificate automatically.'));
+      else toast(r.error||'Could not read certificate info','error');
     },
 
     async openDrawer(s) {
       this.drawerSite=s; this.drawerShow=true;
       const r = await get(`/api/caddy/sites/${s.domain}/config`);
       if (r.ok) this.drawerConf=r.content;
+      else { this.drawerConf=''; toast(r.error||'Could not load the site config','error'); }
     },
 
     async saveDrawerConf() {
@@ -4930,8 +5945,10 @@ function caddyPage() {
     },
 
     async control(action) {
+      if (action==='stop' && !confirm('Stop Caddy? All sites it serves go offline.')) return;
       const r = await post('/api/caddy/control', {action});
       if (r.ok) { this.status.status=r.status; toast(`${action} Caddy`,'success'); }
+      else toast(r.error||`${action} failed`,'error');
     },
 
     async loadLogs() {
@@ -4957,6 +5974,7 @@ function cdnPage() {
       await this.load();
       const ws = await get('/api/websites');
       if (ws.ok) this.sites=ws.sites||[];
+      if (!vpOnce(this, 'init')) return;
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="cdn") this.load(); });
     },
 
@@ -4989,7 +6007,8 @@ function cdnPage() {
 
     async disconnect(p) {
       if (!confirm(`Disconnect ${p.name}?`)) return;
-      await del('/api/cdn/config', {provider:p.id});
+      const r = await del('/api/cdn/config', {provider:p.id});
+      if (!r.ok) { toast(r.error||'Failed','error'); return; }
       toast('Disconnected','success');
       if (this.activeCdn===p.id) { this.activeCdn=''; this.view='grid'; }
       await this.load();
@@ -5022,21 +6041,24 @@ function cdnPage() {
     },
 
     async cfUpdateSetting(key, val) {
-      const r=await put(`/api/cdn/cloudflare/zone/${this.cf.selZone}/settings`, {settings:{[key]:val}});
+      // The backend route is PATCH-only; PUT always got 405.
+      const r=await api('PATCH', `/api/cdn/cloudflare/zone/${this.cf.selZone}/settings`, {settings:{[key]:val}});
       if (r.ok) { toast(`${key} updated`,'success'); this.cf.settings[key]=val; }
-      else toast('Failed','error');
+      else toast(r.error||'Failed to update '+key,'error');
     },
 
     async cfPurge() {
       const urls=this.cf.purgeUrl?[this.cf.purgeUrl]:[];
+      if (!urls.length && !confirm('Purge the ENTIRE Cloudflare cache for this zone?')) return;
       const r=await post(`/api/cdn/cloudflare/zone/${this.cf.selZone}/purge`, {urls});
       if (r.ok) { toast(urls.length?'URL purged':'All cache purged!','success'); this.cf.purgeUrl=''; }
-      else toast(r.errors?.join(',')||'Failed','error');
+      else toast((r.errors||[]).map(e=>e&&e.message?e.message:String(e)).join(', ')||r.error||'Purge failed','error');
     },
 
     async loadCfDns() {
       const r=await get(`/api/cdn/cloudflare/zone/${this.cf.selZone}/dns`);
       if (r.ok) this.cf.dns=r.records||[];
+      else toast(r.error||'Could not load DNS records','error');
     },
 
     async loadBunnyZones() {
@@ -5049,14 +6071,17 @@ function cdnPage() {
 
     async loadBunnyStats() {
       if (!this.bunny.selZone) return;
-      const r=await get(`/api/cdn/bunnycdn/stats/${this.bunny.selZone}`);
+      const r=await get(`/api/cdn/bunnycdn/stats/${parseInt(this.bunny.selZone,10)}`);
       if (r.ok) this.bunny.stats=r;
+      else toast(r.error||'Could not load zone stats','error');
     },
 
     async bunnyPurge() {
-      const r=await post(`/api/cdn/bunnycdn/purge/${this.bunny.selZone}`, {url:this.bunny.purgeUrl});
+      if (!this.bunny.purgeUrl && !confirm('Purge the entire cache of this pull zone?')) return;
+      if (!this.bunny.selZone) { toast('Select a pull zone','error'); return; }
+      const r=await post(`/api/cdn/bunnycdn/purge/${parseInt(this.bunny.selZone,10)}`, {url:this.bunny.purgeUrl});
       if (r.ok) { toast(this.bunny.purgeUrl?'URL purged':'Zone purged!','success'); this.bunny.purgeUrl=''; }
-      else toast('Failed','error');
+      else toast(r.error||('Purge failed'+(r.status?' (HTTP '+r.status+')':'')),'error');
     },
 
     async applyNginxHeaders() {
@@ -5080,8 +6105,10 @@ function updateModalData() {
     errorMsg: '', _pollTimer: null,
 
     async init() {
-      document.addEventListener('vortex-open-update-modal', ()=>{ this.show=true; this.checkForUpdates(); });
-      document.addEventListener('vortex-check-update', ()=>this.checkForUpdates());
+      if (vpOnce(this, 'init')) {
+        document.addEventListener('vortex-open-update-modal', ()=>{ this.show=true; this.checkForUpdates(); });
+        document.addEventListener('vortex-check-update', ()=>this.checkForUpdates());
+      }
       await this.checkForUpdates();
     },
 
@@ -5119,11 +6146,23 @@ function updateModalData() {
       this.updating=true; this.updateDone=false; this.updateSuccess=false;
       this.updateLines=[`Starting update to ${version}…`]; this.updateProgress=5;
       const r = await post('/api/update/start', {version});
-      if (!r.ok) { this.updateLines.push('✗ Failed: '+(r.error||'')); this.updateDone=true; this.updateSuccess=false; return; }
+      if (!r.ok) { this.updateLines.push('Failed: '+(r.error||'')); this.updateDone=true; this.updateSuccess=false; this.updating=false; return; }
+      clearInterval(this._pollTimer);
+      let misses = 0;
       this._pollTimer = setInterval(async ()=>{
         try {
           const s = await get('/api/update/status');
-          if (!s.ok) return;
+          if (!s.ok) {
+            // The panel restarts during an update, so short gaps are normal;
+            // give up only after ~5 minutes without an answer.
+            if (++misses > 500) {
+              clearInterval(this._pollTimer);
+              this.updateDone=true; this.updateSuccess=false;
+              this.updateError='Lost contact with the panel. Reload the page to see whether the update finished.';
+            }
+            return;
+          }
+          misses = 0;
           this.updateLines=s.lines||[];
           this.updateProgress=Math.min(90, 5+(s.lines||[]).length*5);
           this.$nextTick(()=>{ if(this.$refs.terminal) this.$refs.terminal.scrollTop=this.$refs.terminal.scrollHeight; });
@@ -5149,12 +6188,14 @@ function logsPage() {
       const r = await get('/api/logs/sources');
       if (r.ok) this.sources = r.sources || [];
       await this.load();
-      this._interval = setInterval(() => { if (this.autoRefresh) this.load(true); }, 5000);
+      if (!vpOnce(this, 'init')) return;
+      this._interval = setInterval(() => { if (this.autoRefresh && vpActivePage()==='logs' && !document.hidden) this.load(true); }, 5000);
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="logs") this.load(); });
     },
     async load(silent) {
       const params = new URLSearchParams({source:this.source, search:this.search, lines:this.lines});
       const r = await get('/api/logs/tail?'+params.toString());
+      if (!r.ok && !silent) toast(r.error||'Could not read the log','error');
       if (r.ok) {
         this.output = r.lines;
         if (silent) {
@@ -5195,6 +6236,7 @@ function nodeProjectsPage() {
 
     async init(){
       await this.load();
+      if (!vpOnce(this, 'init')) return;
       document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
       window.addEventListener("vp:page", (e) => { if(e.detail==="node-projects") this.load(); });
     },
@@ -5261,7 +6303,7 @@ function nodeProjectsPage() {
       s.loading    = false;
       s.scripts    = [];
       s.wsInfo     = null;
-      fetch('/api/nodejs/webserver').then(r=>r.json()).then(d=>{ s.wsInfo = d; });
+      get('/api/nodejs/webserver').then(d=>{ s.wsInfo = d; });
     },
 
     async submitAdd(){
@@ -5307,7 +6349,7 @@ function nodeProjectsPage() {
 
     async remove(p){
       if(!confirm(`Delete project "${p.name}"? The files will NOT be deleted.`)) return;
-      const r = await del(`/api/nodejs/projects/${p.id}`);
+      const r = await del(`/api/nodejs/projects/${encodeURIComponent(p.id)}`);
       if(r.ok) toast('Project deleted','success');
       else toast(r.error||'Delete failed','error');
       await this.load();
@@ -5322,7 +6364,7 @@ function nodeProjectsPage() {
     async gitPull(p){
       toast('Pulling from git...','info');
       const r = await post(`/api/nodejs/projects/${p.id}/git-pull`,{});
-      if(r.ok) toast('Git pull successful: '+r.output.substring(0,100),'success');
+      if(r.ok) toast('Git pull successful: '+(r.output||'').substring(0,100),'success');
       else toast('Git pull failed: '+(r.output||r.error||'').substring(0,150),'error');
     },
 
@@ -5330,14 +6372,14 @@ function nodeProjectsPage() {
       toast('Installing Node.js '+ver+' via nvm...','info');
       const r = await post('/api/nodejs/versions/install',{version:ver});
       if(r.ok) toast('Node.js '+ver+' installed','success');
-      else toast('Install failed: '+r.error,'error');
+      else toast('Install failed: '+(r.error||r.output||'unknown error'),'error');
       await this.loadVersions();
     },
 
     async useVersion(ver){
       const r = await post('/api/nodejs/versions/use',{version:ver});
       if(r.ok) toast('Switched to '+ver,'success');
-      else toast('Failed: '+r.error,'error');
+      else toast('Failed: '+(r.error||'unknown error'),'error');
       await this.loadVersions();
     },
 
@@ -5345,13 +6387,13 @@ function nodeProjectsPage() {
       if(!confirm('Uninstall '+ver+'?')) return;
       const r = await post('/api/nodejs/versions/uninstall',{version:ver});
       if(r.ok) toast(ver+' uninstalled','success');
-      else toast('Failed: '+r.error,'error');
+      else toast('Failed: '+(r.error||'unknown error'),'error');
       await this.loadVersions();
     },
 
     statusColor(s){ return s==='online'||s==='active'?'var(--green)':s==='stopped'?'var(--text-muted)':'var(--red)'; },
     statusDot(s){   return s==='online'||s==='active'?'dot-green':s==='stopped'?'dot-gray':'dot-red'; },
-    formatBytes(mb){ return mb>=1024 ? (mb/1024).toFixed(1)+' GB' : mb.toFixed(0)+' MB'; },
+    formatBytes(mb){ mb = Number(mb)||0; return mb>=1024 ? (mb/1024).toFixed(1)+' GB' : mb.toFixed(0)+' MB'; },
   };
 }
 
@@ -5377,13 +6419,16 @@ function goProjectsPage() {
 
     async init(){
       await this.load();
-      get('/api/go/webserver').then(r=>{ this.wsInfo = r; 
+      get('/api/go/webserver').then(r=>{ this.wsInfo = r; });
+      // The listeners below were re-added on every init() (once more per
+      // login), so one click on "Create" posted the project several times.
+      if (!vpOnce(this, 'init')) return;
       window.addEventListener("vp:page", (e) => { if(e.detail==="go-projects") this.load(); });
-    });
       document.addEventListener('vortex-logged-in', ()=>{ this.init(); });
       // Listen for submit from global portal modal
       window.addEventListener('vp-submit-go-add', async () => {
         const s = Alpine.store('vp').goAdd;
+        if(s.loading) return;
         if(!s.name){ toast('Project name required','error'); return; }
         if(!s.exec_file){ toast('Executable file path required','error'); return; }
         s.loading = true;
@@ -5433,7 +6478,7 @@ function goProjectsPage() {
       s.release_port = false;
       s.show_more    = false;
       s.wsInfo       = null;
-      fetch('/api/go/webserver').then(r=>r.json()).then(d=>{ s.wsInfo = d; });
+      get('/api/go/webserver').then(d=>{ s.wsInfo = d; });
     },
 
     async submitAdd(){
@@ -5476,6 +6521,7 @@ function goProjectsPage() {
       const p = this.settingsModal.project;
       const r = await get(`/api/go/projects/${p.id}/ssl`);
       if(r.ok) this.sslStatus = {enabled:r.enabled, checked:true, days_left:r.days_left};
+      else toast(r.error||'Could not check SSL','error');
     },
 
     async issueSSL(){
@@ -5492,6 +6538,7 @@ function goProjectsPage() {
       const p = this.settingsModal.project;
       const r = await get(`/api/go/projects/${p.id}/health`);
       if(r.ok) this.healthResult = r;
+      else toast(r.error||'Health check failed','error');
     },
 
     async loadVersions(){
@@ -5526,6 +6573,7 @@ function goProjectsPage() {
       });
       if(r.ok){ toast('Project updated','success'); this.editModal.show=false; await this.load(); }
       else toast(r.error||'Update failed','error');
+      return !!r.ok;
     },
 
     async control(p, action){
@@ -5553,14 +6601,14 @@ function goProjectsPage() {
       toast('Downloading Go '+ver+' from golang.org...','info');
       const r = await post('/api/go/sdk/install',{version:ver});
       if(r.ok) toast('Go '+ver+' installed','success');
-      else toast('Install failed: '+r.error,'error');
+      else toast('Install failed: '+(r.error||'unknown error'),'error');
       await this.loadSDK();
     },
 
     async activateSDK(ver){
       const r = await post('/api/go/sdk/activate',{version:ver});
       if(r.ok) toast('Go '+ver+' is now active','success');
-      else toast(r.error,'error');
+      else toast(r.error||'Failed','error');
       await this.loadSDK();
     },
 
@@ -5568,14 +6616,14 @@ function goProjectsPage() {
       if(!confirm('Remove Go '+ver+'?')) return;
       const r = await post('/api/go/sdk/remove',{version:ver});
       if(r.ok) toast('Go '+ver+' removed','success');
-      else toast(r.error,'error');
+      else toast(r.error||'Failed','error');
       await this.loadSDK();
     },
 
     async setGoproxy(proxy){
       const r = await post('/api/go/sdk/goproxy',{proxy});
       if(r.ok) toast('GOPROXY updated','success');
-      else toast(r.error,'error');
+      else toast(r.error||'Failed','error');
     },
 
     statusColor(s){ return s==='active'?'var(--green)':s==='inactive'||s==='stopped'?'var(--text-muted)':'var(--red)'; },

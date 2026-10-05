@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 import subprocess, os, json, re, time
 from datetime import datetime
 
@@ -15,7 +15,9 @@ except ImportError:
 
 settings_bp = Blueprint('settings', __name__)
 
-def req(): return 'user' in session
+def req():
+    from panel.routes.auth import check_ip_and_session
+    return check_ip_and_session()
 
 def sh(cmd, t=30):
     try:
@@ -44,7 +46,9 @@ def load_config():
 
 def save_config(cfg):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-    with open(CONFIG_FILE,'w') as f: json.dump(cfg, f, indent=2)
+    tmp = CONFIG_FILE + '.tmp'
+    with open(tmp, 'w') as f: json.dump(cfg, f, indent=2)
+    os.replace(tmp, CONFIG_FILE)
 
 # --- Gunicorn bind management ---------------------------------------------------
 def _set_gunicorn_bind(host, port, certfile=None, keyfile=None):
@@ -173,7 +177,7 @@ def get_settings():
     kernel   = sh('uname -r')
     ip       = sh("hostname -I 2>/dev/null | awk '{print $1}'")
     uptime   = sh("uptime -p 2>/dev/null | sed 's/up //'")
-    tz       = sh("cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo UTC")
+    tz       = sh("timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo UTC")
     server_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return jsonify({
         'ok': True, 'config': cfg,
@@ -189,9 +193,27 @@ def get_settings():
 @settings_bp.route('/api/settings', methods=['PUT'])
 def save_settings():
     if not req(): return jsonify({'ok':False}), 401
-    d   = request.get_json() or {}
+    d   = request.get_json(silent=True) or {}
     cfg = load_config()
     allowed = ('panel_name','auto_update','timezone','panel_domain','security_path')
+    tz = d.get('timezone')
+    if tz is not None:
+        # The timezone used to be saved to config.json only and never applied
+        # to the system, while the UI showed it as the server's timezone.
+        tz = str(tz).strip()
+        if not tz or '..' in tz or not re.fullmatch(r'[A-Za-z0-9_+\-/]+', tz) \
+                or not os.path.isfile(os.path.join('/usr/share/zoneinfo', tz)):
+            return jsonify({'ok':False,'error':f'Unknown timezone: {tz}'}), 400
+        cur = sh('timedatectl show -p Timezone --value 2>/dev/null') or \
+              sh("readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||'")
+        if tz != cur:
+            try:
+                r = subprocess.run(['timedatectl', 'set-timezone', tz], capture_output=True, text=True, timeout=30)
+            except Exception as e:
+                return jsonify({'ok':False,'error':f'Could not set timezone: {e}'}), 500
+            if r.returncode != 0:
+                return jsonify({'ok':False,'error':'Could not set timezone: ' + (r.stderr or r.stdout).strip()[:300]}), 500
+        d['timezone'] = tz
     cfg.update({k:v for k,v in d.items() if k in allowed})
     save_config(cfg)
     return jsonify({'ok':True})
@@ -199,44 +221,56 @@ def save_settings():
 
 @settings_bp.route('/api/settings/port', methods=['POST'])
 def change_port():
-    """Change the panel's PUBLIC listening port (works whether HTTP or HTTPS)."""
+    """Change the panel's PUBLIC listening port (works whether HTTP or HTTPS).
+
+    Goes through the same detached verify-and-roll-back helper as the HTTPS
+    switch: previously the unit was rewritten and the panel restarted blind,
+    so a port that was already taken (or blocked) left the admin locked out
+    with the old port's firewall rule already deleted."""
     if not req(): return jsonify({'ok':False}), 401
-    new_port = int((request.get_json() or {}).get('port', 8888))
+    try:
+        new_port = int((request.get_json(silent=True) or {}).get('port', 8888))
+    except (TypeError, ValueError):
+        return jsonify({'ok':False,'error':'Port must be a number'}), 400
     if not (1024 <= new_port <= 65535):
         return jsonify({'ok':False,'error':'Port must be 1024–65535'}), 400
     cfg = load_config()
-    old_port = cfg.get('port', 8888)
+    cur = _current_bind()
+    old_port = cur[1] if cur else cfg.get('port', 8888)
     if new_port == old_port:
         return jsonify({'ok':True,'message':'Port unchanged'})
 
-    if cfg.get('ssl_enabled'):
-        # HTTPS active: update gunicorn bind with SSL certs on new port
-        cert_path = f'{SSL_DIR}/panel.crt'
-        key_path  = f'{SSL_DIR}/panel.key'
-        ok, err = _set_gunicorn_bind('0.0.0.0', new_port, certfile=cert_path, keyfile=key_path)
-        if not ok:
-            return jsonify({'ok':False,'error':err}), 500
-        cfg['port'] = new_port
-        save_config(cfg)
-        _safe_restart_panel()
-    else:
-        # Plain HTTP: gunicorn binds directly to the new public port.
-        ok, err = _set_gunicorn_bind('0.0.0.0', new_port)
-        if not ok:
-            return jsonify({'ok':False,'error':err}), 500
-        cfg['port'] = new_port
-        save_config(cfg)
-        _safe_restart_panel()
+    # Refuse a port something else already listens on.
+    import socket
+    for fam, addr in ((socket.AF_INET, '0.0.0.0'), (socket.AF_INET6, '::')):
+        try:
+            so = socket.socket(fam, socket.SOCK_STREAM)
+        except OSError:
+            continue
+        try:
+            so.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            so.bind((addr, new_port))
+        except OSError as e:
+            if fam == socket.AF_INET or e.errno == 98:
+                return jsonify({'ok':False,'error':f'Port {new_port} is already in use on this server'}), 400
+        finally:
+            so.close()
 
-    # Update firewall: open new port, close old one
+    # Open the new port BEFORE restarting; the old one is closed by the
+    # helper only once the panel answers on the new port.
     sh(f'ufw allow {new_port}/tcp 2>/dev/null')
-    sh(f'ufw delete allow {old_port}/tcp 2>/dev/null || true')
-    sh(f'firewall-cmd --add-port={new_port}/tcp --permanent 2>/dev/null')
-    sh(f'firewall-cmd --remove-port={old_port}/tcp --permanent 2>/dev/null')
-    sh('firewall-cmd --reload 2>/dev/null || true')
+    sh(f'firewall-cmd --permanent --add-port={new_port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null')
 
-    return jsonify({'ok':True,'port':new_port,
-                    'message':f'Port changed to {new_port}.' + (' Panel restarting…' if not cfg.get('ssl_enabled') else '')})
+    try:
+        ssl_on = '--certfile' in open(SERVICE_FILE).read()
+    except Exception:
+        ssl_on = bool(cfg.get('ssl_enabled'))
+    ok, err, apply_id = _switch_panel_scheme(ssl_on, new_port=new_port)
+    if not ok:
+        return jsonify({'ok':False,'error':err}), 500
+    return jsonify({'ok':True,'port':new_port,'apply_id':apply_id,
+                    'message':f'Port changing to {new_port}. Panel restarting - if it does not answer on the '
+                              f'new port within ~40 s the previous port is restored automatically.'})
 
 
 # --- SSL -------------------------------------------------------------------------
@@ -256,33 +290,55 @@ SSL_APPLY_STATE = os.path.join(SSL_APPLY_DIR, 'ssl_apply.json')
 # answer, and if it doesn't, puts the previous unit file + config back and
 # restarts again - the panel can never be left down by an HTTPS change.
 _SSL_APPLY_HELPER = r"""
-import json, os, subprocess, sys, time
+import json, os, ssl, subprocess, sys, time, urllib.request, urllib.error
 state_path, apply_id, scheme, port, unit, unit_bak, cfg, cfg_bak = sys.argv[1:9]
+old_scheme = sys.argv[9] if len(sys.argv) > 9 else ('http' if scheme == 'https' else 'https')
+old_port = sys.argv[10] if len(sys.argv) > 10 else port
+close_old = len(sys.argv) > 11 and sys.argv[11] == '1'
 def save(d):
     tmp = state_path + '.tmp'
     json.dump(d, open(tmp, 'w')); os.replace(tmp, state_path)
-def healthy(sch, tries):
+def probe(sch, prt):
+    # urllib instead of curl: the helper must still be able to roll back on
+    # a host without curl.
+    ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                         urllib.request.HTTPSHandler(context=ctx))
+    try:
+        return opener.open(f'{sch}://127.0.0.1:{prt}/', timeout=3).status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except Exception:
+        return 0
+def healthy(sch, prt, tries):
     for _ in range(tries):
         time.sleep(1)
-        r = subprocess.run(['curl', '-sk', '--noproxy', '*', '-o', '/dev/null', '-w', '%{http_code}',
-                            '--max-time', '3', f'{sch}://127.0.0.1:{port}/'], capture_output=True, text=True)
-        if r.stdout.strip() in ('200', '301', '302', '401', '403'):
+        if probe(sch, prt) in (200, 301, 302, 401, 403):
             return True
     return False
+def fw(action, prt):
+    if not prt or not str(prt).isdigit():
+        return
+    if action == 'close':
+        subprocess.run(f'ufw delete allow {prt}/tcp >/dev/null 2>&1; '
+                       f'firewall-cmd --permanent --remove-port={prt}/tcp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null 2>&1',
+                       shell=True)
 time.sleep(2)
 subprocess.run('systemctl daemon-reload; systemctl restart vortexpanel', shell=True)
-if healthy(scheme, 20):
+if healthy(scheme, port, 20):
+    if close_old and old_port != port:
+        fw('close', old_port)
     save({'id': apply_id, 'status': 'ok', 'scheme': scheme, 'port': port, 'finished': time.time()})
     sys.exit(0)
 log = subprocess.run('journalctl -u vortexpanel -n 25 --no-pager 2>/dev/null', shell=True,
                      capture_output=True, text=True).stdout[-1500:]
 os.replace(unit_bak, unit); os.replace(cfg_bak, cfg)
 subprocess.run('systemctl daemon-reload; systemctl restart vortexpanel', shell=True)
-old = 'http' if scheme == 'https' else 'https'
-back = healthy(old, 20)
+back = healthy(old_scheme, old_port, 20)
+what = scheme.upper() + (f' port {port}' if old_port != port else '')
 save({'id': apply_id, 'status': 'failed', 'scheme': scheme, 'port': port, 'finished': time.time(),
       'rolled_back': back,
-      'error': f'The panel did not come back on {scheme.upper()}, so the previous settings were restored.',
+      'error': f'The panel did not come back on {what}, so the previous settings were restored.',
       'log': log})
 """
 
@@ -292,6 +348,22 @@ def _free_port():
     with socket.socket() as so:
         so.bind(('127.0.0.1', 0))
         return so.getsockname()[1]
+
+
+def _probe_https(port):
+    """HTTP status of https://127.0.0.1:<port>/ (0 if unreachable). Pure
+    Python so it does not depend on curl being installed."""
+    import ssl as _ssl, urllib.request as _ur, urllib.error as _ue
+    ctx = _ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    opener = _ur.build_opener(_ur.ProxyHandler({}), _ur.HTTPSHandler(context=ctx))
+    try:
+        return opener.open(f'https://127.0.0.1:{port}/', timeout=2).status
+    except _ue.HTTPError as e:
+        return e.code
+    except Exception:
+        return 0
 
 
 def _pretest_tls(cert_path, key_path):
@@ -319,8 +391,7 @@ def _pretest_tls(cert_path, key_path):
             time.sleep(0.5)
             if proc.poll() is not None:
                 break
-            code = sh(f"curl -sk --noproxy '*' -o /dev/null -w '%{{http_code}}' --max-time 2 https://127.0.0.1:{port}/")
-            if code in ('200', '301', '302', '401', '403'):
+            if _probe_https(port) in (200, 301, 302, 401, 403):
                 ok = True
                 break
     finally:
@@ -330,12 +401,20 @@ def _pretest_tls(cert_path, key_path):
     return (True, '') if ok else (False, 'A test start of the panel with this certificate failed: ' + out.strip()[-600:])
 
 
-def _switch_panel_scheme(https, domain=''):
-    """Point the panel service at HTTPS (https=True) or plain HTTP, then
-    restart it through a detached helper that verifies the result and rolls
-    back automatically. Returns (ok, error, apply_id)."""
+def _switch_panel_scheme(https, domain='', new_port=None):
+    """Point the panel service at HTTPS (https=True) or plain HTTP (and
+    optionally a new port), then restart it through a detached helper that
+    verifies the result and rolls back automatically. Returns (ok, error, apply_id)."""
     cfg = load_config()
-    port = cfg.get('port', PANEL_PORT)
+    cur = _current_bind()
+    old_port = cur[1] if cur else cfg.get('port', PANEL_PORT)
+    try:
+        old_scheme = 'https' if '--certfile' in open(SERVICE_FILE).read() else 'http'
+    except Exception:
+        old_scheme = 'https' if cfg.get('ssl_enabled') else 'http'
+    port = new_port or old_port
+    bind_host = cur[0] if cur else '0.0.0.0'
+
     cert_path, key_path = f'{SSL_DIR}/panel.crt', f'{SSL_DIR}/panel.key'
     if https:
         if not (os.path.exists(cert_path) and os.path.exists(key_path)):
@@ -351,11 +430,12 @@ def _switch_panel_scheme(https, domain=''):
     with open(SERVICE_FILE) as f: open(unit_bak, 'w').write(f.read())
     json.dump(cfg, open(cfg_bak, 'w'))
 
-    ok, err = (_set_gunicorn_bind('0.0.0.0', port, certfile=cert_path, keyfile=key_path) if https
-               else _set_gunicorn_bind('0.0.0.0', port))
+    ok, err = (_set_gunicorn_bind(bind_host, port, certfile=cert_path, keyfile=key_path) if https
+               else _set_gunicorn_bind(bind_host, port))
     if not ok:
         return False, err, None
     cfg['ssl_enabled'] = bool(https)
+    cfg['port'] = port
     if domain: cfg['panel_domain'] = domain
     save_config(cfg)
 
@@ -368,7 +448,8 @@ def _switch_panel_scheme(https, domain=''):
     import shlex, sys as _sys
     args = ' '.join(shlex.quote(a) for a in [_sys.executable if os.path.exists(_sys.executable) else 'python3', helper,
                                              SSL_APPLY_STATE, apply_id, scheme, str(port),
-                                             SERVICE_FILE, unit_bak, CONFIG_FILE, cfg_bak])
+                                             SERVICE_FILE, unit_bak, CONFIG_FILE, cfg_bak,
+                                             old_scheme, str(old_port), '1' if port != old_port else '0'])
     if sh('which systemd-run 2>/dev/null'):
         sh(f'systemd-run --no-block --collect --unit=vortexpanel-ssl-{apply_id} {args} 2>/dev/null')
     else:
@@ -417,22 +498,71 @@ def ssl_letsencrypt():
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}$', domain):
         return jsonify({'ok':False,'error':'Invalid domain format'}), 400
 
-    sh('which certbot 2>/dev/null || apt-get install -y certbot 2>/dev/null || '
-       '(dnf install -y epel-release 2>/dev/null; dnf install -y certbot 2>/dev/null) || '
-       '(yum install -y epel-release 2>/dev/null; yum install -y certbot 2>/dev/null)')
+    if not sh('command -v certbot 2>/dev/null'):
+        # Was run with the default 30 s timeout, which an apt/dnf install
+        # routinely exceeds - the install was killed half way.
+        if _is_rhel():
+            from panel.routes.os_utils import ensure_epel_cmd
+            epel = '' if os.path.exists('/etc/fedora-release') else ensure_epel_cmd() + '; '
+            sh(epel + 'dnf install -y certbot 2>/dev/null || yum install -y certbot 2>/dev/null', t=600)
+        else:
+            sh(_APT_ENV + 'apt-get install -y ' + _APT_OPTS + 'certbot 2>/dev/null || (' + _APT_ENV +
+               'apt-get update -q 2>/dev/null; ' + _APT_ENV + 'apt-get install -y ' + _APT_OPTS + 'certbot 2>/dev/null)', t=600)
+    if not sh('command -v certbot 2>/dev/null'):
+        return jsonify({'ok':False,'error':'certbot is not installed and could not be installed automatically'}), 500
+    # EPEL ships certbot-renew.timer disabled: the panel certificate silently
+    # expired after 90 days on the RHEL family (the deploy hook below never ran)
+    try:
+        from panel.routes.os_utils import certbot_enable_renewal
+        certbot_enable_renewal()
+    except Exception:
+        pass
     sh('ufw allow 80/tcp 2>/dev/null; firewall-cmd --add-service=http --permanent 2>/dev/null; firewall-cmd --reload 2>/dev/null || true')
 
-    _, err, rc = sh3(
-        f'certbot certonly --standalone --non-interactive --agree-tos '
-        f'--register-unsafely-without-email -d {domain} 2>&1',
-        t=120
+    # --standalone needs port 80 for itself. On a panel box nginx/apache
+    # almost always holds it, so certbot always failed. Stop whichever web
+    # server is listening for the few seconds of the challenge and start it
+    # again (certbot runs the post-hook even when issuance fails).
+    hooks = ''
+    busy = sh("ss -Hltn 'sport = :80' 2>/dev/null")
+    if busy:
+        running = [u for u in ('nginx', 'apache2', 'httpd', 'caddy', 'lsws', 'openresty')
+                   if sh(f'systemctl is-active {u} 2>/dev/null') == 'active']
+        if running:
+            units = ' '.join(running)
+            hooks = f"--pre-hook 'systemctl stop {units}' --post-hook 'systemctl start {units}' "
+    # Renewal: certbot renews /etc/letsencrypt/live/<domain>, but the panel
+    # serves a COPY in /opt/vortexpanel/ssl - with nothing copying it again
+    # the panel certificate silently expired after 90 days. A global deploy
+    # hook (runs after every successful renewal) refreshes the copy.
+    try:
+        hook_dir = '/etc/letsencrypt/renewal-hooks/deploy'
+        os.makedirs(hook_dir, exist_ok=True)
+        hook = os.path.join(hook_dir, 'vortexpanel-panel-cert.sh')
+        with open(hook, 'w') as f:
+            f.write('#!/bin/sh\n'
+                    '# VortexPanel: refresh the panel\'s copy of its Let\'s Encrypt certificate\n'
+                    f'[ "$RENEWED_LINEAGE" = "/etc/letsencrypt/live/{domain}" ] || exit 0\n'
+                    f'cp "$RENEWED_LINEAGE/fullchain.pem" {SSL_DIR}/panel.crt && '
+                    f'cp "$RENEWED_LINEAGE/privkey.pem" {SSL_DIR}/panel.key && '
+                    f'chmod 600 {SSL_DIR}/panel.key && systemctl restart vortexpanel\n')
+        os.chmod(hook, 0o755)
+    except Exception:
+        pass
+    out, err, rc = sh3(
+        f'certbot certonly --standalone --non-interactive --agree-tos --keep-until-expiring '
+        f'--register-unsafely-without-email {hooks}-d {domain} 2>&1',
+        t=180
     )
     if rc != 0:
-        return jsonify({'ok':False,'error':f'Certbot failed: {err[:300]}'}), 500
+        return jsonify({'ok':False,'error':f'Certbot failed: {(out or err)[-400:]}'}), 500
 
     os.makedirs(SSL_DIR, exist_ok=True)
-    sh(f'cp /etc/letsencrypt/live/{domain}/fullchain.pem {SSL_DIR}/panel.crt')
-    sh(f'cp /etc/letsencrypt/live/{domain}/privkey.pem {SSL_DIR}/panel.key')
+    _, cerr, crc = sh3(f'cp /etc/letsencrypt/live/{domain}/fullchain.pem {SSL_DIR}/panel.crt && '
+                       f'cp /etc/letsencrypt/live/{domain}/privkey.pem {SSL_DIR}/panel.key && '
+                       f'chmod 600 {SSL_DIR}/panel.key')
+    if crc != 0:
+        return jsonify({'ok':False,'error':f'Could not copy the issued certificate: {cerr[:300]}'}), 500
 
     ok2, err2, apply_id = _switch_panel_scheme(True, domain)
     if not ok2:
@@ -562,7 +692,7 @@ def webshell_scan():
     outlived the worker timeout and the scan silently returned nothing."""
     if not req(): return jsonify({'ok':False}), 401
     from panel.routes.job_state import save_job
-    path = os.path.realpath((request.get_json() or {}).get('path', '/www/wwwroot').strip() or '/www/wwwroot')
+    path = os.path.realpath(str((request.get_json(silent=True) or {}).get('path') or '/www/wwwroot').strip() or '/www/wwwroot')
     if not os.path.isdir(path):
         return jsonify({'ok':False,'error':f'Directory not found: {path}'}), 404
     if _scan_state().get('running'):
@@ -653,23 +783,42 @@ def webshell_scan_paths():
 @settings_bp.route('/api/settings/password', methods=['POST'])
 def change_password():
     if not req(): return jsonify({'ok':False}), 401
-    d      = request.get_json() or {}
-    new_pw = d.get('new_password','')
-    if len(new_pw) < 8: return jsonify({'ok':False,'error':'Min 8 characters'}), 400
-    from panel.routes.auth import CREDS_FILE, get_credentials, _hash_password
-    creds = get_credentials()
-    creds['password_hash'] = _hash_password(new_pw)
-    import json as _json
-    with open(CREDS_FILE,'w') as f: _json.dump(creds, f, indent=2)
-    return jsonify({'ok':True})
+    # Same logic as /api/auth/change-password: current password required,
+    # atomic 0600 write, other sessions invalidated. This route used to accept
+    # a new password with no current-password check and rewrote the file
+    # non-atomically.
+    from panel.routes.auth import _do_change_password
+    return _do_change_password(request.get_json(silent=True) or {})
 
 
 @settings_bp.route('/api/settings/hostname', methods=['POST'])
 def set_hostname():
     if not req(): return jsonify({'ok':False}), 401
-    name = (request.get_json() or {}).get('hostname','').strip()
+    name = str((request.get_json(silent=True) or {}).get('hostname') or '').strip().lower()
     if not name: return jsonify({'ok':False,'error':'Hostname required'}), 400
-    sh(f'hostnamectl set-hostname {name}')
+    # Was interpolated straight into a root shell command.
+    if len(name) > 253 or not re.fullmatch(r'[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*', name):
+        return jsonify({'ok':False,'error':'Invalid hostname (letters, digits, hyphens and dots only)'}), 400
+    try:
+        r = subprocess.run(['hostnamectl', 'set-hostname', name], capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        return jsonify({'ok':False,'error':str(e)}), 500
+    if r.returncode != 0:
+        return jsonify({'ok':False,'error':(r.stderr or r.stdout).strip()[:300] or 'hostnamectl failed'}), 500
+    # Keep the new name resolvable locally (sudo and some daemons complain
+    # "unable to resolve host" otherwise). Only touches the 127.0.1.1 line.
+    try:
+        short = name.split('.')[0]
+        entry = f'127.0.1.1\t{name}' + (f' {short}' if short != name else '')
+        hosts = open('/etc/hosts').read()
+        if re.search(r'^127\.0\.1\.1\s.*$', hosts, re.M):
+            hosts = re.sub(r'^127\.0\.1\.1\s.*$', entry, hosts, count=1, flags=re.M)
+        elif not re.search(r'\s' + re.escape(name) + r'(\s|$)', hosts):
+            hosts = hosts.rstrip('\n') + '\n' + entry + '\n'
+        with open('/etc/hosts.vp.tmp', 'w') as f: f.write(hosts)
+        os.replace('/etc/hosts.vp.tmp', '/etc/hosts')
+    except Exception:
+        pass
     return jsonify({'ok':True})
 
 
@@ -678,13 +827,19 @@ def _pending_security_packages(refresh=True):
     endpoint's post-run verification -- so 'did it actually work?' is
     answered by the same logic that decided what was pending in the
     first place, rather than by trusting an exit code."""
-    os_family = sh(". /etc/os-release 2>/dev/null && echo $ID_LIKE || echo debian")
     packages = []
-    if re.search(r'rhel|fedora|centos', os_family, re.I):
+    # ID_LIKE alone misdetected Fedora (it has no ID_LIKE) as Debian, so the
+    # card always said "nothing pending" there.
+    if _is_rhel():
         if refresh: sh('dnf makecache 2>/dev/null || yum makecache 2>/dev/null', t=120)
-        raw = sh('dnf updateinfo list security 2>/dev/null || yum updateinfo list security 2>/dev/null', t=60)
+        raw = sh('dnf updateinfo list --security 2>/dev/null || yum updateinfo list security 2>/dev/null', t=60)
         for line in raw.split('\n'):
-            m = re.match(r'^\S+\s+(Critical|Important|Moderate|Low)/Sec\.\s+(\S+)', line.strip())
+            line = line.strip()
+            # dnf4/yum: "RHSA-2024:1234 Important/Sec. pkg-1.2-3.el9.x86_64"
+            m = re.match(r'^\S+\s+(Critical|Important|Moderate|Low|None|Unknown)/Sec\.\s+(\S+)', line)
+            if not m:
+                # dnf5: "FEDORA-2024-abc security Moderate pkg-1.2-3.fc41.x86_64 2024-..."
+                m = re.match(r'^\S+\s+security\s+(\S+)\s+(\S+)', line, re.I)
             if m:
                 packages.append({'severity': m.group(1), 'package': m.group(2)})
     else:
@@ -724,7 +879,7 @@ def _pending_vendor_updates():
         pkg, cur_ver, new_ver, archive = m.group(1), m.group(2), m.group(3), m.group(4).rstrip(',')
         # Distro-provided archives are already covered by the security
         # check above -- anything else came from a vendor repo we added.
-        if re.match(r'^(Ubuntu|Debian):', archive, re.I):
+        if re.match(r'^(Ubuntu|Debian)(-Security)?:', archive, re.I):
             continue
         vendor.append({'package': pkg, 'current': cur_ver, 'available': new_ver, 'source': archive})
     return vendor
@@ -910,8 +1065,10 @@ def security_update_status():
 @settings_bp.route('/api/settings/sync-time', methods=['POST'])
 def sync_time():
     if not req(): return jsonify({'ok':False}), 401
-    sh('timedatectl set-ntp true 2>/dev/null || ntpdate pool.ntp.org 2>/dev/null || true')
-    return jsonify({'ok':True,'time':datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')})
+    _, err, rc = sh3('timedatectl set-ntp true 2>&1 || ntpdate pool.ntp.org 2>&1 || chronyc makestep 2>&1')
+    if rc != 0:
+        return jsonify({'ok':False,'error':'Could not enable NTP sync: ' + err[:300]}), 500
+    return jsonify({'ok':True,'time':datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
 
 
 @settings_bp.route('/api/settings/update', methods=['POST'])
@@ -919,7 +1076,14 @@ def system_update():
     if not req(): return jsonify({'ok':False}), 401
     import threading
     def do_update():
-        sh('apt-get update -y && apt-get upgrade -y 2>/dev/null || dnf update -y 2>/dev/null', t=300)
+        # Non-interactive (a conffile / needrestart prompt with no terminal
+        # hung it) and a realistic timeout: 300 s killed the shell mid-upgrade
+        # on any real box. The old 'apt ... || dnf ...' also ran dnf whenever
+        # apt failed on Debian. Branch on the actual package manager instead.
+        if _is_rhel():
+            sh('dnf -y upgrade 2>&1 || yum -y update 2>&1', t=3600)
+        else:
+            sh(_APT_ENV + 'apt-get update -q 2>&1 && ' + _APT_ENV + 'apt-get -y ' + _APT_OPTS + 'upgrade 2>&1', t=3600)
     threading.Thread(target=do_update, daemon=True).start()
     return jsonify({'ok':True,'message':'System update started in background'})
 
@@ -934,8 +1098,8 @@ def reboot():
 
 @settings_bp.route('/api/settings/webroot')
 def get_webroot():
+    """The web root new sites are created in (one implementation for the
+    whole panel: websites_core -> os_utils.get_webroot())."""
     if not req(): return jsonify({'ok': False}), 401
-    for p in ['/www/wwwroot','/var/www/html','/var/www','/srv/www']:
-        if os.path.isdir(p): return jsonify({'ok':True,'path':p})
-    os.makedirs('/www/wwwroot', exist_ok=True)
-    return jsonify({'ok':True,'path':'/www/wwwroot'})
+    from panel.routes.websites_core import get_webroot as _gw
+    return jsonify({'ok':True,'path':_gw()})

@@ -1,10 +1,12 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 import subprocess, os, re, time
 
 monitoring_bp = Blueprint('monitoring', __name__)
-def req(): return 'user' in session
+def req():
+    from panel.routes.auth import check_ip_and_session
+    return check_ip_and_session()
 def sh(c):
-    try: return subprocess.check_output(c,shell=True,text=True,stderr=subprocess.DEVNULL).strip()
+    try: return subprocess.check_output(c,shell=True,text=True,stderr=subprocess.DEVNULL,timeout=20).strip()
     except: return ''
 
 
@@ -50,19 +52,35 @@ def logs():
         'mail':         ['/var/log/mail.log', '/var/log/maillog'],
     }.get(log, ['/var/log/syslog', '/var/log/messages'])
     path = next((p for p in candidates if os.path.exists(p)), candidates[0])
-    lines = int(request.args.get('lines', 100))
+    try:
+        lines = max(1, min(int(request.args.get('lines', 100)), 5000))
+    except (TypeError, ValueError):
+        lines = 100
     content = sh(f'tail -n {lines} {path} 2>/dev/null')
     return jsonify({'ok':True,'content':content,'path':path})
 
 @monitoring_bp.route('/api/monitoring/diskio')
 def diskio():
     if not req(): return jsonify({'ok':False}),401
-    raw = sh('iostat -d 1 1 2>/dev/null | tail -n +4')
+    # Was `iostat` (sysstat, usually not installed) with the columns read
+    # off by one (reads = kB_wrtn/s). /proc/diskstats is always there.
+    def snap():
+        d = {}
+        try:
+            for line in open('/proc/diskstats'):
+                f = line.split()
+                if len(f) < 14 or re.match(r'^(loop|ram|zram|fd|sr)\d', f[2]):
+                    continue
+                d[f[2]] = (int(f[5]), int(f[9]))   # sectors read / written
+        except Exception:
+            pass
+        return d
+    a = snap(); time.sleep(1); b = snap()
     disks = []
-    for line in raw.split('\n'):
-        parts = line.strip().split()
-        if len(parts)>=6:
-            disks.append({'device':parts[0],'reads':parts[3],'writes':parts[4]})
+    for dev, (r2, w2) in b.items():
+        r1, w1 = a.get(dev, (r2, w2))
+        disks.append({'device': dev, 'reads': round((r2 - r1) * 512 / 1024, 1),
+                      'writes': round((w2 - w1) * 512 / 1024, 1)})   # kB/s
     return jsonify({'ok':True,'disks':disks})
 
 @monitoring_bp.route('/api/monitoring/netstat')
@@ -83,12 +101,16 @@ def monitoring_overview():
     if not req(): return jsonify({'ok': False}), 401
     import subprocess, re as _re
 
-    # CPU
+    # CPU: total busy % from /proc/stat. `top -bn1 ... $2` was only the user
+    # share, the since-boot average, broke on comma-decimal locales and ran
+    # with no timeout.
     try:
-        cpu_out = subprocess.run("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'",
-                                  shell=True, capture_output=True, text=True).stdout.strip()
-        cpu = float(cpu_out) if cpu_out else 0.0
-    except: cpu = 0.0
+        def _t():
+            v = [int(x) for x in open('/proc/stat').readline().split()[1:]]
+            return v[3] + (v[4] if len(v) > 4 else 0), sum(v)
+        i1, t1 = _t(); time.sleep(0.2); i2, t2 = _t()
+        cpu = round((1 - (i2 - i1) / ((t2 - t1) or 1)) * 100, 1)
+    except Exception: cpu = 0.0
 
     # RAM
     try:
@@ -154,8 +176,20 @@ def kill_process():
     pid = str(d.get('pid','')).strip()
     if not pid.isdigit():
         return jsonify({'ok':False,'error':'Invalid PID'}),400
-    if pid == '1' or int(pid) == os.getpid():
+    if pid == '1' or int(pid) in (os.getpid(), os.getppid()):
         return jsonify({'ok':False,'error':'Refusing to kill init or the panel process itself'}),400
-    signal_arg = '-9' if d.get('force') else ''
-    out = sh(f'kill {signal_arg} {pid} 2>&1')
-    return jsonify({'ok':True, 'output':out})
+    # Other gunicorn workers of this panel are children of the same master.
+    try:
+        ppid = int(open(f'/proc/{pid}/stat').read().rsplit(')', 1)[1].split()[1])
+        if ppid == os.getppid():
+            return jsonify({'ok':False,'error':'Refusing to kill a VortexPanel worker process'}),400
+    except Exception:
+        pass
+    import signal as _signal
+    try:
+        os.kill(int(pid), _signal.SIGKILL if d.get('force') else _signal.SIGTERM)
+    except ProcessLookupError:
+        return jsonify({'ok':False,'error':f'No process with PID {pid}'}),404
+    except Exception as e:
+        return jsonify({'ok':False,'error':str(e)}),500
+    return jsonify({'ok':True, 'output':''})

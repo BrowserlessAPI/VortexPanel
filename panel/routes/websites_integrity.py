@@ -1,4 +1,4 @@
-import os, json, time
+import os, json, time, subprocess
 from flask import jsonify
 
 try:
@@ -16,6 +16,27 @@ def _scan_hashes(path):
         mtime, size, fpath = parts
         files[fpath] = {'mtime': mtime, 'size': size}
     return files
+
+
+def _hash_tree(path):
+    """{file: sha256} for every file under path. The shared sh() helper
+    returns '' whenever find exits non-zero -- a single unreadable file or
+    vanished temp file made the baseline empty, or made a scan report every
+    file as removed. Returns (files, error)."""
+    try:
+        r = subprocess.run(['find', path, '-type', 'f', '-exec', 'sha256sum', '{}', '+'],
+                           capture_output=True, text=True, timeout=110, errors='replace')
+    except subprocess.TimeoutExpired:
+        return None, 'Hashing the site took longer than 110 seconds -- the site is too large for an on-demand integrity check'
+    files = {}
+    for line in r.stdout.splitlines():
+        parts = line.split('  ', 1)
+        if len(parts) != 2: continue
+        h, fp = parts
+        files[fp] = h.lstrip('\\')   # sha256sum prefixes escaped names with a backslash
+    if not files and r.returncode != 0:
+        return None, (r.stderr.strip()[-300:] or 'find/sha256sum failed')
+    return files, ''
 
 
 def _hash_file(path):
@@ -45,13 +66,9 @@ def integrity_baseline(domain):
     path = _get_site_path(domain)
     if not os.path.isdir(path):
         return jsonify({'ok':False,'error':'Site path not found'}),404
-    out = sh(f'find "{path}" -type f -exec sha256sum {{}} + 2>/dev/null', t=120)
-    files = {}
-    for line in out.splitlines():
-        parts = line.split('  ', 1)
-        if len(parts) != 2: continue
-        h, fp = parts
-        files[fp] = h
+    files, err = _hash_tree(path)
+    if files is None:
+        return jsonify({'ok':False,'error':err}), 500
     os.makedirs(INTEGRITY_DIR, exist_ok=True)
     with open(os.path.join(INTEGRITY_DIR, domain+'.json'), 'w') as f:
         json.dump({'path':path, 'created':time.strftime('%Y-%m-%d %H:%M:%S'), 'files':files}, f)
@@ -75,13 +92,9 @@ def integrity_scan(domain):
     with open(baseline_file) as f: data = json.load(f)
     old_files = data.get('files',{})
     path = data.get('path') or _get_site_path(domain)
-    out = sh(f'find "{path}" -type f -exec sha256sum {{}} + 2>/dev/null', t=120)
-    new_files = {}
-    for line in out.splitlines():
-        parts = line.split('  ', 1)
-        if len(parts) != 2: continue
-        h, fp = parts
-        new_files[fp] = h
+    new_files, err = _hash_tree(path)
+    if new_files is None:
+        return jsonify({'ok':False,'error':err}), 500
     added    = [f for f in new_files if f not in old_files]
     removed  = [f for f in old_files if f not in new_files]
     modified = [f for f in new_files if f in old_files and new_files[f] != old_files[f]]

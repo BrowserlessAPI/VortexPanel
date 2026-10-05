@@ -16,7 +16,7 @@ guaranteed, so every detected field is editable rather than blindly trusted.
 Only site files + database are imported (no email/cron/SSL in this version).
 """
 from flask import Blueprint, jsonify, request, session
-import os, re, subprocess, tempfile, threading, time, json, uuid, shutil
+import os, re, subprocess, threading, time, json, uuid, shutil, shlex
 
 import_bp = Blueprint('import_website', __name__)
 
@@ -40,6 +40,26 @@ except ImportError:
     from websites_core import create_site_core, get_webroot, ensure_web_ownership
 
 IMPORT_WORKSPACE = '/opt/vortexpanel/import_workspace'
+_ID_RE = re.compile(r'^[0-9a-f-]{8,36}$')
+
+
+@import_bp.before_request
+def _guard_ids():
+    """import_id / job_id become paths under IMPORT_WORKSPACE: '..' made
+    cancel_import() rmtree /opt/vortexpanel itself. The SSE job stream also
+    had no login check and printed the generated database passwords."""
+    if not req():
+        return jsonify({'ok': False}), 401
+    va = request.view_args or {}
+    for k in ('import_id', 'job_id'):
+        if k in va and not _ID_RE.match(va[k] or ''):
+            return jsonify({'ok': False, 'error': 'Invalid id'}), 400
+    return None
+
+
+def _inside(path, root):
+    rp, rr = os.path.realpath(path), os.path.realpath(root)
+    return rp == rr or rp.startswith(rr + os.sep)
 
 
 # --- Job store (same JSONL-append pattern used across the panel: modules.py,
@@ -93,20 +113,61 @@ def upload_backup():
 
 # --- Detection ------------------------------------------------------------------
 def _extract_archive(archive_path, dest_dir):
-    """Extract a .tar.gz/.tar/.zip archive. Returns (ok, error_message)."""
+    """Extract a .tar.gz/.tar/.zip archive. Returns (ok, error_message).
+
+    The archive comes from another server and is untrusted: members with
+    absolute paths or '..', links pointing outside dest_dir, entries that
+    would be written through such a link, and device/fifo nodes are skipped
+    (tar/zip slip), and setuid/setgid bits are dropped. Python's tarfile /
+    zipfile are used instead of GNU tar / unzip so every member can be
+    checked before it is written."""
+    import tarfile, zipfile
     os.makedirs(dest_dir, exist_ok=True)
+    root = os.path.realpath(dest_dir)
     lower = archive_path.lower()
-    if lower.endswith('.zip'):
-        _, err, rc = sh(f'unzip -q -o "{archive_path}" -d "{dest_dir}"', timeout=180)
-    elif lower.endswith('.tar.gz') or lower.endswith('.tgz'):
-        _, err, rc = sh(f'tar -xzf "{archive_path}" -C "{dest_dir}"', timeout=180)
-    elif lower.endswith('.tar'):
-        _, err, rc = sh(f'tar -xf "{archive_path}" -C "{dest_dir}"', timeout=180)
-    else:
-        return False, f'Unrecognized archive format: {os.path.basename(archive_path)} (expected .tar.gz, .tar, or .zip)'
-    if rc != 0:
-        return False, err or 'Extraction failed'
-    return True, ''
+    skipped = 0
+    try:
+        if lower.endswith('.zip'):
+            with zipfile.ZipFile(archive_path) as zf:
+                for info in zf.infolist():
+                    name = info.filename
+                    if not name or name.startswith('/') or '..' in name.replace('\\', '/').split('/'):
+                        skipped += 1; continue
+                    target = os.path.join(root, name)
+                    if not _inside(os.path.dirname(target) or root, root):
+                        skipped += 1; continue
+                    zf.extract(info, root)
+        elif lower.endswith(('.tar.gz', '.tgz', '.tar', '.tar.zst', '.tar.bz2', '.tar.xz')):
+            if lower.endswith('.tar.zst'):
+                return False, 'zstd-compressed archives are not supported yet -- recompress as .tar.gz'
+            with tarfile.open(archive_path, 'r:*') as tf:
+                for m in tf:
+                    name = m.name
+                    while name.startswith('./'):
+                        name = name[2:]
+                    parts = name.split('/')
+                    if not name or name.startswith('/') or '..' in parts:
+                        skipped += 1; continue
+                    if not (m.isreg() or m.isdir() or m.issym() or m.islnk()):
+                        skipped += 1; continue       # devices, fifos
+                    target = os.path.join(root, name)
+                    if not _inside(os.path.dirname(target), root) or (os.path.lexists(target) and not m.isdir() and not _inside(target, root)):
+                        skipped += 1; continue       # would be written through a link
+                    if m.issym():
+                        if m.linkname.startswith('/') or not _inside(os.path.join(os.path.dirname(target), m.linkname), root):
+                            skipped += 1; continue
+                    if m.islnk():
+                        if m.linkname.startswith('/') or '..' in m.linkname.split('/'):
+                            skipped += 1; continue
+                    m.mode &= 0o777
+                    m.uid = m.gid = 0
+                    m.uname = m.gname = 'root'
+                    tf.extract(m, root, set_attrs=not m.issym())
+        else:
+            return False, f'Unrecognized archive format: {os.path.basename(archive_path)} (expected .tar.gz, .tar, or .zip)'
+    except Exception as e:
+        return False, f'Extraction failed: {e}'
+    return True, (f'{skipped} unsafe archive member(s) skipped' if skipped else '')
 
 
 def _find_first(root, *names):
@@ -437,12 +498,16 @@ def detect_backup(import_id):
     archive_path = os.path.join(workdir, archive_files[0])
 
     extract_dir = os.path.join(workdir, 'extracted')
+    warn = ''
     if not os.path.isdir(extract_dir):
-        ok, err = _extract_archive(archive_path, extract_dir)
+        ok, warn = _extract_archive(archive_path, extract_dir)
         if not ok:
-            return jsonify({'ok': False, 'error': f'Extraction failed: {err}'})
+            shutil.rmtree(extract_dir, ignore_errors=True)   # allow a retry
+            return jsonify({'ok': False, 'error': f'Extraction failed: {warn}'})
 
     info = DETECTORS[panel_type](extract_dir)
+    if warn:
+        info['notes'].append(warn)
     info['import_id'] = import_id
     return jsonify({'ok': True, **info})
 
@@ -460,12 +525,27 @@ def execute_import(import_id):
 
     if not domain:
         return jsonify({'ok': False, 'error': 'Domain is required'})
+    from panel.routes.websites_core import is_valid_domain
+    if not is_valid_domain(domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain name'})
+    if not re.fullmatch(r'\d+\.\d+', php_version):
+        php_version = '8.3'
     if not doc_root or not os.path.isdir(doc_root):
         return jsonify({'ok': False, 'error': 'Document root path is invalid or missing'})
 
     workdir = os.path.join(IMPORT_WORKSPACE, import_id)
     if not os.path.isdir(workdir):
         return jsonify({'ok': False, 'error': 'Import session not found'})
+    # doc_root and the dump paths come back from the browser: they must stay
+    # inside this import session (any server directory could be copied into
+    # a public webroot, any file fed to mysql)
+    if not _inside(doc_root, workdir):
+        return jsonify({'ok': False, 'error': 'Document root must be inside the uploaded backup'})
+    if not isinstance(databases, list):
+        databases = []
+    for db in databases:
+        if not isinstance(db, dict) or (db.get('dump_path') and not _inside(db.get('dump_path'), workdir)):
+            return jsonify({'ok': False, 'error': 'Database dumps must be inside the uploaded backup'})
 
     job_id = str(uuid.uuid4())[:8]
     _job_create(job_id)
@@ -487,18 +567,30 @@ def execute_import(import_id):
             # 2. Copy site files from the extracted doc root into the new webroot
             _job_append(job_id, f'[VortexPanel] Copying files from {doc_root} ...')
             copy_result = subprocess.run(
-                f'cp -a "{doc_root}/." "{site_path}/"',
-                shell=True, capture_output=True, text=True, timeout=300
+                ['cp', '-a', '--', doc_root.rstrip('/') + '/.', site_path + '/'],
+                capture_output=True, text=True, timeout=1800
             )
             if copy_result.returncode != 0:
                 _job_append(job_id, f'[ERROR] File copy failed: {copy_result.stderr.strip()[:300]}')
                 _job_finish(job_id, False)
                 return
-            file_count = subprocess.run(f'find "{site_path}" -type f | wc -l',
-                                         shell=True, capture_output=True, text=True).stdout.strip()
+            file_count = subprocess.run(f'find {shlex.quote(site_path)} -type f | wc -l',
+                                         shell=True, capture_output=True, text=True, timeout=120).stdout.strip()
             _job_append(job_id, f'[VortexPanel] ✓ Copied {file_count} files')
 
-            ensure_web_ownership(site_path)
+            # drop the "site created" placeholder unless the backup had its own
+            # index.html (Apache's DirectoryIndex prefers it over index.php)
+            ph = os.path.join(site_path, 'index.html')
+            if not os.path.exists(os.path.join(doc_root, 'index.html')) and os.path.isfile(ph):
+                try:
+                    if 'site created successfully' in open(ph, errors='ignore').read():
+                        os.unlink(ph)
+                except OSError:
+                    pass
+            # owner = the account the site's PHP-FPM pool runs as; also restores
+            # the SELinux web label (`cp -a` kept the import workspace's context,
+            # so every request was 403 on enforcing RHEL systems)
+            ensure_web_ownership(site_path, result.get('php') or php_version, result.get('webserver'))
             _job_append(job_id, '[VortexPanel] ✓ File ownership set for web server user')
 
             # 3. Import databases
@@ -514,44 +606,54 @@ def execute_import(import_id):
                     continue
 
                 _job_append(job_id, f'[VortexPanel] Creating database `{target_name}`...')
-                sockets = ['/var/run/mysqld/mysqld.sock', '/run/mysqld/mysqld.sock']
-                sock_flag = ''
-                for sock in sockets:
-                    if os.path.exists(sock):
-                        sock_flag = f'--socket={sock}'
-                        break
-
-                create_out = subprocess.run(
-                    f'mysql -u root {sock_flag} -e "CREATE DATABASE IF NOT EXISTS \\`{target_name}\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"',
-                    shell=True, capture_output=True, text=True, timeout=30
-                )
-                if create_out.returncode != 0:
-                    _job_append(job_id, f'[ERROR] Failed to create database {target_name}: {create_out.stderr.strip()[:300]}')
+                from panel.routes.databases import mysql_cmd, _mysql_run, _mysql_bin
+                out, err = mysql_cmd(f"SHOW DATABASES LIKE '{target_name}';")
+                if err:
+                    _job_append(job_id, f'[ERROR] Cannot reach MySQL/MariaDB: {err[:300]}')
+                    continue
+                if target_name in (out or '').split():
+                    # CREATE DATABASE IF NOT EXISTS used to import straight into
+                    # an existing database of another site, overwriting its tables
+                    _job_append(job_id, f'[ERROR] A database named {target_name} already exists -- choose another target name')
+                    continue
+                _, err = mysql_cmd(f"CREATE DATABASE `{target_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+                if err:
+                    _job_append(job_id, f'[ERROR] Failed to create database {target_name}: {err[:300]}')
                     continue
 
                 # Generate a fresh random password for the import's DB user —
                 # original passwords are never included in backup dumps, so we
-                # can't (and shouldn't try to) recover them.
+                # can't (and shouldn't try to) recover them. The user name gets
+                # a random suffix (an existing user of the same name kept its
+                # old password, so the credentials shown did not work) and fits
+                # MySQL's 32-character limit.
                 import secrets, string
                 new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
-                subprocess.run(
-                    f"mysql -u root {sock_flag} -e \"CREATE USER IF NOT EXISTS '{target_name}'@'localhost' IDENTIFIED BY '{new_password}'; "
-                    f"GRANT ALL PRIVILEGES ON \\`{target_name}\\`.* TO '{target_name}'@'localhost'; FLUSH PRIVILEGES;\"",
-                    shell=True, capture_output=True, text=True, timeout=30
-                )
-
-                _job_append(job_id, f'[VortexPanel] Importing dump ({os.path.basename(dump_path)})...')
-                if dump_path.endswith('.gz'):
-                    import_cmd = f'zcat "{dump_path}" | mysql -u root {sock_flag} "{target_name}"'
-                else:
-                    import_cmd = f'mysql -u root {sock_flag} "{target_name}" < "{dump_path}"'
-                imp = subprocess.run(import_cmd, shell=True, capture_output=True, text=True, timeout=300)
-                if imp.returncode != 0:
-                    _job_append(job_id, f'[ERROR] Import failed for {target_name}: {imp.stderr.strip()[:300]}')
+                db_user = target_name[:27] + '_' + ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(4))
+                _, err = mysql_cmd(f"CREATE USER '{db_user}'@'localhost' IDENTIFIED BY '{new_password}'; "
+                                   f"GRANT ALL PRIVILEGES ON `{target_name}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;")
+                if err:
+                    _job_append(job_id, f'[ERROR] Failed to create database user for {target_name}: {err[:300]}')
                     continue
 
-                _job_append(job_id, f'[VortexPanel] ✓ Database `{target_name}` imported — user `{target_name}` / password: {new_password}')
-                imported_dbs.append({'name': target_name, 'user': target_name, 'password': new_password})
+                _job_append(job_id, f'[VortexPanel] Importing dump ({os.path.basename(dump_path)})...')
+                qdb, qdump = shlex.quote(target_name), shlex.quote(dump_path)
+                if dump_path.endswith('.gz'):
+                    import gzip
+                    plain = os.path.join(workdir, f'_import_{target_name}.sql')
+                    with gzip.open(dump_path, 'rb') as zin, open(plain, 'wb') as zout:
+                        shutil.copyfileobj(zin, zout)
+                    qdump = shlex.quote(plain)
+                _, err = _mysql_run(_mysql_bin(), f'{qdb} < {qdump}', 1800)
+                if dump_path.endswith('.gz'):
+                    try: os.unlink(plain)
+                    except OSError: pass
+                if err:
+                    _job_append(job_id, f'[ERROR] Import failed for {target_name}: {err[:300]}')
+                    continue
+
+                _job_append(job_id, f'[VortexPanel] ✓ Database `{target_name}` imported — user `{db_user}` / password: {new_password}')
+                imported_dbs.append({'name': target_name, 'user': db_user, 'password': new_password})
 
             _job_append(job_id, f'[VortexPanel] ✓ Import complete for {domain}')
             if imported_dbs:

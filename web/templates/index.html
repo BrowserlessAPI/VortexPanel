@@ -12,7 +12,8 @@
 <script src="/static/js/vendor/xterm/xterm-addon-fit.js"></script>
 <link rel="stylesheet" href="/static/css/vendor/codemirror/codemirror.css">
 <link rel="stylesheet" href="/static/css/vendor/codemirror/theme/material-darker.css">
-<script src="/static/js/vendor/chart.umd.min.js"></script>  <style>[x-cloak]{display:none!important}</style>
+<script src="/static/js/vendor/chart.umd.min.js"></script>
+<script src="/static/js/vendor/qrcode.min.js"></script>  <style>[x-cloak]{display:none!important}</style>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js?v={{ panel_version }}"></script>
   <script src="/static/js/vendor/alpine.cdn.min.js" defer></script>
@@ -306,7 +307,7 @@
       <!-- WEBSITES -->
       <div x-show="page==='websites'" x-data="websitesPage()">
         <div class="page-header">
-          <div><div class="page-title">Websites</div><div class="page-sub">Manage Nginx virtual hosts</div></div>
+          <div><div class="page-title">Websites</div><div class="page-sub">Manage websites on nginx, Apache, OpenLiteSpeed and Caddy</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" @click="openImportWizard()">Import Website</button>
             <button class="btn btn-primary" @click="openAddSite()">+ Add Site</button>
@@ -323,6 +324,7 @@
                 <tr>
                   <td>
                     <a class="row-domain" :href="'http://'+s.domain" target="_blank" @click.stop x-text="s.domain" style="text-decoration:none"></a>
+                    <span x-show="s.webserver && s.webserver!=='nginx'" class="badge badge-gray" style="font-size:10px;margin-left:6px" x-text="({apache:'Apache',openlitespeed:'OpenLiteSpeed',caddy:'Caddy'})[s.webserver]||s.webserver"></span>
                     <span class="row-path" x-text="s.path" :title="s.path"></span>
                   </td>
                   <td><span class="badge badge-blue" x-text="s.php"></span></td>
@@ -484,7 +486,7 @@
 
               <!-- Left sidebar tabs -->
               <div style="width:180px;min-width:180px;flex-shrink:0;border-right:1px solid var(--border);overflow-y:auto;padding:8px 0">
-                <template x-for="tab in drawerTabs" :key="tab.id">
+                <template x-for="tab in siteDrawerTabs()" :key="tab.id">
                   <div class="drawer-nav-item" :class="drawer.tab===tab.id ? 'active' : ''"
                        @click="drawer.tab=tab.id;loadDrawerTab()" x-text="tab.label"></div>
                 </template>
@@ -500,7 +502,7 @@
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px">A domain per line, default port is 80. Wildcard: *.domain.com · Custom port: domain.com:8080</div>
                 <div style="display:flex;gap:8px;margin-bottom:16px">
                   <input class="form-input" style="flex:1" x-model="drawer.domainInput" placeholder="example.com or *.example.com">
-                  <button class="btn btn-primary btn-sm" @click="post('/api/websites/'+drawer.site?.domain+'/domains',{domain:drawer.domainInput}).then(r=>{if(r.ok){toast('Domain added','success');drawer.domainInput='';loadDrawerTab();}else toast(r.error||'Failed','error')})">Add</button>
+                  <button class="btn btn-primary btn-sm" @click="addDomainBinding()">Add</button>
                 </div>
                 <div class="card" style="padding:0;overflow:hidden">
                   <table class="data-table">
@@ -510,7 +512,7 @@
                         <tr>
                           <td style="font-weight:600;color:var(--accent)" x-text="d.domain"></td>
                           <td x-text="d.port||'80'"></td>
-                          <td><button class="btn btn-danger btn-xs" @click="del('/api/websites/'+drawer.site?.domain+'/domains/'+d.domain).then(r=>{if(r.ok){toast('Removed','success');loadDrawerTab();}})">Delete</button></td>
+                          <td><button class="btn btn-danger btn-xs" @click="removeDomainBinding(d.domain)">Delete</button></td>
                         </tr>
                       </template>
                       <template x-if="!drawer.domains?.length">
@@ -544,7 +546,7 @@
                     <label class="form-label">Site directory</label>
                     <div style="display:flex;gap:8px">
                       <input class="form-input" style="flex:1" x-model="drawer.directory.path">
-                      <button class="btn btn-primary btn-sm" @click="put('/api/websites/'+drawer.site?.domain+'/config',{action:'set_root',path:drawer.directory.path}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                      <button class="btn btn-primary btn-sm" @click="saveDirectory()">Save</button>
                     </div>
                     <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Some programs need to specify a secondary directory as the working directory</div>
                   </div>
@@ -553,11 +555,11 @@
                       <div style="font-size:13px;font-weight:500">Anti-XSS attack</div>
                       <div style="font-size:11px;color:var(--text-muted)">(Base directory limit) (open basedir)</div>
                     </div>
-                    <input type="checkbox" x-model="drawer.directory.antixss" style="width:18px;height:18px">
+                    <input type="checkbox" x-model="drawer.directory.antixss" @change="toggleDirectoryOption('antixss')" style="width:18px;height:18px">
                   </div>
                   <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--bg-raised);border-radius:8px;border:1px solid var(--border)">
                     <div style="font-size:13px;font-weight:500">Write access log</div>
-                    <input type="checkbox" x-model="drawer.directory.accesslog" style="width:18px;height:18px">
+                    <input type="checkbox" x-model="drawer.directory.accesslog" @change="toggleDirectoryOption('accesslog')" :disabled="(drawer.site?.webserver||'nginx')!=='nginx'" :title="(drawer.site?.webserver||'nginx')!=='nginx'?'Access log switching is available for nginx sites only':''" style="width:18px;height:18px">
                   </div>
                 </div>
               </div>
@@ -566,10 +568,10 @@
               <div x-show="drawer.tab==='rewrite'" x-transition:enter="drawer-tab-fade-enter" x-transition:enter-start="drawer-tab-fade-enter-start" x-transition:enter-end="drawer-tab-fade-enter-end">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
                   <div style="font-weight:600;font-size:13px">URL Rewrite</div>
-                  <select class="form-input" style="max-width:180px;font-size:12px" @change="post('/api/websites/'+drawer.site?.domain+'/rewrite',{template:$event.target.value}).then(r=>{if(r.ok)drawer.rewriteContent=r.content||''})">
+                  <select class="form-input" style="max-width:180px;font-size:12px" @change="applyRewriteTemplate($event.target.value, $event.target)">
                     <option value="">Apply template...</option>
                     <template x-for="t in drawer.rewriteTemplates" :key="t.id">
-                      <option :value="t.id" x-text="t.name"></option>
+                      <option :value="t.id" x-text="t.label||t.name||t.id"></option>
                     </template>
                   </select>
                 </div>
@@ -577,10 +579,10 @@
                   <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;color:#4b5563">Rewrite rules · Ctrl+S to save</div>
                   <textarea style="width:100%;min-height:300px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical"
                             x-model="drawer.rewriteContent"
-                            @keydown.ctrl.s.prevent="post('/api/websites/'+drawer.site?.domain+'/rewrite',{content:drawer.rewriteContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))"
+                            @keydown.ctrl.s.prevent="saveRewrite()"
                             spellcheck="false"></textarea>
                 </div>
-                <button class="btn btn-primary btn-sm" @click="post('/api/websites/'+drawer.site?.domain+'/rewrite',{content:drawer.rewriteContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                <button class="btn btn-primary btn-sm" @click="saveRewrite()">Save</button>
                 <div style="margin-top:12px;font-size:11px;color:var(--text-muted);line-height:1.8">
                   • If the site cannot be accessed after rewrite rules set, please try to reset to default<br>
                   • You are able to modify rewrite rules, just save it after modification
@@ -592,7 +594,7 @@
                 <div style="font-weight:600;font-size:13px;margin-bottom:12px">Default Document</div>
                 <textarea class="form-input" style="min-height:200px;font-family:var(--font-mono);font-size:12px" x-model="drawer.defaultDoc" placeholder="index.php&#10;index.html&#10;index.htm"></textarea>
                 <div style="font-size:11px;color:var(--text-muted);margin:8px 0 12px">Default indexes, one per line, priority top-to-bottom.</div>
-                <button class="btn btn-primary btn-sm" @click="put('/api/websites/'+drawer.site?.domain+'/config',{action:'set_index',indexes:drawer.defaultDoc}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                <button class="btn btn-primary btn-sm" @click="saveDefaultDoc()">Save</button>
               </div>
 
               <!-- -- LIMIT ACCESS TAB -- -->
@@ -603,16 +605,16 @@
                 </div>
                 <div x-show="drawer.showLimitAdd" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
                   <div class="form-row form-row-2">
-                    <div class="form-group"><label class="form-label">Name</label><input class="form-input" x-model="drawer.limitForm.name" placeholder="admin"></div>
                     <div class="form-group"><label class="form-label">Path</label><input class="form-input" x-model="drawer.limitForm.path" placeholder="/admin"></div>
+                    <div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="drawer.limitForm.user" placeholder="admin"></div>
                   </div>
                   <div class="form-row form-row-2">
-                    <div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="drawer.limitForm.user" placeholder="admin"></div>
                     <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="drawer.limitForm.pass" placeholder="••••••••"></div>
+                    <div></div>
                   </div>
                   <div style="display:flex;gap:8px">
                     <button class="btn btn-ghost btn-sm" @click="drawer.showLimitAdd=false">Cancel</button>
-                    <button class="btn btn-primary btn-sm" @click="post('/api/websites/'+drawer.site?.domain+'/limit-access',drawer.limitForm).then(r=>{if(r.ok){toast('Added','success');drawer.showLimitAdd=false;loadDrawerTab();}else toast(r.error||'Failed','error')})">Save</button>
+                    <button class="btn btn-primary btn-sm" @click="addLimitRule()">Save</button>
                   </div>
                 </div>
                 <template x-if="!drawer.limitRules?.length">
@@ -622,7 +624,7 @@
                   <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-raised);border:1px solid var(--border);border-radius:6px;margin-bottom:6px">
                     <span style="font-weight:600;flex:1" x-text="rule.name"></span>
                     <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted)" x-text="rule.path"></span>
-                    <button class="btn btn-danger btn-xs" @click="del('/api/websites/'+drawer.site?.domain+'/limit-access/'+rule.name).then(r=>{if(r.ok){toast('Deleted','success');loadDrawerTab();}})">Delete</button>
+                    <button class="btn btn-danger btn-xs" @click="delLimitRule(rule)">Delete</button>
                   </div>
                 </template>
                 <div style="margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.8">
@@ -653,7 +655,7 @@
                   </div>
                 </div>
                 <button class="btn btn-primary btn-sm" style="margin-top:16px"
-                        @click="post('/api/websites/'+drawer.site?.domain+'/hotlink',{enable:drawer.hotlink.enabled,suffixes:drawer.hotlink.suffixes,access_domain:drawer.hotlink.domains,response:drawer.hotlink.response}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">Save</button>
+                        @click="saveHotlink()">Save</button>
                 <div style="margin-top:14px;font-size:11px;color:var(--text-muted);line-height:1.8">
                   • By default, resources are allowed to be accessed directly<br>
                   • Multiple URL suffixes and domains should be separated by comma<br>
@@ -1908,7 +1910,7 @@
                     </div>
                     <span x-show="v.recommended"
                           style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">
-                      ★ Recommended
+                      Recommended
                     </span>
                     <span x-show="v.status==='maintenance'"
                           style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(245,158,11,.12);color:#d97706">
@@ -2310,7 +2312,7 @@
                       <span style="font-weight:600;font-family:var(--font-mono)" x-text="'go'+v.version"></span>
                       <span style="margin-left:8px;font-size:11px;color:var(--text-muted)" x-text="v.label.split('(')[1]?.replace(')','') || ''"></span>
                     </div>
-                    <span x-show="v.recommended" style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">★ Recommended</span>
+                    <span x-show="v.recommended" style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">Recommended</span>
                     <span x-show="v.status==='rc'" style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(99,102,241,.12);color:var(--accent)">RC</span>
                   </div>
                   <div>
@@ -2540,7 +2542,7 @@
                   </div>
                   <div style="font-size:11px;color:var(--text-muted)">A runaway process will be capped rather than taking down the whole server. Leave blank for no limit.</div>
                   <div style="display:flex;justify-content:flex-end">
-                    <button class="btn btn-primary btn-sm" @click="submitEdit(); settingsModal.show=false">Save & Restart</button>
+                    <button class="btn btn-primary btn-sm" @click="submitEdit().then(ok=>{ if(ok) settingsModal.show=false; })">Save & Restart</button>
                   </div>
                 </div>
               </div>
@@ -2556,7 +2558,7 @@
                             placeholder="One per line&#10;myapp.com&#10;*.myapp.com"></textarea>
                 </div>
                 <div style="display:flex;justify-content:flex-end;margin-top:12px">
-                  <button class="btn btn-primary btn-sm" @click="submitEdit(); settingsModal.show=false">Apply Domain</button>
+                  <button class="btn btn-primary btn-sm" @click="submitEdit().then(ok=>{ if(ok) settingsModal.show=false; })">Apply Domain</button>
                 </div>
 
                 <!-- SSL section -->
@@ -2830,6 +2832,7 @@
               </div>
             </div>
             <div class="modal-ft">
+              <button class="btn btn-danger" style="margin-right:auto" @click="dropUser(selUser)">Drop User</button>
               <button class="btn btn-ghost" @click="showUserDetail=false">Close</button>
             </div>
           </div>
@@ -3465,7 +3468,7 @@
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="phpUninstallModal.show=false">Cancel</button>
               <button class="btn btn-danger" :disabled="!phpUninstallModal.selVer"
-                      @click="phpUninstallModal.show=false; $store && $store || true; let m=modules.find(x=>x.id==='php'); post('/api/modules/php/uninstall',{version:phpUninstallModal.selVer}).then(r=>{if(r.ok){let label='Removing: PHP v'+phpUninstallModal.selVer; jobModal={show:true,title:label,lines:[],done:false,success:false,action:'uninstall',installedVer:''}; const es=new EventSource('/api/modules/job/'+r.job_id); es.onmessage=(e)=>{const d=JSON.parse(e.data); if(d.line)jobModal.lines.push(d.line); if(d.done){es.close();m.installed=d.installed;jobModal.done=true;jobModal.success=d.success;setTimeout(()=>load(),1200);} if(d.error){es.close();toast(d.error,'error');}  $nextTick(()=>{const t=document.querySelector('.job-terminal');if(t)t.scrollTop=t.scrollHeight;});};}else toast(r.error||'Failed','error');})">
+                      @click="uninstallPhpVersion()">
                 Uninstall v<span x-text="phpUninstallModal.selVer"></span>
               </button>
             </div>
@@ -3497,7 +3500,7 @@
                 <!-- PHP version switcher pills -->
                 <div x-show="settingsModal.mod?.id==='php' && settingsModal.phpVersions?.length>0" style="display:flex;flex-direction:row;flex-wrap:wrap;gap:7px;margin-top:8px">
                   <template x-for="pv in (settingsModal.phpVersions||[])" :key="pv.version">
-                    <button @click="settingsModal.selPhpVer=pv.version; post('/api/modules/php/settings',{action:'get_ver_data',version:pv.version}).then(r=>{if(r.ok){settingsModal.version=r.version;settingsModal.iniPath=r.ini_path;settingsModal.iniContent=r.ini_content;settingsModal.fpmConf=r.fpm_conf;settingsModal.fpmContent=r.fpm_content;settingsModal.fpmProfile=r.fpm_profile||{};settingsModal.phpConfig=r.config||{};settingsModal.extensions=r.extensions||[];settingsModal.logs=r.logs||'';settingsModal.status=r.status||'';settingsModal.phpServiceName='php'+pv.version+'-fpm';}else toast('Failed to load PHP '+pv.version,'error');})"
+                    <button @click="settingsModal.selPhpVer=pv.version; post('/api/modules/php/settings',{action:'get_ver_data',version:pv.version}).then(r=>{if(r.ok){settingsModal.version=r.version;settingsModal.iniPath=r.ini_path;settingsModal.iniContent=r.ini_content;settingsModal.fpmConf=r.fpm_conf;settingsModal.fpmContent=r.fpm_content;settingsModal.fpmProfile=r.fpm_profile||{};settingsModal.phpConfig=r.config||{};settingsModal.extensions=r.extensions||[];settingsModal.logs=r.logs||'';settingsModal.status=r.status||'';settingsModal.phpServiceName=r.service||pv.service||'';}else toast('Failed to load PHP '+pv.version,'error');})"
                             :style="settingsModal.selPhpVer===pv.version
                               ? 'display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:8px;font-size:12px;font-weight:600;border:1.5px solid var(--accent);cursor:pointer;white-space:nowrap;font-family:inherit;background:var(--accent);color:#fff;box-shadow:0 3px 10px rgba(88,101,242,.4)'
                               : 'display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:8px;font-size:12px;font-weight:600;border:1.5px solid var(--border);cursor:pointer;white-space:nowrap;font-family:inherit;background:var(--bg-raised);color:var(--text-secondary)'">
@@ -3609,9 +3612,9 @@
                       <div style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;letter-spacing:.4px">Config Test Error</div>
                       <button class="btn btn-ghost btn-xs" @click="async()=>{
                         const svc = settingsModal.mod.id;
-                        const cmd = svc==='nginx' ? 'nginx -t 2>&1' : 'apache2ctl configtest 2>&1';
-                        const r = await post('/api/terminal/run', {cmd});
-                        settingsModal.configTestOutput = r.output || r.error || 'Could not run config test';
+                        const cmd = svc==='nginx' ? 'nginx -t 2>&1' : '(apache2ctl configtest || apachectl configtest) 2>&1';
+                        const r = await post('/api/terminal/exec', {cmd, cwd:'/'});
+                        settingsModal.configTestOutput = ((r.stdout||'')+(r.stderr||'')).trim() || r.error || 'Could not run config test';
                       }">Run Test</button>
                     </div>
                     <pre x-show="settingsModal.configTestOutput"
@@ -3619,13 +3622,13 @@
                          x-text="settingsModal.configTestOutput"></pre>
                     <div x-show="!settingsModal.configTestOutput"
                          style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:12px;font-size:12px;color:var(--red)">
-                      Service failed to start. Click <strong>Run Test</strong> to see the config error, or open the <strong>Error Log</strong> tab for details. Common causes: port 80 already in use, syntax error in nginx.conf, or a broken site config in /etc/nginx/conf.d/.
+                      Service failed to start. Click <strong>Run Test</strong> to see the config error, or open the <strong>Error Log</strong> tab for details. Common causes: port 80 already in use, a syntax error in the main config file, or a broken site config.
                     </div>
                   </div>
 
                   <div style="background:var(--bg-base);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text-secondary)">
                     <div style="font-weight:600;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;font-size:11px;letter-spacing:.4px">Service Info</div>
-                    <div x-text="'Service name: '+(settingsModal.mod?.id==='php'?(settingsModal.phpServiceName||'php'+settingsModal.selPhpVer+'-fpm'):(settingsModal.mod?.service||settingsModal.mod?.id))"></div>
+                    <div x-text="'Service name: '+(settingsModal.mod?.id==='php'?(settingsModal.phpServiceName||'-'):(settingsModal.mod?.service||settingsModal.mod?.id))"></div>
                     <div x-show="settingsModal.confPath" x-text="'Config: '+settingsModal.confPath" style="margin-top:3px;font-family:var(--font-mono);font-size:11px"></div>
                   </div>
                 </div>
@@ -3762,7 +3765,7 @@
                       <span :style="settingsModal.webserverStatus==='active'?'color:var(--green);font-weight:600':'color:var(--red);font-weight:600'" x-text="settingsModal.webserverStatus"></span>
                     </div>
                   </div>
-                  <button class="btn btn-primary btn-sm" @click="settingsModal.show=false; window.__vpPendingSecurityTab='waf'; $dispatch('nav',{page:'security'})">Open WAF Controls</button>
+                  <button class="btn btn-primary btn-sm" @click="settingsModal.show=false; window.__vpPendingSecurityTab='modsec'; $dispatch('nav',{page:'security'})">Open WAF Controls</button>
                 </div>
 
 
@@ -3787,9 +3790,9 @@
                 <div x-show="settingsModal.tab==='port'">
                   <div style="font-weight:600;font-size:14px;margin-bottom:16px">Port Configuration</div>
                   <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-                    <label style="font-size:13px;color:var(--text-secondary);width:100px">MySQL Port</label>
+                    <label style="font-size:13px;color:var(--text-secondary);width:100px" x-text="(settingsModal.mod?.name||'MySQL')+' Port'"></label>
                     <input class="form-input" style="width:120px;font-family:var(--font-mono)" x-model="settingsModal.port" placeholder="3306">
-                    <button class="btn btn-primary btn-sm" @click="post('/api/modules/mysql/settings',{action:'save_optimization',optimization:{port:settingsModal.port}}).then(r=>toast(r.ok?'Port updated — restart required':'Failed',r.ok?'success':'error'))">Modify</button>
+                    <button class="btn btn-primary btn-sm" :disabled="settingsModal.saving" @click="settingsSavePort()">Modify</button>
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);line-height:1.7">
                     Changing the port requires a service restart.<br>
@@ -3935,8 +3938,8 @@
                   <div class="card" style="margin-bottom:16px">
                     <div style="font-weight:600;font-size:13px;margin-bottom:12px">Persistent File Storage Path</div>
                     <div style="display:flex;gap:8px">
-                      <input class="form-input" style="flex:1;font-family:var(--font-mono)" :value="settingsModal.persistence?.dir||'/var/lib/redis'" placeholder="/var/lib/redis">
-                      <button class="btn btn-primary btn-sm">Save</button>
+                      <input class="form-input" style="flex:1;font-family:var(--font-mono)" x-model="settingsModal.persistence.dir" placeholder="/var/lib/redis">
+                      <button class="btn btn-primary btn-sm" :disabled="settingsModal.saving" @click="redisSavePersistence(['dir'])">Save</button>
                     </div>
                   </div>
                   <div class="card" style="margin-bottom:16px">
@@ -3944,20 +3947,20 @@
                     <div style="display:flex;gap:16px;align-items:flex-end">
                       <div class="form-group" style="flex:1;margin:0">
                         <label class="form-label">Append only</label>
-                        <select class="form-input" :value="settingsModal.persistence?.aof_enabled||'no'">
+                        <select class="form-input" x-model="settingsModal.persistence.aof_enabled">
                           <option value="no">Close</option>
                           <option value="yes">Open</option>
                         </select>
                       </div>
                       <div class="form-group" style="flex:1;margin:0">
                         <label class="form-label">Append fsync</label>
-                        <select class="form-input" :value="settingsModal.persistence?.appendfsync||'everysec'">
+                        <select class="form-input" x-model="settingsModal.persistence.appendfsync">
                           <option value="always">always</option>
                           <option value="everysec">everysec</option>
                           <option value="no">no</option>
                         </select>
                       </div>
-                      <button class="btn btn-primary btn-sm" style="margin-bottom:1px">Save</button>
+                      <button class="btn btn-primary btn-sm" style="margin-bottom:1px" :disabled="settingsModal.saving" @click="redisSavePersistence(['appendonly','appendfsync'])">Save</button>
                     </div>
                   </div>
                   <div class="card">
@@ -4005,12 +4008,12 @@
                             <span x-show="!ext.installed" style="color:var(--text-muted);font-size:13px">—</span>
                           </td>
                           <td>
-                            <button class="btn btn-primary btn-xs" x-show="!ext.installed"
-                                    @click="post('/api/modules/php/settings',{action:'install_php_ext',version:settingsModal.selPhpVer||settingsModal.version,ext:ext.name}).then(r=>{if(r.ok){ext.installed=true;toast(ext.name+' installed','success');}else toast(r.error||'Failed','error');})">
+                            <button class="btn btn-primary btn-xs" x-show="!ext.installed" :disabled="ext._busy"
+                                    @click="phpExtAction(ext, true)">
                               Install
                             </button>
-                            <button class="btn btn-danger btn-xs" x-show="ext.installed"
-                                    @click="if(confirm('Uninstall '+ext.name+'?'))post('/api/modules/php/settings',{action:'uninstall_php_ext',version:settingsModal.selPhpVer||settingsModal.version,ext:ext.name}).then(r=>{if(r.ok){ext.installed=false;toast(ext.name+' removed','success');}})">
+                            <button class="btn btn-danger btn-xs" x-show="ext.installed" :disabled="ext._busy"
+                                    @click="phpExtAction(ext, false)">
                               Uninstall
                             </button>
                           </td>
@@ -4036,7 +4039,7 @@
                     </template>
                   </div>
                   <button class="btn btn-primary"
-                          @click="post('/api/modules/php/settings',{action:'save_php_config',version:settingsModal.selPhpVer||settingsModal.version,config:settingsModal.phpConfig}).then(r=>toast(r.ok?'PHP config saved':'Failed',r.ok?'success':'error'))">
+                          @click="phpSaveConfig()">
                     Save & Reload FPM
                   </button>
                 </div>
@@ -4049,7 +4052,7 @@
                       <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.iniPath"></div>
                     </div>
                     <button class="btn btn-primary btn-sm"
-                            @click="post('/api/modules/php/settings',{action:'save_config',conf_path:settingsModal.iniPath,content:settingsModal.iniContent,version:settingsModal.selPhpVer||settingsModal.version}).then(r=>toast(r.ok?'php.ini saved':'Failed',r.ok?'success':'error'))">
+                            @click="post('/api/modules/php/settings',{action:'save_config',conf_path:settingsModal.iniPath,content:settingsModal.iniContent,version:settingsModal.selPhpVer||settingsModal.version}).then(r=>toast(r.ok?'php.ini saved':(r.error||'Failed'),r.ok?'success':'error'))">
                       Save
                     </button>
                   </div>
@@ -4060,7 +4063,7 @@
                     </div>
                     <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
                               x-model="settingsModal.iniContent"
-                              @keydown.ctrl.s.prevent="post('/api/modules/php/settings',{action:'save_config',conf_path:settingsModal.iniPath,content:settingsModal.iniContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))"
+                              @keydown.ctrl.s.prevent="post('/api/modules/php/settings',{action:'save_config',conf_path:settingsModal.iniPath,content:settingsModal.iniContent,version:settingsModal.selPhpVer||settingsModal.version}).then(r=>toast(r.ok?'Saved':(r.error||'Failed'),r.ok?'success':'error'))"
                               spellcheck="false"></textarea>
                   </div>
                 </div>
@@ -4073,7 +4076,7 @@
                       <div style="font-size:11px;font-family:var(--font-mono);color:var(--text-muted)" x-text="settingsModal.fpmConf"></div>
                     </div>
                     <button class="btn btn-primary btn-sm"
-                            @click="post('/api/modules/php/settings',{action:'save_fpm_content',version:settingsModal.selPhpVer||settingsModal.version,conf_path:settingsModal.fpmConf,content:settingsModal.fpmContent}).then(r=>toast(r.ok?'FPM profile saved':'Failed',r.ok?'success':'error'))">
+                            @click="post('/api/modules/php/settings',{action:'save_fpm_content',version:settingsModal.selPhpVer||settingsModal.version,conf_path:settingsModal.fpmConf,content:settingsModal.fpmContent}).then(r=>toast(r.ok?'FPM profile saved':(r.error||'Failed'),r.ok?'success':'error'))">
                       Save & Reload
                     </button>
                   </div>
@@ -4084,7 +4087,7 @@
                     </div>
                     <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
                               x-model="settingsModal.fpmContent"
-                              @keydown.ctrl.s.prevent="post('/api/modules/php/settings',{action:'save_fpm_content',version:settingsModal.selPhpVer||settingsModal.version,conf_path:settingsModal.fpmConf,content:settingsModal.fpmContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))"
+                              @keydown.ctrl.s.prevent="post('/api/modules/php/settings',{action:'save_fpm_content',version:settingsModal.selPhpVer||settingsModal.version,conf_path:settingsModal.fpmConf,content:settingsModal.fpmContent}).then(r=>toast(r.ok?'Saved':(r.error||'Failed'),r.ok?'success':'error'))"
                               spellcheck="false"></textarea>
                   </div>
                 </div>
@@ -4108,7 +4111,7 @@
                     </div>
                   </div>
                   <button class="btn btn-primary btn-sm" style="margin-top:20px"
-                          @click="post('/api/modules/php/settings',{action:'save_php_config',version:settingsModal.selPhpVer||settingsModal.version,config:{upload_max_filesize:settingsModal.phpConfig['upload_max_filesize'],post_max_size:settingsModal.phpConfig['post_max_size'],max_file_uploads:settingsModal.phpConfig['max_file_uploads']}}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">
+                          @click="phpSaveConfig(['upload_max_filesize','post_max_size','max_file_uploads'])">
                     Save
                   </button>
                 </div>
@@ -4132,7 +4135,7 @@
                     </div>
                   </div>
                   <button class="btn btn-primary btn-sm" style="margin-top:20px"
-                          @click="post('/api/modules/php/settings',{action:'save_php_config',version:settingsModal.selPhpVer||settingsModal.version,config:{max_execution_time:settingsModal.phpConfig['max_execution_time'],max_input_time:settingsModal.phpConfig['max_input_time'],memory_limit:settingsModal.phpConfig['memory_limit']}}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">
+                          @click="phpSaveConfig(['max_execution_time','max_input_time','memory_limit'])">
                     Save
                   </button>
                 </div>
@@ -4147,7 +4150,7 @@
                             placeholder="e.g. exec,passthru,shell_exec,system"></textarea>
                   <div style="font-size:11px;color:var(--text-muted);margin-top:8px">• Separate function names with commas. Restart PHP-FPM after saving.</div>
                   <button class="btn btn-primary btn-sm" style="margin-top:16px"
-                          @click="post('/api/modules/php/settings',{action:'save_php_config',version:settingsModal.selPhpVer||settingsModal.version,config:{disable_functions:settingsModal.phpConfig['disable_functions']}}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">
+                          @click="phpSaveConfig(['disable_functions'])">
                     Save
                   </button>
                 </div>
@@ -4181,7 +4184,7 @@
                     </div>
                   </div>
                   <button class="btn btn-primary btn-sm" style="margin-top:20px"
-                          @click="post('/api/modules/php/settings',{action:'save_fpm_profile',version:settingsModal.selPhpVer||settingsModal.version,fpm_profile:settingsModal.fpmProfile}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">
+                          @click="phpSaveFpmProfile(['pm','pm.max_children','pm.start_servers','pm.min_spare_servers','pm.max_spare_servers'])">
                     Save & Reload
                   </button>
                 </div>
@@ -4201,7 +4204,7 @@
                     </div>
                   </div>
                   <button class="btn btn-primary btn-sm" style="margin-top:20px"
-                          @click="post('/api/modules/php/settings',{action:'save_php_config',version:settingsModal.selPhpVer||settingsModal.version,config:{'session.gc_maxlifetime':settingsModal.phpConfig['session.gc_maxlifetime'],'date.timezone':settingsModal.phpConfig['date.timezone']}}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">
+                          @click="phpSaveConfig(['session.gc_maxlifetime','date.timezone'])">
                     Save
                   </button>
                 </div>
@@ -4217,7 +4220,7 @@
                     </div>
                   </div>
                   <button class="btn btn-primary btn-sm" style="margin-bottom:20px"
-                          @click="post('/api/modules/php/settings',{action:'save_fpm_profile',version:settingsModal.selPhpVer||settingsModal.version,fpm_profile:settingsModal.fpmProfile}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))">
+                          @click="phpSaveFpmProfile(['request_slowlog_timeout'])">
                     Save & Reload
                   </button>
                   <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">Slow log content:</div>
@@ -4379,7 +4382,7 @@
                             <td>
                               <div style="display:flex;gap:6px">
                                 <button class="btn btn-ghost btn-xs" @click="settingsModal.dnsSelZone=z.domain;settingsModal.tab='dns_records';get('/api/dns/zones/'+z.domain+'/records').then(r=>{if(r.ok)settingsModal.dnsRecords=r.records||[];})">Records</button>
-                                <button class="btn btn-danger btn-xs" @click="if(confirm('Delete zone '+z.domain+'?'))del('/api/dns/zones/'+z.domain).then(r=>{if(r.ok){toast('Deleted','success');openSettings(settingsModal.mod);}})">Delete</button>
+                                <button class="btn btn-danger btn-xs" @click="if(confirm('Delete zone '+z.domain+' and all its records?'))del('/api/dns/zones/'+z.domain).then(r=>{if(r.ok){toast('Deleted','success');openSettings(settingsModal.mod);}else toast(r.error||'Failed','error');})">Delete</button>
                               </div>
                             </td>
                           </tr>
@@ -4438,7 +4441,7 @@
                             <td style="font-family:var(--font-mono);font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis" x-text="r.value"></td>
                             <td style="color:var(--text-muted)" x-text="r.ttl||'3600'"></td>
                             <td>
-                              <button class="btn btn-danger btn-xs" @click="if(confirm('Delete this record?'))post('/api/dns/zones/'+settingsModal.dnsSelZone+'/records/delete',{index:i}).then(r=>{if(r.ok){toast('Deleted','success');get('/api/dns/zones/'+settingsModal.dnsSelZone+'/records').then(r2=>{if(r2.ok)settingsModal.dnsRecords=r2.records||[];});}})">Delete</button>
+                              <button class="btn btn-danger btn-xs" @click="if(confirm('Delete this record?'))post('/api/dns/zones/'+settingsModal.dnsSelZone+'/records/delete',{index:i}).then(r=>{if(r.ok){toast('Deleted','success');get('/api/dns/zones/'+settingsModal.dnsSelZone+'/records').then(r2=>{if(r2.ok)settingsModal.dnsRecords=r2.records||[];});}else toast(r.error||'Failed','error');})">Delete</button>
                             </td>
                           </tr>
                         </template>
@@ -4565,7 +4568,7 @@
                             <td>
                               <div style="display:flex;gap:6px">
                                 <button class="btn btn-ghost btn-xs" @click="post('/api/ddns/test/'+d.domain,{}).then(r=>toast(r.ok?r.message:'Failed: '+(r.error||''),r.ok?'success':'error'))">Test</button>
-                                <button class="btn btn-danger btn-xs" @click="del('/api/ddns/domains/'+d.domain).then(r=>{if(r.ok){toast('Deleted','success');openSettings(settingsModal.mod);}})">Delete</button>
+                                <button class="btn btn-danger btn-xs" @click="if(confirm('Remove '+d.domain+' from dynamic DNS?'))del('/api/ddns/domains/'+encodeURIComponent(d.domain)).then(r=>{if(r.ok){toast('Deleted','success');openSettings(settingsModal.mod);}else toast(r.error||'Failed','error');})">Delete</button>
                               </div>
                             </td>
                           </tr>
@@ -4588,11 +4591,11 @@
                   </div>
                   <div style="display:flex;gap:8px;margin-bottom:20px">
                     <button class="btn btn-success btn-sm" x-show="!settingsModal.ddnsStatus?.enabled"
-                            @click="post('/api/ddns/toggle',{enable:true}).then(r=>{if(r.ok){toast('DDNS started','success');openSettings(settingsModal.mod);}})">Start</button>
+                            @click="post('/api/ddns/toggle',{enable:true}).then(r=>{if(r.ok){toast('DDNS started','success');openSettings(settingsModal.mod);}else toast(r.error||'Failed','error');})">Start</button>
                     <button class="btn btn-danger btn-sm" x-show="settingsModal.ddnsStatus?.enabled"
-                            @click="post('/api/ddns/toggle',{enable:false}).then(r=>{if(r.ok){toast('DDNS stopped','success');openSettings(settingsModal.mod);}})">Stop</button>
+                            @click="post('/api/ddns/toggle',{enable:false}).then(r=>{if(r.ok){toast('DDNS stopped','success');openSettings(settingsModal.mod);}else toast(r.error||'Failed','error');})">Stop</button>
                     <button class="btn btn-ghost btn-sm"
-                            @click="post('/api/ddns/toggle',{enable:false}).then(()=>post('/api/ddns/toggle',{enable:true})).then(r=>toast('Restarted','success'))">Restart</button>
+                            @click="post('/api/ddns/toggle',{enable:false}).then(()=>post('/api/ddns/toggle',{enable:true})).then(r=>{toast(r.ok?'Restarted':(r.error||'Restart failed'),r.ok?'success':'error');if(r.ok)openSettings(settingsModal.mod);})">Restart</button>
                   </div>
                   <div style="padding:12px;background:var(--bg-raised);border-radius:8px;font-size:12px;color:var(--text-muted);line-height:1.8">
                     <div>Current IP: <span style="color:var(--text-primary);font-family:var(--font-mono)" x-text="settingsModal.ddnsStatus?.current_ip||'Unknown'"></span></div>
@@ -4633,7 +4636,7 @@
                     </div>
                     <textarea style="width:100%;min-height:420px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
                               x-model="settingsModal.confContent"
-                              @keydown.ctrl.s.prevent="post('/api/modules/caddy/settings',{action:'save_config',conf_path:settingsModal.confPath,content:settingsModal.confContent}).then(r=>toast(r.ok?'Saved':'Failed',r.ok?'success':'error'))"
+                              @keydown.ctrl.s.prevent="post('/api/modules/caddy/settings',{action:'save_config',conf_path:settingsModal.confPath,content:settingsModal.confContent}).then(r=>toast(r.ok?'Saved':(r.error||'Failed'),r.ok?'success':'error'))"
                               spellcheck="false"></textarea>
                   </div>
                 </div>
@@ -4736,7 +4739,7 @@
                     <div style="display:flex;gap:8px">
                       <button class="btn btn-ghost btn-sm" @click="settingsModal.showFtpAdd=false">Cancel</button>
                       <button class="btn btn-primary btn-sm"
-                              @click="post('/api/modules/pure-ftpd/settings',{action:'ftp_add_user',user:settingsModal.ftpUser,password:settingsModal.ftpPass,home:settingsModal.ftpHome||'/www/wwwroot'}).then(r=>{if(r.ok){toast('FTP user added','success');settingsModal.showFtpAdd=false;openSettings(settingsModal.mod);}else toast(r.error||'Failed','error');})">
+                              @click="ftpAddUser()">
                         Confirm
                       </button>
                     </div>
@@ -4752,7 +4755,7 @@
                             <td><span class="badge badge-green" style="font-size:10px">Active</span></td>
                             <td>
                               <button class="btn btn-danger btn-xs"
-                                      @click="if(confirm('Delete FTP user '+u.user+'?'))post('/api/modules/pure-ftpd/settings',{action:'ftp_del_user',user:u.user}).then(r=>{if(r.ok){toast('Deleted','success');openSettings(settingsModal.mod);}})">
+                                      @click="ftpDelUser(u)">
                                 Delete
                               </button>
                             </td>
@@ -4933,7 +4936,7 @@
                             x-model="settingsModal.blackIps"
                             placeholder="One IP per line&#10;e.g. 192.168.1.1&#10;192.168.0.0/24"></textarea>
                   <button class="btn btn-primary btn-sm" style="margin-top:10px"
-                          @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_save_blacklist',ips:settingsModal.blackIps}).then(r=>toast(r.ok?'Blacklist saved':'Failed',r.ok?'success':'error'))">
+                          @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_save_blacklist',ips:settingsModal.blackIps}).then(r=>toast(r.ok?'Blacklist saved':(r.error||'Failed'),r.ok?'success':'error'))">
                     Save
                   </button>
                   <div style="margin-top:10px;font-size:11px;color:var(--text-muted)">One IP or CIDR range per line</div>
@@ -4946,7 +4949,7 @@
                             x-model="settingsModal.whiteIps"
                             placeholder="127.0.0.1/8"></textarea>
                   <button class="btn btn-primary btn-sm" style="margin-top:10px"
-                          @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_save_whitelist',ips:settingsModal.whiteIps}).then(r=>toast(r.ok?'Whitelist saved':'Failed',r.ok?'success':'error'))">
+                          @click="post('/api/modules/fail2ban/settings',{action:'fail2ban_save_whitelist',ips:settingsModal.whiteIps}).then(r=>toast(r.ok?'Whitelist saved':(r.error||'Failed'),r.ok?'success':'error'))">
                     Save
                   </button>
                   <div style="margin-top:10px;font-size:11px;color:var(--text-muted)">Whitelisted IPs will never be banned. One per line.</div>
@@ -5026,15 +5029,16 @@
 
       <!-- FIREWALL -->
       <div x-show="page==='firewall'" x-data="firewallPage()">
-        <div class="page-header"><div><div class="page-title">Firewall</div><div class="page-sub">UFW rules management</div></div>
+        <div class="page-header"><div><div class="page-title">Firewall</div><div class="page-sub" x-text="backend ? 'Firewall rules managed with '+backendLabel : 'Firewall rules (UFW on Debian/Ubuntu, firewalld on RHEL-family)'"></div></div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-success btn-sm" @click="toggleFirewall(true)">Enable UFW</button>
-            <button class="btn btn-danger btn-sm" @click="toggleFirewall(false)">Disable UFW</button>
+            <button class="btn btn-success btn-sm" @click="toggleFirewall(true)">Enable Firewall</button>
+            <button class="btn btn-danger btn-sm" @click="toggleFirewall(false)">Disable Firewall</button>
             <button class="btn btn-primary btn-sm" @click="showAdd=true">+ Add Rule</button>
           </div>
         </div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;align-items:center;gap:10px">
-          <span :class="'badge badge-'+(status==='active'?'green':'red')" x-text="'UFW: '+status"></span>
+          <span :class="'badge badge-'+(status==='active'?'green':'red')" x-text="backendLabel+': '+(status||'unknown')"></span>
+          <span x-show="fwError" style="font-size:12px;color:var(--red)" x-text="fwError"></span>
         </div>
         <div class="card" style="padding:0;overflow:hidden">
           <table class="data-table">
@@ -5102,7 +5106,7 @@
         <div class="grid-3" style="margin-bottom:16px">
           <div class="card">
             <div class="card-hd"><div class="card-title">Full Backup</div></div>
-            <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;min-height:48px">Backs up all websites, nginx/caddy configs, and the backups folder itself in one archive.</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;min-height:48px">Backs up all websites and the nginx/Caddy configs in one archive (existing backups are not included).</div>
             <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center" @click="createBackup('full','')" :disabled="creating==='full'">
               <span x-show="creating==='full'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
               Create Full Backup
@@ -5346,7 +5350,7 @@
 
       <!-- FTP -->
       <div x-show="page==='ftp'" x-data="ftpPage()">
-        <div class="page-header"><div><div class="page-title">FTP / SFTP</div><div class="page-sub">Pure-FTPd account management</div></div><button class="btn btn-primary btn-sm" @click="showAdd=true" x-show="ftpStatus.installed">+ Add Account</button></div>
+        <div class="page-header"><div><div class="page-title">FTP / SFTP</div><div class="page-sub" x-text="'FTP account management'+(ftpStatus.daemon?' ('+ftpStatus.daemon+')':'')"></div></div><button class="btn btn-primary btn-sm" @click="showAdd=true" x-show="ftpStatus.installed">+ Add Account</button></div>
         <template x-if="!ftpStatus.installed"><div class="card" style="text-align:center;padding:40px"><div style="font-size:40px;margin-bottom:12px"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div><div style="font-size:14px;font-weight:600;margin-bottom:8px">Pure-FTPd Not Installed</div><button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">Install via Modules</button></div></template>
         <div x-show="ftpStatus.installed">
           <div class="card" style="padding:0;overflow:hidden">
@@ -6151,22 +6155,60 @@
       <!-- WAF -->
       <div x-show="page==='waf'" x-data="wafPage()">
         <div class="page-header">
-          <div><div class="page-title">WAF Analytics</div><div class="page-sub">ModSecurity + OWASP CRS attack visibility — free, no upsell</div></div>
+          <div><div class="page-title">WAF Analytics</div><div class="page-sub">ModSecurity / Coraza + OWASP CRS: attack visibility, exceptions, region and custom rules, rate limits</div></div>
         </div>
 
         <!-- Not installed empty state -->
-        <div x-show="!loading && !modsecInstalled" class="empty-state">
+        <div x-show="!loading && !wafEngineReady" class="empty-state">
           <div class="empty-icon"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-          <div class="empty-text">ModSecurity isn't installed yet</div>
+          <div class="empty-text">No WAF engine is installed yet (ModSecurity for nginx/Apache, or Coraza for Caddy)</div>
           <button class="btn btn-primary btn-sm" style="margin-top:10px" @click="go('modules')">Install from App Store</button>
         </div>
 
-        <div x-show="!loading && modsecInstalled">
+        <div x-show="!loading && wafEngineReady">
+          <!-- WAF 2.0 overview strip -->
+          <div class="waf-strip">
+            <div class="card-sm waf-strip-item">
+              <div class="stat-label">ModSecurity</div>
+              <div class="waf-strip-val">
+                <span x-show="!modsecInstalled" class="badge badge-gray">Not installed</span>
+                <span x-show="modsecInstalled" :class="'badge '+(wafOv.engine==='On'?'badge-green':wafOv.engine==='DetectionOnly'?'badge-yellow':'badge-red')"
+                      x-text="wafOv.engine==='On'?'Enforcing':wafOv.engine==='DetectionOnly'?'Detection only':'Off'"></span>
+                <span x-show="modsecInstalled && wafOv.paranoia" style="font-size:11px;color:var(--text-muted)" x-text="'PL '+wafOv.paranoia"></span>
+              </div>
+            </div>
+            <div class="card-sm waf-strip-item">
+              <div class="stat-label">Caddy (Coraza)</div>
+              <div class="waf-strip-val">
+                <span :class="'badge '+(wafCaddy.installed?'badge-green':'badge-gray')" x-text="wafCaddy.installed?(wafCaddy.wired_sites.length+' site'+(wafCaddy.wired_sites.length===1?'':'s')):'Not installed'"></span>
+                <span x-show="wafCaddy.installed && !wafCaddy.in_sync" class="badge badge-yellow" title="Caddy's generated WAF files differ from the shared model">Out of sync</span>
+                <button x-show="wafCaddy.installed" class="btn btn-ghost btn-xs" :disabled="wafCaddyBusy==='sync'" @click="wafCaddySync()" x-text="wafCaddyBusy==='sync'?'Syncing...':'Sync'"></button>
+              </div>
+            </div>
+            <div class="card-sm waf-strip-item">
+              <div class="stat-label">Recent interceptions</div>
+              <div class="waf-strip-val"><span style="font-size:18px;font-weight:700" x-text="wafOv.malicious||0"></span><span style="font-size:11px;color:var(--text-muted)">last 2000 log lines</span></div>
+            </div>
+            <div class="card-sm waf-strip-item">
+              <div class="stat-label">GeoIP database</div>
+              <div class="waf-strip-val"><span :class="'badge '+(wafGeo.geoip_installed?'badge-green':'badge-gray')" x-text="wafGeo.geoip_installed?'Installed':'Missing'"></span></div>
+            </div>
+            <div class="card-sm waf-strip-item">
+              <div class="stat-label">Rules</div>
+              <div class="waf-strip-val" style="font-size:12px;color:var(--text-secondary);gap:10px;flex-wrap:wrap">
+                <span><strong x-text="wafCounts.exceptions"></strong> exceptions</span>
+                <span><strong x-text="wafCounts.region"></strong> region</span>
+                <span><strong x-text="wafCounts.custom"></strong> custom</span>
+                <span><strong x-text="wafCounts.ratelimit"></strong> rate limits</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Tabs -->
-          <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border)">
-            <template x-for="t in [{id:'overview',label:'Overview'},{id:'blockade',label:'Blockade Log'},{id:'lists',label:'Blacklist / Whitelist'}]" :key="t.id">
+          <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <template x-for="t in [{id:'overview',label:'Overview'},{id:'hits',label:'Recent Hits'},{id:'blockade',label:'Blockade Log'},{id:'exceptions',label:'Exceptions & Site Mode'},{id:'region',label:'Region Blocking'},{id:'custom',label:'Custom Rules'},{id:'ratelimit',label:'Rate Limits'},{id:'lists',label:'Blacklist / Whitelist'}]" :key="t.id">
               <button :class="'btn btn-sm '+(wtab===t.id?'btn-primary':'btn-ghost')" style="border-radius:6px 6px 0 0"
-                      @click="wtab=t.id; wtab==='blockade' && loadBlockadeLog(); wtab==='lists' && loadLists()" x-text="t.label"></button>
+                      @click="wafOpenTab(t.id)" x-text="t.label"></button>
             </template>
           </div>
 
@@ -6275,6 +6317,210 @@
             </div>
           </div>
 
+          <!-- RECENT HITS TAB -->
+          <div x-show="wtab==='hits'">
+            <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap">
+              <select class="form-input" style="max-width:260px" x-model="wafHitsDomain" @change="wafLoadHits()">
+                <option value="">All sites</option>
+                <template x-for="d in wafDomains" :key="d"><option :value="d" x-text="d"></option></template>
+              </select>
+              <button class="btn btn-ghost btn-sm" :disabled="wafHitsLoading" @click="wafLoadHits()" x-text="wafHitsLoading?'Loading...':'Refresh'"></button>
+              <span style="font-size:12px;color:var(--text-muted)">Latest 50 distinct interceptions. Use "Add exception" for a false positive.</span>
+            </div>
+            <div class="card" style="padding:0;overflow-x:auto">
+              <table class="data-table">
+                <thead><tr><th>Time</th><th>Site</th><th>Request</th><th>Rule</th><th>Category</th><th>Client IP</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="(h,i) in wafHits" :key="i">
+                    <tr>
+                      <td style="font-size:11px;color:var(--text-muted);white-space:nowrap" x-text="h.timestamp||'-'"></td>
+                      <td style="font-size:12px" x-text="h.domain||'-'"></td>
+                      <td style="font-family:var(--font-mono);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="h.message||h.uri" x-text="(h.method?h.method+' ':'')+(h.uri||'')"></td>
+                      <td style="font-family:var(--font-mono);font-size:12px" x-text="h.rule_id"></td>
+                      <td><span class="badge badge-red" style="font-size:10px" x-text="h.category||'-'"></span></td>
+                      <td style="font-family:var(--font-mono);font-size:11px" x-text="h.ip||'-'"></td>
+                      <td><button class="btn btn-ghost btn-xs" :disabled="!h.domain" @click="wafNewException(h)">Add exception</button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="!wafHits.length" class="empty-state" style="padding:30px"><div class="empty-text" x-text="wafHitsExists?'No interceptions recorded':'No WAF audit log on this server yet'"></div></div>
+            </div>
+          </div>
+
+          <!-- EXCEPTIONS & SITE MODE TAB -->
+          <div x-show="wtab==='exceptions'">
+            <div class="card" style="margin-bottom:16px;padding:0;overflow-x:auto">
+              <div class="card-hd" style="padding:14px 16px 0"><div><div class="card-title">Per-site engine mode</div><div class="card-sub">Enforce blocks attacks, Detection only logs them, Off skips inspection for the site</div></div></div>
+              <table class="data-table">
+                <thead><tr><th>Site</th><th>Web server</th><th>Mode</th><th x-show="wafCaddy.installed">Caddy WAF</th></tr></thead>
+                <tbody>
+                  <template x-for="d in wafDomains" :key="d">
+                    <tr>
+                      <td x-text="d"></td>
+                      <td style="font-size:12px" x-text="wafSiteServer(d)||'-'"></td>
+                      <td>
+                        <select class="form-input" style="max-width:170px;font-size:12px;padding:5px 8px" :disabled="wafModeBusy===d"
+                                @change="wafSetSiteMode(d, $event.target.value, $event.target)">
+                          <option value="enforce" :selected="wafSiteMode(d)==='enforce'">Enforce</option>
+                          <option value="detect" :selected="wafSiteMode(d)==='detect'">Detection only</option>
+                          <option value="off" :selected="wafSiteMode(d)==='off'">Off</option>
+                        </select>
+                      </td>
+                      <td x-show="wafCaddy.installed">
+                        <template x-if="wafSiteServer(d)==='caddy'">
+                          <div style="display:flex;gap:6px;align-items:center">
+                            <span :class="'badge '+(wafCaddy.wired_sites.includes(d)?'badge-green':'badge-gray')" x-text="wafCaddy.wired_sites.includes(d)?'On':'Off'"></span>
+                            <button class="btn btn-ghost btn-xs" :disabled="wafCaddyBusy===d" @click="wafCaddySite(d, !wafCaddy.wired_sites.includes(d))" x-text="wafCaddy.wired_sites.includes(d)?'Disable':'Enable'"></button>
+                          </div>
+                        </template>
+                        <span x-show="wafSiteServer(d)!=='caddy'" style="font-size:11px;color:var(--text-muted)">-</span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="!wafDomains.length" class="empty-state" style="padding:24px"><div class="empty-text">No websites yet</div></div>
+            </div>
+
+            <div class="card" style="padding:0;overflow-x:auto">
+              <div class="card-hd" style="padding:14px 16px 0">
+                <div><div class="card-title">Rule exceptions</div><div class="card-sub">Switch specific OWASP CRS rules off for one URL prefix of one site</div></div>
+                <button class="btn btn-primary btn-sm" @click="wafNewException(null)">Add exception</button>
+              </div>
+              <table class="data-table">
+                <thead><tr><th>Site</th><th>URL prefix</th><th>Methods</th><th>Client IPs</th><th>Rules</th><th>Note</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="e in wafExcRows" :key="e.domain+e.id">
+                    <tr>
+                      <td x-text="e.domain"></td>
+                      <td style="font-family:var(--font-mono);font-size:12px" x-text="e.url_prefix"></td>
+                      <td style="font-size:12px" x-text="(e.methods||[]).join(', ')||'Any'"></td>
+                      <td style="font-family:var(--font-mono);font-size:11px" x-text="(e.client_ips||[]).join(', ')||'Any'"></td>
+                      <td style="font-family:var(--font-mono);font-size:12px" x-text="(e.rule_ids||[]).join(', ')"></td>
+                      <td style="font-size:12px;color:var(--text-muted)" x-text="e.note||''"></td>
+                      <td><button class="icon-btn" title="Remove" @click="wafDeleteException(e)" x-html="vpIcon('trash')"></button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="!wafExcRows.length" class="empty-state" style="padding:24px"><div class="empty-text" x-text="wafExcLoading?'Loading...':'No exceptions'"></div></div>
+            </div>
+          </div>
+
+          <!-- REGION BLOCKING TAB -->
+          <div x-show="wtab==='region'">
+            <div class="card" style="margin-bottom:16px">
+              <div class="card-hd"><div><div class="card-title">GeoIP database</div><div class="card-sub">Region rules match the client's country through a local country database</div></div></div>
+              <div x-show="wafGeo.geoip_installed" style="font-size:12px;color:var(--text-secondary)">Using <code x-text="wafGeo.geoip_db"></code></div>
+              <div x-show="!wafGeo.geoip_installed">
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">No GeoIP database was found. Region rules stay inactive until one is installed.</div>
+                <button class="btn btn-primary btn-sm" :disabled="wafGeoInstalling || !modsecInstalled" @click="wafInstallGeoDb()" x-text="wafGeoInstalling?'Installing...':'Install GeoIP database'"></button>
+              </div>
+              <div x-show="!modsecInstalled" style="margin-top:8px;font-size:12px;color:var(--accent-warn)">Region rules need ModSecurity (nginx/Apache); Coraza on Caddy has no GeoIP lookup.</div>
+              <pre x-show="wafGeoInstallLog" style="margin-top:10px;max-height:140px;overflow:auto;background:var(--bg-raised);border-radius:6px;padding:8px;font-size:11px;color:var(--text-muted);white-space:pre-wrap" x-text="wafGeoInstallLog"></pre>
+            </div>
+            <div class="card" style="margin-bottom:16px">
+              <div class="card-hd"><div class="card-title">Add region rule</div></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+                <div class="form-group" style="margin:0;width:110px"><label class="form-label">Country</label><input class="form-input" maxlength="2" style="text-transform:uppercase;font-family:var(--font-mono)" x-model="wafGeoForm.country" placeholder="CN"></div>
+                <div class="form-group" style="margin:0;width:150px"><label class="form-label">Action</label>
+                  <select class="form-input" x-model="wafGeoForm.action"><option value="block">Block</option><option value="allow">Allow (skip WAF)</option></select></div>
+                <div class="form-group" style="margin:0;width:110px" x-show="wafGeoForm.action==='block'"><label class="form-label">Status</label>
+                  <select class="form-input" x-model="wafGeoForm.status"><template x-for="c in wafStatusCodes" :key="c"><option :value="c" x-text="c"></option></template></select></div>
+                <div class="form-group" style="margin:0;flex:1;min-width:160px"><label class="form-label">Note</label><input class="form-input" x-model="wafGeoForm.note" placeholder="Optional"></div>
+                <button class="btn btn-primary btn-sm" :disabled="wafGeoForm.saving || !wafGeo.geoip_installed" @click="wafAddGeo()" x-text="wafGeoForm.saving?'Applying...':'Add rule'"></button>
+              </div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Applies to every site on this server. A rule for a country that already has one replaces it.</div>
+            </div>
+            <div class="card" style="padding:0;overflow-x:auto">
+              <table class="data-table">
+                <thead><tr><th>Country</th><th>Action</th><th>Status</th><th>Note</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="g in wafGeo.rules" :key="g.country">
+                    <tr>
+                      <td style="font-family:var(--font-mono)" x-text="g.country"></td>
+                      <td><span :class="'badge '+(g.action==='allow'?'badge-green':'badge-red')" x-text="g.action==='allow'?'Allow':'Block'"></span></td>
+                      <td x-text="g.action==='allow'?'-':g.status"></td>
+                      <td style="font-size:12px;color:var(--text-muted)" x-text="g.note||''"></td>
+                      <td><button class="icon-btn" title="Remove" @click="wafDeleteGeo(g.country)" x-html="vpIcon('trash')"></button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="!wafGeo.rules.length" class="empty-state" style="padding:24px"><div class="empty-text">No region rules</div></div>
+            </div>
+          </div>
+
+          <!-- CUSTOM RULES TAB -->
+          <div x-show="wtab==='custom'">
+            <div class="card" style="padding:0;overflow-x:auto">
+              <div class="card-hd" style="padding:14px 16px 0">
+                <div><div class="card-title">Custom rules</div><div class="card-sub">Block or allow requests when ALL conditions of a rule match</div></div>
+                <button class="btn btn-primary btn-sm" @click="wafNewCustom()">Add rule</button>
+              </div>
+              <table class="data-table">
+                <thead><tr><th>Name</th><th>Site</th><th>Conditions</th><th>Action</th><th>Enabled</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="c in wafCustom.rules" :key="c.id">
+                    <tr>
+                      <td x-text="c.name"></td>
+                      <td style="font-size:12px" x-text="c.domain||'All sites'"></td>
+                      <td style="font-family:var(--font-mono);font-size:11px" x-text="(c.conditions||[]).map(x=>x.field+' = '+x.value).join('  AND  ')"></td>
+                      <td><span :class="'badge '+(c.action==='allow'?'badge-green':'badge-red')" x-text="c.action==='allow'?'Allow':'Block '+c.status"></span></td>
+                      <td><span :class="'badge '+(c.enabled!==false?'badge-green':'badge-gray')" x-text="c.enabled!==false?'Yes':'No'"></span></td>
+                      <td><button class="icon-btn" title="Delete" @click="wafDeleteCustom(c)" x-html="vpIcon('trash')"></button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="!wafCustom.rules.length" class="empty-state" style="padding:24px"><div class="empty-text">No custom rules</div></div>
+            </div>
+          </div>
+
+          <!-- RATE LIMITS TAB -->
+          <div x-show="wtab==='ratelimit'">
+            <div x-show="!wafRl.nginx" class="card" style="margin-bottom:16px;font-size:12px;color:var(--accent-warn)">Rate limiting zones are an nginx feature and nginx is not installed on this server.</div>
+            <div class="card" style="margin-bottom:16px" x-show="wafRl.nginx">
+              <div class="card-hd"><div><div class="card-title">Add rate limit zone</div><div class="card-sub">Creates an nginx limit_req_zone; add the generated line to the site's matching location block to activate it</div></div></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+                <div class="form-group" style="margin:0;width:150px"><label class="form-label">Name</label><input class="form-input" x-model="wafRlForm.name" placeholder="login_api"></div>
+                <div class="form-group" style="margin:0;width:160px"><label class="form-label">URL</label><input class="form-input" style="font-family:var(--font-mono)" x-model="wafRlForm.url" placeholder="/wp-login.php"></div>
+                <div class="form-group" style="margin:0;width:90px"><label class="form-label">Req/sec</label><input class="form-input" type="number" min="1" x-model="wafRlForm.rps"></div>
+                <div class="form-group" style="margin:0;width:90px"><label class="form-label">Burst</label><input class="form-input" type="number" min="0" x-model="wafRlForm.burst" :placeholder="(parseInt(wafRlForm.rps,10)||0)*2"></div>
+                <div class="form-group" style="margin:0;width:100px"><label class="form-label">Status</label>
+                  <select class="form-input" x-model="wafRlForm.status"><template x-for="c in wafStatusCodes" :key="c"><option :value="c" x-text="c"></option></template></select></div>
+                <div class="form-group" style="margin:0;width:200px"><label class="form-label">Site (label)</label>
+                  <select class="form-input" x-model="wafRlForm.domain"><option value="">Any</option><template x-for="d in wafDomains" :key="d"><option :value="d" x-text="d"></option></template></select></div>
+                <button class="btn btn-primary btn-sm" :disabled="wafRlForm.saving" @click="wafAddRl()" x-text="wafRlForm.saving?'Applying...':'Add zone'"></button>
+              </div>
+              <div x-show="wafRlWarning" style="margin-top:8px;font-size:12px;color:var(--accent-warn)" x-text="wafRlWarning"></div>
+            </div>
+            <div class="card" style="padding:0;overflow-x:auto">
+              <table class="data-table">
+                <thead><tr><th>Name</th><th>URL</th><th>Rate</th><th>Site</th><th>Add to the site's nginx config</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="r in wafRl.rules" :key="r.id||r.name">
+                    <tr>
+                      <td x-text="r.name"></td>
+                      <td style="font-family:var(--font-mono);font-size:12px" x-text="r.url"></td>
+                      <td style="font-size:12px" x-text="r.rps+' r/s, burst '+r.burst+', '+r.status"></td>
+                      <td style="font-size:12px" x-text="r.domain||'Any'"></td>
+                      <td>
+                        <div style="display:flex;gap:6px;align-items:flex-start">
+                          <pre style="margin:0;flex:1;font-size:11px;background:var(--bg-raised);border-radius:6px;padding:6px 8px;white-space:pre-wrap;word-break:break-all" x-text="'location '+r.url+' {\n    '+(r.snippet||'')+'\n}'"></pre>
+                          <button class="icon-btn" title="Copy" @click="wafCopy(r.snippet||'')" x-html="vpIcon('clipboard')"></button>
+                        </div>
+                      </td>
+                      <td><button class="icon-btn" title="Delete" @click="wafDeleteRl(r)" x-html="vpIcon('trash')"></button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="!wafRl.rules.length" class="empty-state" style="padding:24px"><div class="empty-text">No rate limits</div></div>
+            </div>
+          </div>
+
           <!-- BLACKLIST / WHITELIST TAB -->
           <div x-show="wtab==='lists'">
             <div class="card" style="margin-bottom:14px;padding:12px 16px;background:var(--bg-hover);border:1px solid var(--border)">
@@ -6317,6 +6563,121 @@
                 <span x-show="listsSaving">Validating &amp; saving...</span>
                 <span x-show="!listsSaving">Save &amp; Apply</span>
               </button>
+            </div>
+
+            <div class="card" style="margin-top:16px">
+              <div class="card-hd"><div><div class="card-title">Export / Import</div><div class="card-sub">Move the four lists between servers as JSON</div></div>
+                <button class="btn btn-ghost btn-sm" @click="wafExportLists()"><span x-html="vpIcon('download')"></span> Export JSON</button>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+                <input type="file" accept=".json,application/json" class="form-input" style="max-width:320px" @change="wafImportFile($event)">
+                <select class="form-input" style="max-width:220px" x-model="wafImport.mode">
+                  <option value="merge">Merge with current lists</option>
+                  <option value="replace">Replace current lists</option>
+                </select>
+              </div>
+              <textarea class="form-input" rows="5" style="font-family:var(--font-mono);font-size:12px;resize:vertical" x-model="wafImport.text" placeholder='{"lists": {"ip_whitelist": [], "ip_blacklist": [], "ua_blacklist": [], "url_blacklist": []}}'></textarea>
+              <div style="display:flex;justify-content:flex-end;margin-top:10px">
+                <button class="btn btn-primary btn-sm" :disabled="wafImport.saving || !wafImport.text.trim()" @click="wafImportLists()" x-text="wafImport.saving?'Importing...':'Import & Apply'"></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- WAF exception modal -->
+        <div class="modal-overlay" x-show="wafExcForm.show" @click.self="wafExcForm.show=false">
+          <div class="modal" style="max-width:620px">
+            <div class="modal-hd"><div class="modal-title">Add WAF Exception</div><button class="modal-close" @click="wafExcForm.show=false">&times;</button></div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Site</label>
+                <select class="form-input" x-model="wafExcForm.domain">
+                  <option value="">Select site...</option>
+                  <template x-for="d in wafDomains" :key="d"><option :value="d" x-text="d" :selected="d===wafExcForm.domain"></option></template>
+                </select></div>
+              <div class="form-group"><label class="form-label">URL prefix</label><input class="form-input" style="font-family:var(--font-mono)" x-model="wafExcForm.url_prefix" placeholder="/wp-admin/admin-ajax.php"></div>
+            </div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Methods (optional)</label><input class="form-input" x-model="wafExcForm.methods" placeholder="POST, GET - empty for any"></div>
+              <div class="form-group"><label class="form-label">Client IPs / CIDRs (optional)</label><input class="form-input" style="font-family:var(--font-mono)" x-model="wafExcForm.client_ips" placeholder="empty for any client"></div>
+            </div>
+            <div class="form-group"><label class="form-label">Rule IDs</label>
+              <input class="form-input" style="font-family:var(--font-mono)" x-model="wafExcForm.rule_ids" placeholder="942100, 941160">
+              <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">
+                <template x-for="id in wafExcIds" :key="id">
+                  <span :class="'badge '+(wafRuleClass(id)==='protected'?'badge-red':wafRuleClass(id)==='always_block'?'badge-yellow':'badge-blue')"
+                        :title="wafCatalog.rules[id]||wafRuleCategory(id)" x-text="id+(wafRuleCategory(id)?' - '+wafRuleCategory(id):'')"></span>
+                </template>
+              </div>
+            </div>
+            <div class="card-sm" style="margin-bottom:14px">
+              <div style="font-size:12px;font-weight:600;margin-bottom:8px">Pick from the installed OWASP CRS rules</div>
+              <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+                <select class="form-input" style="max-width:240px;font-size:12px" x-model="wafExcForm.pickCat">
+                  <option value="">All categories</option>
+                  <template x-for="c in wafCatalog.categories" :key="c.from"><option :value="String(c.from)" x-text="c.name+' ('+c.from+'-'+c.to+')'"></option></template>
+                </select>
+                <input class="form-input" style="flex:1;min-width:140px;font-size:12px" x-model="wafExcForm.pickSearch" placeholder="Search id or description">
+              </div>
+              <div style="max-height:180px;overflow-y:auto">
+                <template x-for="r in wafPickRules" :key="r.id">
+                  <div style="display:flex;gap:8px;align-items:center;padding:4px 2px;border-bottom:1px solid var(--border-light);font-size:12px">
+                    <span style="font-family:var(--font-mono);width:58px;flex-shrink:0" x-text="r.id"></span>
+                    <span style="flex:1;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="r.msg" x-text="r.msg"></span>
+                    <span x-show="r.cls==='protected'" class="badge badge-red" style="font-size:10px">Protected</span>
+                    <span x-show="r.cls==='always_block'" class="badge badge-yellow" style="font-size:10px">Needs override</span>
+                    <button class="btn btn-ghost btn-xs" :disabled="r.cls==='protected' || wafExcIds.includes(r.id)" @click="wafPickRule(r.id)">Add</button>
+                  </div>
+                </template>
+                <div x-show="!wafPickRules.length" style="font-size:12px;color:var(--text-muted);padding:6px 2px">No CRS rule descriptions found on this server - type the rule IDs above (from the Recent Hits tab).</div>
+              </div>
+            </div>
+            <div class="form-group"><label class="form-label">Note</label><input class="form-input" x-model="wafExcForm.note" placeholder="Why this exception exists"></div>
+            <label x-show="wafExcNeedsForce" style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--accent-warn)">
+              <input type="checkbox" x-model="wafExcForm.force" style="margin-top:2px">
+              <span>One or more of these rules guard against SQL injection / XSS. I understand the risk and want to except them for this URL prefix.</span>
+            </label>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="wafExcForm.show=false">Cancel</button>
+              <button class="btn btn-primary" :disabled="wafExcForm.saving" @click="wafSaveException()" x-text="wafExcForm.saving?'Applying...':'Add exception'"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- WAF custom rule modal -->
+        <div class="modal-overlay" x-show="wafCustomForm.show" @click.self="wafCustomForm.show=false">
+          <div class="modal" style="max-width:620px">
+            <div class="modal-hd"><div class="modal-title">Add Custom Rule</div><button class="modal-close" @click="wafCustomForm.show=false">&times;</button></div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Name</label><input class="form-input" x-model="wafCustomForm.name" placeholder="Block admin from outside office"></div>
+              <div class="form-group"><label class="form-label">Site</label>
+                <select class="form-input" x-model="wafCustomForm.domain">
+                  <option value="">All sites</option>
+                  <template x-for="d in wafDomains" :key="d"><option :value="d" x-text="d"></option></template>
+                </select></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Conditions (all must match)</label>
+              <template x-for="(c,i) in wafCustomForm.conditions" :key="i">
+                <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
+                  <select class="form-input" style="width:150px;font-size:12px" x-model="c.field">
+                    <template x-for="f in (wafCustom.fields.length?wafCustom.fields:Object.keys(wafFieldHints))" :key="f"><option :value="f" x-text="f" :selected="f===c.field"></option></template>
+                  </select>
+                  <input class="form-input" style="flex:1;font-size:12px;font-family:var(--font-mono)" x-model="c.value" :placeholder="wafFieldHints[c.field]||''">
+                  <button class="icon-btn" title="Remove condition" :disabled="wafCustomForm.conditions.length<=1" @click="wafCustomForm.conditions.splice(i,1)" x-html="vpIcon('trash')"></button>
+                </div>
+              </template>
+              <button class="btn btn-ghost btn-xs" @click="wafCustomForm.conditions.push({field:'ip', value:''})">Add condition</button>
+            </div>
+            <div class="form-row form-row-2">
+              <div class="form-group"><label class="form-label">Action</label>
+                <select class="form-input" x-model="wafCustomForm.action"><option value="block">Block</option><option value="allow">Allow (skip WAF)</option></select></div>
+              <div class="form-group" x-show="wafCustomForm.action==='block'"><label class="form-label">Response status</label>
+                <select class="form-input" x-model="wafCustomForm.status"><template x-for="s in wafStatusCodes" :key="s"><option :value="s" x-text="s"></option></template></select></div>
+            </div>
+            <label style="display:flex;gap:8px;align-items:center;font-size:12px"><input type="checkbox" x-model="wafCustomForm.enabled"> Enabled</label>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="wafCustomForm.show=false">Cancel</button>
+              <button class="btn btn-primary" :disabled="wafCustomForm.saving" @click="wafSaveCustom()" x-text="wafCustomForm.saving?'Applying...':'Add rule'"></button>
             </div>
           </div>
         </div>
@@ -7307,7 +7668,7 @@
           <div><div class="page-title">Settings</div><div class="page-sub">Panel configuration &amp; security</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="syncTime()">Sync Time</button>
-            <button class="btn btn-ghost btn-sm" @click="if(confirm('Reboot server?'))reboot()">Reboot</button>
+            <button class="btn btn-ghost btn-sm" @click="reboot()">Reboot</button>
           </div>
         </div>
 
@@ -7365,9 +7726,12 @@
                   <div style="font-size:12px;font-weight:500;color:var(--text-primary)">Panel port</div>
                   <div style="font-size:11px;color:var(--text-muted)">Currently: <strong x-text="cfg.port||8888"></strong> — suggested: 8888–65535</div>
                 </div>
-                <div style="display:flex;gap:6px"><input class="form-input" x-model="newPort" type="number" style="width:90px;text-align:center;font-size:12px" /><button class="btn btn-primary btn-xs" @click="changePort()">Modify</button></div>
+                <div style="display:flex;gap:6px"><input class="form-input" x-model="newPort" type="number" style="width:90px;text-align:center;font-size:12px" :disabled="portApplying" /><button class="btn btn-primary btn-xs" :disabled="portApplying" @click="changePort()" x-text="portApplying?'Applying...':'Modify'"></button></div>
               </div>
               <div style="font-size:10px;color:var(--accent-warn);margin-top:4px">Panel will restart and firewall rule updated automatically</div>
+              <div x-show="portMsg" style="margin-top:6px;font-size:11px;padding:7px 10px;border-radius:var(--radius);white-space:pre-wrap;max-height:220px;overflow:auto"
+                   :style="portMsgOk?'background:rgba(16,185,129,.08);color:var(--green)':'background:rgba(239,68,68,.08);color:var(--red)'"
+                   x-text="portMsg"></div>
             </div>
             <!-- Domain -->
             <div style="padding:10px 0;border-bottom:1px solid var(--border-light)">
@@ -7613,6 +7977,61 @@
             </template>
           </div>
 
+          <!-- 6b. Kernel live patching -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
+              <div style="width:36px;height:36px;background:linear-gradient(135deg,#0ea5e9,#2563eb);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px" x-html="vpIcon('cpu')"></div>
+              <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Kernel Live Patching</div><div style="font-size:11px;color:var(--text-muted)">Apply kernel security fixes without a reboot</div></div>
+              <button class="btn btn-ghost btn-xs" style="margin-left:auto" :disabled="livepatch.loading" @click="loadLivepatch()" x-text="livepatch.loading?'Checking...':'Refresh'"></button>
+            </div>
+            <div x-show="!livepatch.loaded" style="font-size:12px;color:var(--text-muted)" x-text="livepatch.loading?'Checking...':'Status unavailable'"></div>
+            <template x-if="livepatch.loaded && livepatch.data">
+              <div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border-light);font-size:12px">
+                  <span style="color:var(--text-muted)">Status</span>
+                  <span :class="'badge '+(livepatch.data.active?'badge-green':'badge-gray')" x-text="livepatch.data.active?('Active - '+livepatchActiveName):'Not active'"></span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border-light);font-size:12px">
+                  <span style="color:var(--text-muted)">Running kernel</span>
+                  <span style="font-family:var(--font-mono);color:var(--text-primary)" x-text="livepatch.data.kernel||'-'"></span>
+                </div>
+                <div x-show="livepatch.data.reboot_required" style="padding:7px 0;border-bottom:1px solid var(--border-light);font-size:11px;color:var(--accent-warn)"
+                     x-text="'A newer kernel is installed but not booted yet'+(livepatch.data.pending_kernel_packages?' ('+livepatch.data.pending_kernel_packages.split(String.fromCharCode(10)).join(', ')+')':'')"></div>
+                <div x-show="livepatch.data.providers?.kernelcare?.raw || livepatch.data.providers?.canonical?.patch_state" style="padding:7px 0;border-bottom:1px solid var(--border-light);font-size:11px;color:var(--text-muted)">
+                  <span x-show="livepatch.data.providers?.canonical?.patch_state" x-text="'Canonical Livepatch: '+(livepatch.data.providers?.canonical?.patch_state||'')"></span>
+                  <pre x-show="livepatch.data.providers?.kernelcare?.raw" style="margin:4px 0 0;max-height:100px;overflow:auto;white-space:pre-wrap;font-size:10px" x-text="livepatch.data.providers?.kernelcare?.raw||''"></pre>
+                </div>
+                <!-- Not supported (container) -->
+                <div x-show="!livepatch.data.supported" style="margin-top:10px;font-size:12px;padding:8px 10px;border-radius:var(--radius);background:var(--bg-raised);color:var(--text-secondary)"
+                     x-text="livepatch.data.unsupported_reason||'Live patching is not supported on this server.'"></div>
+                <!-- Enable -->
+                <div x-show="livepatch.data.supported && !livepatch.data.active && (livepatch.data.available||[]).length" style="margin-top:10px">
+                  <div class="form-group" style="margin-bottom:8px">
+                    <label class="form-label">Provider</label>
+                    <select class="form-input" style="font-size:12px" x-model="livepatch.provider">
+                      <template x-for="a in (livepatch.data.available||[])" :key="a.id"><option :value="a.id" x-text="a.name+' - '+a.cost" :selected="a.id===livepatch.provider"></option></template>
+                    </select>
+                  </div>
+                  <template x-for="a in (livepatch.data.available||[]).filter(x=>x.id===livepatch.provider)" :key="a.id">
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;line-height:1.6">
+                      <div x-text="a.scope"></div><div x-text="a.caveat"></div>
+                      <div>Get a key at <span style="font-family:var(--font-mono)" x-text="a.signup"></span></div>
+                    </div>
+                  </template>
+                  <div style="display:flex;gap:6px">
+                    <input class="form-input" type="password" autocomplete="off" style="flex:1;font-size:12px;font-family:var(--font-mono)" x-model="livepatch.token" :placeholder="livepatch.provider==='canonical'?'Ubuntu Pro token':'KernelCare licence key'">
+                    <button class="btn btn-primary btn-sm" :disabled="!!livepatch.busy" @click="enableLivepatch()" x-text="livepatch.busy==='install'?'Enabling...':'Enable'"></button>
+                  </div>
+                </div>
+                <div x-show="livepatch.data.supported && livepatchInstalled" style="margin-top:10px;display:flex;gap:6px;align-items:center">
+                  <button class="btn btn-ghost btn-sm" :disabled="!!livepatch.busy" @click="updateLivepatch()" x-text="livepatch.busy==='update'?'Checking...':'Check for patches now'"></button>
+                  <button class="btn btn-ghost btn-sm" style="color:var(--red)" :disabled="!!livepatch.busy" @click="disableLivepatch()" x-text="livepatch.busy==='disable'?'Disabling...':'Disable'"></button>
+                </div>
+                <pre x-show="livepatch.log || livepatch.output" style="margin-top:8px;max-height:140px;overflow:auto;background:var(--bg-raised);border-radius:6px;padding:8px;font-size:10px;color:var(--text-muted);white-space:pre-wrap" x-text="[livepatch.log, livepatch.output].filter(Boolean).join(String.fromCharCode(10))"></pre>
+              </div>
+            </template>
+          </div>
+
           <!-- 7. AI Assistant -->
           <div class="card" style="grid-column:span 1">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
@@ -7673,7 +8092,8 @@
                 <div x-show="$store.vp.security.twofa.secret">
                   <div style="font-size:12px;font-weight:600;margin-bottom:8px">Scan QR code in your authenticator app:</div>
                   <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
-                    <img :src="$store.vp.security.twofa.qr_url" style="width:140px;height:140px;border:2px solid var(--border);border-radius:var(--radius);background:#fff" />
+                    <div x-show="$store.vp.security.twofa.qr_svg" x-html="$store.vp.security.twofa.qr_svg" style="width:160px;height:160px;flex-shrink:0;border:2px solid var(--border);border-radius:var(--radius);background:#fff;overflow:hidden"></div>
+                    <div x-show="!$store.vp.security.twofa.qr_svg" style="width:160px;flex-shrink:0;font-size:11px;color:var(--text-muted)">QR code unavailable - enter the manual key in your authenticator app.</div>
                     <div>
                       <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Manual key:</div>
                       <div style="font-family:var(--font-mono);font-size:11px;font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;word-break:break-all" x-text="$store.vp.security.twofa.secret"></div>
@@ -7786,7 +8206,7 @@
        const dir=p.path&&p.path.includes('/')?p.path.substring(0,p.path.lastIndexOf('/'))||'/':'/www/wwwroot';
        $store.vp.picker.path=dir;
        $store.vp.picker.loading=true;
-       const r=await(await fetch('/api/files/list?path='+encodeURIComponent(dir))).json();
+       const r=await get('/api/files/list?path='+encodeURIComponent(dir)); if(!r.ok) toast(r.error||'Cannot open folder','error');
        $store.vp.picker.items=r.items||[]; $store.vp.picker.loading=false;
      }">
   <div style="background:var(--bg-card);border-radius:12px;width:560px;height:480px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,.5)">
@@ -7798,7 +8218,7 @@
       <template x-for="(part,i) in ($store.vp.picker.path.split('/').filter(Boolean).reduce((a,p,j,arr)=>[...a,{label:p,path:'/'+arr.slice(0,j+1).join('/')}],[{label:'/',path:'/'}]))" :key="part.path">
         <span style="display:flex;align-items:center;gap:3px">
           <span x-show="part.label!='/'" style="color:var(--text-muted)">/</span>
-          <button @click="async()=>{$store.vp.picker.path=part.path;$store.vp.picker.loading=true;const r=await(await fetch('/api/files/list?path='+encodeURIComponent(part.path))).json();$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=part.path;}"
+          <button @click="async()=>{$store.vp.picker.path=part.path;$store.vp.picker.loading=true;const r=await get('/api/files/list?path='+encodeURIComponent(part.path)); if(!r.ok) toast(r.error||'Cannot open folder','error');$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=part.path;}"
                   style="background:none;border:none;cursor:pointer;color:var(--accent);padding:0;font-size:12px" x-text="part.label"></button>
         </span>
       </template>
@@ -7807,7 +8227,7 @@
       <div x-show="$store.vp.picker.loading" style="text-align:center;padding:30px;color:var(--text-muted)">Loading...</div>
       <template x-for="item in $store.vp.picker.items" :key="item.path">
         <div @click="if(item.type==='dir'&&$store.vp.picker.mode==='dir'){$store.vp.picker.selected=item.path;}else if(item.type==='file'&&$store.vp.picker.mode==='file'){$store.vp.picker.selected=item.path;}"
-             @dblclick="async()=>{if(item.type==='dir'){$store.vp.picker.path=item.path;$store.vp.picker.loading=true;const r=await(await fetch('/api/files/list?path='+encodeURIComponent(item.path))).json();$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=item.path;}}"
+             @dblclick="async()=>{if(item.type==='dir'){$store.vp.picker.path=item.path;$store.vp.picker.loading=true;const r=await get('/api/files/list?path='+encodeURIComponent(item.path)); if(!r.ok) toast(r.error||'Cannot open folder','error');$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=item.path;}}"
              :style="'display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px;'+($store.vp.picker.selected===item.path?'background:rgba(99,102,241,.12)':'')">
           <span x-html="vpIcon(item.type==='dir'?'folder':'file-text')" style="font-size:15px"></span>
           <span x-text="item.name" :style="item.type==='dir'?'':'color:var(--text-secondary)'"></span>
@@ -7826,7 +8246,7 @@
 
 <!-- ── NODE.JS ADD PROJECT MODAL ────────────────────────────────────────── -->
 <div x-data="{}" x-show="$store.vp.nodeAdd.show"
-     class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">>
+     class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div style="font-size:18px;font-weight:700">Add Node.js Project</div>
@@ -7934,7 +8354,7 @@
 </div>
 
 <!-- ── GO ADD PROJECT MODAL ──────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.goAdd.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">>
+<div x-data="{}" x-show="$store.vp.goAdd.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div style="font-size:18px;font-weight:700">Add Go Project</div>
@@ -8112,7 +8532,7 @@
       <div style="border:2px dashed var(--border);border-radius:8px;padding:24px;text-align:center">
         <input type="file" id="import-file-input" style="display:none" @change="importUploadFile($event)" accept=".tar.gz,.tgz,.tar,.zip">
         <div x-show="!$store.vp.importWizard.filename">
-          <div style="font-size:28px;margin-bottom:8px">⇩</div>
+          <div style="font-size:28px;margin-bottom:8px" x-html="vpIcon('download')"></div>
           <button class="btn btn-primary btn-sm" @click="document.getElementById('import-file-input').click()" :disabled="$store.vp.importWizard.uploading">
             <span x-show="$store.vp.importWizard.uploading">Uploading...</span>
             <span x-show="!$store.vp.importWizard.uploading">Choose Backup File</span>
@@ -8173,7 +8593,7 @@
                 <span style="font-size:10px;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="db.dump_path" x-text="db.dump_path?db.dump_path.split('/').pop():'no dump file'"></span>
                 <button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="importRemoveDbRow(idx)">Delete</button>
               </div>
-              <div x-show="db.note" style="font-size:10px;color:var(--yellow);margin-top:-4px;margin-left:4px" x-text="''+db.note"></div>
+              <div x-show="db.note" style="font-size:10px;color:var(--yellow);margin-top:-4px;margin-left:4px" x-text="db.note"></div>
             </template>
           </div>
         </div>
@@ -8304,9 +8724,9 @@
       <!-- Live terminal output -->
       <div class="terminal-out" style="max-height:260px;min-height:120px" x-ref="terminal">
         <template x-for="(line,i) in updateLines" :key="i">
-          <div :style="line.startsWith('')||line.startsWith('✓')?'color:var(--green)':
-                        line.startsWith('✗')||line.startsWith('')?'color:var(--yellow)':
-                        line.startsWith('ERROR')?'color:var(--red)':''"
+          <div :style="(line.startsWith('OK')||line.startsWith('✓')||/updated successfully/i.test(line))?'color:var(--green)':
+                        (line.startsWith('✗')||/^(WARN|Warning|No tag)/.test(line))?'color:var(--yellow)':
+                        /^(ERROR|Error|FAILED|Failed)/.test(line)?'color:var(--red)':''"
                x-text="line||''"></div>
         </template>
       </div>

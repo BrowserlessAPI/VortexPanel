@@ -1,10 +1,28 @@
-from flask import Blueprint, jsonify, session
+from flask import Blueprint, jsonify
 import subprocess, re, time
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
 def req():
-    return 'user' in session
+    from panel.routes.auth import check_ip_and_session
+    return check_ip_and_session()
+
+
+def _unit_states(names):
+    """{name: (LoadState, ActiveState)} from one `systemctl show` call.
+    `systemctl is-active` prints 'inactive' for units that do not exist at
+    all, so the dashboard listed apache2/mysql/php7.4-fpm/... as stopped on
+    servers that never had them."""
+    try:
+        r = subprocess.run(['systemctl', 'show', '--property=LoadState,ActiveState', '--'] +
+                           [n + '.service' for n in names], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return {}
+    res = {}
+    for name, block in zip(names, r.stdout.strip().split('\n\n')):
+        props = dict(l.split('=', 1) for l in block.splitlines() if '=' in l)
+        res[name] = (props.get('LoadState', ''), props.get('ActiveState', ''))
+    return res
 
 _stats_cache = {'data': None, 'ts': 0}
 _STATS_TTL   = 1.5
@@ -81,46 +99,43 @@ def _get_stats():
             rx = tx = 0
             for line in open('/proc/net/dev').readlines()[2:]:
                 f = line.split()
-                if f[0].rstrip(':') == 'lo': continue
+                name = f[0].rstrip(':')
+                # Skip loopback and virtual/bridge links: container traffic
+                # crosses veth + docker0/br-* and the uplink, so it was
+                # counted two or three times.
+                if name == 'lo' or name.startswith(('veth', 'docker', 'br-', 'virbr', 'cni', 'flannel')):
+                    continue
                 rx += int(f[1]); tx += int(f[9])
             return rx, tx
         except:
             return 0, 0
 
     def _services():
-        svcs = ['nginx', 'apache2', 'mysql', 'mariadb',
+        svcs = ['nginx', 'apache2', 'httpd', 'mysql', 'mysqld', 'mariadb',
                 'php8.5-fpm', 'php8.4-fpm', 'php8.3-fpm', 'php8.2-fpm',
-                'php8.1-fpm', 'php7.4-fpm',
-                'redis-server', 'docker', 'fail2ban', 'supervisor']
+                'php8.1-fpm', 'php7.4-fpm', 'php-fpm',
+                'redis-server', 'redis', 'docker', 'fail2ban', 'supervisor', 'supervisord']
         try:
-            r = subprocess.run(
-                'systemctl is-active ' + ' '.join(svcs) + ' 2>/dev/null',
-                shell=True, capture_output=True, text=True, timeout=5
-            )
-            lines = r.stdout.strip().split('\n')
             out = {}
-            for i, svc in enumerate(svcs):
-                state = lines[i].strip() if i < len(lines) else ''
-                if state in ('active', 'inactive', 'failed'):
+            for svc, (load, state) in _unit_states(svcs).items():
+                if load == 'loaded' and state in ('active', 'inactive', 'failed', 'activating', 'reloading'):
                     out[svc] = state
-            return {k: v for k, v in out.items() if v}
-        except:
+            return out
+        except Exception:
             return {}
 
     def _webserver_conflicts():
-        webservers = {
-            'nginx':         'systemctl is-active nginx 2>/dev/null',
-            'apache2':       'systemctl is-active apache2 2>/dev/null || systemctl is-active httpd 2>/dev/null',
-            'openlitespeed': 'systemctl is-active lsws 2>/dev/null',
-            'caddy':         'systemctl is-active caddy 2>/dev/null',
-        }
+        # 'active' in stdout also matched "inactive" (printed for stopped AND
+        # non-existent units), so every server showed a permanent
+        # "multiple webservers running" warning.
+        units = {'nginx': 'nginx', 'apache2': 'apache2', 'httpd': 'apache2',
+                 'lsws': 'openlitespeed', 'caddy': 'caddy'}
         active = []
         try:
-            for name, cmd in webservers.items():
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3)
-                if 'active' in result.stdout:
-                    active.append(name)
-        except:
+            for unit, (_load, state) in _unit_states(list(units)).items():
+                if state == 'active' and units[unit] not in active:
+                    active.append(units[unit])
+        except Exception:
             pass
         if len(active) > 1:
             return {'conflict': True, 'active': active,

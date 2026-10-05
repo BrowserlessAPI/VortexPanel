@@ -5,13 +5,12 @@ cron_bp = Blueprint('cron', __name__)
 def req(): return 'user' in session
 
 CRON_META_FILE = '/opt/vortexpanel/cron_meta.json'
-_run_logs = {}  # job_id -> {lines, done, exit_code}
 
 def sh(c, t=30):
     try:
         r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
         return r.stdout.strip(), r.stderr.strip(), r.returncode
-    except: return '', '', 1
+    except Exception as e: return '', str(e), 1
 
 def load_meta():
     if os.path.exists(CRON_META_FILE):
@@ -22,15 +21,123 @@ def load_meta():
 
 def save_meta(meta):
     os.makedirs(os.path.dirname(CRON_META_FILE), exist_ok=True)
-    with open(CRON_META_FILE, 'w') as f: json.dump(meta, f, indent=2)
+    tmp = CRON_META_FILE + '.tmp'
+    with open(tmp, 'w') as f: json.dump(meta, f, indent=2)
+    os.replace(tmp, CRON_META_FILE)
+
+class CrontabError(Exception):
+    pass
 
 def get_crontab():
-    out, _, _ = sh('crontab -l 2>/dev/null')
-    return out or ''
+    """Root's crontab. `crontab -l` exits 1 with "no crontab for root" when
+    none exists yet - that is an empty crontab. Any other failure (crontab
+    binary missing because cron/cronie is not installed, timeout) must abort
+    the caller: treating it as empty made the next add/edit/delete overwrite
+    the whole existing crontab with just the new line."""
+    try:
+        r = subprocess.run(['crontab', '-l'], capture_output=True, text=True, timeout=15)
+    except FileNotFoundError:
+        raise CrontabError('crontab command not found - install cron (Debian/Ubuntu) or cronie (RHEL/Fedora)')
+    except subprocess.TimeoutExpired:
+        raise CrontabError('crontab -l timed out')
+    if r.returncode == 0:
+        return r.stdout
+    if 'no crontab' in (r.stderr or '').lower():
+        return ''
+    raise CrontabError((r.stderr or 'crontab -l failed').strip())
 
 def set_crontab(content):
-    r = subprocess.run('crontab -', input=content, shell=True, text=True)
-    return r.returncode == 0
+    try:
+        r = subprocess.run(['crontab', '-'], input=content, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    if r.returncode != 0:
+        return False, (r.stderr or 'crontab rejected the new table').strip()
+    return True, None
+
+def cron_daemon_active():
+    out, _, _ = sh('systemctl is-active cron crond cronie 2>/dev/null', t=10)
+    return any(l.strip() == 'active' for l in out.split('\n'))
+
+def _cron_unit():
+    """cron (Debian/Ubuntu) or crond (RHEL/Fedora cronie), whichever exists."""
+    for u in ('cron', 'crond'):
+        if subprocess.run(['systemctl', 'cat', u], capture_output=True, timeout=15).returncode == 0:
+            return u
+    return ''
+
+def ensure_cron():
+    """Make sure root's crontab can be written AND is executed: minimal and
+    cloud images (Fedora cloud, Debian/Ubuntu minimal, containers) ship
+    without cron/cronie, so 'crontab' did not exist and every job failed; a
+    present but stopped daemon silently ran nothing. Installs cron (apt) or
+    cronie (dnf/yum) when crontab is missing and enables the daemon.
+    Returns (ok, message)."""
+    import shutil
+    msg = ''
+    if not shutil.which('crontab'):
+        if shutil.which('apt-get'):
+            cmd = ['apt-get', 'install', '-y', '-o', 'DPkg::Lock::Timeout=120', 'cron']
+        elif shutil.which('dnf') or shutil.which('yum'):
+            cmd = [shutil.which('dnf') or shutil.which('yum'), 'install', '-y', 'cronie']
+        else:
+            return False, 'crontab command not found and no supported package manager to install cron'
+        env = dict(os.environ, DEBIAN_FRONTEND='noninteractive', NEEDRESTART_MODE='a')
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
+            if r.returncode != 0 and cmd[0] == 'apt-get':
+                # minimal images often have empty package lists
+                subprocess.run(['apt-get', 'update', '-qq'], capture_output=True, timeout=300, env=env)
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
+        except subprocess.TimeoutExpired:
+            return False, 'Installing cron timed out'
+        if r.returncode != 0 or not shutil.which('crontab'):
+            return False, 'cron is not installed and installing it failed: ' + ((r.stderr or r.stdout or '').strip()[-400:])
+        msg = 'cron was not installed -- installed it. '
+    unit = _cron_unit()
+    if unit and not cron_daemon_active():
+        try:
+            r = subprocess.run(['systemctl', 'enable', '--now', unit], capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                msg += f'The {unit} service was not running -- started and enabled it. '
+            else:
+                msg += f'Warning: the {unit} service could not be started: {(r.stderr or "").strip()[-200:]} '
+        except subprocess.TimeoutExpired:
+            msg += f'Warning: starting {unit} timed out. '
+    return True, msg.strip()
+
+_VID_RE = re.compile(r'^[a-f0-9-]{1,36}$')
+_FIELD_RE = re.compile(r'^[0-9*/,A-Za-z-]+$')
+
+def _vid_re(vid):
+    return re.compile(r'#\s*vp:' + re.escape(vid) + r'\s*$')
+
+def _valid_schedule(schedule):
+    parts = schedule.split()
+    return len(parts) == 5 and all(_FIELD_RE.match(p) for p in parts)
+
+def _escape_percent(cmd):
+    """cron turns an unescaped '%' into a newline (the rest of the line becomes
+    stdin), so `date +%F` silently breaks. Escape any '%' not already escaped."""
+    return re.sub(r'(?<!\\)%', r'\%', cmd)
+
+def _cron_to_shell(cmd):
+    """Undo cron's %-processing for Run Now: the part before the first unescaped
+    '%' is the command, the rest (with '%' -> newline) is stdin, '\\%' -> '%'."""
+    m = re.search(r'(?<!\\)%', cmd)
+    stdin = None
+    if m:
+        cmd, stdin = cmd[:m.start()], cmd[m.end():]
+        stdin = re.sub(r'(?<!\\)%', '\n', stdin).replace('\\%', '%')
+    return cmd.replace('\\%', '%'), stdin
+
+def _validate_job(schedule, command, name):
+    if not command: return 'Command required'
+    if any(c in (command + schedule + (name or '')) for c in '\r\n'):
+        return 'Command, schedule and name must be a single line'
+    if not _valid_schedule(schedule):
+        return 'Invalid cron schedule - must be 5 fields (min hour day month weekday)'
+    return None
 
 def parse_crontab(raw, meta):
     jobs = []
@@ -138,7 +245,7 @@ TASK_TEMPLATES = [
     {'id':'log_clear',  'label':'Clear Nginx Logs',   'icon':'trash', 'desc':'Rotate/clear Nginx access logs',
      'cmd':'> /var/log/nginx/access.log && systemctl reload nginx','hint':''},
     {'id':'cloud_sync', 'label':'Cloud Backup Sync',  'icon':'cloud',  'desc':'Upload any new local backups to cloud storage',
-     'cmd':'/opt/vortexpanel/venv/bin/python3 /opt/vortexpanel/scripts/cloud_sync.py','hint':''},
+     'cmd':'cd /opt/vortexpanel && venv/bin/python3 -c "from panel.routes.cloud_backup import sync_all; sync_all()"','hint':''},
     {'id':'custom',     'label':'Custom Command',     'icon':'settings',  'desc':'Enter any custom command',
      'cmd':'','hint':'Enter your command...'},
 ]
@@ -151,67 +258,79 @@ def get_presets():
 @cron_bp.route('/api/cron/jobs')
 def list_jobs():
     if not req(): return jsonify({'ok':False}), 401
-    raw  = get_crontab()
+    try: raw = get_crontab()
+    except CrontabError as e:
+        # Listing never installs anything; the first job added does (ensure_cron).
+        return jsonify({'ok':False,'error':str(e),'jobs':[],'cron_missing':'not found' in str(e),
+                        'hint':'Adding a job installs and starts cron automatically.'})
     meta = load_meta()
     jobs = parse_crontab(raw, meta)
     # Add human-readable schedule
     for j in jobs:
         j['schedule_human'] = human_schedule(j['schedule'])
-    return jsonify({'ok':True, 'jobs':jobs, 'count':len(jobs)})
+    return jsonify({'ok':True, 'jobs':jobs, 'count':len(jobs), 'daemon_active':cron_daemon_active()})
 
 @cron_bp.route('/api/cron/jobs', methods=['POST'])
 def add_job():
     if not req(): return jsonify({'ok':False}), 401
     d        = request.get_json() or {}
-    schedule = d.get('schedule','0 * * * *').strip()
-    command  = d.get('command','').strip()
-    name     = d.get('name','').strip()
+    schedule = ' '.join((d.get('schedule') or '0 * * * *').split())
+    command  = (d.get('command') or '').strip()
+    name     = (d.get('name') or '').strip()
     jtype    = d.get('type','shell')
-    user     = d.get('user','root')
 
-    if not command: return jsonify({'ok':False,'error':'Command required'}), 400
-    # Validate schedule (basic: 5 parts)
-    if len(schedule.split()) != 5:
-        return jsonify({'ok':False,'error':'Invalid cron schedule — must be 5 parts (min hour day month weekday)'}), 400
+    err = _validate_job(schedule, command, name)
+    if err: return jsonify({'ok':False,'error':err}), 400
 
     vid  = str(uuid.uuid4())[:8]
-    line = f'{schedule} {command} # vp:{vid}'
+    line = f'{schedule} {_escape_percent(command)} # vp:{vid}'
 
-    raw  = get_crontab()
-    new  = (raw.rstrip() + '\n' + line + '\n') if raw else line + '\n'
-    if not set_crontab(new):
-        return jsonify({'ok':False,'error':'Failed to update crontab'}), 500
+    ok, note = ensure_cron()
+    if not ok: return jsonify({'ok':False,'error':note}), 500
+    try: raw = get_crontab()
+    except CrontabError as e: return jsonify({'ok':False,'error':str(e)}), 500
+    new  = (raw.rstrip() + '\n' + line + '\n') if raw.strip() else line + '\n'
+    ok, err = set_crontab(new)
+    if not ok:
+        return jsonify({'ok':False,'error':'Failed to update crontab: ' + err}), 500
 
     meta = load_meta()
-    meta[vid] = {'name':name, 'type':jtype, 'user':user, 'created':time.strftime('%Y-%m-%d %H:%M:%S'), 'last_log':'', 'last_run':'', 'last_exit':''}
+    # Jobs always live in root's crontab (the panel has no per-user crontab support)
+    meta[vid] = {'name':name, 'type':jtype, 'user':'root', 'created':time.strftime('%Y-%m-%d %H:%M:%S'), 'last_log':'', 'last_run':'', 'last_exit':''}
     save_meta(meta)
-    return jsonify({'ok':True, 'id':vid, 'schedule_human':human_schedule(schedule)})
+    return jsonify({'ok':True, 'id':vid, 'schedule_human':human_schedule(schedule), 'notice':note})
 
 @cron_bp.route('/api/cron/jobs/<vid>', methods=['PUT'])
 def edit_job(vid):
     if not req(): return jsonify({'ok':False}), 401
     d        = request.get_json() or {}
-    schedule = d.get('schedule','').strip()
-    command  = d.get('command','').strip()
-    name     = d.get('name','')
+    schedule = ' '.join((d.get('schedule') or '').split())
+    command  = (d.get('command') or '').strip()
+    name     = d.get('name','') or ''
     jtype    = d.get('type','shell')
 
-    if not command: return jsonify({'ok':False,'error':'Command required'}), 400
+    if not _VID_RE.match(vid): return jsonify({'ok':False,'error':'Job not found'}), 404
+    err = _validate_job(schedule, command, name)
+    if err: return jsonify({'ok':False,'error':err}), 400
 
-    raw   = get_crontab()
-    lines = raw.split('\n')
+    try: raw = get_crontab()
+    except CrontabError as e: return jsonify({'ok':False,'error':str(e)}), 500
+    rx = _vid_re(vid)
     new_lines = []
     found = False
-    for line in lines:
-        if f'# vp:{vid}' in line:
-            new_lines.append(f'{schedule} {command} # vp:{vid}')
+    for line in raw.rstrip('\n').split('\n'):
+        if rx.search(line):
+            # keep a disabled job disabled
+            prefix = '# ' if line.strip().startswith('#') else ''
+            new_lines.append(f'{prefix}{schedule} {_escape_percent(command)} # vp:{vid}')
             found = True
         else:
             new_lines.append(line)
     if not found:
         return jsonify({'ok':False,'error':'Job not found'}), 404
 
-    set_crontab('\n'.join(new_lines) + '\n')
+    ok, err = set_crontab('\n'.join(new_lines) + '\n')
+    if not ok: return jsonify({'ok':False,'error':'Failed to update crontab: ' + err}), 500
     meta = load_meta()
     if vid in meta:
         meta[vid].update({'name':name,'type':jtype})
@@ -221,9 +340,13 @@ def edit_job(vid):
 @cron_bp.route('/api/cron/jobs/<vid>', methods=['DELETE'])
 def delete_job(vid):
     if not req(): return jsonify({'ok':False}), 401
-    raw   = get_crontab()
-    lines = [l for l in raw.split('\n') if f'# vp:{vid}' not in l]
-    set_crontab('\n'.join(lines) + '\n')
+    if not _VID_RE.match(vid): return jsonify({'ok':False,'error':'Job not found'}), 404
+    try: raw = get_crontab()
+    except CrontabError as e: return jsonify({'ok':False,'error':str(e)}), 500
+    rx = _vid_re(vid)
+    lines = [l for l in raw.rstrip('\n').split('\n') if not rx.search(l)]
+    ok, err = set_crontab('\n'.join(lines).strip('\n') + '\n' if any(l.strip() for l in lines) else '')
+    if not ok: return jsonify({'ok':False,'error':'Failed to update crontab: ' + err}), 500
     meta = load_meta()
     meta.pop(vid, None)
     save_meta(meta)
@@ -232,12 +355,16 @@ def delete_job(vid):
 @cron_bp.route('/api/cron/jobs/<vid>/toggle', methods=['POST'])
 def toggle_job(vid):
     if not req(): return jsonify({'ok':False}), 401
-    enable = (request.get_json() or {}).get('enable', True)
-    raw    = get_crontab()
-    lines  = raw.split('\n')
+    enable = bool((request.get_json() or {}).get('enable', True))
+    if not _VID_RE.match(vid): return jsonify({'ok':False,'error':'Job not found'}), 404
+    try: raw = get_crontab()
+    except CrontabError as e: return jsonify({'ok':False,'error':str(e)}), 500
+    rx = _vid_re(vid)
     new_lines = []
-    for line in lines:
-        if f'# vp:{vid}' in line:
+    found = False
+    for line in raw.rstrip('\n').split('\n'):
+        if rx.search(line):
+            found = True
             s = line.strip()
             if enable:
                 new_lines.append(re.sub(r'^#+\s*', '', s))
@@ -245,44 +372,75 @@ def toggle_job(vid):
                 new_lines.append('# ' + s if not s.startswith('#') else s)
         else:
             new_lines.append(line)
-    set_crontab('\n'.join(new_lines) + '\n')
+    if not found: return jsonify({'ok':False,'error':'Job not found'}), 404
+    ok, err = set_crontab('\n'.join(new_lines) + '\n')
+    if not ok: return jsonify({'ok':False,'error':'Failed to update crontab: ' + err}), 500
     return jsonify({'ok':True, 'enabled':enable})
 
 @cron_bp.route('/api/cron/jobs/<vid>/run', methods=['POST'])
 def run_now(vid):
     if not req(): return jsonify({'ok':False}), 401
-    raw  = get_crontab()
-    cmd  = ''
+    if not _VID_RE.match(vid): return jsonify({'ok':False,'error':'Job not found or disabled'}), 404
+    try: raw = get_crontab()
+    except CrontabError as e: return jsonify({'ok':False,'error':str(e)}), 500
+    rx  = _vid_re(vid)
+    cmd = ''
     for line in raw.split('\n'):
-        if f'# vp:{vid}' in line and not line.strip().startswith('#'):
+        if rx.search(line) and not line.strip().startswith('#'):
             parts = line.strip().split(None, 5)
             if len(parts) >= 6:
-                cmd = parts[5]
-                cmd = re.sub(r'\s*#\s*vp:[a-f0-9-]+', '', cmd).strip()
+                cmd = rx.sub('', parts[5]).strip()
     if not cmd:
         return jsonify({'ok':False,'error':'Job not found or disabled'}), 404
+    shell_cmd, stdin_data = _cron_to_shell(cmd)
 
     run_id = str(uuid.uuid4())[:8]
-    _run_logs[run_id] = {'lines':[], 'done':False, 'exit_code':None, 'start': time.time()}
+    # Run state goes through job_state (shared file): the poll for a run that
+    # started in one gunicorn worker usually lands on another worker.
+    from panel.routes.job_state import save_job
+    state = {'lines':[], 'done':False, 'exit_code':None, 'start': time.time()}
+    save_job('cronrun_' + run_id, state)
 
     def execute():
         start = time.time()
-        _run_logs[run_id]['lines'].append(f'[VortexPanel] Executing: {cmd}')
-        _run_logs[run_id]['lines'].append(f'[VortexPanel] Started: {time.strftime("%Y-%m-%d %H:%M:%S")}')
-        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        for line in proc.stdout:
-            _run_logs[run_id]['lines'].append(line.rstrip())
-        proc.wait()
+        last_save = [0.0]
+        def flush(force=False):
+            if force or time.time() - last_save[0] > 0.4:
+                if len(state['lines']) > 2000:
+                    state['lines'] = state['lines'][:2] + ['[VortexPanel] ... output truncated ...'] + state['lines'][-1900:]
+                try: save_job('cronrun_' + run_id, state)
+                except Exception: pass
+                last_save[0] = time.time()
+        state['lines'].append(f'[VortexPanel] Executing: {cmd}')
+        state['lines'].append(f'[VortexPanel] Started: {time.strftime("%Y-%m-%d %H:%M:%S")}')
+        flush(True)
+        rc = None
+        try:
+            proc = subprocess.Popen(shell_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+                                    text=True, bufsize=1, errors='replace')
+            if stdin_data is not None:
+                try:
+                    proc.stdin.write(stdin_data); proc.stdin.close()
+                except OSError: pass
+            for line in proc.stdout:
+                state['lines'].append(line.rstrip())
+                flush()
+            rc = proc.wait()
+        except Exception as e:
+            state['lines'].append(f'[VortexPanel] Failed to start: {e}')
+            rc = 127
         elapsed = round(time.time() - start, 2)
-        _run_logs[run_id].update({'done':True,'exit_code':proc.returncode})
-        _run_logs[run_id]['lines'].append(f'[VortexPanel] Finished in {elapsed}s — exit code: {proc.returncode}')
+        state.update({'done':True,'exit_code':rc})
+        state['lines'].append(f'[VortexPanel] Finished in {elapsed}s - exit code: {rc}')
+        flush(True)
         # Save to meta
         meta = load_meta()
         if vid in meta:
-            log_str = '\n'.join(_run_logs[run_id]['lines'])
+            log_str = '\n'.join(state['lines'])
             meta[vid].update({
                 'last_run':  time.strftime('%Y-%m-%d %H:%M:%S'),
-                'last_exit': str(proc.returncode),
+                'last_exit': str(rc),
                 'last_log':  log_str[-2000:],
             })
             save_meta(meta)
@@ -293,9 +451,10 @@ def run_now(vid):
 @cron_bp.route('/api/cron/run/<run_id>')
 def run_status(run_id):
     if not req(): return jsonify({'ok':False}), 401
-    job = _run_logs.get(run_id)
+    from panel.routes.job_state import load_job
+    job = load_job('cronrun_' + run_id)
     if not job: return jsonify({'ok':False,'error':'Run not found'}), 404
-    return jsonify({'ok':True, **job})
+    return jsonify(dict(job, ok=True))
 
 @cron_bp.route('/api/cron/jobs/<vid>/logs')
 def job_logs(vid):

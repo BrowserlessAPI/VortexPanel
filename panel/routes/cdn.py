@@ -1,22 +1,46 @@
 from flask import Blueprint, jsonify, request, session
-import urllib.request, urllib.error, json, os, re, subprocess
+import urllib.request, urllib.error, urllib.parse, json, os, re, subprocess
 
 cdn_bp = Blueprint('cdn', __name__)
 def req(): return 'user' in session
 
 CONFIG_FILE = '/opt/vortexpanel/cdn_config.json'
 
+_SECRET_KEYS = ('api_key', 'api_token', 'auth_secret')
+_CF_ID_RE = re.compile(r'^[0-9a-f]{32}$')
+_CF_SETTING_RE = re.compile(r'^[a-z0-9_]{1,64}$')
+# The settings GET returns friendly names; map them back to Cloudflare's ids
+# (PATCHing settings/always_https or settings/dev_mode was a 404).
+_CF_SETTING_ALIASES = {'always_https': 'always_use_https', 'dev_mode': 'development_mode'}
+_DOMAIN_RE = re.compile(r'^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9-]{2,63}$')
+
 def load_config():
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            try: return json.load(f)
-            except: pass
+        try:
+            if os.stat(CONFIG_FILE).st_mode & 0o077: os.chmod(CONFIG_FILE, 0o600)
+            with open(CONFIG_FILE) as f:
+                cfg = json.load(f)
+                if isinstance(cfg, dict): return cfg
+        except Exception: pass
     return {}
 
 def save_config(cfg):
+    """API keys live here: 0600 and atomic (was created world-readable)."""
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-    with open(CONFIG_FILE, 'w') as f:
+    tmp = CONFIG_FILE + '.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
         json.dump(cfg, f, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CONFIG_FILE)
+
+def _cf_err(data, fallback='Cloudflare API error'):
+    errs = (data or {}).get('errors') if isinstance(data, dict) else None
+    if isinstance(errs, list) and errs:
+        return '; '.join((f"{e.get('code','')} {e.get('message','')}".strip() if isinstance(e, dict) else str(e)) for e in errs)
+    if isinstance(data, dict) and data.get('error'):
+        return str(data['error'])
+    return fallback
 
 def http_request(url, method='GET', headers=None, data=None, timeout=15):
     """Generic HTTP request helper"""
@@ -28,10 +52,16 @@ def http_request(url, method='GET', headers=None, data=None, timeout=15):
             for k, v in headers.items():
                 req.add_header(k, v)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode()), resp.status
+            raw = resp.read().decode('utf-8', 'replace')
+            # 204 / empty bodies (BunnyCDN purge) used to raise in json.loads
+            # and be reported as a failure with status 0.
+            try: body = json.loads(raw) if raw.strip() else {}
+            except ValueError: body = {'raw': raw[:500]}
+            return body, resp.status
     except urllib.error.HTTPError as e:
         try: body = json.loads(e.read().decode())
-        except: body = {'error': str(e)}
+        except Exception: body = {'error': str(e)}
+        if not isinstance(body, (dict, list)): body = {'error': str(e)}
         return body, e.code
     except Exception as e:
         return {'error': str(e)}, 0
@@ -41,9 +71,12 @@ def http_request(url, method='GET', headers=None, data=None, timeout=15):
 def get_config():
     if not req(): return jsonify({'ok':False}), 401
     cfg = load_config()
-    # Mask secrets
-    safe = {k: {**v, 'api_key': '***' if v.get('api_key') else '', 'api_token': '***' if v.get('api_token') else ''}
-            for k, v in cfg.items()}
+    # Mask secrets. cfg also holds 'active_cdn' (a string): `{**v}` on it
+    # raised TypeError, so this endpoint 500ed after the first save.
+    safe = {}
+    for k, v in cfg.items():
+        if not isinstance(v, dict): continue
+        safe[k] = dict(v, **{s: ('***' if v.get(s) else '') for s in _SECRET_KEYS})
     return jsonify({'ok':True, 'config':safe, 'active': cfg.get('active_cdn','')})
 
 @cdn_bp.route('/api/cdn/config', methods=['PUT'])
@@ -52,6 +85,8 @@ def save_cdn_config():
     d   = request.get_json() or {}
     provider = d.get('provider','')
     if not provider: return jsonify({'ok':False,'error':'Provider required'}), 400
+    if provider not in [p['id'] for p in CDN_PROVIDERS]:
+        return jsonify({'ok':False,'error':'Unknown provider'}), 400
     cfg = load_config()
     # Don't overwrite masked values
     existing = cfg.get(provider, {})
@@ -97,29 +132,37 @@ def cf_test():
     api_key = d.get('api_key')   or cfg.get('api_key')
     email   = d.get('email')     or cfg.get('email')
     headers = {'Authorization':f'Bearer {token}'} if token else {'X-Auth-Email':email,'X-Auth-Key':api_key}
+    if not token and not (api_key and email):
+        return jsonify({'ok':False,'error':'Enter an API token, or the account email plus Global API Key'})
     data, status = http_request('https://api.cloudflare.com/client/v4/user/tokens/verify' if token
                                 else 'https://api.cloudflare.com/client/v4/user', 'GET', headers)
-    ok = status == 200 and data.get('success', False)
-    return jsonify({'ok':ok, 'detail':data.get('result',{}), 'error':data.get('errors',[])})
+    ok = status == 200 and isinstance(data, dict) and data.get('success', False)
+    return jsonify({'ok':ok, 'detail':data.get('result',{}) if isinstance(data, dict) else {},
+                    'error': None if ok else _cf_err(data, f'HTTP {status}')})
 
 @cdn_bp.route('/api/cdn/cloudflare/zones')
 def cf_zones():
     if not req(): return jsonify({'ok':False}), 401
     cfg = load_config().get('cloudflare', {})
-    data, status = http_request('https://api.cloudflare.com/client/v4/zones?per_page=50', 'GET', cf_headers(cfg))
-    if not data.get('success'):
-        return jsonify({'ok':False, 'error':str(data.get('errors','API error'))}), 400
-    zones = [{'id':z['id'],'name':z['name'],'status':z['status'],'plan':z.get('plan',{}).get('name','')}
-             for z in data.get('result',[])]
+    zones = []
+    for page in range(1, 21):
+        data, status = http_request(f'https://api.cloudflare.com/client/v4/zones?per_page=50&page={page}', 'GET', cf_headers(cfg))
+        if not isinstance(data, dict) or not data.get('success'):
+            return jsonify({'ok':False, 'error':_cf_err(data)}), 400
+        zones += [{'id':z['id'],'name':z['name'],'status':z['status'],'plan':(z.get('plan') or {}).get('name','')}
+                  for z in data.get('result') or []]
+        info = data.get('result_info') or {}
+        if page >= (info.get('total_pages') or 1): break
     return jsonify({'ok':True, 'zones':zones})
 
 @cdn_bp.route('/api/cdn/cloudflare/zone/<zone_id>/settings')
 def cf_zone_settings(zone_id):
     if not req(): return jsonify({'ok':False}), 401
+    if not _CF_ID_RE.match(zone_id): return jsonify({'ok':False,'error':'Invalid zone id'}), 400
     cfg = load_config().get('cloudflare', {})
     data, _ = http_request(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/settings', 'GET', cf_headers(cfg))
-    if not data.get('success'):
-        return jsonify({'ok':False, 'error':'Failed to fetch settings'}), 400
+    if not isinstance(data, dict) or not data.get('success'):
+        return jsonify({'ok':False, 'error':'Failed to fetch settings: ' + _cf_err(data)}), 400
     # Extract key settings
     settings = {s['id']: s['value'] for s in data.get('result',[])}
     return jsonify({'ok':True, 'settings':{
@@ -135,40 +178,53 @@ def cf_zone_settings(zone_id):
         'hotlink_protection': settings.get('hotlink_protection','off'),
     }})
 
-@cdn_bp.route('/api/cdn/cloudflare/zone/<zone_id>/settings', methods=['PATCH'])
+@cdn_bp.route('/api/cdn/cloudflare/zone/<zone_id>/settings', methods=['PATCH', 'PUT'])
 def cf_update_settings(zone_id):
     if not req(): return jsonify({'ok':False}), 401
+    if not _CF_ID_RE.match(zone_id): return jsonify({'ok':False,'error':'Invalid zone id'}), 400
     cfg = load_config().get('cloudflare', {})
     settings = (request.get_json() or {}).get('settings', {})
-    results = {}
+    if not isinstance(settings, dict) or not settings:
+        return jsonify({'ok':False,'error':'No settings given'}), 400
+    results, errors = {}, []
     for key, val in settings.items():
+        cf_key = _CF_SETTING_ALIASES.get(key, key)
+        if not _CF_SETTING_RE.match(cf_key):
+            results[key] = {'ok': False, 'status': 0}; errors.append(f'{key}: invalid setting name'); continue
         data, status = http_request(
-            f'https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/{key}',
+            f'https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/{cf_key}',
             'PATCH', cf_headers(cfg), {'value': val}
         )
-        results[key] = {'ok': data.get('success', False), 'status':status}
-    return jsonify({'ok':True, 'results':results})
+        ok = isinstance(data, dict) and data.get('success', False)
+        results[key] = {'ok': ok, 'status':status}
+        if not ok: errors.append(f'{key}: {_cf_err(data, "HTTP " + str(status))}')
+    # Was always ok:true, so the UI showed "updated" for rejected changes.
+    return jsonify({'ok':not errors, 'results':results, 'error':'; '.join(errors) or None})
 
 @cdn_bp.route('/api/cdn/cloudflare/zone/<zone_id>/purge', methods=['POST'])
 def cf_purge(zone_id):
     if not req(): return jsonify({'ok':False}), 401
+    if not _CF_ID_RE.match(zone_id): return jsonify({'ok':False,'error':'Invalid zone id'}), 400
     cfg  = load_config().get('cloudflare', {})
     d    = request.get_json() or {}
-    urls = d.get('urls', [])
+    urls = [u for u in (d.get('urls') or []) if isinstance(u, str) and u.strip()]
     body = {'purge_everything': True} if not urls else {'files': urls}
     data, status = http_request(
         f'https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache',
         'POST', cf_headers(cfg), body
     )
-    return jsonify({'ok': data.get('success', False), 'errors': data.get('errors',[])})
+    ok = isinstance(data, dict) and data.get('success', False)
+    return jsonify({'ok': ok, 'errors': (data.get('errors',[]) if isinstance(data, dict) else []),
+                    'error': None if ok else _cf_err(data, f'HTTP {status}')})
 
 @cdn_bp.route('/api/cdn/cloudflare/zone/<zone_id>/dns')
 def cf_dns(zone_id):
     if not req(): return jsonify({'ok':False}), 401
+    if not _CF_ID_RE.match(zone_id): return jsonify({'ok':False,'error':'Invalid zone id'}), 400
     cfg  = load_config().get('cloudflare', {})
     data, _ = http_request(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?per_page=100', 'GET', cf_headers(cfg))
-    if not data.get('success'):
-        return jsonify({'ok':False,'error':'Failed'}), 400
+    if not isinstance(data, dict) or not data.get('success'):
+        return jsonify({'ok':False,'error':_cf_err(data, 'Failed to load DNS records')}), 400
     records = [{'id':r['id'],'type':r['type'],'name':r['name'],'content':r['content'],'proxied':r.get('proxied',False)}
                for r in data.get('result',[])]
     return jsonify({'ok':True,'records':records})
@@ -176,12 +232,13 @@ def cf_dns(zone_id):
 @cdn_bp.route('/api/cdn/cloudflare/zone/<zone_id>/analytics')
 def cf_analytics(zone_id):
     if not req(): return jsonify({'ok':False}), 401
+    if not _CF_ID_RE.match(zone_id): return jsonify({'ok':False,'error':'Invalid zone id'}), 400
     cfg = load_config().get('cloudflare', {})
     data, _ = http_request(
         f'https://api.cloudflare.com/client/v4/zones/{zone_id}/analytics/dashboard?since=-1440',
         'GET', cf_headers(cfg)
     )
-    if not data.get('success'):
+    if not isinstance(data, dict) or not data.get('success'):
         return jsonify({'ok':False,'error':'Analytics unavailable (requires Pro plan or above)'}), 400
     result = data.get('result', {})
     totals = result.get('totals', {})
@@ -203,16 +260,21 @@ def bunny_test():
     d   = request.get_json() or {}
     cfg = load_config().get('bunnycdn', {})
     key = d.get('api_key') or cfg.get('api_key','')
+    if not key: return jsonify({'ok':False,'error':'API key required'})
     data, status = http_request('https://api.bunny.net/pullzone?page=1&perPage=1', 'GET', {'AccessKey':key})
-    ok = status == 200 and isinstance(data, list)
-    return jsonify({'ok':ok, 'detail':f'Found {len(data)} pull zones' if ok else 'Auth failed', 'status':status})
+    # With page/perPage the API returns {"Items": [...], "TotalItems": n},
+    # not a bare list, so a valid key was always reported as "Auth failed".
+    ok = status == 200 and isinstance(data, (list, dict))
+    total = len(data) if isinstance(data, list) else (data.get('TotalItems', len(data.get('Items') or [])) if isinstance(data, dict) else 0)
+    return jsonify({'ok':ok, 'detail':f'Found {total} pull zones' if ok else 'Auth failed', 'status':status,
+                    'error': None if ok else f'Auth failed (HTTP {status})'})
 
 @cdn_bp.route('/api/cdn/bunnycdn/zones')
 def bunny_zones():
     if not req(): return jsonify({'ok':False}), 401
     cfg  = load_config().get('bunnycdn', {})
     data, status = http_request('https://api.bunny.net/pullzone?page=1&perPage=100', 'GET', bunny_headers(cfg))
-    if status != 200: return jsonify({'ok':False,'error':f'API error {status}'}), 400
+    if status != 200 or not isinstance(data, (list, dict)): return jsonify({'ok':False,'error':f'API error {status}'}), 400
     zones = [{'id':z['Id'],'name':z['Name'],'hostname':z.get('CnameDomain',''),
               'origin':z.get('OriginUrl',''),'monthly_bw':z.get('MonthlyBandwidthLimit',0)}
              for z in (data if isinstance(data,list) else data.get('Items',[]))]
@@ -229,14 +291,15 @@ def bunny_purge(zone_id):
         data, status = http_request(endpoint, 'POST', bunny_headers(cfg))
     else:
         data, status = http_request(f'https://api.bunny.net/pullzone/{zone_id}/purgeCache', 'POST', bunny_headers(cfg))
-    return jsonify({'ok': status in (200,204), 'status':status})
+    ok = status in (200,204)
+    return jsonify({'ok': ok, 'status':status, 'error': None if ok else f'Purge failed (HTTP {status})'})
 
 @cdn_bp.route('/api/cdn/bunnycdn/stats/<int:zone_id>')
 def bunny_stats(zone_id):
     if not req(): return jsonify({'ok':False}), 401
     cfg  = load_config().get('bunnycdn', {})
     data, status = http_request(f'https://api.bunny.net/statistics?pullZoneId={zone_id}', 'GET', bunny_headers(cfg))
-    if status != 200: return jsonify({'ok':False,'error':f'Stats API error {status}'}), 400
+    if status != 200 or not isinstance(data, dict): return jsonify({'ok':False,'error':f'Stats API error {status}'}), 400
     return jsonify({'ok':True,
         'bandwidth_used':    data.get('TotalBandwidthUsed',0),
         'requests_served':   data.get('TotalRequestsServed',0),
@@ -256,6 +319,8 @@ def generic_test():
     provider = d.get('provider','')
     test_url = d.get('test_url','')
     if not test_url: return jsonify({'ok':False,'error':'Test URL required'}), 400
+    if urllib.parse.urlparse(test_url).scheme not in ('http', 'https'):
+        return jsonify({'ok':False,'error':'Test URL must start with http:// or https://'}), 400
     try:
         req2 = urllib.request.Request(test_url)
         req2.add_header('User-Agent', 'VortexPanel/3.0 CDN-Test')
@@ -294,8 +359,11 @@ def apply_nginx_headers():
     }
     cache_header = cache_rules.get(provider, cache_rules['generic'])
 
+    if not _DOMAIN_RE.match(domain):
+        return jsonify({'ok':False,'error':'Invalid domain'}), 400
+
     nginx_snippet = f"""
-    # VortexPanel CDN: {provider} cache headers for {domain}
+    # VortexPanel CDN BEGIN ({provider})
     location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|webp|avif)$ {{
         add_header {cache_header};
         add_header Vary "Accept-Encoding";
@@ -306,30 +374,60 @@ def apply_nginx_headers():
     location ~* \\.html$ {{
         add_header Cache-Control "public, max-age=3600, s-maxage=86400";
     }}
+    # VortexPanel CDN END
 """
-    # Find nginx config
+    # Find nginx config. Panel-created sites live in /etc/nginx/vortex, which
+    # was not searched at all ("Nginx config not found" for every panel site).
     conf_path = None
-    for d_path in ['/etc/nginx/sites-available', '/etc/nginx/conf.d']:
+    for d_path in ['/etc/nginx/vortex', '/etc/nginx/sites-available', '/etc/nginx/conf.d']:
         p = os.path.join(d_path, f'{domain}.conf')
         if os.path.exists(p): conf_path = p; break
 
     if not conf_path:
         return jsonify({'ok':False,'error':f'Nginx config not found for {domain}'}), 404
 
-    with open(conf_path) as f: content = f.read()
+    with open(conf_path) as f: original = f.read()
 
-    # Remove old CDN headers block if exists
-    content = re.sub(r'\n    # VortexPanel CDN:.*?}\n', '\n', content, flags=re.DOTALL)
+    # Remove a previous block: current BEGIN/END markers, and the legacy
+    # unmarked format (whose removal regex stopped after the first location,
+    # leaving the HTML location behind on every re-apply).
+    content = re.sub(r'\n[ \t]*# VortexPanel CDN BEGIN.*?# VortexPanel CDN END[ \t]*\n', '\n', original, flags=re.DOTALL)
+    content = re.sub(r'\n[ \t]*# VortexPanel CDN:.*?# CDN cache for HTML\s*location ~\* \\\.html\$ \{.*?\}[ \t]*\n',
+                     '\n', content, flags=re.DOTALL)
 
-    # Add before closing brace
-    content = re.sub(r'(}\s*)$', nginx_snippet + r'\1', content, count=1)
+    # Insert into every server block that serves files (has a root), right
+    # before its closing brace - not just before the last '}' of the file,
+    # which may belong to an HTTP->HTTPS redirect server.
+    def server_blocks(text):
+        out = []
+        for m in re.finditer(r'(^|\n)\s*server\s*\{', text):
+            depth, k = 0, text.index('{', m.start())
+            while k < len(text):
+                if text[k] == '{': depth += 1
+                elif text[k] == '}':
+                    depth -= 1
+                    if depth == 0: break
+                k += 1
+            out.append((m.start(), k))
+        return out
+    targets = [(a, b) for a, b in server_blocks(content) if re.search(r'^\s*root\s', content[a:b], re.M)]
+    if not targets:
+        return jsonify({'ok':False,'error':'No server block with a root directive found in ' + conf_path}), 400
+    for a, b in sorted(targets, reverse=True):
+        content = content[:b] + nginx_snippet.lstrip('\n') + content[b:]
     with open(conf_path,'w') as f: f.write(content)
 
-    # Test and reload
-    result = subprocess.run('nginx -t 2>&1', shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        return jsonify({'ok':False,'error':f'Nginx error: {result.stdout}'}), 400
-    subprocess.run('systemctl reload nginx 2>/dev/null || nginx -s reload', shell=True)
+    # Test and reload; restore the original file if nginx rejects it so the
+    # next reload/restart does not fail on a broken vhost.
+    try:
+        result = subprocess.run(['nginx', '-t'], capture_output=True, text=True, timeout=30)
+        rc, out = result.returncode, (result.stderr or result.stdout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        rc, out = 1, str(e)
+    if rc != 0:
+        with open(conf_path,'w') as f: f.write(original)
+        return jsonify({'ok':False,'error':f'Nginx error (change reverted): {out.strip()[-500:]}'}), 400
+    subprocess.run('systemctl reload nginx 2>/dev/null || nginx -s reload', shell=True, timeout=60)
     return jsonify({'ok':True,'snippet':nginx_snippet})
 
 CDN_PROVIDERS = [
@@ -499,11 +597,14 @@ def keycdn_purge():
     zone = d.get('zone_id') or cfg.get('zone_id','')
     url  = d.get('url','')
     if not zone: return jsonify({'ok':False,'error':'Zone ID required'}), 400
+    if not str(zone).isdigit(): return jsonify({'ok':False,'error':'Invalid zone ID'}), 400
     endpoint = f'https://api.keycdn.com/zones/purge/{zone}.json'
     if url: endpoint = f'https://api.keycdn.com/zones/purgeurl/{zone}.json'
     import base64
     auth = base64.b64encode(f"{cfg.get('api_key','')}:".encode()).decode()
-    data, status = http_request(endpoint, 'GET' if url else 'DELETE',
+    # KeyCDN: purge zone = GET /zones/purge/{id}.json, purge URLs =
+    # DELETE /zones/purgeurl/{id}.json (the methods were swapped).
+    data, status = http_request(endpoint, 'DELETE' if url else 'GET',
                                 {'Authorization':f'Basic {auth}'},
                                 {'urls':[url]} if url else None)
     return jsonify({'ok': status in (200,204), 'data':data})

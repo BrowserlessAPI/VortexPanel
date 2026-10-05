@@ -24,19 +24,26 @@ Both are third-party services requiring the admin's own token/key. This module
 detects what is installed, reports real status read from the provider's own
 client, and installs/enables on request. It never invents a status.
 """
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 import subprocess, os, re, json
 
 livepatch_bp = Blueprint('livepatch', __name__)
 
 
 def req():
-    return 'user' in session
+    from panel.routes.auth import check_ip_and_session
+    return check_ip_and_session()
+
+
+# canonical-livepatch is a snap (/snap/bin), which is not on the systemd
+# service's PATH: after enabling it the status kept saying "not installed".
+_PATH = os.environ.get('PATH', '/usr/sbin:/usr/bin:/sbin:/bin') + ':/snap/bin:/usr/local/bin:/usr/local/sbin'
 
 
 def sh(c, t=60):
     try:
-        r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
+        r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t,
+                           env={**os.environ, 'PATH': _PATH})
         return r.stdout.strip(), r.stderr.strip(), r.returncode
     except Exception as e:
         return '', str(e), 1
@@ -60,6 +67,31 @@ def _is_ubuntu():
     return (out or '').strip().lower() == 'ubuntu'
 
 
+def _container():
+    """Name of the container technology, or '' on a VM / bare metal. Live
+    patching modifies the running kernel, which a container does not own
+    (LXC, OpenVZ, Docker share the host's kernel) - neither provider can work."""
+    out, _, rc = sh('systemd-detect-virt --container 2>/dev/null', t=10)
+    out = (out or '').strip()
+    if rc == 0 and out and out != 'none':
+        return out
+    if os.path.exists('/proc/vz') and not os.path.exists('/proc/bc'):
+        return 'openvz'
+    return ''
+
+
+def _ubuntu_lts():
+    """(is_ubuntu, is_lts). Canonical Livepatch only covers LTS releases."""
+    out, _, _ = sh('. /etc/os-release 2>/dev/null && echo "$ID|$VERSION_ID|$VERSION"')
+    parts = (out or '').split('|')
+    if not parts or parts[0].strip().lower() != 'ubuntu':
+        return False, False
+    ver = parts[1] if len(parts) > 1 else ''
+    lts = 'LTS' in (parts[2] if len(parts) > 2 else '') or (
+        bool(re.match(r'^\d+\.04$', ver)) and int(ver.split('.')[0]) % 2 == 0)
+    return True, lts
+
+
 def _running_kernel():
     out, _, _ = sh('uname -r')
     return out
@@ -78,9 +110,14 @@ def _canonical_status():
     try:
         data = json.loads(out)
         status = (data.get('Status') or [{}])[0]
+        state = str((status.get('Livepatch') or {}).get('State', '')).lower()
         return {
             'installed': True,
-            'enabled': True,
+            # A parsable status does not mean patches are being applied:
+            # 'kernel-upgrade-required', 'unsupported', 'disabled' etc. are
+            # all reported through the same JSON.
+            'enabled': bool(state) and state not in ('disabled', 'unsupported', 'kernel-upgrade-required',
+                                                     'kernel-end-of-life', 'unknown'),
             'kernel': status.get('Kernel', ''),
             'patch_state': (status.get('Livepatch') or {}).get('State', ''),
             'fixes': (status.get('Livepatch') or {}).get('Fixes', ''),
@@ -94,9 +131,12 @@ def _kernelcare_status():
     if not sh('command -v kcarectl')[0]:
         return {'installed': False}
     info, _, rc = sh('kcarectl --info', t=30)
-    uname, _, _ = sh('kcarectl --uname', t=30)
-    patched = 'patch level' in (info or '').lower() or bool(uname)
-    return {'installed': True, 'enabled': rc == 0, 'patched': patched,
+    low = (info or '').lower()
+    # `kcarectl --uname` always prints a version, so bool(uname) made every
+    # installed client look "patched".
+    patched = 'patch level' in low or 'patch is applied' in low
+    unregistered = 'not registered' in low or 'unregistered' in low or 'no valid license' in low
+    return {'installed': True, 'enabled': rc == 0 and not unregistered, 'patched': patched,
             'raw': (info or '')[:800]}
 
 
@@ -121,8 +161,12 @@ def livepatch_status():
         except Exception:
             pass
 
+    container = _container()
+    is_ubuntu, is_lts = _ubuntu_lts()
     available = []
-    if _is_ubuntu():
+    if container:
+        pass   # nothing can live-patch a kernel this machine does not own
+    elif is_ubuntu and is_lts:
         available.append({
             'id': 'canonical',
             'name': 'Canonical Livepatch',
@@ -132,7 +176,7 @@ def livepatch_status():
                       'some fixes will still require a reboot.',
             'signup': 'https://ubuntu.com/pro',
         })
-    available.append({
+    if not container: available.append({
         'id': 'kernelcare',
         'name': 'TuxCare KernelCare',
         'cost': 'Paid subscription (per server)',
@@ -147,6 +191,10 @@ def livepatch_status():
         'os_family': _os_family(),
         'active': active,
         'reboot_required': reboot_required,
+        'container': container,
+        'supported': not container,
+        'unsupported_reason': (f'This server is a {container} container: it runs on the host\'s kernel, '
+                               f'which only the host can live-patch.') if container else '',
         'pending_kernel_packages': pending_kernel,
         'providers': {'canonical': canonical, 'kernelcare': kernelcare},
         'available': available,
@@ -177,18 +225,30 @@ def livepatch_install():
 
     log = []
 
+    container = _container()
+    if container:
+        return jsonify({'ok': False, 'error': f'This server is a {container} container. Live patching changes the '
+                                              f'running kernel, which belongs to the host - it has to be done there.'}), 400
+
     if provider == 'canonical':
-        if not _is_ubuntu():
+        is_ubuntu, is_lts = _ubuntu_lts()
+        if not is_ubuntu:
             return jsonify({'ok': False,
                             'error': 'Canonical Livepatch only supports Ubuntu. On this OS, use KernelCare instead.'}), 400
-        out, err, rc = sh('command -v pro || command -v ubuntu-advantage', t=20)
+        if not is_lts:
+            return jsonify({'ok': False,
+                            'error': 'Canonical Livepatch only supports Ubuntu LTS releases.'}), 400
+        # Only `pro` is used below; a machine with just the old
+        # `ubuntu-advantage` binary passed the old check and then failed.
+        out, err, rc = sh('command -v pro', t=20)
         if rc != 0:
-            o, e, rc2 = sh('DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-advantage-tools 2>&1', t=300)
-            if rc2 != 0:
-                return jsonify({'ok': False, 'error': f'Could not install ubuntu-advantage-tools: {(e or o)[:400]}'}), 500
+            o, e, rc2 = sh('DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-advantage-tools 2>&1 || '
+                           '(apt-get update -q >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-advantage-tools 2>&1)', t=600)
+            if rc2 != 0 or sh('command -v pro', t=20)[2] != 0:
+                return jsonify({'ok': False, 'error': f'Could not install ubuntu-advantage-tools: {(e or o)[-400:]}'}), 500
             log.append('Installed ubuntu-advantage-tools')
         o, e, rc = sh(f'pro attach {token} 2>&1', t=300)
-        if rc != 0:
+        if rc != 0 and 'already attached' not in (o or e or '').lower():
             return jsonify({'ok': False, 'error': f'Attach failed: {(o or e)[:500]}', 'log': log}), 500
         log.append('Attached Ubuntu Pro subscription')
         o, e, rc = sh('pro enable livepatch 2>&1', t=300)
@@ -229,3 +289,18 @@ def livepatch_update():
         o, e, rc = sh('canonical-livepatch refresh 2>&1', t=300)
         return jsonify({'ok': rc == 0, 'output': (o or e)[:800]})
     return jsonify({'ok': False, 'error': 'No live patching provider is installed'}), 400
+
+
+@livepatch_bp.route('/api/livepatch/disable', methods=['POST'])
+def livepatch_disable():
+    """Turn live patching off with the provider's own client. The licence /
+    subscription itself is not cancelled."""
+    if not req():
+        return jsonify({'ok': False}), 401
+    if sh('command -v kcarectl')[0]:
+        o, e, rc = sh('kcarectl --unregister 2>&1', t=180)
+        return jsonify({'ok': rc == 0, 'output': (o or e)[:800], **({} if rc == 0 else {'error': (o or e)[:500] or 'kcarectl --unregister failed'})})
+    if sh('command -v pro')[0] and (sh('command -v canonical-livepatch')[0] or os.path.exists('/snap/bin/canonical-livepatch')):
+        o, e, rc = sh('pro disable livepatch 2>&1', t=300)
+        return jsonify({'ok': rc == 0, 'output': (o or e)[:800], **({} if rc == 0 else {'error': (o or e)[:500] or 'pro disable livepatch failed'})})
+    return jsonify({'ok': False, 'error': 'No live patching provider is enabled'}), 400

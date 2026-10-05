@@ -45,62 +45,123 @@ _LOCKOUT_ATTEMPTS = 5
 _LOCKOUT_WINDOW   = 900   # 15 minutes
 _attempts = defaultdict(list)   # in-memory: ip -> [monotonic timestamps]
 
+_LOOPBACK = ('127.0.0.1', '::1', '::ffff:127.0.0.1')
+
+def _norm_ip(ip):
+    ip = (ip or '').strip()
+    if ip.startswith('::ffff:') and '.' in ip:
+        ip = ip[7:]
+    return ip
+
 def _client_ip():
-    return (request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-            or request.headers.get('X-Real-IP', '')
-            or request.remote_addr or '127.0.0.1')
+    """Real client address. X-Forwarded-For / X-Real-IP are only honoured
+    when the TCP peer is a local reverse proxy (or VORTEX_TRUST_PROXY is set):
+    gunicorn listens on the public port directly, so trusting these headers
+    from anyone let a client send 'X-Forwarded-For: 127.0.0.1' to bypass the
+    IP allowlist (loopback is always allowed) and rotate the header to dodge
+    the brute-force lockout."""
+    peer = _norm_ip(request.remote_addr) or '127.0.0.1'
+    if peer in _LOOPBACK or os.environ.get('VORTEX_TRUST_PROXY'):
+        real = _norm_ip(request.headers.get('X-Real-IP', ''))
+        if real:
+            return real
+        xff = [x.strip() for x in request.headers.get('X-Forwarded-For', '').split(',') if x.strip()]
+        if xff:
+            # The proxy appends the address it saw: the right-most entry is
+            # the only one the client cannot forge.
+            return _norm_ip(xff[-1])
+    return peer
+
+def _atomic_write_json(path, data, mode=0o600):
+    """Write JSON via temp file + rename so a concurrent reader in another
+    gunicorn worker never sees a truncated/empty file."""
+    d = os.path.dirname(path) or '.'
+    os.makedirs(d, exist_ok=True)
+    tmp = f'{path}.tmp.{os.getpid()}.{secrets.token_hex(4)}'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except Exception:
+        try: os.unlink(tmp)
+        except Exception: pass
+        raise
+
+
+def _load_lockout():
+    try:
+        with open(LOCKOUT_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _lock_entry(data, ip):
+    """Current entry for ip with failures older than the window dropped.
+    lockout.json is the source of truth shared by all gunicorn workers; the
+    old per-worker in-memory list meant each of the 4 workers allowed its own
+    5 attempts and reported a different 'attempts remaining'."""
+    now = time.time()
+    entry = data.get(ip) or {}
+    locked_at = entry.get('locked_at', 0)
+    if locked_at and now - locked_at >= _LOCKOUT_WINDOW:
+        entry = {}
+    first = entry.get('first', 0)
+    if not locked_at and first and now - first >= _LOCKOUT_WINDOW:
+        entry = {}
+    return entry
+
 
 def _is_locked(ip):
+    data = _load_lockout()
+    entry = _lock_entry(data, ip)
+    if ip in data and not entry:
+        data.pop(ip, None)
+        try: _atomic_write_json(LOCKOUT_FILE, data)
+        except Exception: pass
+    if entry.get('count', 0) >= _LOCKOUT_ATTEMPTS:
+        return True
     now = time.monotonic()
     _attempts[ip] = [t for t in _attempts[ip] if now - t < _LOCKOUT_WINDOW]
-    # Also check persistent lockout file (survives restarts)
-    try:
-        data = json.load(open(LOCKOUT_FILE))
-        entry = data.get(ip, {})
-        if entry.get('count', 0) >= _LOCKOUT_ATTEMPTS:
-            locked_at = entry.get('locked_at', 0)
-            if time.time() - locked_at < _LOCKOUT_WINDOW:
-                return True
-            else:
-                # Expired — clean up
-                del data[ip]
-                with open(LOCKOUT_FILE, 'w') as f:
-                    json.dump(data, f)
-    except Exception:
-        pass
     return len(_attempts[ip]) >= _LOCKOUT_ATTEMPTS
 
 def _record_fail(ip):
     _attempts[ip].append(time.monotonic())
     # Persist to file so restarts don't reset lockout
     try:
-        data = {}
-        try: data = json.load(open(LOCKOUT_FILE))
-        except: pass
-        entry = data.get(ip, {'count': 0})
+        data = _load_lockout()
+        entry = _lock_entry(data, ip)
+        if not entry:
+            entry = {'count': 0, 'first': time.time()}
         entry['count'] = entry.get('count', 0) + 1
-        if entry['count'] >= _LOCKOUT_ATTEMPTS:
+        if entry['count'] >= _LOCKOUT_ATTEMPTS and not entry.get('locked_at'):
             entry['locked_at'] = time.time()
         data[ip] = entry
-        with open(LOCKOUT_FILE, 'w') as f:
-            json.dump(data, f)
+        # Bound the file: drop entries whose window has passed.
+        data = {k: v for k, v in data.items() if k == ip or _lock_entry(data, k)}
+        _atomic_write_json(LOCKOUT_FILE, data)
     except Exception:
         pass
 
 def _clear_attempts(ip):
     _attempts[ip] = []
     try:
-        data = json.load(open(LOCKOUT_FILE))
-        data.pop(ip, None)
-        with open(LOCKOUT_FILE, 'w') as f:
-            json.dump(data, f)
+        data = _load_lockout()
+        if ip in data:
+            data.pop(ip, None)
+            _atomic_write_json(LOCKOUT_FILE, data)
     except Exception:
         pass
 
 def _attempts_remaining(ip):
+    entry = _lock_entry(_load_lockout(), ip)
     now = time.monotonic()
     recent = [t for t in _attempts[ip] if now - t < _LOCKOUT_WINDOW]
-    return max(0, _LOCKOUT_ATTEMPTS - len(recent))
+    used = max(entry.get('count', 0), len(recent))
+    return max(0, _LOCKOUT_ATTEMPTS - used)
 
 # --- Password helpers -----------------------------------------------------------
 def _hash_password(password: str) -> str:
@@ -116,6 +177,8 @@ def _verify_password(password: str, stored: str) -> bool:
     Verify against Argon2id, bcrypt, or legacy SHA-256.
     Migration order: Argon2id → bcrypt → SHA-256.
     """
+    if not isinstance(password, str) or not isinstance(stored, str) or not stored:
+        return False
     if stored.startswith('$argon2'):
         if not _ARGON2:
             return False
@@ -131,8 +194,11 @@ def _verify_password(password: str, stored: str) -> bool:
             return _bcrypt.checkpw(password.encode(), stored.encode())
         except Exception:
             return False
-    # Legacy SHA-256 (64-char hex)
-    return hashlib.sha256(password.encode()).hexdigest() == stored
+    # Legacy SHA-256 (64-char hex) - what install.sh wrote before v3.5.3;
+    # upgraded to Argon2id on the next successful login.
+    if len(stored) != 64:
+        return False
+    return secrets.compare_digest(hashlib.sha256(password.encode()).hexdigest(), stored.lower())
 
 def _needs_upgrade(stored: str) -> bool:
     """True if stored hash should be upgraded to Argon2id."""
@@ -158,9 +224,23 @@ def _ip_allowed(ip):
         allowed = [x.strip() for x in cfg.get('allowed_ips', []) if x.strip()]
         if not allowed:
             return True
-        return any(ip == a or (a.endswith('.') and ip.startswith(a)) for a in allowed)
+        return any(_ip_matches(ip, a) for a in allowed)
     except Exception:
         return True
+
+
+def _ip_matches(ip, rule):
+    """Exact IP, legacy prefix ('203.0.113.') or CIDR ('203.0.113.0/24')."""
+    ip, rule = _norm_ip(ip), rule.strip()
+    if ip == rule or (rule.endswith('.') and ip.startswith(rule)):
+        return True
+    if '/' in rule:
+        import ipaddress
+        try:
+            return ipaddress.ip_address(ip) in ipaddress.ip_network(rule, strict=False)
+        except ValueError:
+            return False
+    return False
 
 def check_ip_and_session():
     """
@@ -177,7 +257,24 @@ def check_ip_and_session():
     if session.get('fingerprint') and session['fingerprint'] != _session_fingerprint():
         session.clear()
         return False
+    # Password change rotates session_version in credentials.json; any session
+    # created before that (other browsers, a stolen cookie) is now invalid.
+    cur = _current_session_version()
+    if cur and session.get('session_version') != cur:
+        session.clear()
+        return False
     return True
+
+
+def _current_session_version():
+    path = find_creds_file()
+    if not path:
+        return ''
+    try:
+        with open(path) as f:
+            return json.load(f).get('session_version', '') or ''
+    except Exception:
+        return ''
 
 # --- Credentials ----------------------------------------------------------------
 def find_creds_file():
@@ -188,14 +285,23 @@ def find_creds_file():
 def get_credentials():
     path = find_creds_file()
     if path:
-        try:
-            data = json.load(open(path))
-            if 'password' in data and 'password_hash' not in data:
-                data['password_hash'] = _hash_password(data.pop('password'))
-                save_credentials(data)
-            return data
-        except Exception:
-            pass
+        data = None
+        for _ in range(3):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                break
+            except Exception:
+                time.sleep(0.05)
+        if not isinstance(data, dict):
+            # The file exists but is unreadable/corrupt (or mid-write by an
+            # older version). Never regenerate here: that used to silently
+            # replace the admin password and drop 2FA. Fail closed instead.
+            return {'username': 'admin', 'password_hash': '!unreadable'}
+        if 'password' in data and 'password_hash' not in data:
+            data['password_hash'] = _hash_password(data.pop('password'))
+            save_credentials(data)
+        return data
     # No credentials file found. NEVER fall back to a known default password
     # (the old 'admin123' constant meant a missing/unreadable creds file left
     # the panel logged-in-able by anyone). Generate a strong random password,
@@ -213,11 +319,7 @@ def get_credentials():
     return creds
 
 def save_credentials(creds):
-    os.makedirs(os.path.dirname(CREDS_FILE), exist_ok=True)
-    with open(CREDS_FILE, 'w') as f:
-        json.dump(creds, f, indent=2)
-    try: os.chmod(CREDS_FILE, 0o600)
-    except: pass
+    _atomic_write_json(CREDS_FILE, creds, 0o600)
 
 # --- Panel config ---------------------------------------------------------------
 def _get_config():
@@ -225,8 +327,7 @@ def _get_config():
     except: return {}
 
 def _save_config(cfg):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(cfg, f, indent=2)
+    _atomic_write_json(CONFIG_FILE, cfg, 0o600)
 
 # --- Audit log ------------------------------------------------------------------
 def _audit(ip, username, success, note=''):
@@ -250,7 +351,7 @@ def _audit(ip, username, success, note=''):
 
 @auth_bp.route('/api/auth/check')
 def check_session():
-    logged_in = 'user' in session and not session.get('2fa_pending')
+    logged_in = check_ip_and_session()
     if logged_in:
         resp = jsonify({'ok': True, 'logged_in': True,
                         'username': session.get('user','admin'),
@@ -276,9 +377,11 @@ def login():
         return jsonify({'ok': False,
                         'error': 'Too many failed attempts. Try again in 15 minutes.'}), 429
 
-    data     = request.get_json() or {}
-    username = data.get('username', '').strip()
-    password = data.get('password', '')
+    data     = request.get_json(silent=True) or {}
+    username = str(data.get('username') or '').strip()
+    password = data.get('password') or ''
+    if not isinstance(password, str):
+        password = str(password)
     creds    = get_credentials()
 
     username_match = (username == creds.get('username', 'admin')
@@ -317,6 +420,7 @@ def login():
     session.clear()
     session['user']        = creds.get('username', 'admin')
     session['fingerprint'] = _session_fingerprint()
+    session['session_version'] = creds.get('session_version', '')
     session.permanent      = True
     _audit(ip, username, True, 'login successful')
     return jsonify({'ok': True, 'username': session['user']})
@@ -327,19 +431,30 @@ def verify_2fa():
     if not session.get('2fa_pending'):
         return jsonify({'ok': False, 'error': 'No pending 2FA verification'}), 400
     ip   = _client_ip()
-    code = (request.get_json() or {}).get('code', '').replace(' ', '').strip()
+    # The TOTP step was not rate-limited at all: with the password known, the
+    # 6-digit code could be brute-forced through one pending session.
+    if not _ip_allowed(ip):
+        return jsonify({'ok': False, 'error': 'Access denied from this IP address'}), 403
+    if _is_locked(ip):
+        session.clear()
+        return jsonify({'ok': False, 'error': 'Too many failed attempts. Try again in 15 minutes.'}), 429
+    code = str((request.get_json(silent=True) or {}).get('code') or '').replace(' ', '').strip()
     creds  = get_credentials()
     secret = creds.get('totp_secret', '')
     if not secret or not _PYOTP:
         return jsonify({'ok': False, 'error': '2FA not configured'}), 400
     if not _pyotp.TOTP(secret).verify(code, valid_window=1):
+        _record_fail(ip)
         _audit(ip, session.get('2fa_user','?'), False, 'invalid TOTP code')
+        if _attempts_remaining(ip) == 0:
+            session.clear()
         return jsonify({'ok': False, 'error': 'Invalid verification code'}), 401
     _clear_attempts(ip)
     user = session.pop('2fa_user', 'admin')
     session.clear()
     session['user']        = user
     session['fingerprint'] = _session_fingerprint()
+    session['session_version'] = creds.get('session_version', '')
     session.permanent      = True
     _audit(ip, user, True, '2FA verified — full login')
     return jsonify({'ok': True, 'username': user})
@@ -362,13 +477,22 @@ def me():
 def change_password():
     if not check_ip_and_session():
         return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
-    d      = request.get_json() or {}
-    new_pw = d.get('new_password', '')
-    if len(new_pw) < 8:
+    return _do_change_password(request.get_json(silent=True) or {})
+
+
+def _do_change_password(d):
+    """Shared by /api/auth/change-password and /api/settings/password.
+    The current password is REQUIRED: previously it was optional here and not
+    asked for at all on the settings route, so a hijacked session (or a
+    same-site CSRF) could take over the account permanently."""
+    new_pw = d.get('new_password') or ''
+    if not isinstance(new_pw, str) or len(new_pw) < 8:
         return jsonify({'ok': False, 'error': 'Password too short (min 8 characters)'}), 400
     creds = get_credentials()
-    old_pw = d.get('current_password', '')
-    if old_pw and not _verify_password(old_pw, creds.get('password_hash','')):
+    old_pw = d.get('current_password') or ''
+    if not old_pw:
+        return jsonify({'ok': False, 'error': 'Current password is required'}), 400
+    if not _verify_password(old_pw, creds.get('password_hash','')):
         return jsonify({'ok': False, 'error': 'Current password incorrect'}), 401
     creds['password_hash'] = _hash_password(new_pw)
     # Invalidate all other sessions by rotating the session token marker
@@ -415,9 +539,13 @@ def setup_2fa():
     uri    = _pyotp.TOTP(secret).provisioning_uri(
         name=session.get('user', 'admin'), issuer_name='VortexPanel')
     session['totp_setup_secret'] = secret
+    from urllib.parse import quote
     return jsonify({
         'ok': True, 'secret': secret, 'uri': uri,
-        'qr_url': f'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={uri}',
+        # NOTE: this hands the TOTP secret to a third-party QR service. Kept
+        # only because the frontend has no local QR renderer yet; the 'uri'
+        # (and 'secret') let the UI render it locally instead.
+        'qr_url': 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + quote(uri, safe=''),
     })
 
 
@@ -430,7 +558,7 @@ def enable_2fa():
     secret = session.get('totp_setup_secret', '')
     if not secret:
         return jsonify({'ok': False, 'error': 'Run /setup first to generate a secret'}), 400
-    code = (request.get_json() or {}).get('code', '').replace(' ', '').strip()
+    code = str((request.get_json(silent=True) or {}).get('code') or '').replace(' ', '').strip()
     if not _pyotp.TOTP(secret).verify(code, valid_window=1):
         return jsonify({'ok': False, 'error': 'Invalid code — check your authenticator app'}), 401
     creds = get_credentials()
@@ -487,11 +615,33 @@ def get_security_settings():
 def save_security_settings():
     if not check_ip_and_session():
         return jsonify({'ok': False}), 401
-    d   = request.get_json() or {}
+    d   = request.get_json(silent=True) or {}
     cfg = _get_config()
     if 'allowed_ips' in d:
-        cfg['allowed_ips'] = [ip.strip() for ip in d['allowed_ips'] if ip.strip()]
+        raw = d['allowed_ips']
+        if isinstance(raw, str):
+            raw = raw.replace(',', '\n').split('\n')
+        if not isinstance(raw, list):
+            return jsonify({'ok': False, 'error': 'allowed_ips must be a list'}), 400
+        ips = [str(x).strip() for x in raw if str(x).strip()]
+        import ipaddress
+        for rule in ips:
+            if rule.endswith('.') and all(p.isdigit() for p in rule[:-1].split('.')):
+                continue
+            try:
+                ipaddress.ip_network(rule, strict=False)
+            except ValueError:
+                return jsonify({'ok': False, 'error': f'Invalid IP, prefix or CIDR: {rule}'}), 400
+        # Refuse a list that would lock out the admin making the change.
+        me = _client_ip()
+        if ips and me not in _ALWAYS_ALLOWED and not any(_ip_matches(me, r) for r in ips):
+            return jsonify({'ok': False, 'error': f'Your current IP ({me}) is not in this list - '
+                                                  f'saving it would lock you out. Add it first.'}), 400
+        cfg['allowed_ips'] = ips
     if 'session_hours' in d:
-        cfg['session_hours'] = max(1, min(720, int(d['session_hours'])))
+        try:
+            cfg['session_hours'] = max(1, min(720, int(d['session_hours'])))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'session_hours must be a number'}), 400
     _save_config(cfg)
     return jsonify({'ok': True})

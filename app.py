@@ -69,23 +69,68 @@ def _get_secret_key() -> bytes:
     64-byte random key and save it.  The hardcoded fallback is only used
     when the install directory isn't writable (e.g. CI/test environments).
     """
-    if os.path.exists(_SECRET_KEY_FILE):
+    def _read():
         try:
-            key = open(_SECRET_KEY_FILE, 'rb').read()
-            if len(key) >= 32:
-                return key
+            with open(_SECRET_KEY_FILE, 'rb') as f:
+                k = f.read()
+            return k if len(k) >= 32 else None
         except Exception:
-            pass
-    # Generate a new key
+            return None
+    key = _read()
+    if key:
+        return key
+    # Generate a new key. gunicorn imports this module in each of its 4
+    # workers at the same moment on first start; with a plain write every
+    # worker kept its OWN random key, so a login made on one worker was
+    # rejected by the other three until the next restart. Publish the key
+    # with link() (fails if the file already exists) so exactly one wins and
+    # every worker then reads that one.
     key = secrets.token_bytes(64)
     try:
         os.makedirs('/opt/vortexpanel', exist_ok=True)
-        with open(_SECRET_KEY_FILE, 'wb') as f:
+        tmp = f'{_SECRET_KEY_FILE}.{os.getpid()}.tmp'
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'wb') as f:
             f.write(key)
-        os.chmod(_SECRET_KEY_FILE, 0o600)
+        try:
+            if os.path.exists(_SECRET_KEY_FILE):
+                os.remove(_SECRET_KEY_FILE)   # present but too short / unreadable
+            os.link(tmp, _SECRET_KEY_FILE)
+        except FileExistsError:
+            pass
+        finally:
+            try: os.unlink(tmp)
+            except Exception: pass
+        return _read() or key
     except Exception:
-        pass
-    return key
+        return key
+
+
+def _read_panel_config():
+    try:
+        import json
+        with open('/opt/vortexpanel/config.json') as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        return {}
+
+
+_lifetime_cache = {'mtime': None}
+
+def _apply_session_lifetime(app):
+    try:
+        mtime = os.path.getmtime('/opt/vortexpanel/config.json')
+    except OSError:
+        mtime = 0
+    if _lifetime_cache['mtime'] == mtime:
+        return
+    _lifetime_cache['mtime'] = mtime
+    try:
+        hours = int(_read_panel_config().get('session_hours', 24))
+    except (TypeError, ValueError):
+        hours = 24
+    app.permanent_session_lifetime = timedelta(hours=max(1, min(720, hours)))
 
 
 def create_app():
@@ -104,7 +149,17 @@ def create_app():
     # the session cookie is never sent in cleartext on HTTPS deployments while
     # still allowing plain-HTTP setups. Explicit override: SESSION_COOKIE_SECURE=1/0.
     _secure_env = os.environ.get('SESSION_COOKIE_SECURE', os.environ.get('VORTEX_HTTPS', ''))
-    app.config['SESSION_COOKIE_SECURE'] = _secure_env.lower() in ('1', 'true', 'yes', 'on')
+    if _secure_env:
+        app.config['SESSION_COOKIE_SECURE'] = _secure_env.lower() in ('1', 'true', 'yes', 'on')
+    else:
+        # Panel HTTPS (Settings -> Panel SSL) is served by gunicorn itself
+        # (--certfile in the unit) and every switch restarts the service, so
+        # mark the cookie Secure exactly when this process serves TLS.
+        try:
+            with open('/etc/systemd/system/vortexpanel.service') as _u:
+                app.config['SESSION_COOKIE_SECURE'] = '--certfile' in _u.read()
+        except Exception:
+            app.config['SESSION_COOKIE_SECURE'] = False
 
     # -- Server-side sessions (survives gunicorn restarts / nginx reloads) -----
     # flask-session stores session data in files on disk; the cookie only holds
@@ -114,7 +169,7 @@ def create_app():
     #   3. Sessions can be individually invalidated server-side (logout).
     _SESSION_DIR = '/opt/vortexpanel/sessions'
     if _server_session_available:
-        os.makedirs(_SESSION_DIR, exist_ok=True)
+        os.makedirs(_SESSION_DIR, mode=0o700, exist_ok=True)
         app.config['SESSION_TYPE']              = 'filesystem'
         app.config['SESSION_FILE_DIR']          = _SESSION_DIR
         app.config['SESSION_FILE_THRESHOLD']    = 500      # max session files kept
@@ -147,6 +202,9 @@ def create_app():
     # API call prevents use of a stolen session cookie from an unlisted IP.
     @app.before_request
     def enforce_ip_allowlist():
+        # Session lifetime configured in Settings -> Security (session_hours)
+        # was saved but never applied; the lifetime stayed fixed at 24 h.
+        _apply_session_lifetime(app)
         # Enforce on API calls AND the terminal WebSocket (/ws/…). The WS gives
         # a full root shell, so it must be subject to the same IP allowlist as
         # /api/ — previously only /api/ was checked, letting a stolen session
@@ -160,6 +218,65 @@ def create_app():
         ip = _client_ip()
         if not _ip_allowed(ip):
             return jsonify({'ok': False, 'error': 'Access denied from this IP address'}), 403
+        return None
+
+    # -- CSRF: reject cross-site state-changing requests ----------------------
+    # The session cookie is SameSite=Lax, which does not cover sites on the
+    # same registrable domain (e.g. a hosted site on example.com vs the panel
+    # on panel.example.com), and the terminal WebSocket handshake is a GET.
+    # Browsers always send Origin on cross-origin POST/PUT/DELETE and on
+    # WebSocket handshakes, so a mismatching Origin is a forged request.
+    @app.before_request
+    def enforce_same_origin():
+        p = request.path
+        if not (p.startswith('/api/') or p.startswith('/ws/')):
+            return None
+        if request.method in ('GET', 'HEAD', 'OPTIONS') and not p.startswith('/ws/'):
+            return None
+        origin = request.headers.get('Origin')
+        if not origin:
+            return None          # non-browser client (curl, scripts)
+        from urllib.parse import urlsplit
+        try:
+            o_host = (urlsplit(origin).hostname or '').lower()
+        except ValueError:
+            o_host = ''
+        def _h(v):
+            v = (v or '').split(',')[0].strip().lower()
+            if v.startswith('['):
+                return v[1:v.find(']')] if ']' in v else v
+            return v.rsplit(':', 1)[0] if v.count(':') == 1 else v
+        allowed = {_h(request.host)}
+        peer = (request.remote_addr or '').replace('::ffff:', '')
+        if peer in ('127.0.0.1', '::1') or os.environ.get('VORTEX_TRUST_PROXY'):
+            # Behind a local reverse proxy the public name arrives here.
+            allowed.add(_h(request.headers.get('X-Forwarded-Host', '')))
+            if _h(request.host) in ('127.0.0.1', 'localhost', '::1') and not request.headers.get('X-Forwarded-Host'):
+                # Panel opened through an SSH tunnel (http://127.0.0.1:8888)
+                # or a proxy that does not pass Host: only a loopback page
+                # may write. A blanket allow here let any website the admin
+                # visited forge requests to a tunnelled panel.
+                allowed.update({'127.0.0.1', 'localhost', '::1'})
+        if o_host and o_host in allowed:
+            return None
+        return jsonify({'ok': False, 'error': 'Cross-origin request blocked'}), 403
+
+    # -- Central authentication gate ------------------------------------------
+    # Every blueprint has its own `if not req()` line; one forgotten line
+    # (e.g. /api/import/job/<id>) exposed data unauthenticated, and most of
+    # those req() helpers only check 'user' in session (no fingerprint, no
+    # session_version after a password change). Enforce the full check once
+    # for everything under /api/ and /ws/; /api/auth/* handles its own.
+    @app.before_request
+    def enforce_authentication():
+        p = request.path
+        if not (p.startswith('/api/') or p.startswith('/ws/')):
+            return None
+        if p.startswith('/api/auth/'):
+            return None
+        from panel.routes.auth import check_ip_and_session
+        if not check_ip_and_session():
+            return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
         return None
 
     # -- Security headers on every response -----------------------------------
@@ -190,8 +307,12 @@ def create_app():
                      '/opt/vortexpanel/ai_config.json',
                      '/opt/vortexpanel/config.json']:
             if not os.path.exists(_cfg):
-                with open(_cfg, 'w') as _f:
+                # 0600: these hold API keys / tokens
+                fd = os.open(_cfg, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, 'w') as _f:
                     _f.write('{}')
+            else:
+                os.chmod(_cfg, 0o600)
     except Exception:
         pass
 

@@ -1,13 +1,34 @@
-import os, re, json
+import os, re, json, shlex, subprocess, tempfile
 from datetime import datetime
 from flask import jsonify, request
 
 try:
+    from panel.routes import os_utils as _ou
+except ImportError:
+    import os_utils as _ou
+
+try:
     from panel.routes.websites_core import (websites_bp, req, sh, get_nginx_dirs, reload_nginx, pkg_install,
-        CF_CONFIG_FILE, is_valid_domain, nginx_server_blocks, _nginx_apply, SSL_BEGIN, SSL_END, SSL_REDIRECT_TAG)
+        CF_CONFIG_FILE, is_valid_domain, nginx_server_blocks, _nginx_apply, SSL_BEGIN, SSL_END, SSL_REDIRECT_TAG,
+        _find_site_config, apache_apply, apache_layout, get_os, apache_edit_site)
 except ImportError:
     from websites_core import (websites_bp, req, sh, get_nginx_dirs, reload_nginx, pkg_install,
-        CF_CONFIG_FILE, is_valid_domain, nginx_server_blocks, _nginx_apply, SSL_BEGIN, SSL_END, SSL_REDIRECT_TAG)
+        CF_CONFIG_FILE, is_valid_domain, nginx_server_blocks, _nginx_apply, SSL_BEGIN, SSL_END, SSL_REDIRECT_TAG,
+        _find_site_config, apache_apply, apache_layout, get_os, apache_edit_site)
+
+
+def _run_out(cmd, t=120):
+    """Run a command and return its output even when it fails -- certbot's
+    error text is the only explanation the user gets (the shared sh() helper
+    returns '' on a non-zero exit, so failed requests showed no reason)."""
+    import subprocess
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t)
+        return (r.stdout + r.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return f'[VortexPanel] The certificate request did not finish within {t} seconds.'
+    except Exception as e:
+        return f'[VortexPanel] Could not run certbot: {e}'
 
 
 # --- CLOUDFLARE HELPERS ----------------------------------------------------------
@@ -38,18 +59,26 @@ def cf_check_proxied(domain):
     if not token:
         return None, None
 
-    # find root domain (last two labels) for zone lookup
+    # Find the zone by walking up the labels: the old "last two labels"
+    # guess never found zones such as example.co.uk.
     parts = domain.split('.')
-    root = '.'.join(parts[-2:]) if len(parts) >= 2 else domain
-
-    zones = _cf_api(f'https://api.cloudflare.com/client/v4/zones?name={root}', token)
-    results = zones.get('result') or []
+    results = []
+    for i in range(0, max(len(parts) - 1, 1)):
+        cand = '.'.join(parts[i:])
+        zones = _cf_api(f'https://api.cloudflare.com/client/v4/zones?name={cand}', token)
+        results = zones.get('result') or []
+        if results:
+            break
     if not results:
         return token, None
     zone_id = results[0]['id']
 
-    recs = _cf_api(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?per_page=100', token)
-    records = recs.get('result') or []
+    # Query the two names directly -- listing only the first 100 records
+    # missed them in larger zones.
+    records = []
+    for name in (domain, f'www.{domain}'):
+        recs = _cf_api(f'https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?name={name}', token)
+        records += recs.get('result') or []
 
     proxied = False
     found = False
@@ -79,10 +108,24 @@ def _write_cf_credentials(domain, token):
     cred_dir = '/etc/letsencrypt/cloudflare'
     os.makedirs(cred_dir, exist_ok=True)
     cred_path = f'{cred_dir}/{domain}.ini'
-    with open(cred_path, 'w') as fp:
+    # created 0600 from the start (was world-readable until the chmod)
+    fd = os.open(cred_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as fp:
         fp.write(f'dns_cloudflare_api_token = {token}\n')
     os.chmod(cred_path, 0o600)
     return cred_path
+
+
+_EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
+
+
+def _reload_hook(ws):
+    """certonly (DNS-01) installs nothing, so a renewed certificate was never
+    loaded by the web server: it kept serving the old one until it expired.
+    The deploy hook is stored in the renewal config and runs on every renewal."""
+    cmd = ('systemctl reload apache2 2>/dev/null || systemctl reload httpd' if ws == 'apache'
+           else 'systemctl reload nginx')
+    return '--deploy-hook ' + shlex.quote(cmd)
 
 
 _SSL_LINE = re.compile(r'^[ \t]*(listen[^;]*\b443\b[^;]*;|ssl_[a-z_]+\s[^;]*;|include\s+/etc/letsencrypt/[^;]*;|'
@@ -193,6 +236,109 @@ def nginx_remove_ssl(content):
     return re.sub(r'\n{3,}', '\n\n', result)
 
 
+# --- Apache SSL --------------------------------------------------------------------
+# Apache comments must be on their own line, so the markers are whole lines.
+A_SSL_BEGIN = '# VORTEX-SSL-BEGIN'
+A_SSL_END = '# VORTEX-SSL-END'
+A_REDIR_BEGIN = '# VORTEX-SSL-REDIRECT-BEGIN'
+A_REDIR_END = '# VORTEX-SSL-REDIRECT-END'
+_A_VHOST = re.compile(r'<VirtualHost\s+[^>]*>.*?</VirtualHost>', re.S | re.I)
+# The three lines certbot --apache adds to the port-80 vhost
+_A_CERTBOT_REDIR = re.compile(r'\n[ \t]*RewriteEngine on\n(?:[ \t]*RewriteCond %\{SERVER_NAME\} =[^\n]*\n)+[ \t]*RewriteRule \^ https://%\{SERVER_NAME\}[^\n]*', re.I)
+
+
+def _apache_enable_ssl_module():
+    if apache_layout() == 'debian':
+        sh('a2enmod ssl rewrite 2>/dev/null', t=30)
+    elif not os.path.exists('/etc/httpd/conf.d/ssl.conf'):
+        sh(pkg_install('mod_ssl') + ' 2>/dev/null', t=180)
+
+
+def apache_add_ssl(content, cert_path, key_path):
+    """Return content with a :443 copy of the site's port-80 vhost (same
+    DocumentRoot, PHP handler, etc.) plus an http->https redirect, each
+    between marker lines so Disable SSL can remove exactly what was added.
+    Returns None when the config already has SSL."""
+    if 'SSLCertificateFile' in content or A_SSL_BEGIN in content:
+        return None
+    m = None
+    for mm in _A_VHOST.finditer(content):
+        if ':80>' in mm.group(0).split('\n', 1)[0] or ':80 ' in mm.group(0).split('\n', 1)[0]:
+            m = mm; break
+    m = m or _A_VHOST.search(content)
+    if not m:
+        return None
+    block = m.group(0)
+    ssl = re.sub(r'^<VirtualHost\s+[^>]*>', '<VirtualHost *:443>', block, count=1, flags=re.I)
+    # `ServerName example.com:80` copied into the :443 vhost would make
+    # Apache build self-referential URLs as http://...:80
+    ssl = re.sub(r'^([ \t]*ServerName[ \t]+[^\s:]+):80\b', r'\1', ssl, flags=re.M)
+    sn = re.search(r'\n([ \t]*)ServerName[^\n]*', ssl)
+    ind = sn.group(1) if sn else '    '
+    ssl_lines = (f'\n{ind}SSLEngine on\n{ind}SSLCertificateFile {cert_path}\n{ind}SSLCertificateKeyFile {key_path}\n'
+                 f'{ind}SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1')
+    pos = sn.end() if sn else ssl.index('>') + 1
+    ssl = ssl[:pos] + ssl_lines + ssl[pos:]
+    redirect = (f'\n{ind}{A_REDIR_BEGIN}\n{ind}RewriteEngine On\n{ind}RewriteCond %{{HTTPS}} off\n'
+                f'{ind}RewriteRule ^ https://%{{HTTP_HOST}}%{{REQUEST_URI}} [R=301,L]\n{ind}{A_REDIR_END}')
+    sn80 = re.search(r'\n[ \t]*ServerName[^\n]*', block)
+    p80 = sn80.end() if sn80 else block.index('>') + 1
+    block80 = block[:p80] + redirect + block[p80:]
+    return (content[:m.start()] + block80 + content[m.end():].rstrip('\n') +
+            f'\n\n{A_SSL_BEGIN}\n{ssl}\n{A_SSL_END}\n')
+
+
+def apache_remove_ssl(content):
+    content = re.sub(r'\n?[ \t]*' + re.escape(A_SSL_BEGIN) + r'.*?' + re.escape(A_SSL_END) + r'[^\n]*', '', content, flags=re.S)
+    content = re.sub(r'\n[ \t]*' + re.escape(A_REDIR_BEGIN) + r'.*?' + re.escape(A_REDIR_END) + r'[^\n]*', '', content, flags=re.S)
+    content = _A_CERTBOT_REDIR.sub('', content)
+    return re.sub(r'\n{3,}', '\n\n', content).rstrip('\n') + '\n'
+
+
+def _apache_inject_ssl(domain, cert_path, key_path):
+    fp, ws = _find_site_config(domain)
+    if ws != 'apache':
+        return False, 'Apache config for this site not found'
+    with open(fp) as f:
+        content = f.read()
+    new = apache_add_ssl(content, cert_path, key_path)
+    if new is None:
+        # already has SSL: point every SSLCertificate(Key)File of the site and
+        # its certbot companion at the given files
+        def repoint(c):
+            c = re.sub(r'(^[ \t]*SSLCertificateFile\s+)\S+', lambda m: m.group(1) + cert_path, c, flags=re.M)
+            return re.sub(r'(^[ \t]*SSLCertificateKeyFile\s+)\S+', lambda m: m.group(1) + key_path, c, flags=re.M)
+        return apache_edit_site(fp, repoint)
+    _apache_enable_ssl_module()
+    return apache_apply(fp, new)
+
+
+def _ensure_certbot(ws):
+    plugin = {'apache': 'python3-certbot-apache', 'nginx': 'python3-certbot-nginx'}.get(ws, '')
+    have_certbot = bool(sh('command -v certbot 2>/dev/null'))
+    have_plugin = (not plugin) or ('apache' in sh('certbot plugins 2>/dev/null') if ws == 'apache'
+                                   else 'nginx' in sh('certbot plugins 2>/dev/null'))
+    if have_certbot and have_plugin:
+        _enable_renewal()
+        return
+    pkgs = ('certbot ' + plugin).strip()
+    if get_os().get('family') == 'rhel':
+        # epel-release exists only on Alma/Rocky/CentOS/CloudLinux; RHEL and
+        # Oracle Linux need their own EPEL route (Fedora ships certbot itself)
+        sh(_ou.ensure_epel_cmd(), t=300)
+    sh(pkg_install(pkgs) + ' 2>&1', t=300)
+    _enable_renewal()
+
+
+def _enable_renewal():
+    """EPEL ships certbot-renew.timer disabled: without this every
+    certificate issued on the RHEL family silently expired after 90 days."""
+    try:
+        _ou.certbot_enable_renewal()
+    except Exception:
+        pass
+
+
 def _inject_ssl_block(domain, cert_path, key_path):
     """Enable HTTPS on a site's nginx vhost with an already-issued cert."""
     conf_path = _nginx_conf_path(domain)
@@ -216,20 +362,52 @@ def _d_args(domain):
 
 def _issue_cert(domain, email):
     """Auto-detect HTTP-01 vs DNS-01 (Cloudflare) and issue cert. Returns (ok, output, method)."""
+    if not is_valid_domain(domain):
+        return False, 'Invalid domain', 'none'
+    email = (email or '').strip() or f'admin@{domain}'
+    if not _EMAIL_RE.match(email):
+        return False, 'Enter a valid e-mail address for Let\'s Encrypt', 'none'
+    email = shlex.quote(email)
+    ws = _find_site_config(domain)[1] or 'nginx'
+    if ws == 'caddy':
+        return True, ('Caddy obtains and renews HTTPS certificates for this site automatically, as soon as '
+                      f'{domain} points to this server. Nothing else to do.'), 'caddy-automatic'
+    if ws == 'openlitespeed':
+        return False, ('Let\'s Encrypt from the Websites page is not available for OpenLiteSpeed sites yet -- '
+                       'use the OpenLiteSpeed WebAdmin console (port 7080) or upload a certificate in the Config tab.'), 'unsupported'
     token, proxied = cf_check_proxied(domain)
+    if ws == 'nginx':
+        _ensure_certbot('nginx')
+    if ws == 'apache':
+        _ensure_certbot('apache')
+        if token and proxied and _ensure_dns_cloudflare_plugin():
+            cred_path = _write_cf_credentials(domain, token)
+            out = _run_out(f'certbot certonly --dns-cloudflare --dns-cloudflare-credentials {cred_path} '
+                     f'--dns-cloudflare-propagation-seconds 30 {_d_args(domain)} {_reload_hook("apache")} --non-interactive --agree-tos -m {email} 2>&1', t=180)
+            ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
+            if ok:
+                ok2, err = _apache_inject_ssl(domain, f'/etc/letsencrypt/live/{domain}/fullchain.pem',
+                                              f'/etc/letsencrypt/live/{domain}/privkey.pem')
+                if not ok2:
+                    ok = False
+                    out += '\n[VortexPanel] Certificate issued but the Apache config update failed: ' + err
+            return ok, out, 'dns-cloudflare'
+        out = _run_out(f'certbot --apache {_d_args(domain)} --redirect --non-interactive --agree-tos -m {email} 2>&1', t=180)
+        ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
+        return ok, out, 'http'
 
     if token and proxied:
         # DNS-01 via Cloudflare
         if not _ensure_dns_cloudflare_plugin():
-            out = sh(f'certbot --nginx {_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+            out = _run_out(f'certbot --nginx {_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1', t=120)
             ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
             return ok, out, 'http (dns-plugin install failed, fallback)'
 
         cred_path = _write_cf_credentials(domain, token)
-        out = sh(
+        out = _run_out(
             f'certbot certonly --dns-cloudflare --dns-cloudflare-credentials {cred_path} '
             f'--dns-cloudflare-propagation-seconds 30 '
-            f'{_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1',
+            f'{_d_args(domain)} {_reload_hook("nginx")} --non-interactive --agree-tos -m {email} 2>&1',
             t=180
         )
         ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
@@ -242,9 +420,53 @@ def _issue_cert(domain, email):
         return ok, out, 'dns-cloudflare'
 
     # HTTP-01 (default / not proxied / no token)
-    out = sh(f'certbot --nginx {_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1', t=120)
+    out = _run_out(f'certbot --nginx {_d_args(domain)} --non-interactive --agree-tos -m {email} 2>&1', t=120)
     ok = 'Congratulations' in out or 'Certificate not yet due' in out or 'Successfully' in out
     return ok, out, 'http'
+
+
+def _validate_cert_pair(cert, key):
+    """Return an error string unless `cert` is a PEM certificate (chain) and
+    `key` the matching private key. Previously anything was written over the
+    live cert files; when the site already had SSL only a reload followed,
+    which nginx refused -- and the next nginx restart failed for every site."""
+    if '-----BEGIN CERTIFICATE-----' not in cert:
+        return 'The certificate must be in PEM format (-----BEGIN CERTIFICATE-----)'
+    if 'PRIVATE KEY-----' not in key:
+        return 'The private key must be in PEM format (-----BEGIN ... PRIVATE KEY-----)'
+    tmpdir = tempfile.mkdtemp(prefix='vp-ssl-')
+    try:
+        cp, kp = os.path.join(tmpdir, 'c.pem'), os.path.join(tmpdir, 'k.pem')
+        _write_secret(cp, cert + '\n', 0o600)
+        _write_secret(kp, key + '\n', 0o600)
+        def run(args):
+            try:
+                r = subprocess.run(args, capture_output=True, text=True, timeout=20)
+                return r.returncode, r.stdout
+            except Exception as e:
+                return 1, str(e)
+        rc, cpub = run(['openssl', 'x509', '-in', cp, '-noout', '-pubkey'])
+        if rc != 0 or 'PUBLIC KEY' not in cpub:
+            return 'The certificate could not be parsed by openssl'
+        rc, kpub = run(['openssl', 'pkey', '-in', kp, '-pubout'])
+        if rc != 0 or 'PUBLIC KEY' not in kpub:
+            return 'The private key could not be parsed (encrypted keys are not supported)'
+        if cpub.strip() != kpub.strip():
+            return 'The private key does not match the certificate'
+        rc, _ = run(['openssl', 'x509', '-in', cp, '-noout', '-checkend', '0'])
+        if rc != 0:
+            return 'The certificate has already expired'
+        return ''
+    finally:
+        import shutil as _sh
+        _sh.rmtree(tmpdir, ignore_errors=True)
+
+
+def _write_secret(path, data, mode):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, 'w') as f:
+        f.write(data)
+    os.chmod(path, mode)
 
 
 # --- ROUTES ----------------------------------------------------------------------
@@ -261,9 +483,6 @@ def letsencrypt_ssl(domain):
     if not req(): return jsonify({'ok':False}), 401
     d     = request.get_json() or {}
     email = d.get('email', f'admin@{domain}')
-    certbot = sh('which certbot 2>/dev/null')
-    if not certbot:
-        sh(pkg_install('certbot python3-certbot-nginx'), t=120)
     ok, out, method = _issue_cert(domain, email)
     return jsonify({'ok':ok, 'output':out[-800:], 'method':method})
 
@@ -277,26 +496,49 @@ def manual_ssl(domain):
     if not key or not cert:
         return jsonify({'ok':False,'error':'Private key and certificate are required'}), 400
 
-    ssl_dir = f'/etc/nginx/ssl/{domain}'
-    os.makedirs(ssl_dir, exist_ok=True)
+    if not is_valid_domain(domain):
+        return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    verr = _validate_cert_pair(cert, key)
+    if verr:
+        return jsonify({'ok':False,'error':verr}), 400
+    site_ws = _find_site_config(domain)[1] or 'nginx'
+    # nginx keeps its historical location; other servers must not get an
+    # /etc/nginx tree created on a server without nginx.
+    ssl_dir = f'/etc/nginx/ssl/{domain}' if site_ws == 'nginx' else f'/etc/ssl/vortexpanel/{domain}'
+    os.makedirs(ssl_dir, mode=0o700, exist_ok=True)
 
     key_path  = f'{ssl_dir}/privkey.pem'
     cert_path = f'{ssl_dir}/fullchain.pem'
-    with open(key_path,  'w') as f: f.write(key)
-    with open(cert_path, 'w') as f: f.write(cert)
-    os.chmod(key_path, 0o600)
+    _write_secret(key_path, key + '\n', 0o600)
+    _write_secret(cert_path, cert + '\n', 0o644)
+
+    ws = _find_site_config(domain)[1]
+    if ws == 'apache':
+        ok, err = _apache_inject_ssl(domain, cert_path, key_path)
+        if not ok:
+            return jsonify({'ok':False,'error':err}), 400
+        return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
+    if ws in ('openlitespeed', 'caddy'):
+        return jsonify({'ok':False,'error':f'Uploading a certificate is supported for nginx and Apache sites. For this {ws} site, '
+                                          f'the files were saved to {cert_path} and {key_path} -- reference them in the Config tab.'}), 400
 
     # Update nginx config to add SSL (validated with nginx -t, restored on failure)
     conf_path = _nginx_conf_path(domain)
     if os.path.exists(conf_path):
         with open(conf_path) as f: content = f.read()
         new = nginx_add_ssl(content, domain, cert_path, key_path)
-        if new is not None:
-            ok, err = _nginx_apply(conf_path, new)
-            if not ok:
-                return jsonify({'ok':False,'error':err}), 400
-        else:
-            reload_nginx()  # SSL block already present - pick up the new cert files
+        if new is None:
+            # SSL already configured (possibly with a Let's Encrypt path):
+            # point it at the uploaded files -- previously the upload was
+            # reported as installed while the old certificate kept being served
+            new = re.sub(r'(^[ \t]*ssl_certificate\s+)[^;]+;', lambda m: m.group(1) + cert_path + ';', content, flags=re.M)
+            new = re.sub(r'(^[ \t]*ssl_certificate_key\s+)[^;]+;', lambda m: m.group(1) + key_path + ';', new, flags=re.M)
+            if new == content:
+                reload_nginx()
+                return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
+        ok, err = _nginx_apply(conf_path, new)
+        if not ok:
+            return jsonify({'ok':False,'error':err}), 400
     return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
 
 
@@ -305,18 +547,34 @@ def ssl_info(domain):
     if not req(): return jsonify({'ok':False}), 401
     if not is_valid_domain(domain):
         return jsonify({'ok':False,'error':'Invalid domain'}), 400
-    conf_path = _nginx_conf_path(domain)
-    if os.path.exists(conf_path):
-        with open(conf_path) as f:
-            if 'ssl_certificate' not in f.read():
-                # cert files may still be on disk after Disable SSL - the site isn't using them
-                return jsonify({'ok':False,'error':'SSL is not enabled for this site'})
-    cert_path = f'/etc/nginx/ssl/{domain}/fullchain.pem'
-    # Also check certbot path
-    for p in [cert_path, f'/etc/letsencrypt/live/{domain}/fullchain.pem']:
+    fp, ws = _find_site_config(domain)
+    candidates = [f'/etc/nginx/ssl/{domain}/fullchain.pem', f'/etc/letsencrypt/live/{domain}/fullchain.pem',
+                  f'/etc/ssl/vortexpanel/{domain}/fullchain.pem']
+    if ws == 'nginx' and os.path.exists(fp):
+        with open(fp) as f:
+            ncontent = f.read()
+        if 'ssl_certificate' not in ncontent:
+            # cert files may still be on disk after Disable SSL - the site isn't using them
+            return jsonify({'ok':False,'error':'SSL is not enabled for this site'})
+        # report the certificate the vhost actually uses first
+        candidates = re.findall(r'^[ \t]*ssl_certificate\s+([^;\s]+)\s*;', ncontent, re.M) + candidates
+    elif ws == 'apache':
+        content = open(fp).read()
+        companion = fp[:-5] + '-le-ssl.conf'
+        enabled_companion = os.path.exists(companion) and (apache_layout() != 'debian' or
+                            os.path.exists('/etc/apache2/sites-enabled/' + os.path.basename(companion)))
+        if enabled_companion:
+            content += open(companion).read()
+        certs = re.findall(r'^\s*SSLCertificateFile\s+"?([^"\s]+)', content, re.M)
+        if not certs:
+            return jsonify({'ok':False,'error':'SSL is not enabled for this site'})
+        candidates = certs + candidates
+    elif ws == 'caddy':
+        return jsonify({'ok':False,'error':'Caddy manages this site\'s certificate automatically (stored under /var/lib/caddy)'})
+    for p in candidates:
         if os.path.exists(p):
-            info = sh(f'openssl x509 -in {p} -noout -dates -subject -issuer 2>/dev/null')
-            expiry = sh(f'openssl x509 -in {p} -noout -enddate 2>/dev/null')
+            info = sh(f'openssl x509 -in {shlex.quote(p)} -noout -dates -subject -issuer 2>/dev/null')
+            expiry = sh(f'openssl x509 -in {shlex.quote(p)} -noout -enddate 2>/dev/null')
             # Structured fields for the SSL tab's summary banner, parsed from
             # the same openssl output rather than a second subprocess call -
             # the raw `info` text is still returned as-is for anyone who
@@ -349,9 +607,34 @@ def disable_ssl(domain):
     if not req(): return jsonify({'ok':False}), 401
     if not is_valid_domain(domain):
         return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    fp, ws = _find_site_config(domain)
+    if ws == 'apache':
+        with open(fp) as f: content = f.read()
+        companion = fp[:-5] + '-le-ssl.conf'
+        new = apache_remove_ssl(content)
+        if 'SSLCertificateFile' in new:
+            return jsonify({'ok':False,'error':'Could not safely remove SSL from this config automatically - edit it in the Config tab'}), 400
+        undo = None
+        if os.path.exists(companion):
+            if apache_layout() == 'debian':
+                if os.path.exists('/etc/apache2/sites-enabled/' + os.path.basename(companion)):
+                    sh(f'a2dissite {shlex.quote(os.path.basename(companion))} 2>/dev/null')
+                    undo = lambda: sh(f'a2ensite {shlex.quote(os.path.basename(companion))} 2>/dev/null')
+            else:
+                os.rename(companion, companion + '.disabled')
+                undo = lambda: os.rename(companion + '.disabled', companion)
+        ok, err = apache_apply(fp, new)
+        if not ok:
+            if undo:
+                undo()   # keep HTTPS working exactly as before
+            return jsonify({'ok':False,'error':err}), 500
+        sh('systemctl reload apache2 2>/dev/null || systemctl reload httpd 2>/dev/null')
+        return jsonify({'ok':True})
+    if ws in ('caddy', 'openlitespeed'):
+        return jsonify({'ok':False,'error':f'Disable SSL is supported for nginx and Apache sites ({domain} is served by {ws})'}), 400
     conf_path = _nginx_conf_path(domain)
     if not os.path.exists(conf_path):
-        return jsonify({'ok':False,'error':'Disable SSL is currently supported for nginx sites only'}), 400
+        return jsonify({'ok':False,'error':'No config found for this site'}), 404
     with open(conf_path) as f:
         content = f.read()
     if 'ssl_certificate' not in content and not re.search(r'listen[^;]*\b443\b', content):

@@ -1,10 +1,13 @@
 from flask_sock import Sock
-from flask import session
 import os, pty, fcntl, struct, termios, select, subprocess, threading, signal, time
 
 sock = Sock()
 
-def req(): return 'user' in session
+def req():
+    # Full check (2FA done, fingerprint, IP allowlist, session_version), not
+    # just 'user' in session: this endpoint is a root shell.
+    from panel.routes.auth import check_ip_and_session
+    return check_ip_and_session()
 
 @sock.route('/ws/terminal')
 def terminal_ws(ws):
@@ -15,9 +18,23 @@ def terminal_ws(ws):
     # Spawn a shell with a PTY
     pid, fd = pty.fork()
     if pid == 0:
-        # Child process
-        os.environ['TERM'] = 'xterm-256color'
-        os.execvp('/bin/bash', ['/bin/bash', '--login'])
+        # Child process. Never let an exception here fall back into the
+        # copied gunicorn worker code: always exec or _exit.
+        try:
+            os.environ['TERM'] = 'xterm-256color'
+            for k in ('SECRET_KEY',):
+                os.environ.pop(k, None)
+            home = os.environ.get('HOME') or '/root'
+            os.environ['HOME'] = home
+            try:
+                os.chdir(home)
+            except Exception:
+                pass
+            if os.path.exists('/bin/bash'):
+                os.execv('/bin/bash', ['/bin/bash', '--login'])
+            os.execv('/bin/sh', ['/bin/sh', '-l'])
+        finally:
+            os._exit(127)
     else:
         # Parent — set non-blocking
         try:
@@ -61,7 +78,8 @@ def terminal_ws(ws):
                 if isinstance(msg, str) and msg.startswith('\x00RESIZE\x00'):
                     try:
                         cols, rows = msg.split('\x00')[2].split(',')
-                        winsize = struct.pack('HHHH', int(rows), int(cols), 0, 0)
+                        cols = max(1, min(1000, int(cols))); rows = max(1, min(1000, int(rows)))
+                        winsize = struct.pack('HHHH', rows, cols, 0, 0)
                         fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
                     except Exception:
                         pass
@@ -74,11 +92,32 @@ def terminal_ws(ws):
             pass
         finally:
             stop.set()
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except Exception:
-                pass
+            # The shell is a session leader (pty.fork -> setsid): signal the
+            # whole process group so programs started from it (top, tail -f,
+            # an editor) die with the tab instead of running on, then reap
+            # the shell - it was never waited for and stayed a zombie per
+            # terminal session for the life of the worker.
+            for sig in (signal.SIGHUP, signal.SIGKILL):
+                try:
+                    os.killpg(pid, sig)
+                except Exception:
+                    try: os.kill(pid, sig)
+                    except Exception: pass
+                if sig == signal.SIGHUP:
+                    time.sleep(0.2)
             try:
                 os.close(fd)
             except Exception:
                 pass
+            try:
+                t.join(timeout=1)
+            except Exception:
+                pass
+            for _ in range(20):
+                try:
+                    wpid, _st = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    break
+                if wpid:
+                    break
+                time.sleep(0.05)
