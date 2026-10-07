@@ -219,6 +219,11 @@ def create_backup():
     btype  = d.get('type') or 'website'  # website | database | full
     domain = (d.get('domain') or '').strip()   # specific domain or empty for all
     db     = (d.get('database') or '').strip() # specific DB or empty for all
+    if btype == 'site':
+        # files + linked databases in one archive (panel/sitebackup.py)
+        if not domain:
+            return jsonify({'ok':False,'error':'Choose a website'}), 400
+        return site_backup_run(domain)
     if btype not in ('website', 'database', 'full'):
         return jsonify({'ok':False,'error':f'Unknown backup type: {btype}'}), 400
     if domain and not _DOMAIN_RE.match(domain):
@@ -503,6 +508,23 @@ def _start_restore(name, btype, target):
     if not name or not os.path.isfile(path):
         return None, ('Backup file not found', 404)
     target = (target or '').strip()
+    from panel import sitebackup as _sbm
+    if _sbm.NAME_RE.match(name) and _sbm.read_manifest(name):
+        # files + databases archive: restore both to where they came from
+        if target:
+            _, err = _check_target(target)
+            if err: return None, (err, 400)
+        job = _Job(uuid.uuid4().hex[:12])
+
+        def do_site_restore():
+            try:
+                res = _sbm.restore_backup(name, log=job.line, target=target or None)
+                job.line(f'Restore of {res["domain"]} finished')
+                job.ok()
+            except Exception as e:
+                job.fail(str(e))
+        threading.Thread(target=do_site_restore, daemon=True).start()
+        return job.id, None
     is_db_file = name.endswith(('.sql.gz', '.sql'))
     if not btype:
         btype = 'database' if is_db_file or name.startswith(('database_', 'db_')) else 'website'
@@ -568,6 +590,9 @@ def upload_restore():
 
     os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
     upload_name = f'upload_{time.strftime("%Y%m%d_%H%M%S")}_{name}'
+    from panel import sitebackup as _sbm
+    if _sbm.NAME_RE.match(name) and not os.path.exists(os.path.join(BACKUP_DIR, name)):
+        upload_name = name  # a site backup keeps its name (it carries the domain)
     upload_path = os.path.join(BACKUP_DIR, upload_name)
     f.save(upload_path)
     os.chmod(upload_path, 0o600)
@@ -576,3 +601,133 @@ def upload_restore():
     job_id, err = _start_restore(upload_name, btype, target)
     if err: return jsonify({'ok':False,'error':err[0],'name':upload_name}), err[1]
     return jsonify({'ok':True,'job_id':job_id,'name':upload_name})
+
+
+# --- Website backups: files + databases together, schedules, cloud (v3.6.0) ---------
+# Engine in panel/sitebackup.py; scheduled runs come from vortexpanel-backups.timer.
+def _sb():
+    from panel import sitebackup
+    return sitebackup
+
+
+def _site_entry(sb, domain, path, existing, sched_all, cloud_on):
+    raw = sched_all.get(domain, {})
+    sched = dict(sb.DEFAULT_SCHEDULE); sched.update(raw)
+    linked = sched.get('databases')
+    detected = sb.detect_databases(domain, path, existing)
+    backups = sb.list_backups(domain)
+    return {
+        'domain': domain, 'path': path,
+        'databases': [n for n in (linked if linked is not None else detected) if n in existing],
+        'databases_auto': linked is None, 'detected': detected,
+        'schedule': {k: sched.get(k) for k in sb.DEFAULT_SCHEDULE},
+        'next_run': raw.get('next_run') if sched.get('enabled') else None,
+        'last_run': raw.get('last_run'), 'last_ok': raw.get('last_ok'),
+        'last_message': raw.get('last_message', ''), 'last_trigger': raw.get('last_trigger', ''),
+        'count': len(backups), 'latest': backups[0] if backups else None,
+        'local_size': sum(b['size'] for b in backups),
+    }
+
+
+@backups_bp.route('/api/backups/sites')
+def site_backups_overview():
+    if not req(): return jsonify({'ok':False}), 401
+    sb = _sb()
+    existing = sb.db_map()
+    sched_all = sb.load_schedules()
+    cloud = sb.cloud_config()
+    out = [_site_entry(sb, d, p, existing, sched_all, bool(cloud)) for d, p in sorted(sb.sites().items())]
+    try:
+        from panel.tasks import timer_status
+        timer = timer_status().get('vortexpanel-backups', {})
+    except Exception:
+        timer = {}
+    return jsonify({'ok': True, 'sites': out, 'databases': sorted(existing),
+                    'cloud': {'connected': bool(cloud), 'bucket': (cloud or {}).get('bucket', ''),
+                              'provider': (cloud or {}).get('provider', '')},
+                    'scheduler_active': bool(timer.get('active'))})
+
+
+@backups_bp.route('/api/backups/sites/<domain>/schedule', methods=['PUT'])
+def site_backup_schedule(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    sb = _sb()
+    domain = domain.lower()
+    if domain not in sb.sites():
+        return jsonify({'ok': False, 'error': 'Website not found'}), 404
+    s, err = sb.validate_schedule(request.get_json() or {})
+    if err: return jsonify({'ok': False, 'error': err}), 400
+    if s['databases'] is not None:
+        existing = sb.db_map()
+        missing = [n for n in s['databases'] if n not in existing]
+        if missing:
+            return jsonify({'ok': False, 'error': 'Database not found: ' + ', '.join(missing)}), 400
+    if s['cloud'] and not sb.cloud_config():
+        return jsonify({'ok': False, 'error': 'Connect cloud storage first (Backups > Cloud Storage)'}), 400
+    s['next_run'] = sb.next_run(s) if s['enabled'] else None
+    sb._update_site_state(domain, **s)
+    return jsonify({'ok': True, 'next_run': s['next_run']})
+
+
+@backups_bp.route('/api/backups/sites/<domain>/run', methods=['POST'])
+def site_backup_run(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    sb = _sb()
+    domain = domain.lower()
+    if domain not in sb.sites():
+        return jsonify({'ok': False, 'error': 'Website not found'}), 404
+    job = _Job(uuid.uuid4().hex[:12])
+
+    def work():
+        try:
+            ok, msg = sb.run_one(domain, trigger='manual', log=job.line)
+            if ok:
+                job.state['name'] = (sb.load_schedules().get(domain) or {}).get('last_file', '')
+                job.ok()
+            else:
+                job.fail(msg)
+        except Exception as e:
+            job.fail(str(e))
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({'ok': True, 'job_id': job.id})
+
+
+@backups_bp.route('/api/backups/sites/<domain>/backups')
+def site_backup_list(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    sb = _sb()
+    items = sb.list_backups(domain.lower())
+    for it in items[:60]:
+        m = sb.read_manifest(it['name']) or {}
+        it['databases'] = [d.get('name') for d in m.get('databases', [])]
+        it['trigger'] = m.get('trigger', '')
+        it['path'] = m.get('path', '')
+    return jsonify({'ok': True, 'backups': items})
+
+
+@backups_bp.route('/api/backups/sites/restore', methods=['POST'])
+def site_backup_restore():
+    if not req(): return jsonify({'ok':False}), 401
+    sb = _sb()
+    d = request.get_json() or {}
+    name = os.path.basename(d.get('name') or '')
+    if not sb.NAME_RE.match(name) or not os.path.isfile(os.path.join(BACKUP_DIR, name)):
+        return jsonify({'ok': False, 'error': 'Site backup not found'}), 404
+    files, dbs = bool(d.get('files', True)), bool(d.get('databases', True))
+    if not files and not dbs:
+        return jsonify({'ok': False, 'error': 'Choose files, databases or both'}), 400
+    target = (d.get('target') or '').strip() or None
+    if target:
+        _, err = _check_target(target)
+        if err: return jsonify({'ok': False, 'error': err}), 400
+    job = _Job(uuid.uuid4().hex[:12])
+
+    def work():
+        try:
+            res = sb.restore_backup(name, log=job.line, files=files, databases=dbs, target=target)
+            job.line(f'Restore of {res["domain"]} finished')
+            job.ok()
+        except Exception as e:
+            job.fail(str(e))
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({'ok': True, 'job_id': job.id})

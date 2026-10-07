@@ -1666,6 +1666,41 @@ fi''',
         'service':'fail2ban', 'manage':True,
     },
     {
+        # Postfix (SMTP) + Dovecot (IMAP, LMTP delivery). The Mail Server page
+        # then configures virtual mailboxes (/api/mail/setup).
+        'id':'postfix', 'name':'Mail Server', 'icon':'/static/icons/mailserver.svg', 'category':'Mail',
+        'desc':'Postfix + Dovecot: email accounts for your domains (IMAP/SMTP)',
+        'check':'command -v postfix >/dev/null 2>&1 && command -v doveadm 2>/dev/null',
+        'versions':[
+            {'label':'Distro-provided Postfix + Dovecot', 'value':'latest'},
+        ],
+        'install':(
+            # Dovecot's default "listen = *, ::" makes it (and its package
+            # setup) fail on kernels with IPv6 disabled.
+            '[ -e /proc/net/if_inet6 ] || { mkdir -p /etc/dovecot/conf.d && '
+            '  printf "# VortexPanel: this kernel has no IPv6\nlisten = *\n" > /etc/dovecot/conf.d/98-vortexpanel-listen.conf; }; '
+            'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
+            'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
+            '  export DEBIAN_FRONTEND=noninteractive && '
+            '  echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections && '
+            '  echo "postfix postfix/mailname string $(hostname -f 2>/dev/null || hostname)" | debconf-set-selections && '
+            '  apt-get install -y postfix dovecot-imapd dovecot-lmtpd && '
+            '  systemctl enable postfix dovecot && systemctl restart postfix dovecot; '
+            'else '
+            '  (dnf install -y postfix dovecot || yum install -y postfix dovecot) && '
+            '  systemctl enable postfix dovecot && systemctl restart postfix dovecot; '
+            'fi'
+        ),
+        'uninstall':(
+            'systemctl stop dovecot postfix 2>/dev/null; '
+            'apt-get remove -y postfix dovecot-core dovecot-imapd dovecot-lmtpd 2>/dev/null; '
+            'dnf remove -y postfix dovecot 2>/dev/null; yum remove -y postfix dovecot 2>/dev/null; '
+            'rm -f /etc/dovecot/conf.d/98-vortexpanel-listen.conf; '
+            'echo "[VortexPanel] Mailboxes in /var/mail/vhosts were kept."; true'
+        ),
+        'service':'postfix', 'manage':False,
+    },
+    {
         'id':'clamav', 'name':'ClamAV', 'icon':'/static/icons/clamav.svg', 'category':'Security',
         'desc':'Open source antivirus engine for mail gateways',
         'check':'which clamscan 2>/dev/null',

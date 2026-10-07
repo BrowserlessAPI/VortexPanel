@@ -877,6 +877,9 @@ def create_site_core(domain, path=None, php='8.3'):
     domain = (domain or '').strip().lower()
     path = (path or f'{get_webroot()}/{domain}').strip().rstrip('/')
     php = str(php or '8.3').strip()
+    # "Static (no PHP)" in the Add Site form used to be replaced by 8.3, so a
+    # static site got a PHP handler anyway.
+    static = php.lower() == 'static'
     if not domain:
         return False, {'error': 'Domain required'}
     if not is_valid_domain(domain):
@@ -884,7 +887,7 @@ def create_site_core(domain, path=None, php='8.3'):
     perr = valid_site_path(path)
     if perr:
         return False, {'error': perr}
-    if not re.fullmatch(r'\d+\.\d+', php):
+    if not static and not re.fullmatch(r'\d+\.\d+', php):
         php = '8.3'
     # Never overwrite an existing site: _write_vhost() replaced the existing
     # vhost (losing its SSL / proxy / rewrite edits) and, when the new config
@@ -896,7 +899,13 @@ def create_site_core(domain, path=None, php='8.3'):
     webserver = _detect_webserver()
     if not webserver:
         return False, {'error': 'No web server is installed. Install Nginx, Apache2, OpenLiteSpeed, or Caddy from the App Store first.'}
-    if webserver != 'openlitespeed' and not php_layout(php):
+    if static and webserver == 'openlitespeed':
+        # OpenLiteSpeed serves static files with or without its LSPHP handler;
+        # its vhost always names one, so give it the default version.
+        static = False
+        lays = installed_php_layouts()
+        php = lays[0]['ver'] if lays else '8.3'
+    if not static and webserver != 'openlitespeed' and not php_layout(php):
         # e.g. the 8.3 default on a RHEL box whose module-stream PHP is 8.2:
         # the vhost pointed at a socket that never exists (502 for .php)
         lays = installed_php_layouts()
@@ -909,12 +918,12 @@ def create_site_core(domain, path=None, php='8.3'):
         with open(idx, 'w') as f:
             f.write(f'<!DOCTYPE html><html><body><h1>Welcome to {domain}</h1><p>VortexPanel - site created successfully.</p></body></html>')
 
-    ensure_web_ownership(path, php, webserver)
+    ensure_web_ownership(path, None if static else php, webserver)
 
-    ok, result = _write_vhost(domain, path, php, webserver)
+    ok, result = _write_vhost(domain, path, 'static' if static else php, webserver)
     if not ok:
         return False, {'error': result}
-    return True, {'domain': domain, 'path': path, 'webserver': webserver, 'php': php}
+    return True, {'domain': domain, 'path': path, 'webserver': webserver, 'php': 'static' if static else php}
 
 
 @websites_bp.route('/api/websites', methods=['POST'])
@@ -1518,14 +1527,24 @@ def switch_site_php(domain, ver):
     sock = php_fpm_socket(ver)
     if not sock:
         return False, f'PHP {ver} FPM is not running on this server (no socket found) -- install/start it first', None
+    from panel.routes.wp_toolkit import STATIC_PHP_MARK
     if ws == 'apache':
         with open(fp_ws) as f: content = f.read()
-        if 'proxy:unix:' not in content:
+        if 'proxy:unix:' not in content and STATIC_PHP_MARK not in content:
             return False, 'This Apache site has no PHP-FPM handler to switch', None
-        ok, err = apache_edit_site(fp_ws, lambda c: re.sub(r'proxy:unix:[^|"]+', f'proxy:unix:{sock}', c))
+        def _ap(c):
+            if STATIC_PHP_MARK in c:
+                c = c.replace(STATIC_PHP_MARK, '# PHP-FPM via Unix socket\n    <FilesMatch \\.php$>\n'
+                              f'        SetHandler "proxy:unix:{sock}|fcgi://localhost/"\n    </FilesMatch>', 1)
+                return re.sub(r'(DirectoryIndex\s+)(?!index\.php)', r'\1index.php ', c, count=1)
+            return re.sub(r'proxy:unix:[^|"]+', f'proxy:unix:{sock}', c)
+        ok, err = apache_edit_site(fp_ws, _ap)
     elif ws == 'caddy':
         with open(fp_ws) as f: content = f.read()
-        new = re.sub(r'php_fastcgi\s+unix/\S+', f'php_fastcgi unix/{sock}', content)
+        if STATIC_PHP_MARK in content:
+            new = content.replace(STATIC_PHP_MARK, f'php_fastcgi unix/{sock}', 1)
+        else:
+            new = re.sub(r'php_fastcgi\s+unix/\S+', f'php_fastcgi unix/{sock}', content)
         with open(fp_ws, 'w') as f: f.write(new)
         r = subprocess.run('caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1', shell=True, capture_output=True, text=True, timeout=60)
         ok, err = r.returncode == 0, (r.stdout + r.stderr)[-600:]
@@ -1534,6 +1553,15 @@ def switch_site_php(domain, ver):
             with open(fp_ws, 'w') as f: f.write(content)
     else:
         def fn(c):
+            if STATIC_PHP_MARK in c:
+                c = re.sub(re.escape(STATIC_PHP_MARK) + r'\s*location ~ \\\.php\$ \{\s*return 404;\s*\}',
+                           'location ~ \\.php$ {\n        include fastcgi_params;\n'
+                           f'        fastcgi_pass unix:{sock};\n'
+                           '        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n'
+                           '        fastcgi_index index.php;\n        fastcgi_read_timeout 300;\n    }', c, count=1)
+                c = re.sub(r'(\n\s*index\s+)(?!index\.php)', r'\1index.php ', c, count=1)
+                c = c.replace('try_files $uri $uri/ =404;', 'try_files $uri $uri/ /index.php?$args;', 1)
+                return c
             if not re.search(r'fastcgi_pass\s+unix:[^;]+;', c):
                 return (None, 'This site has no PHP handler (fastcgi_pass) to switch -- it is a static or proxied site')
             return re.sub(r'fastcgi_pass\s+unix:[^;]+;', f'fastcgi_pass unix:{sock};', c)

@@ -88,7 +88,10 @@ def _dovecot_conf(ver):
         "service auth {\n"
         "  unix_listener /var/spool/postfix/private/auth {\n"
         "    mode = 0660\n    user = postfix\n    group = postfix\n  }\n}\n\n"
-        "protocols = imap lmtp\n")
+        "protocols = imap lmtp\n"
+        # Dovecot's default `listen = *, ::` makes it exit on kernels with
+        # IPv6 disabled ("Address family not supported by protocol").
+        + ("" if os.path.exists('/proc/net/if_inet6') else "listen = *\n"))
     if ver >= (2, 4):
         return (
             "# Managed by VortexPanel -- virtual mailbox delivery (Dovecot 2.4 syntax). Do not edit by hand.\n"
@@ -305,8 +308,9 @@ def mail_status():
     queue   = sh('mailq 2>/dev/null | tail -1')
     try: q_count = int(re.search(r'(\d+)\s+Request', queue or '0').group(1))
     except: q_count = 0
+    installed = bool(sh('command -v postfix')) and bool(sh('command -v doveadm'))
     return jsonify({'ok':True,'postfix':postfix,'dovecot':dovecot,'queue':q_count,
-                    'configured':_mail_configured()})
+                    'configured':_mail_configured(), 'installed': installed})
 
 @mail_bp.route('/api/mail/domains')
 def mail_domains():

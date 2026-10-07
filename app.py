@@ -59,6 +59,8 @@ from panel.routes.logs import logs_bp
 from panel.routes.nodejs_projects import nodejs_bp
 from panel.routes.go_projects import go_bp
 from panel.routes.import_website import import_bp
+from panel.routes.onboarding import onboarding_bp
+from panel.routes.diskusage import disk_bp
 
 # -- Secret key: auto-generate and persist on first run -----------------------
 _SECRET_KEY_FILE = '/opt/vortexpanel/secret.key'
@@ -193,9 +195,31 @@ def create_app():
                dns_bp, mail_bp, ftp_bp, cron_bp, docker_bp, monitoring_bp,
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
                caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
-               logs_bp, wp_bp, nodejs_bp, go_bp, import_bp, livepatch_bp]:
+               logs_bp, wp_bp, nodejs_bp, go_bp, import_bp, livepatch_bp,
+               onboarding_bp, disk_bp]:
         app.register_blueprint(bp)
     terminal_sock.init_app(app)
+
+    # -- Background task timers (traffic history, scheduled site backups) ----
+    # Installed/enabled once per start, off the request path. The systemd
+    # timers run `python3 -m panel.tasks ...`, so no gunicorn worker owns a
+    # schedule (there are several worker processes).
+    def _ensure_task_timers():
+        import fcntl
+        try:
+            os.makedirs('/opt/vortexpanel/data', exist_ok=True)
+            with open('/opt/vortexpanel/data/.timers.lock', 'w') as lf:
+                fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                from panel.tasks import install_timers
+                for p in install_timers():
+                    print('[VortexPanel] task timers:', p)
+        except OSError:
+            pass  # another worker is doing it
+        except Exception as e:
+            print('[VortexPanel] task timers not installed:', e)
+    if os.geteuid() == 0 and not app.config.get('TESTING'):
+        import threading as _th
+        _th.Thread(target=_ensure_task_timers, daemon=True).start()
 
     # -- IP allowlist enforcement on EVERY API request ------------------------
     # The allowlist in auth.py is also checked at login, but checking every

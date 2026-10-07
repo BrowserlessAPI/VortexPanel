@@ -326,11 +326,42 @@ os.makedirs(WP_BACKUP_DIR, exist_ok=True)
 # VHOST GENERATORS (Nginx / Apache / OpenLiteSpeed / Caddy)
 # ===============================================================================
 
+# Marker for the PHP block of a site created as "Static (no PHP)". Switching
+# the site to a PHP version later replaces this block with a real handler.
+STATIC_PHP_MARK = '# VortexPanel: static site - no PHP handler'
+
+def _is_static(php_ver):
+    return str(php_ver or '').strip().lower() == 'static'
+
 def _nginx_vhost(domain, path, php_ver):
-    sock = _php_sock(php_ver)
     # IPv6 listener only where the kernel has IPv6 (nginx refuses to start
     # with `listen [::]:80` when IPv6 is disabled)
     v6 = '\n    listen [::]:80;' if os.path.exists('/proc/net/if_inet6') else ''
+    if _is_static(php_ver):
+        return f"""server {{
+    listen 80;{v6}
+    server_name {domain} www.{domain};
+    root {path};
+    index index.html index.htm;
+
+    access_log /var/log/nginx/{domain}.access.log;
+    error_log  /var/log/nginx/{domain}.error.log;
+
+    location / {{
+        try_files $uri $uri/ =404;
+    }}
+
+    location ~* /\\.(ht|git|env) {{
+        deny all;
+    }}
+
+    {STATIC_PHP_MARK}
+    location ~ \\.php$ {{
+        return 404;
+    }}
+}}
+"""
+    sock = _php_sock(php_ver)
     return f"""server {{
     listen 80;{v6}
     server_name {domain} www.{domain};
@@ -364,6 +395,25 @@ def _nginx_vhost(domain, path, php_ver):
 """
 
 def _apache_vhost(domain, path, php_ver):
+    if _is_static(php_ver):
+        return f"""<VirtualHost *:80>
+    ServerName {domain}
+    ServerAlias www.{domain}
+    DocumentRoot {path}
+    DirectoryIndex index.html index.htm
+
+    <Directory {path}>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    {STATIC_PHP_MARK}
+
+    ErrorLog  {_apache_log_dir()}/{domain}.error.log
+    CustomLog {_apache_log_dir()}/{domain}.access.log combined
+</VirtualHost>
+"""
     sock = _php_sock(php_ver)
     return f"""<VirtualHost *:80>
     ServerName {domain}
@@ -528,6 +578,18 @@ accessControl  {{
 """
 
 def _caddy_vhost(domain, path, php_ver):
+    if _is_static(php_ver):
+        return f"""{domain} {{
+    root * {path}
+    encode gzip
+    {STATIC_PHP_MARK}
+    file_server
+
+    log {{
+        output file /var/log/caddy/{domain}.log
+    }}
+}}
+"""
     sock = _php_sock(php_ver)
     return f"""{domain} {{
     root * {path}

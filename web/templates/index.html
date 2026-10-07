@@ -2,8 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
 <title>VortexPanel</title>
+<script>
+/* Apply the saved theme before the first paint so the page never flashes light. */
+(function(){
+  var m='system';
+  try { m = localStorage.getItem('vp-theme') || 'system'; } catch(e) {}
+  var dark = m === 'dark' || (m === 'system' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/theme.css?v={{ panel_version }}">
@@ -83,7 +94,7 @@
     </div>
 
     <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:11px;color:var(--text-dim)">VortexPanel v3.4</span>
+      <span style="font-size:11px;color:var(--text-dim)">VortexPanel {{ panel_version }}</span>
       <a href="https://github.com/BrowserlessAPI/VortexPanel" target="_blank" style="font-size:11px;color:var(--text-muted);text-decoration:none">GitHub</a>
     </div>
   </div>
@@ -98,7 +109,7 @@
       <div class="logo-icon"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
       <div>
         <div class="logo-text">VortexPanel</div>
-        <div class="logo-ver" x-text="panelVersion||'v3.4'"></div>
+        <div class="logo-ver" x-text="panelVersion||'{{ panel_version }}'"></div>
       </div>
     </div>
 
@@ -142,16 +153,22 @@
       </div>
     </div>
   </nav>
+  <div class="sidebar-backdrop" x-show="sidebarOpen" x-transition.opacity @click="sidebarOpen=false" x-cloak></div>
 
   <!-- MAIN -->
   <div class="main-area">
     <!-- TOPBAR -->
     <div class="topbar">
-      <button class="topbar-btn" @click="sidebarOpen=!sidebarOpen" style="display:none;padding:6px 8px">Menu</button>
+      <button class="topbar-btn topbar-menu" @click="sidebarOpen=!sidebarOpen" aria-label="Open menu" :aria-expanded="sidebarOpen?'true':'false'"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <div class="topbar-title" x-text="pageTitle()"></div>
       <div class="topbar-spacer"></div>
-      <div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--green)">
+      <div class="topbar-live" style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--green)">
         <span class="dot dot-green"></span><span>Live</span>
+      </div>
+      <div class="theme-switch" role="group" aria-label="Theme">
+        <button type="button" :class="{on: themeMode==='light'}" @click="setTheme('light')" title="Light theme" aria-label="Light theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg></button>
+        <button type="button" :class="{on: themeMode==='dark'}" @click="setTheme('dark')" title="Dark theme" aria-label="Dark theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+        <button type="button" :class="{on: themeMode==='system'}" @click="setTheme('system')" title="Follow system setting" aria-label="Follow system theme"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
       </div>
       <div style="position:relative;margin-left:8px">
         <button class="btn btn-ghost btn-sm" @click="openUpdateModal()"
@@ -233,45 +250,45 @@
 
         <!-- SSL expiry warning banner -->
         <div x-show="sslAlerts.length>0"
-             style="display:flex;align-items:flex-start;gap:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
+             style="display:flex;align-items:flex-start;gap:12px;background:var(--tint-amber);border:1px solid var(--tint-amber-border);border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
           <span style="font-size:18px;flex-shrink:0"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
           <div style="flex:1">
-            <div style="font-size:13px;font-weight:600;color:#92400e;margin-bottom:3px"
+            <div style="font-size:13px;font-weight:600;color:var(--tint-amber-text);margin-bottom:3px"
                  x-text="sslAlerts.length+' SSL certificate'+(sslAlerts.length>1?'s':'')+' expiring soon'"></div>
-            <div style="font-size:12px;color:#b45309;display:flex;flex-wrap:wrap;gap:6px">
+            <div style="font-size:12px;color:var(--tint-amber-text);display:flex;flex-wrap:wrap;gap:6px">
               <template x-for="a in sslAlerts" :key="a.domain">
-                <span :style="'padding:2px 8px;border-radius:10px;font-weight:600;'+(a.severity==='expired'?'background:#fee2e2;color:#991b1b':a.severity==='critical'?'background:#fed7aa;color:#9a3412':'background:#fef3c7;color:#92400e')"
+                <span :style="'padding:2px 8px;border-radius:10px;font-weight:600;'+(a.severity==='expired'?'background:var(--tint-red);color:var(--tint-red-text)':a.severity==='critical'?'background:var(--tint-amber);color:var(--tint-amber-text)':'background:var(--tint-amber);color:var(--tint-amber-text)')"
                       x-text="a.domain+' ('+(a.days_left<0?'expired':a.days_left+'d left')+')'"></span>
               </template>
             </div>
           </div>
-          <button class="btn btn-sm" style="background:#fef3c7;color:#92400e;border-color:#fde68a;flex-shrink:0" @click="go('websites')">Renew</button>
+          <button class="btn btn-sm" style="background:var(--tint-amber);color:var(--tint-amber-text);border-color:var(--tint-amber-border);flex-shrink:0" @click="go('websites')">Renew</button>
         </div>
 
         <!-- Security updates warning banner -->
         <div x-show="securityUpdates.checked && securityUpdates.total>0"
-             style="display:flex;align-items:flex-start;gap:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
+             style="display:flex;align-items:flex-start;gap:12px;background:var(--tint-red);border:1px solid var(--tint-red-border);border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
           <span style="font-size:18px;flex-shrink:0"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
           <div style="flex:1">
-            <div style="font-size:13px;font-weight:600;color:#991b1b;margin-bottom:3px"
+            <div style="font-size:13px;font-weight:600;color:var(--tint-red-text);margin-bottom:3px"
                  x-text="securityUpdates.total+' pending security update'+(securityUpdates.total>1?'s':'')"></div>
-            <div style="font-size:12px;color:#b91c1c" x-text="securityUpdates.packages.slice(0,6).map(p=>p.package).join(', ')+(securityUpdates.total>6?' and '+(securityUpdates.total-6)+' more':'')"></div>
+            <div style="font-size:12px;color:var(--tint-red-text)" x-text="securityUpdates.packages.slice(0,6).map(p=>p.package).join(', ')+(securityUpdates.total>6?' and '+(securityUpdates.total-6)+' more':'')"></div>
           </div>
-          <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;flex-shrink:0" @click="go('settings')">Review</button>
+          <button class="btn btn-sm" style="background:var(--tint-red);color:var(--tint-red-text);border-color:var(--tint-red-border);flex-shrink:0" @click="go('settings')">Review</button>
         </div>
 
         <!-- Webserver conflict warning banner -->
         <div x-show="wsConflict.conflict"
-             style="display:flex;align-items:flex-start;gap:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
+             style="display:flex;align-items:flex-start;gap:12px;background:var(--tint-red);border:1px solid var(--tint-red-border);border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
           <span style="font-size:18px;flex-shrink:0"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
           <div style="flex:1">
-            <div style="font-size:13px;font-weight:600;color:#991b1b;margin-bottom:3px">Multiple webservers running simultaneously</div>
-            <div style="font-size:12px;color:#b91c1c">
+            <div style="font-size:13px;font-weight:600;color:var(--tint-red-text);margin-bottom:3px">Multiple webservers running simultaneously</div>
+            <div style="font-size:12px;color:var(--tint-red-text)">
               <span x-text="wsConflict.active?.join(', ')"></span> are all active. This causes port 80/443 conflicts and unpredictable routing.
               Stop all but one via <strong>Services</strong> or <strong>App Store</strong>.
             </div>
           </div>
-          <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fca5a5;flex-shrink:0" @click="go('services')">Fix Now</button>
+          <button class="btn btn-sm" style="background:var(--tint-red);color:var(--tint-red-text);border-color:var(--tint-red-border);flex-shrink:0" @click="go('services')">Fix Now</button>
         </div>
 
         <!-- Services quick view -->
@@ -576,7 +593,7 @@
                   </select>
                 </div>
                 <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:12px">
-                  <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;color:#4b5563">Rewrite rules · Ctrl+S to save</div>
+                  <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;color:var(--text-secondary)">Rewrite rules · Ctrl+S to save</div>
                   <textarea style="width:100%;min-height:300px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical"
                             x-model="drawer.rewriteContent"
                             @keydown.ctrl.s.prevent="saveRewrite()"
@@ -816,7 +833,7 @@
                     <button class="btn btn-primary btn-sm" @click="saveConf()" :disabled="!!drawer.confError">Save</button>
                   </div>
                 </div>
-                <div x-show="drawer.confError" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:#991b1b" x-text="drawer.confError"></div>
+                <div x-show="drawer.confError" style="background:var(--tint-red);border:1px solid var(--tint-red-border);border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:12px;color:var(--tint-red-text)" x-text="drawer.confError"></div>
                 <div x-show="!drawer.confError" style="background:#1a1b26;border:1px solid #2a2b3a;border-radius:8px;overflow:hidden">
                   <div style="padding:6px 12px;background:#161722;border-bottom:1px solid #2a2b3a;font-size:11px;font-family:var(--font-mono);color:#64748b;display:flex;gap:12px">
                     <span x-text="drawer.confPath"></span>
@@ -838,7 +855,7 @@
                       Inspects and can block malicious requests before they reach your site — including PHP requests, since the WAF runs first in the request pipeline.
                       Requires the <b>caddy-waf</b> module to be installed from the App Store (Security category) first.
                     </p>
-                    <div x-show="drawer.wafMessage" :style="'font-size:12px;margin-bottom:12px;padding:10px 12px;border-radius:8px;' + (drawer.wafOk ? 'background:rgba(16,185,129,.08);color:#10b981' : 'background:#fef2f2;color:#991b1b')" x-text="drawer.wafMessage"></div>
+                    <div x-show="drawer.wafMessage" :style="'font-size:12px;margin-bottom:12px;padding:10px 12px;border-radius:8px;' + (drawer.wafOk ? 'background:rgba(16,185,129,.08);color:#10b981' : 'background:var(--tint-red);color:var(--tint-red-text)')" x-text="drawer.wafMessage"></div>
                     <button class="btn btn-primary btn-sm" @click="enableWaf()">Enable WAF for this site</button>
                     <button class="btn btn-ghost btn-sm" style="margin-left:8px" @click="disableWaf()">Disable</button>
                   </div>
@@ -897,7 +914,7 @@
                   <!-- -- CADDY: auto, nothing to do -- -->
                   <div x-show="drawer.http3Webserver==='caddy'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
                     <svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> <strong>Caddy</strong> enables HTTP/3 automatically whenever SSL is active. No configuration needed.
-                    <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;font-size:11px">
+                    <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:var(--tint-amber-text);font-size:11px">
                       UDP port 443 may be blocked in your firewall. HTTP/3 won't work until it's open.
                       <button class="btn btn-sm" style="margin-top:6px;display:block" @click="toggleHttp3(true)">Open UDP 443</button>
                     </div>
@@ -907,7 +924,7 @@
                   <!-- -- OPENLITESPEED: auto, nothing to do -- -->
                   <div x-show="drawer.http3Webserver==='openlitespeed'" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">
                     <svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> <strong>OpenLiteSpeed</strong> enables HTTP/3 by default. No configuration needed.
-                    <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;font-size:11px">
+                    <div x-show="!drawer.http3UdpOpen" style="margin-top:8px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:var(--tint-amber-text);font-size:11px">
                       UDP port 443 is not open in your firewall. HTTP/3 requires UDP 443 in addition to TCP 443.
                       <button class="btn btn-sm" style="margin-top:6px;display:block" @click="toggleHttp3(true)">Open UDP 443 Now</button>
                     </div>
@@ -925,8 +942,8 @@
 
                     <!-- Case 1: distro nginx, needs upgrade -->
                     <div x-show="drawer.http3UpgradeNeeded" style="padding:10px;background:rgba(245,158,11,.07);border-radius:var(--radius);margin-bottom:12px">
-                      <div style="font-size:12px;font-weight:500;color:#92400e;margin-bottom:4px">nginx <span x-text="drawer.http3NginxVersion"></span> — distro build, no HTTP/3</div>
-                      <div style="font-size:11px;color:#78350f;margin-bottom:10px">
+                      <div style="font-size:12px;font-weight:500;color:var(--tint-amber-text);margin-bottom:4px">nginx <span x-text="drawer.http3NginxVersion"></span> — distro build, no HTTP/3</div>
+                      <div style="font-size:11px;color:var(--tint-amber-text);margin-bottom:10px">
                         Your nginx was installed from the distro's package repo and was not compiled with <code>--with-http_v3_module</code>.
                         HTTP/3 requires the <strong>official nginx.org mainline package</strong> (1.25+).
                         VortexPanel can upgrade this automatically — your existing vhost configs are preserved.
@@ -938,7 +955,7 @@
                     </div>
 
                     <!-- Case 2: nginx too old (< 1.25), not just repo issue -->
-                    <div x-show="!drawer.http3Capable && !drawer.http3UpgradeNeeded && drawer.http3NginxVersion" style="padding:10px;background:rgba(239,68,68,.06);border-radius:var(--radius);margin-bottom:12px;font-size:11px;color:#991b1b">
+                    <div x-show="!drawer.http3Capable && !drawer.http3UpgradeNeeded && drawer.http3NginxVersion" style="padding:10px;background:rgba(239,68,68,.06);border-radius:var(--radius);margin-bottom:12px;font-size:11px;color:var(--tint-red-text)">
                       nginx <span x-text="drawer.http3NginxVersion"></span> is too old for HTTP/3 (requires 1.25+). Upgrade nginx manually from nginx.org.
                     </div>
 
@@ -950,7 +967,7 @@
                       </div>
 
                       <!-- UDP 443 status -->
-                      <div x-show="drawer.http3Enabled && !drawer.http3UdpOpen" style="font-size:11px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:#92400e;margin-bottom:10px">
+                      <div x-show="drawer.http3Enabled && !drawer.http3UdpOpen" style="font-size:11px;padding:8px 10px;background:rgba(245,158,11,.07);border-radius:var(--radius);color:var(--tint-amber-text);margin-bottom:10px">
                         HTTP/3 is enabled in nginx config but UDP port 443 is blocked in your firewall.
                         Browsers won't be able to connect via QUIC until UDP 443 is open.
                         <button class="btn btn-sm" style="margin-top:6px;display:block" @click="toggleHttp3(true)">Open UDP 443</button>
@@ -1144,7 +1161,7 @@
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <!-- wp-cli missing warning -->
-            <div x-show="!wpcliInstalled" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:6px;font-size:11px;color:#92400e">
+            <div x-show="!wpcliInstalled" style="display:flex;align-items:center;gap:6px;padding:5px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:6px;font-size:11px;color:var(--tint-amber-text)">
               wp-cli not installed
               <button class="btn btn-xs" style="background:var(--accent-warn);color:#000;border:none" @click="installWpCli()">Install</button>
             </div>
@@ -1199,7 +1216,7 @@
                   <div style="font-size:10px;color:var(--text-muted)" x-text="site.domain"></div>
                 </div>
                 <!-- Security grade badge -->
-                <div x-show="site.is_staging===false" style="position:absolute;top:8px;left:8px;background:rgba(255,255,255,.92);border-radius:20px;padding:2px 7px;font-size:10px;font-weight:700;display:flex;align-items:center;gap:3px">
+                <div x-show="site.is_staging===false" style="position:absolute;top:8px;left:8px;background:var(--bg-card);color:var(--text-primary);opacity:.95;border-radius:20px;padding:2px 7px;font-size:10px;font-weight:700;display:flex;align-items:center;gap:3px">
                   <span><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
                   <span x-text="site.wp_version!=='—'?'v'+site.wp_version:'Scanning…'" style="color:var(--text-secondary)"></span>
                 </div>
@@ -1349,7 +1366,7 @@
                   <span>Maintenance mode</span>
                   <label style="position:relative;width:34px;height:18px;display:inline-block">
                     <input type="checkbox" style="opacity:0;width:0;height:0" :checked="drawer.site?.maintenance" @change="saveSettings({maintenance:$event.target.checked})">
-                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.maintenance?'background:var(--accent)':''">
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:var(--track);border-radius:9px;transition:.2s" :style="drawer.site?.maintenance?'background:var(--accent)':''">
                       <span style="position:absolute;height:12px;width:12px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="drawer.site?.maintenance?'transform:translateX(16px)':''"></span>
                     </span>
                   </label>
@@ -1358,7 +1375,7 @@
                   <span>Search engine visibility</span>
                   <label style="position:relative;width:34px;height:18px;display:inline-block">
                     <input type="checkbox" style="opacity:0;width:0;height:0" :checked="drawer.site?.search_visible" @change="saveSettings({search_visible:$event.target.checked})">
-                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:#cbd5e1;border-radius:9px;transition:.2s" :style="drawer.site?.search_visible?'background:var(--accent)':''">
+                    <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;background:var(--track);border-radius:9px;transition:.2s" :style="drawer.site?.search_visible?'background:var(--accent)':''">
                       <span style="position:absolute;height:12px;width:12px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="drawer.site?.search_visible?'transform:translateX(16px)':''"></span>
                     </span>
                   </label>
@@ -1459,7 +1476,7 @@
                       <span :style="c.passed?'color:var(--green)':'color:var(--red)'" x-text="c.passed?'✓':'✕'"></span>
                       <div style="flex:1">
                         <strong x-text="c.label"></strong>
-                        <div style="font-size:11px;margin-top:1px" :style="c.passed?'color:#065f46':'color:#7f1d1d'" x-text="c.detail"></div>
+                        <div style="font-size:11px;margin-top:1px" :style="c.passed?'color:var(--tint-green-text)':'color:var(--tint-red-text)'" x-text="c.detail"></div>
                       </div>
                       <button x-show="!c.passed && c.fix" class="btn btn-xs" style="background:var(--accent);color:#fff;border:none;flex-shrink:0" @click="applyFix(c.fix)">Fix</button>
                     </div>
@@ -1510,7 +1527,7 @@
                     <div style="margin:10px 0;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-muted)">
                       <span>Push to</span><strong x-text="drawer.site?.domain"></strong>
                     </div>
-                    <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:7px 10px;font-size:11px;color:#7f1d1d;margin-bottom:8px">
+                    <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:7px 10px;font-size:11px;color:var(--tint-red-text);margin-bottom:8px">
                       Pushing will overwrite the live site. A backup of live is created automatically.
                     </div>
                     <button class="btn btn-primary btn-sm" @click="pushToLive(s)">Push staging to live</button>
@@ -1656,7 +1673,7 @@
                     </template>
                   </select>
                   <div x-show="!phpVersions.length"
-                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:#92400e">
+                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:var(--tint-amber-text)">
                     No PHP version is installed on this server.
                     Install one first from the <strong>App Store</strong>, then return here to install WordPress.
                   </div>
@@ -1668,7 +1685,7 @@
                     <option value="mariadb" x-text="dbEngines.includes('mariadb')?'MariaDB ✓ installed':'MariaDB (not installed)'"></option>
                   </select>
                   <div x-show="!dbEngines.includes(installForm.db_engine)"
-                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:#92400e">
+                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:var(--tint-amber-text)">
                     <svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> <strong x-text="installForm.db_engine==='mariadb'?'MariaDB':'MySQL'"></strong> is not installed on this server.
                     Install it first from the <strong>App Store</strong>, then return here to install WordPress.
                   </div>
@@ -1684,7 +1701,7 @@
                     <option value="caddy" x-text="installedWebservers.includes('caddy')?'Caddy ✓ installed':'Caddy (not installed)'"></option>
                   </select>
                   <div x-show="!installedWebservers.includes(installForm.webserver)"
-                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:#92400e">
+                       style="margin-top:5px;padding:7px 10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);font-size:11px;color:var(--tint-amber-text)">
                     <svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> <strong x-text="installForm.webserver"></strong> is not installed on this server.
                     Install it first from the <strong>App Store</strong>, then return here to install WordPress.
                   </div>
@@ -3212,7 +3229,7 @@
                     <span x-text="node.name"></span>
                   </div>
                 </template>
-                <div x-show="!editorTree.length" style="padding:12px;color:#4b5563;font-size:11px">Loading file tree...</div>
+                <div x-show="!editorTree.length" style="padding:12px;color:var(--text-secondary);font-size:11px">Loading file tree...</div>
               </div>
               <!-- CodeMirror host -->
               <div style="flex:1;min-width:0;overflow:hidden;position:relative">
@@ -3310,7 +3327,7 @@
               <tr>
                 <th style="width:46px"></th>
                 <th style="width:180px">Name</th>
-                <th>Description</th>
+                <th class="vp-hide-sm">Description</th>
                 <th style="width:130px">Status / Version</th>
                 <th style="width:225px">Actions</th>
               </tr>
@@ -3330,7 +3347,7 @@
                   </td>
 
                   <!-- Description -->
-                  <td style="font-size:12px;color:var(--text-secondary);padding-right:8px" x-text="m.desc"></td>
+                  <td class="vp-hide-sm" style="font-size:12px;color:var(--text-secondary);padding-right:8px" x-text="m.desc"></td>
 
                   <!-- Status / Version -->
                   <td>
@@ -3653,7 +3670,7 @@
                     Tips: This is the main configuration file. Incorrect modification may cause the service to fail to start.
                   </div>
                   <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563;display:flex;justify-content:space-between">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);display:flex;justify-content:space-between">
                       <span x-text="settingsModal.confPath"></span>
                       <span>Ctrl+S to save</span>
                     </div>
@@ -4058,7 +4075,7 @@
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Tips: Ctrl+S to save · Do not edit if you don't understand the config rules</div>
                   <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563;display:flex;justify-content:space-between">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);display:flex;justify-content:space-between">
                       <span x-text="settingsModal.iniPath"></span><span>Ctrl+S to save</span>
                     </div>
                     <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
@@ -4082,7 +4099,7 @@
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Tips: Ctrl+S to save · If you do not understand the php-fpm configuration file, please do not modify it</div>
                   <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563;display:flex;justify-content:space-between">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);display:flex;justify-content:space-between">
                       <span x-text="settingsModal.fpmConf"></span><span>Ctrl+S to save</span>
                     </div>
                     <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
@@ -4466,7 +4483,7 @@
                     </button>
                   </div>
                   <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:var(--text-secondary)">
                       /etc/bind/named.conf · Ctrl+S to save
                     </div>
                     <textarea style="width:100%;min-height:400px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical"
@@ -4631,7 +4648,7 @@
                   </div>
                   <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Tips: Ctrl+S to save · Caddy reloads with zero downtime</div>
                   <div style="background:#13141e;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:#4b5563;display:flex;justify-content:space-between">
+                    <div style="padding:6px 12px;background:#0d0e18;border-bottom:1px solid #1e2030;font-size:11px;font-family:var(--font-mono);color:var(--text-secondary);display:flex;justify-content:space-between">
                       <span x-text="settingsModal.confPath"></span><span>Ctrl+S to save</span>
                     </div>
                     <textarea style="width:100%;min-height:420px;background:#13141e;color:#e2e8f0;border:none;outline:none;padding:14px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;resize:vertical;tab-size:2"
@@ -5099,8 +5116,66 @@
           </div>
         </div>
         <div class="tabs" style="margin-bottom:14px">
-          <div class="tab" :class="{active:tab==='local'}" @click="tab='local'">Local Backups</div>
+          <div class="tab" :class="{active:tab==='sites'}" @click="tab='sites';loadSites()">Website Backups</div>
+          <div class="tab" :class="{active:tab==='local'}" @click="tab='local'">Backup Files</div>
           <div class="tab" :class="{active:tab==='cloud'}" @click="tab='cloud';loadCloudConfig();loadCloudList()">Cloud Storage</div>
+        </div>
+
+        <!-- WEBSITE BACKUPS (files + databases, schedules, cloud) -->
+        <div x-show="tab==='sites'">
+          <div class="sb-status">
+            <div class="sb-pill" :class="sb.cloud.connected?'ok':''">
+              <span x-html="vpIcon('cloud')"></span>
+              <span x-show="sb.cloud.connected" x-text="'Cloud storage: '+sb.cloud.bucket"></span>
+              <span x-show="!sb.cloud.connected">Cloud storage not connected</span>
+              <button class="btn btn-ghost btn-xs" x-show="!sb.cloud.connected" @click="tab='cloud';loadCloudConfig()">Connect</button>
+            </div>
+            <div class="sb-pill" :class="sb.scheduler_active?'ok':'warn'">
+              <span x-html="vpIcon('clock')"></span>
+              <span x-text="sb.scheduler_active ? 'Scheduler running (checks every 5 minutes)' : 'Scheduler is not running - scheduled backups will not start'"></span>
+            </div>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <table class="data-table">
+              <thead><tr><th>Website</th><th class="vp-hide-sm">Databases</th><th>Schedule</th><th>Last backup</th><th>Actions</th></tr></thead>
+              <tbody>
+                <template x-for="s in sb.sites" :key="s.domain">
+                  <tr>
+                    <td><span class="row-domain" x-text="s.domain"></span><span class="row-path" x-text="s.path"></span></td>
+                    <td class="vp-hide-sm">
+                      <span x-show="!s.databases.length" style="color:var(--text-muted);font-size:12px">Files only</span>
+                      <template x-for="d in s.databases" :key="d"><span class="badge badge-blue" style="margin:0 4px 2px 0" x-text="d"></span></template>
+                    </td>
+                    <td>
+                      <div x-show="s.schedule.enabled" style="font-size:12px">
+                        <div style="color:var(--text-primary)" x-text="schedText(s.schedule)"></div>
+                        <div style="color:var(--text-muted);font-size:11px" x-text="'Next: '+(s.next_run?fmtDate(s.next_run):'-')+(s.schedule.cloud?' · to cloud':'')"></div>
+                      </div>
+                      <span x-show="!s.schedule.enabled" class="badge badge-gray">Off</span>
+                    </td>
+                    <td style="font-size:12px;white-space:normal;max-width:260px">
+                      <template x-if="s.last_run">
+                        <div>
+                          <span class="dot" :class="s.last_ok?'dot-green':'dot-red'" style="margin-right:5px"></span>
+                          <span x-text="fmtDate(s.last_run)"></span>
+                          <div style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis" :style="s.last_ok?'':'color:var(--red)'" :title="s.last_message" x-text="s.last_message"></div>
+                        </div>
+                      </template>
+                      <span x-show="!s.last_run" style="color:var(--text-muted)">Never</span>
+                    </td>
+                    <td><div style="display:flex;gap:4px;flex-wrap:wrap">
+                      <button class="btn btn-primary btn-xs" :disabled="!!sbRunning[s.domain]" @click="runSiteBackup(s)" x-text="sbRunning[s.domain]?'Backing up...':'Back up now'"></button>
+                      <button class="btn btn-ghost btn-xs" @click="openSchedule(s)">Schedule</button>
+                      <button class="btn btn-ghost btn-xs" @click="openSiteBackups(s)" x-text="'Backups ('+s.count+')'"></button>
+                    </div></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <template x-if="sbLoaded && !sb.sites.length"><div class="empty-state"><div class="empty-text">No websites yet. Create one on the Websites page.</div></div></template>
+            <template x-if="!sbLoaded"><div class="empty-state"><span class="loading-spinner"></span></div></template>
+          </div>
+          <div class="onb-note">A website backup holds the site's folder and its databases (found in wp-config.php or .env, or chosen in the schedule) in one archive, so one restore brings the whole site back.</div>
         </div>
         <div x-show="tab==='local'">
         <div class="grid-3" style="margin-bottom:16px">
@@ -5113,15 +5188,15 @@
             </button>
           </div>
           <div class="card">
-            <div class="card-hd"><div class="card-title">Website Backup</div></div>
+            <div class="card-hd"><div class="card-title">Website Backup</div><span class="card-sub">Files and database</span></div>
             <div class="form-group"><label class="form-label">Domain</label>
               <select class="form-input" x-model="form.website.domain">
                 <option value="">— Select website —</option>
                 <template x-for="w in info.websites" :key="w.domain"><option :value="w.domain" x-text="w.domain"></option></template>
               </select>
             </div>
-            <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center" @click="createBackup('website',form.website.domain)" :disabled="!form.website.domain||creating==='website'">
-              <span x-show="creating==='website'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+            <button class="btn btn-primary btn-sm" style="width:100%;justify-content:center" @click="createBackup('site',form.website.domain)" :disabled="!form.website.domain||creating==='site'">
+              <span x-show="creating==='site'" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
               Create Website Backup
             </button>
           </div>
@@ -5231,13 +5306,120 @@
             <div class="modal-hd"><div class="modal-title">Restore Backup</div><button class="modal-close" @click="restoreModal.show=false">×</button></div>
             <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Restoring: <strong x-text="restoreModal.name"></strong></div>
             <div class="form-group" x-show="restoreModal.type==='database'"><label class="form-label">Restore to database</label><input class="form-input" x-model="restoreModal.target" placeholder="database_name"></div>
-            <div class="form-group" x-show="restoreModal.type==='website'"><label class="form-label">Restore to path (optional)</label><input class="form-input" x-model="restoreModal.customPath" placeholder="Leave empty for original path"></div>
+            <div x-show="restoreModal.type==='site'" style="margin-bottom:12px">
+              <label class="form-check" style="margin-bottom:6px"><input type="checkbox" x-model="restoreModal.files"> Website files <span style="color:var(--text-muted)" x-text="restoreModal.path?'('+restoreModal.path+')':''"></span></label>
+              <label class="form-check" :style="restoreModal.dbs.length?'':'opacity:.5'"><input type="checkbox" x-model="restoreModal.databases" :disabled="!restoreModal.dbs.length"> Databases <span style="color:var(--text-muted)" x-text="restoreModal.dbs.length?'('+restoreModal.dbs.join(', ')+')':'(none in this backup)'"></span></label>
+              <div class="onb-note" style="margin-top:8px">Files that are not in the backup are removed from the site folder, and the databases are replaced with the backed-up copy.</div>
+            </div>
+            <div class="form-group" x-show="restoreModal.type==='website' || (restoreModal.type==='site' && restoreModal.files)"><label class="form-label">Restore to path (optional)</label><input class="form-input" x-model="restoreModal.customPath" placeholder="Leave empty for original path"></div>
             <div class="modal-ft"><button class="btn btn-ghost" @click="restoreModal.show=false">Cancel</button><button class="btn btn-danger" @click="doRestore()">Restore</button></div>
+          </div>
+        </div>
+
+        <!-- Website backup schedule -->
+        <div class="modal-overlay" x-show="schedModal.show" x-cloak @click.self="schedModal.show=false">
+          <div class="modal" style="max-width:560px">
+            <div class="modal-hd"><div class="modal-title" x-text="'Backup schedule - '+schedModal.domain"></div><button class="modal-close" @click="schedModal.show=false">×</button></div>
+            <label class="form-check" style="margin-bottom:14px;font-weight:600;color:var(--text-primary)"><input type="checkbox" x-model="schedModal.s.enabled"> Back up this website automatically</label>
+            <div :style="schedModal.s.enabled?'':'opacity:.55'">
+              <div class="form-row form-row-2">
+                <div class="form-group"><label class="form-label">How often</label>
+                  <select class="form-input" x-model="schedModal.s.frequency">
+                    <option value="hourly">Every few hours</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                <div class="form-group" x-show="schedModal.s.frequency==='hourly'"><label class="form-label">Every</label>
+                  <select class="form-input" x-model.number="schedModal.s.every_hours">
+                    <template x-for="h in [1,2,3,4,6,8,12]" :key="h"><option :value="h" x-text="h+(h>1?' hours':' hour')"></option></template>
+                  </select>
+                </div>
+                <div class="form-group" x-show="schedModal.s.frequency!=='hourly'"><label class="form-label">At (server time)</label>
+                  <input class="form-input" type="time" x-model="schedModal.s.time">
+                </div>
+              </div>
+              <div class="form-group" x-show="schedModal.s.frequency==='weekly'"><label class="form-label">Day of the week</label>
+                <select class="form-input" x-model.number="schedModal.s.weekday">
+                  <template x-for="(d,i) in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']" :key="i"><option :value="i" x-text="d"></option></template>
+                </select>
+              </div>
+              <div class="form-group" x-show="schedModal.s.frequency==='monthly'"><label class="form-label">Day of the month</label>
+                <select class="form-input" x-model.number="schedModal.s.monthday">
+                  <template x-for="d in 28" :key="d"><option :value="d" x-text="d"></option></template>
+                </select>
+              </div>
+              <div class="form-row form-row-2">
+                <div class="form-group"><label class="form-label">Keep on this server</label>
+                  <input class="form-input" type="number" min="0" max="365" x-model.number="schedModal.s.keep_local">
+                  <div class="card-sub">Newest copies kept; older ones are deleted.</div>
+                </div>
+                <div class="form-group"><label class="form-label">Keep in cloud storage</label>
+                  <input class="form-input" type="number" min="1" max="3650" x-model.number="schedModal.s.keep_cloud" :disabled="!schedModal.s.cloud">
+                </div>
+              </div>
+              <label class="form-check" style="margin-bottom:14px" :style="sb.cloud.connected?'':'opacity:.55'">
+                <input type="checkbox" x-model="schedModal.s.cloud" :disabled="!sb.cloud.connected">
+                <span x-text="sb.cloud.connected ? 'Upload each backup to '+sb.cloud.bucket : 'Upload to cloud storage (connect it in the Cloud Storage tab first)'"></span>
+              </label>
+            </div>
+            <div class="form-group"><label class="form-label">Databases in the backup</label>
+              <label class="form-check" style="margin-bottom:6px"><input type="radio" value="auto" x-model="schedModal.dbMode"> Detect automatically <span style="color:var(--text-muted)" x-text="'('+(schedModal.detected.length?schedModal.detected.join(', '):'none found')+')'"></span></label>
+              <label class="form-check"><input type="radio" value="pick" x-model="schedModal.dbMode"> Choose</label>
+              <div x-show="schedModal.dbMode==='pick'" class="sb-dbpick">
+                <template x-for="d in sb.databases" :key="d"><label class="form-check"><input type="checkbox" :value="d" x-model="schedModal.dbs"> <span x-text="d"></span></label></template>
+                <span x-show="!sb.databases.length" style="color:var(--text-muted);font-size:12px">No databases on this server.</span>
+              </div>
+            </div>
+            <div class="form-group"><label class="form-label">Leave out (one folder or pattern per line, inside the site)</label>
+              <textarea class="form-input" rows="3" x-model="schedModal.excludes" placeholder="wp-content/cache&#10;node_modules"></textarea>
+            </div>
+            <div class="onb-err" x-show="schedModal.err" x-text="schedModal.err"></div>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="schedModal.show=false">Cancel</button><button class="btn btn-primary" :disabled="schedModal.saving" @click="saveSchedule()">Save</button></div>
+          </div>
+        </div>
+
+        <!-- Backups of one website -->
+        <div class="modal-overlay" x-show="siteBk.show" x-cloak @click.self="siteBk.show=false">
+          <div class="modal" style="max-width:720px">
+            <div class="modal-hd"><div class="modal-title" x-text="'Backups - '+siteBk.domain"></div><button class="modal-close" @click="siteBk.show=false">×</button></div>
+            <template x-if="siteBk.loading"><div class="empty-state"><span class="loading-spinner"></span></div></template>
+            <template x-if="!siteBk.loading && !siteBk.items.length"><div class="empty-state"><div class="empty-text">No backups of this website on the server yet.</div></div></template>
+            <table class="data-table" x-show="siteBk.items.length">
+              <thead><tr><th>Date</th><th>Size</th><th class="vp-hide-sm">Contents</th><th>Actions</th></tr></thead>
+              <tbody>
+                <template x-for="b in siteBk.items" :key="b.name">
+                  <tr>
+                    <td><div x-text="fmtDate(b.mtime)"></div><div style="font-size:11px;color:var(--text-muted)" x-text="b.trigger==='schedule'?'Scheduled':'Manual'"></div></td>
+                    <td x-text="fmtSize(b.size)"></td>
+                    <td class="vp-hide-sm" style="font-size:12px" x-text="'Files'+(b.databases && b.databases.length ? ' + '+b.databases.join(', ') : '')"></td>
+                    <td><div style="display:flex;gap:4px;flex-wrap:wrap">
+                      <button class="btn btn-ghost btn-xs" @click="openRestore(b)">Restore</button>
+                      <button class="btn btn-ghost btn-xs" @click="downloadBackup(b.name)">Download</button>
+                      <button class="btn btn-ghost btn-xs" x-show="sb.cloud.connected" @click="uploadToCloud(b.name)">To cloud</button>
+                      <button class="btn btn-danger btn-xs" @click="await del(b.name); openSiteBackups({domain: siteBk.domain})">Delete</button>
+                    </div></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
       <div x-show="page==='mail'" x-data="mailPage()">
         <div class="page-header"><div><div class="page-title">Mail Server</div><div class="page-sub">Postfix + Dovecot management</div></div></div>
+        <div class="card" style="margin-bottom:14px;border-color:var(--tint-amber-border)" x-show="status.checked && !status.configured">
+          <div class="card-hd"><div class="card-title">Set up the mail server</div></div>
+          <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px" x-show="!status.installed">
+            Postfix and Dovecot are not installed. Install <b>Mail Server</b> from the App Store first, then come back here to finish the setup.
+          </div>
+          <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px" x-show="status.installed">
+            Postfix and Dovecot are installed but not yet set up for virtual mailboxes. Setup connects them (delivery through Dovecot LMTP, login checks, mail stored in /var/mail/vhosts). Both configurations are tested and put back if anything fails.
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" x-show="!status.installed" @click="window.dispatchEvent(new CustomEvent('nav',{detail:{page:'modules'}}))">Open App Store</button>
+            <button class="btn btn-primary btn-sm" x-show="status.installed" :disabled="settingUp" @click="setupMail()"><span x-show="settingUp" class="loading-spinner" style="width:12px;height:12px"></span> Set up mail server</button>
+          </div>
+          <pre x-show="setupLog.length" class="code-block" style="margin-top:12px" x-text="setupLog.join('\n')"></pre>
+        </div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:12px;flex-wrap:wrap">
           <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.postfix==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Postfix: <span :style="status.postfix==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.postfix"></span></span><button class="btn btn-ghost btn-xs" @click="control('postfix','restart')">Restart</button></div>
           <div style="display:flex;align-items:center;gap:8px"><span :class="'dot dot-'+(status.dovecot==='active'?'green':'red')"></span><span style="font-size:12px;font-weight:500">Dovecot: <span :style="status.dovecot==='active'?'color:var(--green)':'color:var(--red)'" x-text="status.dovecot"></span></span><button class="btn btn-ghost btn-xs" @click="control('dovecot','restart')">Restart</button></div>
@@ -5390,7 +5572,7 @@
                   <td><div style="font-size:12px;font-weight:500" x-text="j.schedule_human"></div><div style="font-size:10px;font-family:var(--font-mono);color:var(--text-muted)" x-text="j.schedule"></div></td>
                   <td style="font-family:var(--font-mono);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="j.command"></td>
                   <td><div style="font-size:11px" x-text="j.last_run||'Never'"></div><div x-show="j.last_exit" style="font-size:10px" :style="'color:'+(j.last_exit==='0'?'var(--green)':'var(--red)')" x-text="j.last_exit==='0'?'✓ OK':'✗ '+j.last_exit"></div></td>
-                  <td><div style="width:32px;height:18px;border-radius:9px;cursor:pointer;position:relative;transition:.2s" :style="'background:'+(j.enabled?'var(--accent)':'var(--border)')" @click="toggleJob(j,!j.enabled)"><div style="width:14px;height:14px;background:white;border-radius:50%;position:absolute;top:2px;transition:.2s" :style="'left:'+(j.enabled?'16px':'2px')"></div></div></td>
+                  <td><div style="width:32px;height:18px;border-radius:9px;cursor:pointer;position:relative;transition:.2s" :style="'background:'+(j.enabled?'var(--accent)':'var(--border)')" @click="toggleJob(j,!j.enabled)"><div style="width:14px;height:14px;background:#fff;border-radius:50%;position:absolute;top:2px;transition:.2s" :style="'left:'+(j.enabled?'16px':'2px')"></div></div></td>
                   <td><div style="display:flex;gap:4px"><button class="btn btn-success btn-xs" @click="runNow(j)">Run</button><button class="btn btn-ghost btn-xs" @click="openEdit(j)">Edit</button><button class="btn btn-ghost btn-xs" @click="openLogs(j)">Log</button><button class="btn btn-danger btn-xs" @click="del(j)">Delete</button></div></td>
                 </tr>
               </template>
@@ -5527,9 +5709,163 @@
             <template x-if="!summary.daily?.length"><div class="empty-state" style="padding:24px"><div class="empty-text" x-text="hasVnstat?'Collecting data…':'Install vnstat for history'"></div></div></template>
             <table class="data-table" x-show="summary.daily?.length"><thead><tr><th>Date</th><th>↓ RX</th><th>↑ TX</th><th>Total</th></tr></thead><tbody><template x-for="d in (summary.daily||[])" :key="d.date"><tr><td x-text="d.date"></td><td style="color:var(--accent-3)" x-text="fmtBytes(d.rx)"></td><td style="color:var(--accent)" x-text="fmtBytes(d.tx)"></td><td x-text="fmtBytes((d.rx||0)+(d.tx||0))"></td></tr></template></tbody></table>
           </div>
-          <div class="card"><div class="card-hd"><div class="card-title">Per-Domain Traffic</div></div>
-            <table class="data-table" x-show="domains.length"><thead><tr><th>Domain</th><th>Requests</th><th>Data</th></tr></thead><tbody><template x-for="d in domains" :key="d.domain"><tr><td x-text="d.domain"></td><td x-text="d.requests?.toLocaleString()"></td><td x-text="fmtBytes(d.bytes)"></td></tr></template></tbody></table>
-            <template x-if="!domains.length"><div class="empty-state" style="padding:24px"><div class="empty-text">No access log data</div></div></template>
+          <div class="card"><div class="card-hd"><div class="card-title">Top Websites</div><div class="card-sub" x-text="periodLabel()"></div></div>
+            <template x-if="!sites.length"><div class="empty-state" style="padding:24px"><div class="empty-text">No website traffic recorded yet</div></div></template>
+            <div x-show="sites.length" class="bw-top">
+              <template x-for="s in sites.slice(0,6)" :key="s.domain">
+                <div class="bw-top-row" @click="selectSite(s.domain)">
+                  <div class="bw-top-name" x-text="s.domain"></div>
+                  <div class="bw-top-bar"><span :style="'width:'+share(s)+'%'"></span></div>
+                  <div class="bw-top-val" x-text="fmtBytes(s.bytes)"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Website traffic history -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-hd" style="flex-wrap:wrap;gap:10px">
+            <div>
+              <div class="card-title">Website Traffic</div>
+              <div class="card-sub">
+                <span x-text="selDomain ? selDomain : 'All websites'"></span> &middot;
+                <span x-text="fmtBytes(series.bytes||0)"></span> sent, <span x-text="(series.requests||0).toLocaleString()"></span> requests
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-xs" x-show="selDomain" @click="selectSite('')">All websites</button>
+              <div class="seg">
+                <template x-for="p in periods" :key="p.id">
+                  <button type="button" :class="{on: period===p.id}" @click="setPeriod(p.id)" x-text="p.label"></button>
+                </template>
+              </div>
+            </div>
+          </div>
+          <div class="chart-card" style="height:240px"><canvas id="bw-site-chart"></canvas></div>
+          <div class="bw-foot">
+            <span x-show="lastCollect" x-text="'Updated every 5 minutes from the access logs. Last update '+ago(lastCollect)+'.'"></span>
+            <span x-show="!lastCollect">No data collected yet.</span>
+            <span x-show="lastCollect && !collectorActive" style="color:var(--accent-warn)">The background collector is not running.</span>
+            <button class="btn btn-ghost btn-xs" :disabled="collecting" @click="collectNow()"><span x-text="collecting?'Updating...':'Update now'"></span></button>
+          </div>
+          <table class="data-table" x-show="sites.length && !selDomain" style="margin-top:12px">
+            <thead><tr><th>Website</th><th>Data sent</th><th>Requests</th><th class="vp-hide-sm">Share</th><th class="vp-hide-sm">Last 14 days</th></tr></thead>
+            <tbody>
+              <template x-for="s in sites" :key="s.domain">
+                <tr style="cursor:pointer" @click="selectSite(s.domain)">
+                  <td x-text="s.domain"></td>
+                  <td x-text="fmtBytes(s.bytes)"></td>
+                  <td x-text="s.requests.toLocaleString()"></td>
+                  <td class="vp-hide-sm" x-text="shareText(s)"></td>
+                  <td class="vp-hide-sm"><span class="spark" x-html="spark(s.trend)"></span></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- DISK USAGE -->
+      <div x-show="page==='disk'" x-data="diskPage()">
+        <div class="page-header">
+          <div><div class="page-title">Disk Usage</div><div class="page-sub">Find what is using the space, and clean it up</div></div>
+        </div>
+        <div class="du-mounts">
+          <template x-for="m in mounts" :key="m.mount">
+            <button type="button" class="du-mount" :class="{on: root===m.mount}" @click="pick(m)">
+              <div class="du-mount-hd"><span class="du-mount-name" x-text="m.mount"></span><span class="du-mount-pct" :class="m.percent>=90?'bad':m.percent>=75?'warn':''" x-text="m.percent+'%'"></span></div>
+              <div class="du-bar"><span :style="'width:'+m.percent+'%'" :class="m.percent>=90?'bad':m.percent>=75?'warn':''"></span></div>
+              <div class="du-mount-sub" x-text="fmtBytes(m.used)+' used of '+fmtBytes(m.total)+' · '+fmtBytes(m.free)+' free'"></div>
+              <div class="du-mount-sub" x-show="m.inodes_percent>=80" style="color:var(--accent-warn)" x-text="'Inodes '+m.inodes_percent+'% used'"></div>
+            </button>
+          </template>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-hd" style="flex-wrap:wrap;gap:10px">
+            <div>
+              <div class="card-title" x-text="'Scan of '+root"></div>
+              <div class="card-sub" x-show="tree" x-text="tree ? ('Scanned '+ago(tree.scanned)+(tree.seconds!=null?' in '+tree.seconds+' s':'')+(tree.unreadable?' · '+tree.unreadable+' folders could not be read':'')) : ''"></div>
+              <div class="card-sub" x-show="!tree && !scanning">Not scanned yet</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <div class="seg" x-show="tree">
+                <button type="button" :class="{on: view==='folders'}" @click="view='folders'">Folders</button>
+                <button type="button" :class="{on: view==='files'}" @click="view='files'; loadLargest()">Largest files</button>
+              </div>
+              <button class="btn btn-primary btn-sm" :disabled="scanning" @click="scan()">
+                <span x-show="scanning" class="loading-spinner" style="width:12px;height:12px"></span>
+                <span x-text="scanning ? (scanState && scanState.phase==='files' ? 'Finding large files...' : 'Scanning'+(scanState && scanState.folders ? ' ('+scanState.folders.toLocaleString()+' folders)' : '')+'...') : (tree ? 'Scan again' : 'Scan now')"></span>
+              </button>
+            </div>
+          </div>
+
+          <template x-if="!tree && !scanning">
+            <div class="empty-state"><div class="empty-icon" x-html="vpIcon('hard-drive')"></div><div class="empty-text">Scan this disk to see which folders and files take the most space. A scan reads every folder, so on a large disk it can take a few minutes.</div></div>
+          </template>
+          <template x-if="!tree && scanning">
+            <div class="empty-state"><span class="loading-spinner"></span><div class="empty-text" style="margin-top:10px">Reading folders. You can leave this page; the scan keeps running.</div></div>
+          </template>
+
+          <div x-show="tree && view==='folders'">
+            <div class="du-crumbs">
+              <template x-for="(c,i) in (tree ? tree.crumbs : [])" :key="c.path">
+                <span><button type="button" class="du-crumb" @click="open(c.path)" x-text="c.name"></button><span class="du-sep" x-show="i < tree.crumbs.length-1">/</span></span>
+              </template>
+              <span class="du-crumb-size" x-text="tree ? fmtBytes(tree.size) : ''"></span>
+            </div>
+            <div class="du-strip" x-show="tree && tree.size">
+              <template x-for="sg in segs()" :key="sg.name+sg.size">
+                <div class="du-seg" :style="'flex-basis:'+sg.pct+'%;background:'+sg.color" :title="sg.name+' - '+fmtBytes(sg.size)" @click="sg.dir && open(sg.path)"></div>
+              </template>
+            </div>
+            <div class="du-list">
+              <template x-for="(it, i) in (tree ? tree.items : [])" :key="it.path">
+                <div class="du-row">
+                  <span class="du-swatch" :style="'background:'+(i<10?colors[i%10]:'var(--track)')"></span>
+                  <button type="button" class="du-name" :class="{dir: it.dir}" @click="it.dir ? open(it.path) : null" :title="it.path">
+                    <span x-html="vpIcon(it.dir?'folder':'file')"></span><span x-text="it.name"></span>
+                  </button>
+                  <div class="du-rowbar vp-hide-sm"><span :style="'width:'+pct(it.size)+'%'"></span></div>
+                  <span class="du-size" x-text="fmtBytes(it.size)"></span>
+                  <span class="du-pct vp-hide-sm" x-text="pctText(it.size)"></span>
+                  <div class="du-acts">
+                    <button class="icon-btn" title="Open in File Manager" @click="openInFiles(it.dir ? it.path : it.path.replace(/\/[^\/]*$/, '') || '/')" x-html="vpIcon('external')"></button>
+                    <button class="icon-btn" :title="it.deletable ? 'Delete' : it.why" :disabled="!it.deletable" @click="remove(it)" x-html="vpIcon('trash')"></button>
+                  </div>
+                </div>
+              </template>
+              <div class="du-row du-other" x-show="tree && tree.other > 0">
+                <span class="du-swatch" style="background:var(--track)"></span>
+                <span class="du-name" style="color:var(--text-muted)">Smaller files and folders</span>
+                <div class="du-rowbar vp-hide-sm"></div>
+                <span class="du-size" x-text="tree ? fmtBytes(tree.other) : ''"></span>
+                <span class="du-pct vp-hide-sm" x-text="tree ? pctText(tree.other) : ''"></span>
+                <div class="du-acts"></div>
+              </div>
+              <div class="empty-state" x-show="tree && !tree.items.length" style="padding:20px"><div class="empty-text">No folders larger than 1 MB here.</div></div>
+            </div>
+          </div>
+
+          <div x-show="tree && view==='files'">
+            <table class="data-table">
+              <thead><tr><th>File</th><th>Size</th><th class="vp-hide-sm">Modified</th><th></th></tr></thead>
+              <tbody>
+                <template x-for="f in largest" :key="f.path">
+                  <tr>
+                    <td style="font-family:var(--font-mono);font-size:12px;white-space:normal;word-break:break-all" x-text="f.path"></td>
+                    <td x-text="fmtBytes(f.size)"></td>
+                    <td class="vp-hide-sm" style="font-size:12px" x-text="fmtDate(f.mtime)"></td>
+                    <td><div class="du-acts">
+                      <button class="icon-btn" title="Open in File Manager" @click="openInFiles(f.path.replace(/\/[^\/]*$/, '') || '/')" x-html="vpIcon('external')"></button>
+                      <button class="icon-btn" :title="f.deletable ? 'Delete' : f.why" :disabled="!f.deletable" @click="remove(Object.assign({dir:false}, f))" x-html="vpIcon('trash')"></button>
+                    </div></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="empty-state" x-show="!largest.length" style="padding:20px"><div class="empty-text">No files larger than 50 MB.</div></div>
           </div>
         </div>
       </div>
@@ -5635,7 +5971,7 @@
                        :disabled="ssh.root_login==='yes' && (!ssh.sudo_users || ssh.sudo_users.length===0)"
                        @change="ssh.root_login=$event.target.checked?'no':'yes'">
                 <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
-                      :style="ssh.root_login==='no'?'background:var(--accent)':'background:#cbd5e1'">
+                      :style="ssh.root_login==='no'?'background:var(--accent)':'background:var(--track)'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.root_login==='no'?'left:23px':'left:3px'"></span>
                 </span>
@@ -5655,7 +5991,7 @@
                        :checked="ssh.password_auth==='no'"
                        @change="if($event.target.checked && !ssh.keys_exist){toast('Add your SSH key first!','error');$event.target.checked=false;return;} ssh.password_auth=$event.target.checked?'no':'yes'">
                 <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
-                      :style="ssh.password_auth==='no'?'background:var(--accent)':'background:#cbd5e1'">
+                      :style="ssh.password_auth==='no'?'background:var(--accent)':'background:var(--track)'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.password_auth==='no'?'left:23px':'left:3px'"></span>
                 </span>
@@ -5673,7 +6009,7 @@
                        :checked="ssh.pubkey_auth==='yes'"
                        @change="ssh.pubkey_auth=$event.target.checked?'yes':'no'">
                 <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:11px;transition:.2s"
-                      :style="ssh.pubkey_auth==='yes'?'background:var(--accent)':'background:#cbd5e1'">
+                      :style="ssh.pubkey_auth==='yes'?'background:var(--accent)':'background:var(--track)'">
                   <span style="position:absolute;height:16px;width:16px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                         :style="ssh.pubkey_auth==='yes'?'left:23px':'left:3px'"></span>
                 </span>
@@ -5706,7 +6042,7 @@
               <input class="form-input" x-model="ssh.port" type="number" min="1024" max="65535" style="width:90px;text-align:center" />
             </div>
 
-            <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:10px 12px;font-size:11px;color:#7f1d1d;margin-bottom:12px">
+            <div style="background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.15);border-radius:var(--radius);padding:10px 12px;font-size:11px;color:var(--tint-red-text);margin-bottom:12px">
               <svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> <strong>Warning:</strong> Keep an active terminal/console session open while saving SSH changes. If you get locked out, use your VPS provider's console/VNC to fix it.
             </div>
 
@@ -5847,7 +6183,7 @@
                            :checked="(modsec.site_overrides||{})[site.domain]!=='off'"
                            @change="toggleSiteWAF(site.domain, $event.target.checked)">
                     <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:9px;transition:.2s"
-                          :style="(modsec.site_overrides||{})[site.domain]!=='off'?'background:var(--accent)':'background:#cbd5e1'">
+                          :style="(modsec.site_overrides||{})[site.domain]!=='off'?'background:var(--accent)':'background:var(--track)'">
                       <span style="position:absolute;height:12px;width:12px;top:3px;background:#fff;border-radius:50%;transition:.2s"
                             :style="(modsec.site_overrides||{})[site.domain]!=='off'?'left:19px':'left:3px'"></span>
                     </span>
@@ -6040,7 +6376,7 @@
           <div x-show="lbTab==='tcp'">
             <div x-show="!tcpLb.stream_module_available" class="card" style="background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-                <div style="font-size:12px;color:#92400e">
+                <div style="font-size:12px;color:var(--tint-amber-text)">
                   nginx's <strong>stream module</strong> isn't installed. Required for TCP load balancing.
                 </div>
                 <button class="btn btn-primary btn-sm" @click="installStreamModule()" :disabled="tcpLb.installingStream" style="white-space:nowrap">
@@ -6100,7 +6436,7 @@
                 </div>
                 <label style="position:relative;width:38px;height:20px;display:inline-block">
                   <input type="checkbox" style="opacity:0;width:0;height:0" x-model="health.config.enabled">
-                  <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="health.config.enabled?'background:var(--accent)':'background:#cbd5e1'">
+                  <span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="health.config.enabled?'background:var(--accent)':'background:var(--track)'">
                     <span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="health.config.enabled?'left:21px':'left:3px'"></span>
                   </span>
                 </label>
@@ -7676,7 +8012,7 @@
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
 
           <!-- 0. Security Updates -->
-          <div class="card" x-show="securityUpdates.checked && (securityUpdates.total>0 || applyingSecurityUpdates || securityUpdateOutput)" :style="securityUpdates.total>0?'border-color:#fecaca':''">
+          <div class="card" x-show="securityUpdates.checked && (securityUpdates.total>0 || applyingSecurityUpdates || securityUpdateOutput)" :style="securityUpdates.total>0?'border-color:var(--tint-red-border)':''">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border-light)">
               <div style="width:36px;height:36px;background:linear-gradient(135deg,#ef4444,#b91c1c);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
               <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Security Updates</div><div style="font-size:11px;color:var(--text-muted)" x-text="securityUpdates.total>0 ? securityUpdates.total+' pending — applies only these, not a full system upgrade' : (securityUpdates.reboot_required ? 'Installed — reboot required to finish' : 'No pending security updates')"></div></div>
@@ -7687,7 +8023,7 @@
               <template x-for="p in securityUpdates.packages" :key="p.package">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border-light)">
                   <span style="font-size:12px;font-family:var(--font-mono)" x-text="p.package"></span>
-                  <span :style="'font-size:10px;padding:1px 7px;border-radius:8px;font-weight:600;'+((p.severity==='Critical'||p.severity==='Security')?'background:#fee2e2;color:#991b1b':p.severity==='Important'?'background:#fed7aa;color:#9a3412':'background:#fef3c7;color:#92400e')"
+                  <span :style="'font-size:10px;padding:1px 7px;border-radius:8px;font-weight:600;'+((p.severity==='Critical'||p.severity==='Security')?'background:var(--tint-red);color:var(--tint-red-text)':p.severity==='Important'?'background:var(--tint-amber);color:var(--tint-amber-text)':'background:var(--tint-amber);color:var(--tint-amber-text)')"
                         x-text="p.severity"></span>
                 </div>
               </template>
@@ -7930,10 +8266,15 @@
               <div style="width:36px;height:36px;background:linear-gradient(135deg,#8b5cf6,#7c3aed);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
               <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Panel Settings</div><div style="font-size:11px;color:var(--text-muted)">General panel behaviour</div></div>
             </div>
+            <!-- Setup guide -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
+              <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Setup guide</div><div style="font-size:11px;color:var(--text-muted)">Web stack, security basics and a first website, step by step</div></div>
+              <button class="btn btn-ghost btn-xs" @click="window.dispatchEvent(new CustomEvent('vp:onboarding-open'))">Open</button>
+            </div>
             <!-- Auto update -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
               <div><div style="font-size:12px;font-weight:500;color:var(--text-primary)">Auto update panel</div><div style="font-size:11px;color:var(--text-muted)">Check for VortexPanel updates automatically</div></div>
-              <label style="position:relative;width:38px;height:20px;display:inline-block"><input type="checkbox" style="opacity:0;width:0;height:0" :checked="cfg.auto_update" @change="cfg.auto_update=$event.target.checked;saveSettings()"><span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="cfg.auto_update?'background:var(--accent)':'background:#cbd5e1'"><span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="cfg.auto_update?'left:21px':'left:3px'"></span></span></label>
+              <label style="position:relative;width:38px;height:20px;display:inline-block"><input type="checkbox" style="opacity:0;width:0;height:0" :checked="cfg.auto_update" @change="cfg.auto_update=$event.target.checked;saveSettings()"><span style="position:absolute;cursor:pointer;top:0;left:0;width:100vw;height:100vh;border-radius:10px;transition:.2s" :style="cfg.auto_update?'background:var(--accent)':'background:var(--track)'"><span style="position:absolute;height:14px;width:14px;top:3px;background:#fff;border-radius:50%;transition:.2s" :style="cfg.auto_update?'left:21px':'left:3px'"></span></span></label>
             </div>
             <!-- Timezone -->
             <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light)">
@@ -8092,7 +8433,7 @@
                 <div x-show="$store.vp.security.twofa.secret">
                   <div style="font-size:12px;font-weight:600;margin-bottom:8px">Scan QR code in your authenticator app:</div>
                   <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
-                    <div x-show="$store.vp.security.twofa.qr_svg" x-html="$store.vp.security.twofa.qr_svg" style="width:160px;height:160px;flex-shrink:0;border:2px solid var(--border);border-radius:var(--radius);background:#fff;overflow:hidden"></div>
+                    <div x-show="$store.vp.security.twofa.qr_svg" x-html="$store.vp.security.twofa.qr_svg" style="width:160px;height:160px;flex-shrink:0;border:2px solid var(--border);border-radius:var(--radius);background:var(--bg-card);overflow:hidden"></div>
                     <div x-show="!$store.vp.security.twofa.qr_svg" style="width:160px;flex-shrink:0;font-size:11px;color:var(--text-muted)">QR code unavailable - enter the manual key in your authenticator app.</div>
                     <div>
                       <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Manual key:</div>
@@ -8563,7 +8904,7 @@
       <div style="display:grid;gap:14px">
         <div>
           <label class="form-label">Domain <span style="color:var(--red)">*</span></label>
-          <input class="form-input" x-model="$store.vp.importWizard.domain" placeholder="example.com">
+          <input class="form-input" x-model="$store.vp.importWizard.domain" placeholder="example.com" @change="importDomainChanged()">
         </div>
         <div>
           <label class="form-label">Document Root (extracted path) <span style="color:var(--red)">*</span></label>
@@ -8594,6 +8935,56 @@
                 <button class="btn btn-ghost btn-xs" style="color:var(--red)" @click="importRemoveDbRow(idx)">Delete</button>
               </div>
               <div x-show="db.note" style="font-size:10px;color:var(--yellow);margin-top:-4px;margin-left:4px" x-text="db.note"></div>
+            </template>
+          </div>
+        </div>
+
+        <!-- SSL certificate -->
+        <div>
+          <label class="form-label">SSL certificate <span x-show="$store.vp.importWizard.sslChecking" class="loading-spinner" style="width:10px;height:10px;vertical-align:middle"></span></label>
+          <div x-show="!$store.vp.importWizard.ssl" class="imp-none">No certificate for this domain (with its private key) was found in the backup. You can issue a free Let's Encrypt certificate after the import.</div>
+          <template x-if="$store.vp.importWizard.ssl">
+            <label class="imp-item" :style="$store.vp.importWizard.ssl.expired?'opacity:.6':''">
+              <input type="checkbox" x-model="$store.vp.importWizard.importSsl" :disabled="$store.vp.importWizard.ssl.expired">
+              <div style="min-width:0">
+                <div style="font-weight:600;font-size:12px" x-text="$store.vp.importWizard.ssl.names.slice(0,4).join(', ')"></div>
+                <div style="font-size:11px;color:var(--text-muted)">
+                  <span x-text="($store.vp.importWizard.ssl.issuer||'Unknown issuer')"></span> &middot;
+                  <span :style="$store.vp.importWizard.ssl.expired?'color:var(--red)':''" x-text="($store.vp.importWizard.ssl.expired?'expired ':'expires ')+new Date($store.vp.importWizard.ssl.expires*1000).toLocaleDateString()"></span>
+                </div>
+              </div>
+            </label>
+          </template>
+        </div>
+
+        <!-- Cron jobs -->
+        <div>
+          <label class="form-label">Cron jobs</label>
+          <div x-show="!$store.vp.importWizard.cron.length" class="imp-none">No cron jobs found in the backup.</div>
+          <div x-show="$store.vp.importWizard.cron.length" class="imp-none" style="margin-bottom:6px">They will run as the web server user, not root. Old account paths were changed to the new site folder - check each command before importing.</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <template x-for="(j, idx) in $store.vp.importWizard.cron" :key="idx">
+              <div class="imp-item" style="align-items:flex-start">
+                <input type="checkbox" x-model="j.selected" style="margin-top:8px">
+                <input class="form-input" style="width:120px;font-family:var(--font-mono);font-size:11px;flex-shrink:0" x-model="j.schedule">
+                <input class="form-input" style="flex:1;font-family:var(--font-mono);font-size:11px;min-width:0" x-model="j.command" :title="'From '+j.source">
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Mailboxes -->
+        <div>
+          <label class="form-label">Mailboxes</label>
+          <div x-show="!$store.vp.importWizard.mail.length" class="imp-none">No mailboxes found in the backup.</div>
+          <div x-show="$store.vp.importWizard.mail.length && !$store.vp.importWizard.mailReady" class="imp-none" style="color:var(--accent-warn)">The mail server is not set up on this server, so these mailboxes cannot be imported now. Set it up on the Mail Server page, then run the import again.</div>
+          <div style="display:flex;flex-direction:column;gap:6px" :style="$store.vp.importWizard.mailReady?'':'opacity:.55'">
+            <template x-for="b in $store.vp.importWizard.mail" :key="b.email">
+              <label class="imp-item">
+                <input type="checkbox" x-model="b.selected" :disabled="!$store.vp.importWizard.mailReady">
+                <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600" x-text="b.email"></div>
+                  <div style="font-size:11px;color:var(--text-muted)" x-text="b.messages+' messages, '+fmtBytes(b.size)+(b.has_password?' · password kept':' · a new password will be set')"></div></div>
+              </label>
             </template>
           </div>
         </div>
@@ -8846,6 +9237,202 @@
                 @click="send()">Send</button>
       </div>
       <div style="font-size:10px;color:var(--text-dim);margin-top:4px;text-align:center">Enter to send · Shift+Enter new line · <a href="https://neoncodex.io" target="_blank" style="color:var(--accent);text-decoration:none">NeonCodex</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- FIRST-RUN SETUP GUIDE (v3.6.0) -->
+<div x-data="onboardingWizard()" x-init="init()">
+  <div x-show="show" x-cloak class="modal-overlay" style="z-index:900" x-transition.opacity>
+    <div class="modal onb-modal" role="dialog" aria-modal="true" aria-labelledby="onb-title">
+      <div class="onb-head">
+        <div>
+          <div class="onb-kicker">Setup guide</div>
+          <div class="modal-title" id="onb-title" x-text="steps[step].title"></div>
+        </div>
+        <button class="modal-close" @click="closeLater()" title="Close (you can reopen it from Settings)" aria-label="Close">×</button>
+      </div>
+      <ol class="onb-steps" aria-label="Progress">
+        <template x-for="(s, i) in steps" :key="s.id">
+          <li :class="{on: i===step, done: i<step}" @click="if(i<step && !busy) step=i">
+            <span class="onb-num" x-text="i+1"></span><span class="onb-lbl" x-text="s.short"></span>
+          </li>
+        </template>
+      </ol>
+
+      <!-- 1. Welcome -->
+      <div x-show="steps[step].id==='welcome'" class="onb-body">
+        <p class="onb-lead">This guide sets up a working web server in a few minutes: a web server, database and PHP, the basic security settings, and your first website. Every step can be skipped and done later from the panel.</p>
+        <div class="onb-facts" x-show="server.os">
+          <div><span>System</span><b x-text="server.os"></b></div>
+          <div><span>Hostname</span><b x-text="server.hostname"></b></div>
+          <div><span>IP address</span><b x-text="server.ip||'-'"></b></div>
+          <div><span>CPU / RAM</span><b x-text="server.cpus+' cores / '+fmtBytes(server.ram)"></b></div>
+          <div><span>Disk free</span><b x-text="fmtBytes(server.disk_free)+' of '+fmtBytes(server.disk_total)"></b></div>
+          <div><span>Kernel</span><b x-text="server.kernel"></b></div>
+        </div>
+      </div>
+
+      <!-- 2. Software -->
+      <div x-show="steps[step].id==='stack'" class="onb-body">
+        <div x-show="!modulesLoaded" style="padding:20px 0;color:var(--text-muted)"><span class="loading-spinner"></span> Checking installed software...</div>
+        <div x-show="modulesLoaded">
+          <div class="onb-section">Web server</div>
+          <div class="onb-choices">
+            <template x-for="m in groupMods(['nginx','apache2','openlitespeed','caddy'])" :key="m.id">
+              <label class="onb-choice" :class="{sel: pick.web===m.id, locked: webInstalled}">
+                <input type="radio" name="onb-web" :value="m.id" x-model="pick.web" :disabled="webInstalled || running">
+                <span class="onb-choice-name" x-text="m.name"></span>
+                <span class="onb-choice-tag" x-show="m.installed">Installed</span>
+                <span class="onb-choice-tag rec" x-show="!m.installed && m.id==='nginx' && !webInstalled">Recommended</span>
+              </label>
+            </template>
+            <label class="onb-choice" :class="{sel: pick.web==='', locked: webInstalled}" x-show="!webInstalled">
+              <input type="radio" name="onb-web" value="" x-model="pick.web" :disabled="running"><span class="onb-choice-name">None</span>
+            </label>
+          </div>
+          <div class="onb-section">Database</div>
+          <div class="onb-choices">
+            <template x-for="m in groupMods(['mysql','mariadb','postgresql'])" :key="m.id">
+              <label class="onb-choice" :class="{sel: pick.db===m.id, locked: dbInstalled}">
+                <input type="radio" name="onb-db" :value="m.id" x-model="pick.db" :disabled="dbInstalled || running">
+                <span class="onb-choice-name" x-text="m.name"></span>
+                <span class="onb-choice-tag" x-show="m.installed">Installed</span>
+                <span class="onb-choice-tag rec" x-show="!m.installed && m.id==='mysql' && !dbInstalled">Recommended</span>
+              </label>
+            </template>
+            <label class="onb-choice" :class="{sel: pick.db===''}" x-show="!dbInstalled">
+              <input type="radio" name="onb-db" value="" x-model="pick.db" :disabled="running"><span class="onb-choice-name">None</span>
+            </label>
+          </div>
+          <div class="onb-section" x-show="phpMod">PHP versions</div>
+          <div class="onb-choices" x-show="phpMod">
+            <template x-for="v in phpVersions()" :key="v.value">
+              <label class="onb-choice" :class="{sel: pick.php.includes(v.value), locked: v.installed}">
+                <input type="checkbox" :value="v.value" x-model="pick.php" :disabled="v.installed || running">
+                <span class="onb-choice-name" x-text="'PHP '+v.value"></span>
+                <span class="onb-choice-tag" x-show="v.installed">Installed</span>
+              </label>
+            </template>
+          </div>
+          <div class="onb-section">Extras</div>
+          <div class="onb-choices">
+            <template x-for="m in groupMods(['redis','phpmyadmin','pure-ftpd','fail2ban'])" :key="m.id">
+              <label class="onb-choice" :class="{sel: pick.extras.includes(m.id), locked: m.installed}">
+                <input type="checkbox" :value="m.id" x-model="pick.extras" :disabled="m.installed || running">
+                <span class="onb-choice-name" x-text="m.name"></span>
+                <span class="onb-choice-tag" x-show="m.installed">Installed</span>
+              </label>
+            </template>
+          </div>
+
+          <div x-show="queue.length" class="onb-queue">
+            <template x-for="q in queue" :key="q.key">
+              <div class="onb-q">
+                <span class="onb-q-state" :class="q.state"></span>
+                <div style="flex:1;min-width:0">
+                  <div class="onb-q-name" x-text="q.label"></div>
+                  <div class="onb-q-line" x-text="q.state==='running' ? (q.last||'Starting...') : q.message"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Security -->
+      <div x-show="steps[step].id==='security'" class="onb-body">
+        <p class="onb-lead">Recommended protection for a new server. The firewall keeps your SSH port and the panel port open when it is turned on.</p>
+        <div x-show="!secLoaded" style="padding:20px 0;color:var(--text-muted)"><span class="loading-spinner"></span> Checking...</div>
+        <div class="onb-checks" x-show="secLoaded">
+          <template x-for="c in secChecks" :key="c.label">
+            <div class="onb-check" :class="c.pass?'ok':'bad'">
+              <span class="onb-check-ic" x-html="vpIcon(c.pass?'check':'alert')"></span>
+              <span class="onb-check-lbl" x-text="c.label"></span>
+              <template x-if="!c.pass && secAction(c)">
+                <button class="btn btn-ghost btn-xs" :disabled="secBusy" @click="runSecAction(c)" x-text="secAction(c).label"></button>
+              </template>
+            </div>
+          </template>
+        </div>
+        <div class="onb-note" x-show="secLoaded">SSH hardening (keys only, a new port, no root login) can lock you out if done in the wrong order, so it is left to the Security page, which checks each change before applying it.</div>
+      </div>
+
+      <!-- 4. First website -->
+      <div x-show="steps[step].id==='site'" class="onb-body">
+        <div x-show="!siteResult">
+          <p class="onb-lead" x-show="webReady()">Create your first website. Point the domain's DNS A record to <b x-text="server.ip||'this server'"></b> so it can be reached, and add SSL from the site's settings afterwards.</p>
+          <p class="onb-lead" x-show="!webReady()">No web server is installed yet. Go back to the Software step to install one, or skip this step.</p>
+          <div x-show="webReady()">
+            <div class="form-group">
+              <label class="form-label" for="onb-domain">Domain</label>
+              <input id="onb-domain" class="form-input" x-model.trim="site.domain" placeholder="example.com" autocomplete="off" @keydown.enter="createSite()">
+            </div>
+            <div class="form-row form-row-2">
+              <div class="form-group">
+                <label class="form-label" for="onb-php">PHP</label>
+                <select id="onb-php" class="form-input" x-model="site.php">
+                  <option value="static">Static (no PHP)</option>
+                  <template x-for="v in sitePhp" :key="v"><option :value="v" x-text="'PHP '+v"></option></template>
+                </select>
+              </div>
+              <div class="form-group" style="display:flex;align-items:flex-end">
+                <label class="form-check" :style="mysqlReady()?'':'opacity:.5'"><input type="checkbox" x-model="site.createDb" :disabled="!mysqlReady()"> Create a MySQL database</label>
+              </div>
+            </div>
+            <div class="onb-err" x-show="siteErr" x-text="siteErr"></div>
+          </div>
+        </div>
+        <div x-show="siteResult" class="onb-result">
+          <div class="onb-result-hd"><span x-html="vpIcon('check')"></span> <b x-text="siteResult && siteResult.domain"></b> is ready.</div>
+          <div class="onb-facts">
+            <div><span>Folder</span><b x-text="siteResult && siteResult.path"></b></div>
+            <template x-if="siteResult && siteResult.db_name">
+              <div><span>Database</span><b x-text="siteResult.db_name"></b></div>
+            </template>
+            <template x-if="siteResult && siteResult.db_user">
+              <div><span>DB user</span><b x-text="siteResult.db_user"></b></div>
+            </template>
+            <template x-if="siteResult && siteResult.db_pass">
+              <div><span>DB password</span><b class="mono" x-text="siteResult.db_pass"></b></div>
+            </template>
+          </div>
+          <div class="onb-note" x-show="siteResult && siteResult.db_pass">Save the database password now. It is not shown again.</div>
+          <template x-for="w in (siteResult && siteResult.warnings)||[]" :key="w"><div class="onb-err" x-text="w"></div></template>
+        </div>
+      </div>
+
+      <!-- 5. Done -->
+      <div x-show="steps[step].id==='done'" class="onb-body">
+        <p class="onb-lead">Your server is set up. Here is what happened:</p>
+        <ul class="onb-summary">
+          <template x-for="line in summary()" :key="line"><li x-text="line"></li></template>
+        </ul>
+        <div class="onb-note">You can open this guide again from Settings &gt; Panel Settings &gt; Setup guide.</div>
+      </div>
+
+      <div class="modal-ft onb-ft">
+        <button class="btn btn-ghost" x-show="step===0" @click="skipAll()">Skip setup</button>
+        <button class="btn btn-ghost" x-show="step>0 && step<steps.length-1" :disabled="busy" @click="step--">Back</button>
+        <div style="flex:1"></div>
+        <template x-if="steps[step].id==='stack'">
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" :disabled="running" @click="next()" x-text="pendingCount()? 'Skip' : 'Next'"></button>
+            <button class="btn btn-primary" x-show="pendingCount()" :disabled="running || !modulesLoaded" @click="installSelected()">
+              <span x-show="running" class="loading-spinner" style="width:12px;height:12px"></span>
+              <span x-text="running ? 'Installing...' : 'Install '+pendingCount()+' item'+(pendingCount()>1?'s':'')"></span>
+            </button>
+          </div>
+        </template>
+        <template x-if="steps[step].id==='site' && !siteResult && webReady()">
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" :disabled="busy" @click="next()">Skip</button>
+            <button class="btn btn-primary" :disabled="busy || !site.domain" @click="createSite()"><span x-show="busy" class="loading-spinner" style="width:12px;height:12px"></span> Create website</button>
+          </div>
+        </template>
+        <button class="btn btn-primary" x-show="['welcome','security'].includes(steps[step].id) || (steps[step].id==='site' && (siteResult || !webReady()))" :disabled="busy" @click="next()" x-text="step===0?'Start':'Next'"></button>
+        <button class="btn btn-primary" x-show="steps[step].id==='done'" @click="finish()">Go to dashboard</button>
+      </div>
     </div>
   </div>
 </div>

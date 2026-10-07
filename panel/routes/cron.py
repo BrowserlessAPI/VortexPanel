@@ -279,26 +279,36 @@ def add_job():
     name     = (d.get('name') or '').strip()
     jtype    = d.get('type','shell')
 
+    ok, res = add_cron_job(schedule, command, name, jtype)
+    if not ok:
+        return jsonify({'ok':False,'error':res[0]}), res[1]
+    return jsonify({'ok':True, 'id':res['id'], 'schedule_human':human_schedule(schedule), 'notice':res['notice']})
+
+
+def add_cron_job(schedule, command, name, jtype='shell'):
+    """Append a job to root's crontab (also used by Website Import).
+    Returns (True, {'id', 'notice'}) or (False, (error, http_status))."""
+    schedule = ' '.join((schedule or '').split())
     err = _validate_job(schedule, command, name)
-    if err: return jsonify({'ok':False,'error':err}), 400
+    if err: return False, (err, 400)
 
     vid  = str(uuid.uuid4())[:8]
     line = f'{schedule} {_escape_percent(command)} # vp:{vid}'
 
     ok, note = ensure_cron()
-    if not ok: return jsonify({'ok':False,'error':note}), 500
+    if not ok: return False, (note, 500)
     try: raw = get_crontab()
-    except CrontabError as e: return jsonify({'ok':False,'error':str(e)}), 500
+    except CrontabError as e: return False, (str(e), 500)
     new  = (raw.rstrip() + '\n' + line + '\n') if raw.strip() else line + '\n'
     ok, err = set_crontab(new)
     if not ok:
-        return jsonify({'ok':False,'error':'Failed to update crontab: ' + err}), 500
+        return False, ('Failed to update crontab: ' + err, 500)
 
     meta = load_meta()
     # Jobs always live in root's crontab (the panel has no per-user crontab support)
     meta[vid] = {'name':name, 'type':jtype, 'user':'root', 'created':time.strftime('%Y-%m-%d %H:%M:%S'), 'last_log':'', 'last_run':'', 'last_exit':''}
     save_meta(meta)
-    return jsonify({'ok':True, 'id':vid, 'schedule_human':human_schedule(schedule), 'notice':note})
+    return True, {'id': vid, 'notice': note}
 
 @cron_bp.route('/api/cron/jobs/<vid>', methods=['PUT'])
 def edit_job(vid):

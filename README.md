@@ -66,11 +66,12 @@ Deploy compiled Go binaries and Node.js apps with the same one-click simplicity 
 - Both: reverse proxy on all 4 webservers with **WebSocket support**, Let's Encrypt SSL per domain, firewall integration, all 9 supported distros
 
 ### 📥 Website Import Wizard
-Migrate a site off cPanel, aaPanel, or HestiaCP by uploading its backup archive — no SSH pull required:
+Migrate a site off cPanel, aaPanel, HestiaCP or CyberPanel by uploading its backup archive — no SSH pull required:
 - **Detect → confirm → import** flow — every auto-detected field (domain, PHP version, document root, database) is editable before anything executes
 - Imported sites use the exact same code path as "New Website", so they're indistinguishable from natively-created ones
 - Fresh random database password generated on import (originals are never in a backup dump)
-- Files + database in this release; email/cron/SSL migration not yet included
+- **Files, databases, SSL certificate, cron jobs and mailboxes** — the certificate is installed only when its key matches and it has not expired, cron jobs run as the web user with old account paths pointed at the new site, and mailboxes keep their passwords where the backup has the hash
+- HestiaCP `.tar.zst` backups are supported when `zstd` is installed
 
 ### 🔷 WP Toolkit
 Full WordPress lifecycle management — install, manage, secure, stage, back up — no separate plugin or paid add-on:
@@ -127,7 +128,11 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - **Monitoring & Dashboard** — realtime CPU/RAM/Network charts, process list, bandwidth, **login audit log viewer**
 - **File Manager** — code editor, chmod, AES-encrypted zip support, ClamAV scan
 - **Web Terminal** — full PTY shell in browser over WebSocket
-- **Backups** — website + database, restore, S3-compatible cloud backup
+- **Website Backups** — each site's files and databases in one archive, one-click restore, per-site schedules (every few hours / daily / weekly / monthly) with retention, automatic upload to S3-compatible cloud storage
+- **Bandwidth** — per-website traffic history (24 hours / 7 / 30 days / 12 months) from the access logs, plus live interface traffic
+- **Disk Usage analyzer** — scan a disk, drill into folders, see the largest files, open them in the File Manager or delete them (system and database folders are protected)
+- **Dark mode** (Light / Dark / follow the system) and a **mobile layout** with a slide-in menu
+- **Setup guide** — first-run wizard for the web stack, security basics and the first website
 - **Cron Jobs** — visual scheduler, 10 task types, run-now, logs
 - **AI Assistant** — configurable OpenAI-compatible API (NeonCodex, OpenAI, etc.)
 
@@ -146,7 +151,7 @@ Access the panel at: **`http://YOUR-SERVER-IP:8888`**
 
 The installer auto-detects your OS and package manager. On RHEL 8-family systems (AlmaLinux 8 / Rocky 8, where default Python is 3.6) it automatically installs Python 3.11.
 
-**First things to do after install:** change the default password, enable 2FA, and enable Panel SSL — all from Settings.
+**First things to do after install:** the setup guide opens on first login (web stack, firewall, fail2ban, first website). Then enable 2FA and Panel SSL from Settings.
 
 ---
 
@@ -214,26 +219,30 @@ python3 app.py   # runs on :8888
 - [x] arm64 fixes — MongoDB and PostgreSQL RHEL install paths
 - [x] Modal/layout system overhaul — centering, horizontal scrollbar, cross-component scoping bugs
 
-**v3.4.5 (current) — reliability & security hardening:**
-- [x] Mail, DNS, Cron, Fail2ban — full functional test pass against real running services (not just code review); found and fixed 4 confirmed bugs: disabled cron jobs silently vanishing from the job list instead of showing as disabled, mail account maildirs created with the wrong directory structure (silently broke every new mailbox), DNS zones written to disk but never actually declared to BIND9 (zones were completely unservable), Fail2ban website-jails monitoring the wrong log source entirely due to an unset backend
-- [x] ModSecurity WAF, UFW Firewall, Docker deploy — same full test pass, all verified working correctly against real services, no bugs found
-- [x] WP Toolkit — install-status checks now honest at every layer (was silently reporting Nginx/MySQL as installed when they weren't, both in the UI and in the install logic itself)
-- [x] Fixed 3 pages (WP Toolkit, Databases, Node.js Projects) where navigating in didn't refresh data, due to a broken event listener repeated across all three
-- [x] Security settings modals — fixed floating-popup positioning
-- [x] Dashboard charts — root-caused two separate issues: an external CDN dependency that silently failed to load, and an Alpine.js reactivity/Chart.js conflict causing an infinite-recursion crash
-- [x] All frontend JS/CSS dependencies now self-hosted (Alpine.js upgraded 3.14 → 3.15, plus Chart.js, xterm, CodeMirror) instead of loading from third-party CDNs
-- [x] Tightened Content-Security-Policy — fixed Terminal and code-editor styling that had been silently broken by a CSP/CDN mismatch
+**v3.4.5 — reliability & security hardening:** full functional test pass of Mail, DNS, Cron, Fail2ban, ModSecurity, UFW and Docker; honest WP Toolkit install checks; self-hosted frontend dependencies; tighter Content-Security-Policy.
 
-**v3.5 (next):**
-- [ ] Bandwidth Monitor — per-domain traffic graphs (daily/weekly/monthly)
-- [ ] Website-level Backup — files + database together in one click per domain
-- [ ] Dark mode — toggle with full dark variable set
-- [ ] Onboarding wizard — guided first-run flow
-- [ ] Mobile responsiveness — sidebar + layout for small screens
-- [ ] PHP Webshell Scanner — scan web roots for obfuscated shells
-- [ ] Disk usage analyzer — visual tree, delete from panel
-- [ ] Alerting — CPU/RAM/SSL-expiry notifications (email/webhook)
-- [ ] Website Import — email, cron, and SSL migration (currently files + database only)
+**v3.5.x — shipped:**
+- [x] App Store install/uninstall reliability (package-lock waiting, visible errors, no stuck job windows)
+- [x] Websites on every web server (Nginx, Apache, OpenLiteSpeed, Caddy), WAF 2.0 screen, multi-distro and SELinux support
+- [x] Full audit of every route, page and App Store app (v3.5.3)
+- [x] PHP Webshell Scanner
+
+**v3.6.0 (current):**
+- [x] Bandwidth Monitor — per-domain traffic graphs (24 h / 7 d / 30 d / 12 months)
+- [x] Website-level Backup — files + database together in one click per domain
+- [x] Scheduled per-site backups with retention and upload to cloud storage
+- [x] Dark mode — Light / Dark / System toggle with a full dark variable set
+- [x] Onboarding wizard — guided first-run flow
+- [x] Mobile responsiveness — slide-in sidebar and layouts for small screens
+- [x] Disk usage analyzer — drill-down, largest files, delete from the panel
+- [x] Website Import — SSL, cron and email migration
+- [x] Mail Server in the App Store, with a setup screen
+
+**Next:**
+- [ ] Alerting — CPU/RAM/disk/SSL-expiry/service-down notifications (email, Telegram, webhook)
+- [ ] Coraza WAF installer for Caddy
+- [ ] Multi-user accounts with roles
+- [ ] Documented API keys for automation
 
 ---
 

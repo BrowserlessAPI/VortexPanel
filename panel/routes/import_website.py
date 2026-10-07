@@ -13,7 +13,8 @@ well-documented and stable, but aaPanel and HestiaCP backups are far less
 rigidly standardized across versions — auto-detection is best-effort, not
 guaranteed, so every detected field is editable rather than blindly trusted.
 
-Only site files + database are imported (no email/cron/SSL in this version).
+Site files and databases, plus (v3.6.0) the SSL certificate, cron jobs and
+mailboxes found in the backup -- see panel/import_extras.py.
 """
 from flask import Blueprint, jsonify, request, session
 import os, re, subprocess, threading, time, json, uuid, shutil, shlex
@@ -138,9 +139,16 @@ def _extract_archive(archive_path, dest_dir):
                         skipped += 1; continue
                     zf.extract(info, root)
         elif lower.endswith(('.tar.gz', '.tgz', '.tar', '.tar.zst', '.tar.bz2', '.tar.xz')):
+            src = archive_path
             if lower.endswith('.tar.zst'):
-                return False, 'zstd-compressed archives are not supported yet -- recompress as .tar.gz'
-            with tarfile.open(archive_path, 'r:*') as tf:
+                # HestiaCP 1.5+ compresses backups with zstd
+                if not shutil.which('zstd'):
+                    return False, 'This archive is zstd-compressed: install the zstd package (apt/dnf install zstd) and try again'
+                src = os.path.join(os.path.dirname(dest_dir.rstrip('/')), '.' + os.path.basename(archive_path) + '.tar')
+                r = subprocess.run(['zstd', '-d', '-q', '-f', '-o', src, archive_path], capture_output=True, text=True, timeout=7200)
+                if r.returncode != 0:
+                    return False, 'zstd could not decompress the archive: ' + r.stderr.strip()[:300]
+            with tarfile.open(src, 'r:*') as tf:
                 for m in tf:
                     name = m.name
                     while name.startswith('./'):
@@ -163,6 +171,9 @@ def _extract_archive(archive_path, dest_dir):
                     m.uid = m.gid = 0
                     m.uname = m.gname = 'root'
                     tf.extract(m, root, set_attrs=not m.issym())
+            if src != archive_path:
+                try: os.unlink(src)
+                except OSError: pass
         else:
             return False, f'Unrecognized archive format: {os.path.basename(archive_path)} (expected .tar.gz, .tar, or .zip)'
     except Exception as e:
@@ -508,8 +519,39 @@ def detect_backup(import_id):
     info = DETECTORS[panel_type](extract_dir)
     if warn:
         info['notes'].append(warn)
+    # SSL, cron and mail (v3.6.0) -- generic detection over the whole backup
+    from panel import import_extras as ix
+    ix.expand_nested(extract_dir, _extract_archive, info['notes'])
+    try:
+        info['ssl'] = ix.public_ssl(ix.detect_ssl(extract_dir, info['domain'].lower()), extract_dir) if info.get('domain') else None
+    except Exception as e:
+        info['ssl'] = None
+        info['notes'].append(f'SSL detection failed: {e}')
+    try:
+        info['cron'] = ix.detect_cron(extract_dir)
+    except Exception as e:
+        info['cron'] = []
+        info['notes'].append(f'Cron detection failed: {e}')
+    try:
+        boxes, _ = ix.detect_mail(extract_dir)
+        info['mail'] = {'ready': ix.mail_ready(),
+                        'boxes': [{k: b[k] for k in ('email', 'domain', 'user', 'messages', 'size', 'has_password')} for b in boxes]}
+    except Exception as e:
+        info['mail'] = {'ready': False, 'boxes': []}
+        info['notes'].append(f'Mailbox detection failed: {e}')
     info['import_id'] = import_id
     return jsonify({'ok': True, **info})
+
+
+@import_bp.route('/api/import/<import_id>/ssl', methods=['POST'])
+def detect_ssl_for(import_id):
+    """Re-check the certificate when the domain is edited in the preview."""
+    from panel import import_extras as ix
+    domain = ((request.get_json() or {}).get('domain') or '').strip().lower()
+    extract_dir = os.path.join(IMPORT_WORKSPACE, import_id, 'extracted')
+    if not os.path.isdir(extract_dir) or not ix.DOMAIN_RE.match(domain):
+        return jsonify({'ok': True, 'ssl': None})
+    return jsonify({'ok': True, 'ssl': ix.public_ssl(ix.detect_ssl(extract_dir, domain), extract_dir)})
 
 
 # --- Execute --------------------------------------------------------------------
@@ -522,13 +564,26 @@ def execute_import(import_id):
     doc_root    = (d.get('doc_root') or '').strip()
     php_version = (d.get('php_version') or '8.3').strip()
     databases   = d.get('databases') or []   # [{name, dump_path, target_db_name}]
+    import_ssl  = bool(d.get('import_ssl'))
+    cron_jobs   = d.get('cron_jobs') or []   # [{schedule, command}] as edited in the preview
+    mail_boxes  = d.get('mail_boxes') or []  # [email, ...]
+    if not isinstance(cron_jobs, list): cron_jobs = []
+    if not isinstance(mail_boxes, list): mail_boxes = []
+    for j in cron_jobs:
+        if not isinstance(j, dict) or not str(j.get('command', '')).strip() or \
+                any(c in str(j.get('command', '')) + str(j.get('schedule', '')) for c in '\r\n'):
+            return jsonify({'ok': False, 'error': 'Every cron job needs a one-line schedule and command'})
+    from flask import current_app
+    app = current_app._get_current_object()
 
     if not domain:
         return jsonify({'ok': False, 'error': 'Domain is required'})
     from panel.routes.websites_core import is_valid_domain
     if not is_valid_domain(domain):
         return jsonify({'ok': False, 'error': 'Invalid domain name'})
-    if not re.fullmatch(r'\d+\.\d+', php_version):
+    if php_version.lower() == 'static':
+        php_version = 'static'
+    elif not re.fullmatch(r'\d+\.\d+', php_version):
         php_version = '8.3'
     if not doc_root or not os.path.isdir(doc_root):
         return jsonify({'ok': False, 'error': 'Document root path is invalid or missing'})
@@ -562,7 +617,7 @@ def execute_import(import_id):
                 _job_append(job_id, f'[ERROR] Site creation failed: {result.get("error")}')
                 _job_finish(job_id, False)
                 return
-            _job_append(job_id, f'[VortexPanel] ✓ Site created: {site_path}')
+            _job_append(job_id, f'[VortexPanel] Site created: {site_path}')
 
             # 2. Copy site files from the extracted doc root into the new webroot
             _job_append(job_id, f'[VortexPanel] Copying files from {doc_root} ...')
@@ -576,7 +631,7 @@ def execute_import(import_id):
                 return
             file_count = subprocess.run(f'find {shlex.quote(site_path)} -type f | wc -l',
                                          shell=True, capture_output=True, text=True, timeout=120).stdout.strip()
-            _job_append(job_id, f'[VortexPanel] ✓ Copied {file_count} files')
+            _job_append(job_id, f'[VortexPanel] Copied {file_count} files')
 
             # drop the "site created" placeholder unless the backup had its own
             # index.html (Apache's DirectoryIndex prefers it over index.php)
@@ -591,7 +646,7 @@ def execute_import(import_id):
             # the SELinux web label (`cp -a` kept the import workspace's context,
             # so every request was 403 on enforcing RHEL systems)
             ensure_web_ownership(site_path, result.get('php') or php_version, result.get('webserver'))
-            _job_append(job_id, '[VortexPanel] ✓ File ownership set for web server user')
+            _job_append(job_id, '[VortexPanel] File ownership set for web server user')
 
             # 3. Import databases
             imported_dbs = []
@@ -652,14 +707,76 @@ def execute_import(import_id):
                     _job_append(job_id, f'[ERROR] Import failed for {target_name}: {err[:300]}')
                     continue
 
-                _job_append(job_id, f'[VortexPanel] ✓ Database `{target_name}` imported — user `{db_user}` / password: {new_password}')
+                _job_append(job_id, f'[VortexPanel] Database `{target_name}` imported — user `{db_user}` / password: {new_password}')
                 imported_dbs.append({'name': target_name, 'user': db_user, 'password': new_password})
 
-            _job_append(job_id, f'[VortexPanel] ✓ Import complete for {domain}')
+            # 4. SSL certificate from the backup
+            from panel import import_extras as ix
+            extract_dir = os.path.join(workdir, 'extracted')
+            if import_ssl:
+                cert = ix.detect_ssl(extract_dir, domain)
+                if not cert:
+                    _job_append(job_id, f'[WARN] No certificate for {domain} with a matching key was found in the backup')
+                elif cert['expired']:
+                    _job_append(job_id, '[WARN] The certificate in the backup has expired -- not installed. Issue a free one from the site\'s SSL tab.')
+                else:
+                    with app.app_context():
+                        from panel.routes.websites_ssl import install_manual_cert
+                        rv = install_manual_cert(domain, cert['fullchain'], cert['key'])
+                        resp = rv[0] if isinstance(rv, tuple) else rv
+                        res = resp.get_json(silent=True) or {}
+                    if res.get('ok'):
+                        _job_append(job_id, f'[VortexPanel] SSL certificate installed ({", ".join(cert["names"][:3])}, '
+                                            f'expires {time.strftime("%Y-%m-%d", time.gmtime(cert["expires"]))})')
+                    else:
+                        _job_append(job_id, f'[WARN] SSL certificate not installed: {res.get("error")}')
+
+            # 5. Cron jobs, run as the site's web user (not root)
+            if cron_jobs:
+                from panel.routes.cron import add_cron_job
+                from panel.routes.websites_core import web_owner_group
+                web_user = web_owner_group(result.get('php') or php_version, result.get('webserver'))[0]
+                added = 0
+                for j in cron_jobs:
+                    cmd = str(j.get('command', '')).strip()
+                    wrapped = f'runuser -u {web_user} -- sh -c {shlex.quote(cmd)}'
+                    ok_c, res_c = add_cron_job(str(j.get('schedule', '')), wrapped, f'Imported ({domain})')
+                    if ok_c:
+                        added += 1
+                    else:
+                        _job_append(job_id, f'[WARN] Cron job not added ({j.get("schedule")} {cmd[:60]}): {res_c[0]}')
+                _job_append(job_id, f'[VortexPanel] {added} cron job(s) added -- they run as {web_user} (Cron Jobs page)')
+
+            # 6. Mailboxes
+            mail_passwords = []
+            if mail_boxes:
+                if not ix.mail_ready():
+                    _job_append(job_id, '[WARN] Mailboxes not imported: the mail server is not set up on this server (Mail Server page)')
+                else:
+                    boxes, hashes = ix.detect_mail(extract_dir)
+                    want = {str(e).lower() for e in mail_boxes}
+                    n = 0
+                    for b in boxes:
+                        if b['email'] not in want:
+                            continue
+                        ok_m, gen = ix.import_mailbox(b, hashes.get((b['domain'], b['user'])), lambda l: _job_append(job_id, l))
+                        if ok_m:
+                            n += 1
+                            _job_append(job_id, f'[VortexPanel] Mailbox {b["email"]} imported ({b["messages"]} messages)')
+                            if gen:
+                                mail_passwords.append((b['email'], gen))
+                    ix.reload_mail()
+                    _job_append(job_id, f'[VortexPanel] {n} mailbox(es) imported -- existing passwords were kept where the backup had them')
+
+            _job_append(job_id, f'[VortexPanel] Import complete for {domain}')
+            if mail_passwords:
+                _job_append(job_id, '[VortexPanel] IMPORTANT: these mailboxes had no password in the backup -- new passwords were set:')
+                for e, pw in mail_passwords:
+                    _job_append(job_id, f'   - {e} — password: {pw}')
             if imported_dbs:
                 _job_append(job_id, '[VortexPanel] IMPORTANT: save these generated database credentials — they will not be shown again:')
                 for db in imported_dbs:
-                    _job_append(job_id, f'   • {db["name"]} — user: {db["user"]} — password: {db["password"]}')
+                    _job_append(job_id, f'   - {db["name"]} — user: {db["user"]} — password: {db["password"]}')
 
             # Clean up the extraction workspace (keep the original uploaded archive
             # for a short while in case something needs re-checking, but the

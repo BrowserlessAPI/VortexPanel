@@ -168,3 +168,45 @@ def install_vnstat():
     out = sh(' && '.join(cmds) + ' 2>&1', t=600)
     installed = bool(sh('which vnstat 2>/dev/null'))
     return jsonify({'ok':installed,'output':out[-300:]})
+
+
+# --- Per-site traffic history (v3.6.0) ---------------------------------------------
+# Collected every 5 minutes by vortexpanel-bandwidth.timer (panel/tasks.py)
+# from each site's access log into data/bandwidth.db. See panel/bwstats.py.
+from flask import request as _request
+
+_PERIODS = ('24h', '7d', '30d', '12m')
+
+
+@bandwidth_bp.route('/api/bandwidth/history')
+def bw_history():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import bwstats
+    period = _request.args.get('period', '7d')
+    if period not in _PERIODS:
+        return jsonify({'ok': False, 'error': 'period must be one of ' + ', '.join(_PERIODS)}), 400
+    domain = (_request.args.get('domain') or '').strip().lower() or None
+    if domain and not re.fullmatch(r'[a-z0-9.*_-]{1,253}', domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain'}), 400
+    try:
+        data = bwstats.series(period, domain)
+        sites = bwstats.site_totals(period) if not domain else []
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Traffic history is not available: {e}'}), 500
+    try:
+        from panel.tasks import timer_status
+        timer = timer_status().get('vortexpanel-bandwidth', {})
+    except Exception:
+        timer = {}
+    return jsonify({'ok': True, 'domain': domain, 'series': data, 'sites': sites,
+                    'last_collect': bwstats.last_collect(), 'collector_active': bool(timer.get('active'))})
+
+
+@bandwidth_bp.route('/api/bandwidth/collect', methods=['POST'])
+def bw_collect():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import bwstats
+    try:
+        return jsonify(bwstats.collect())
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500

@@ -491,8 +491,14 @@ def letsencrypt_ssl(domain):
 def manual_ssl(domain):
     if not req(): return jsonify({'ok':False}), 401
     d    = request.get_json() or {}
-    key  = d.get('key','').strip()
-    cert = d.get('cert','').strip()
+    return install_manual_cert(domain, d.get('cert',''), d.get('key',''))
+
+
+def install_manual_cert(domain, cert, key):
+    """Validate and install a certificate + key for a site (Upload SSL, and
+    the SSL step of Website Import). Returns a Flask response tuple/object."""
+    key  = (key or '').strip()
+    cert = (cert or '').strip()
     if not key or not cert:
         return jsonify({'ok':False,'error':'Private key and certificate are required'}), 400
 
