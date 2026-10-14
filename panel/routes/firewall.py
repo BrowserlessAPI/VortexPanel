@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, re, os, json, shlex, shutil, ipaddress
 
 try:
@@ -12,7 +13,7 @@ except ImportError:
 firewall_bp = Blueprint('firewall', __name__)
 
 
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 
 def sh(c, t=30):
@@ -559,3 +560,29 @@ def toggle_ufw():
     if not req(): return jsonify({'ok': False}), 401
     enable = bool((request.get_json() or {}).get('enable', True))
     return _toggle(enable)
+
+
+@firewall_bp.route('/api/firewall/install', methods=['POST'])
+def install_firewall():
+    """Install the distro's firewall manager (ufw on Debian/Ubuntu, firewalld
+    on RHEL-family) with SSH and the panel port already allowed. It is NOT
+    switched on here: the page asks for that separately."""
+    if not req(): return jsonify({'ok': False}), 401
+    if _backend():
+        return jsonify({'ok': True, 'backend': _backend(), 'note': 'already installed'})
+    ports = sorted(set(_ssh_ports()) | set(_panel_ports()))
+    if _is_rhel_family():
+        out, err, rc = sh3('dnf install -y firewalld 2>&1', t=600)
+        if rc == 0:
+            for p in ports:
+                sh3(f'firewall-offline-cmd --add-port={int(p)}/tcp 2>&1', t=30)
+    else:
+        out, err, rc = sh3('DEBIAN_FRONTEND=noninteractive apt-get install -y ufw 2>&1 || '
+                           '(apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y ufw) 2>&1', t=600)
+        if rc == 0:
+            for p in ports:
+                sh3(f'ufw allow {int(p)}/tcp 2>&1', t=30)
+    be = _backend()
+    if not be:
+        return jsonify({'ok': False, 'error': 'The firewall manager could not be installed: ' + (out or err)[-400:]}), 500
+    return jsonify({'ok': True, 'backend': be, 'allowed_ports': ports})

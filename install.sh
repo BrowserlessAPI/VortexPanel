@@ -1,8 +1,33 @@
 #!/bin/bash
-# VortexPanel Universal Installer
+# VortexPanel installer
 # Supports: Ubuntu 20.04+, Debian 11+, Fedora 38+, RHEL/AlmaLinux/Rocky 8+
+#
+#   curl -fsSL https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/install.sh | sudo bash
+#
+# A new install gets a random port, a random login path, a random admin
+# username and password, and HTTPS with a self-signed certificate.
+# Options for a new install (also as environment variables):
+#   --port N          VP_PORT     fixed port instead of a random one
+#   --path P|off      VP_PATH     login path, "off" for none
+#   --user NAME       VP_USER     administrator username
+#   --http            VP_HTTP=1   no HTTPS (only behind a VPN / SSH tunnel)
+#   --version vX.Y.Z  VP_VERSION  install this release instead of the latest
+# Running it again on an installed server repairs/updates the code and keeps
+# every setting, account and password.
 
 set -e
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --port) VP_PORT="$2"; shift 2 ;;
+        --path) VP_PATH="$2"; shift 2 ;;
+        --user) VP_USER="$2"; shift 2 ;;
+        --http) VP_HTTP=1; shift ;;
+        --version) VP_VERSION="$2"; shift 2 ;;
+        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+[ "$(id -u)" = "0" ] || { echo "Run the installer as root (sudo bash install.sh)"; exit 1; }
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[VortexPanel]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
@@ -43,13 +68,16 @@ if [ "$PKG_MGR" = "apt" ]; then
     apt-get update -qq || true
     # cron: minimal/cloud images lack it (panel cron jobs, CRS/cert renewals);
     # zip: File Manager archives.
-    apt-get install -y python3 python3-pip python3-venv curl git wget unzip zip cron sudo ca-certificates
+    apt-get install -y python3 python3-pip python3-venv curl git wget unzip zip cron sudo ca-certificates openssl openssh-client iproute2
+    # ufw: the panel's Firewall page manages it. Installed with rules for SSH
+    # and the panel port but NOT switched on - that stays the admin's choice.
+    command -v ufw >/dev/null 2>&1 || command -v firewall-cmd >/dev/null 2>&1 || apt-get install -y ufw || true
     systemctl enable --now cron 2>/dev/null || true
 elif [ "$PKG_MGR" = "dnf" ]; then
     # RHEL/Alma/Rocky 9+ and Fedora cloud images ship curl-minimal, which
     # conflicts with the full curl package: asking for "curl" there aborted
     # the whole installer (set -e). Only install curl when it is missing.
-    DNF_PKGS="python3 python3-pip git wget unzip zip cronie sudo"
+    DNF_PKGS="python3 python3-pip git wget unzip zip cronie sudo openssl openssh-clients iproute"
     command -v curl >/dev/null 2>&1 || DNF_PKGS="$DNF_PKGS curl"
     # semanage (SELinux port/file labels for sites, phpMyAdmin, FTP)
     if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" != "Disabled" ]; then
@@ -91,45 +119,79 @@ fi
 
 # Install VortexPanel
 INSTALL_DIR="/opt/vortexpanel"
+FRESH=1
+[ -f "$INSTALL_DIR/credentials.json" ] && FRESH=0
 log "Installing VortexPanel to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
+chmod 700 "$INSTALL_DIR"
 
-# Clone or copy — always end up with a PERMANENT, git-connected source at
-# /root/Vortexpanel, never a /tmp path (which gets wiped on reboot and silently
-# breaks future `git pull` + deploy.sh workflows with no way to trace it back).
-SRC_DIR="/root/Vortexpanel"
-if [ -d "$SRC_DIR/.git" ]; then
-    log "Using existing git checkout at $SRC_DIR"
-elif [ -e "$SRC_DIR" ]; then
-    # Something is there but it's not a valid git repo (e.g. leftover files
-    # from a previous manual copy) — move it aside rather than fail or silently
-    # clone into a messy directory.
-    warn "$SRC_DIR exists but isn't a git repo — moving it to ${SRC_DIR}.bak"
-    mv "$SRC_DIR" "${SRC_DIR}.bak.$(date +%s)"
-    git clone https://github.com/BrowserlessAPI/VortexPanel.git "$SRC_DIR"
+# Where the code comes from:
+#  - /root/Vortexpanel (a git clone you work in): used as is, and
+#    /root/deploy.sh + /root/rollback.sh are created for that workflow.
+#  - otherwise the newest signed release tag from GitHub (never the
+#    unreleased main branch), unpacked from a bare mirror in
+#    $INSTALL_DIR/src.git that the panel's updater keeps using.
+REPO_URL="${VP_REPO_URL:-https://github.com/BrowserlessAPI/VortexPanel.git}"
+DEV_DIR="/root/Vortexpanel"
+TRUST_KEY='support@browserlessapi.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJPCUgoALgv3KxwOQUM65hIcfGkXv6cS3/LwQE1ijGT3'
+DEV_MODE=0
+if [ -d "$DEV_DIR/.git" ]; then
+    DEV_MODE=1
+    SRC_DIR="$DEV_DIR"
+    log "Using your git checkout at $SRC_DIR"
 else
-    git clone https://github.com/BrowserlessAPI/VortexPanel.git "$SRC_DIR"
+    MIRROR="$INSTALL_DIR/src.git"
+    if [ -d "$MIRROR" ]; then
+        git -C "$MIRROR" fetch --tags --force --prune origin -q
+    else
+        git clone --bare -q "$REPO_URL" "$MIRROR"
+    fi
+    chmod 700 "$MIRROR"
+    TAG="${VP_VERSION:-$(git -C "$MIRROR" tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)}"
+    case "$TAG" in v*|"") ;; *) TAG="v$TAG" ;; esac
+    SRC_DIR="$INSTALL_DIR/data/install_src"
+    rm -rf "$SRC_DIR"; mkdir -p "$SRC_DIR"; chmod 700 "$INSTALL_DIR/data"
+    if [ -n "$TAG" ] && git -C "$MIRROR" rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+        SIGNERS=$(mktemp); echo "$TRUST_KEY" > "$SIGNERS"
+        if git -C "$MIRROR" -c gpg.ssh.allowedSignersFile="$SIGNERS" verify-tag "$TAG" >/dev/null 2>&1; then
+            log "Release $TAG: signature verified"
+        else
+            warn "Release $TAG is not signed with the VortexPanel release key - installing it anyway"
+        fi
+        rm -f "$SIGNERS"
+        git -C "$MIRROR" archive --format=tar "$TAG" | tar -x -C "$SRC_DIR"
+    else
+        [ -n "$VP_VERSION" ] && err "Release $VP_VERSION does not exist"
+        warn "No release tag found - installing the main branch"
+        git -C "$MIRROR" archive --format=tar main | tar -x -C "$SRC_DIR"
+    fi
 fi
-cp -r "$SRC_DIR/panel" "$SRC_DIR/web" "$SRC_DIR/app.py" "$INSTALL_DIR/"
-cp "$SRC_DIR/requirements.txt" "$INSTALL_DIR/" 2>/dev/null || true
+[ -f "$SRC_DIR/app.py" ] || err "The downloaded code is incomplete ($SRC_DIR/app.py missing)"
+
+for item in panel web; do
+    rm -rf "$INSTALL_DIR/$item.new"; cp -r "$SRC_DIR/$item" "$INSTALL_DIR/$item.new"
+    rm -rf "$INSTALL_DIR/$item"; mv "$INSTALL_DIR/$item.new" "$INSTALL_DIR/$item"
+done
+for item in app.py requirements.txt install.sh VERSION; do
+    if [ -f "$SRC_DIR/$item" ]; then cp "$SRC_DIR/$item" "$INSTALL_DIR/"; fi
+done
+find "$INSTALL_DIR/panel" "$INSTALL_DIR/web" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 if [ -f "$SRC_DIR/VERSION" ]; then
-    cp "$SRC_DIR/VERSION" "$INSTALL_DIR/"
     echo "v$(tr -d ' \n' < "$SRC_DIR/VERSION" | sed 's/^v//')" > "$INSTALL_DIR/version.txt"
 fi
+[ "$DEV_MODE" = "1" ] || rm -rf "$SRC_DIR"
 
 # Create virtualenv
 log "Setting up Python environment..."
-"$PYTHON_BIN" -m venv "$INSTALL_DIR/venv"
-"$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q
-if [ -f "$SRC_DIR/requirements.txt" ]; then
-    "$INSTALL_DIR/venv/bin/pip" install -r "$SRC_DIR/requirements.txt" -q
-else
-    "$INSTALL_DIR/venv/bin/pip" install flask flask-session flask-sock requests gunicorn boto3 -q
-fi
+[ -x "$INSTALL_DIR/venv/bin/python" ] || "$PYTHON_BIN" -m venv "$INSTALL_DIR/venv"
+"$INSTALL_DIR/venv/bin/pip" install --upgrade pip -q --disable-pip-version-check
+"$INSTALL_DIR/venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt" -q --disable-pip-version-check
 
-# Create directories
-mkdir -p /opt/vortexpanel/{backups,logs,sessions}
+# Create directories (data/ holds jobs, temp downloads and state: root only)
+mkdir -p "$INSTALL_DIR"/{backups,logs,sessions,data,ssl}
+chmod 700 "$INSTALL_DIR"/{sessions,data,ssl}
 mkdir -p /var/log/vortexpanel
+chmod 750 /var/log/vortexpanel
 mkdir -p /etc/nginx/vortex 2>/dev/null || true
 # Web root for every site the panel creates (never the distro default
 # docroot /var/www/html or /usr/share/nginx/html -- see os_utils.get_webroot).
@@ -144,30 +206,33 @@ if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" != "Di
     fi
 fi
 
-# Create credentials. Hashed with Argon2id (bcrypt fallback) from the venv,
-# the same scheme auth.py uses, instead of unsalted SHA-256. Files are 0600:
-# the default umask left the hash and the plaintext password world-readable.
-if [ ! -f "$INSTALL_DIR/credentials.json" ]; then
-    PASS=$("$INSTALL_DIR/venv/bin/python" -c 'import secrets,string; a=string.ascii_letters+string.digits; print("".join(secrets.choice(a) for _ in range(16)))')
+randstr() { "$INSTALL_DIR/venv/bin/python" -c "import secrets,sys; a=sys.argv[2]; print(''.join(secrets.choice(a) for _ in range(int(sys.argv[1]))))" "$1" "$2"; }
+LOWER='abcdefghijkmnpqrstuvwxyz23456789'
+ALNUM='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+port_in_use() { ss -Hltn "( sport = :$1 )" 2>/dev/null | grep -q . ; }
+
+# Credentials (new install only). Hashed with Argon2id (bcrypt fallback),
+# the same scheme the panel uses. The plaintext copy in admin_password.txt
+# is deleted by the panel after the first successful sign-in.
+if [ "$FRESH" = "1" ]; then
+    ADMIN_USER="${VP_USER:-$(randstr 8 "$LOWER")}"
+    PASS=$(randstr 16 "$ALNUM")
     ( umask 077
-      VP_PASS="$PASS" "$INSTALL_DIR/venv/bin/python" - "$INSTALL_DIR/credentials.json" << 'PYEOF'
-import json, os, sys, hashlib
+      VP_PASS="$PASS" VP_NAME="$ADMIN_USER" "$INSTALL_DIR/venv/bin/python" - "$INSTALL_DIR/credentials.json" << 'PYEOF'
+import json, os, sys, secrets
 pw = os.environ['VP_PASS']
 try:
     from argon2 import PasswordHasher
     h = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=1).hash(pw)
 except Exception:
-    try:
-        import bcrypt
-        h = bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
-    except Exception:
-        h = hashlib.sha256(pw.encode()).hexdigest()
+    import bcrypt
+    h = bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
 with open(sys.argv[1], 'w') as f:
-    json.dump({'username': 'admin', 'password_hash': h, 'email': 'admin@vortexpanel.local'}, f, indent=2)
+    json.dump({'username': os.environ['VP_NAME'], 'password_hash': h,
+               'session_version': secrets.token_hex(8)}, f, indent=2)
 PYEOF
       echo "$PASS" > "$INSTALL_DIR/admin_password.txt" )
     chmod 600 "$INSTALL_DIR/credentials.json" "$INSTALL_DIR/admin_password.txt"
-    log "Generated admin password: $PASS"
 fi
 
 # Session-signing key, created once here so the 4 gunicorn workers never
@@ -177,27 +242,75 @@ if [ ! -s "$INSTALL_DIR/secret.key" ]; then
 fi
 chmod 600 "$INSTALL_DIR/secret.key" 2>/dev/null || true
 
-# Re-running the installer must not reset a port / HTTPS setup made in
-# Settings: keep the existing unit's --bind and certificate arguments.
-# Dual-stack when the kernel has IPv6 and [::] also accepts IPv4
-# (net.ipv6.bindv6only=0, the Linux default); IPv4-only otherwise.
-PANEL_BIND="0.0.0.0:8888"
+# Listening address. Dual-stack when the kernel has IPv6 and [::] also
+# accepts IPv4 (net.ipv6.bindv6only=0, the Linux default); IPv4 otherwise.
+BIND_HOST="0.0.0.0"
 if [ -f /proc/net/if_inet6 ] && [ "$(cat /proc/sys/net/ipv6/bindv6only 2>/dev/null)" = "0" ]; then
-    PANEL_BIND="[::]:8888"
+    BIND_HOST="[::]"
 fi
-PANEL_TLS=""
 UNIT_FILE=/etc/systemd/system/vortexpanel.service
-if [ -f "$UNIT_FILE" ]; then
-    OLD_BIND=$(grep -o -- '--bind [^ ]*' "$UNIT_FILE" | head -1 | awk '{print $2}')
-    [ -n "$OLD_BIND" ] && PANEL_BIND="$OLD_BIND"
+PANEL_TLS=""
+if [ -f "$UNIT_FILE" ] && grep -q -- '--bind' "$UNIT_FILE"; then
+    # Re-run: keep the port and HTTPS setup made in Settings.
+    PANEL_BIND=$(grep -o -- '--bind [^ ]*' "$UNIT_FILE" | head -1 | awk '{print $2}')
     PANEL_TLS=$(grep -o -- '--certfile [^ ]* --keyfile [^ ]*' "$UNIT_FILE" | head -1)
+else
+    if [ -n "$VP_PORT" ]; then
+        PANEL_PORT="$VP_PORT"
+    else
+        for _ in $(seq 1 50); do
+            PANEL_PORT=$(( 10000 + $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 50000 ))
+            port_in_use "$PANEL_PORT" || break
+        done
+    fi
+    PANEL_BIND="$BIND_HOST:$PANEL_PORT"
+    if [ -z "$VP_HTTP" ]; then
+        # Self-signed certificate for the server's address. Replace it with a
+        # Let's Encrypt one in Settings > Panel SSL once a domain points here.
+        IP4=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+        SAN="DNS:localhost"; [ -n "$IP4" ] && SAN="IP:$IP4,DNS:localhost"
+        if openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+            -keyout "$INSTALL_DIR/ssl/panel.key" -out "$INSTALL_DIR/ssl/panel.crt" \
+            -subj "/CN=${IP4:-localhost}/O=VortexPanel/OU=Panel" -addext "subjectAltName=$SAN" >/dev/null 2>&1; then
+            chmod 600 "$INSTALL_DIR/ssl/panel.key"
+            PANEL_TLS="--certfile $INSTALL_DIR/ssl/panel.crt --keyfile $INSTALL_DIR/ssl/panel.key"
+        else
+            warn "Could not create a certificate - the panel will use plain HTTP"
+        fi
+    fi
 fi
 PANEL_PORT="${PANEL_BIND##*:}"
 PANEL_SCHEME=http
 [ -n "$PANEL_TLS" ] && PANEL_SCHEME=https
 
+# Panel settings for a new install: port, HTTPS and a random login path.
+if [ "$FRESH" = "1" ] || [ ! -f "$INSTALL_DIR/config.json" ]; then
+    case "${VP_PATH:-random}" in
+        off|none) SEC_PATH="" ;;
+        random) SEC_PATH=$(randstr 8 "$LOWER") ;;
+        *) SEC_PATH="$VP_PATH" ;;
+    esac
+    [ -f "$INSTALL_DIR/config.json" ] || ( umask 077; echo '{}' > "$INSTALL_DIR/config.json" )
+    VP_SP="$SEC_PATH" VP_PT="$PANEL_PORT" VP_SSL="$PANEL_TLS" "$INSTALL_DIR/venv/bin/python" - "$INSTALL_DIR/config.json" << 'PYEOF'
+import json, os, sys
+p = sys.argv[1]
+try:
+    cfg = json.load(open(p))
+except Exception:
+    cfg = {}
+cfg.setdefault('panel_name', 'VortexPanel')
+cfg['port'] = int(os.environ['VP_PT'])
+cfg['ssl_enabled'] = bool(os.environ.get('VP_SSL'))
+if not cfg.get('security_path'):
+    cfg['security_path'] = os.environ.get('VP_SP', '')
+cfg.setdefault('session_hours', 12)
+json.dump(cfg, open(p, 'w'), indent=2)
+PYEOF
+    chmod 600 "$INSTALL_DIR/config.json"
+fi
+
 # Create systemd service
-cat > /etc/systemd/system/vortexpanel.service << EOF
+cat > /etc/systemd/system/vortexpanel.service << UNITEOF
 [Unit]
 Description=VortexPanel Control Panel
 After=network.target
@@ -206,138 +319,89 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR
+UMask=0077
 ExecStart=$INSTALL_DIR/venv/bin/gunicorn --workers 4 --threads 4 --worker-class gthread --bind $PANEL_BIND $PANEL_TLS --timeout 120 --access-logfile /var/log/vortexpanel/access.log --error-logfile /var/log/vortexpanel/error.log app:app
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-EOF
+UNITEOF
+
+# Command-line tool: vortexpanel (info, reset-password, port, path, ...)
+cat > /usr/local/bin/vortexpanel << CLIEOF
+#!/bin/sh
+cd $INSTALL_DIR && VP_NO_INIT=1 exec $INSTALL_DIR/venv/bin/python -m panel.cli "\$@"
+CLIEOF
+chmod 755 /usr/local/bin/vortexpanel
 
 systemctl daemon-reload
-systemctl enable vortexpanel
+systemctl enable vortexpanel >/dev/null 2>&1
 systemctl restart vortexpanel
 
-# Generate deploy.sh — always points at the SAME $SRC_DIR resolved above,
-# so it can never drift out of sync with wherever the source actually lives.
-# Auto-backs up the current code + configs before every deploy, so a bad
-# update can always be undone with rollback.sh — the code+config themselves
-# are never at risk from a normal deploy (they live outside panel/web/app.py
-# entirely), but this gives genuine recovery if the NEW code itself is bad.
-cat > /root/deploy.sh << EOF
+if [ "$DEV_MODE" = "1" ]; then
+# Developer workflow: /root/deploy.sh copies $SRC_DIR into the install after
+# a snapshot (same format the panel's updater uses); /root/rollback.sh puts
+# the newest snapshot back.
+cat > /root/deploy.sh << DEPLOYEOF
 #!/bin/bash
-BACKUP_ROOT="$INSTALL_DIR/update_backups"
-BACKUP_DIR="\$BACKUP_ROOT/\$(date +%Y%m%d-%H%M%S)"
-mkdir -p "\$BACKUP_DIR"
-echo "Backing up current install to \$BACKUP_DIR ..."
-for item in panel web app.py requirements.txt VERSION version.txt; do
-    if [ -e "$INSTALL_DIR/\$item" ]; then
-        cp -r "$INSTALL_DIR/\$item" "\$BACKUP_DIR/" 2>/dev/null
-    fi
-done
-for f in config.json credentials.json admin_password.txt ai_config.json cdn_config.json secret.key; do
-    if [ -f "$INSTALL_DIR/\$f" ]; then
-        cp "$INSTALL_DIR/\$f" "\$BACKUP_DIR/" 2>/dev/null
-    fi
-done
-echo "\$BACKUP_DIR" > "$INSTALL_DIR/.last_backup"
-ls -1dt "\$BACKUP_ROOT"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
-# New Python dependencies first: a release that adds one otherwise restarts
-# straight into an ImportError.
-if [ -f $SRC_DIR/requirements.txt ]; then
-    $INSTALL_DIR/venv/bin/pip install -q --disable-pip-version-check -r $SRC_DIR/requirements.txt || { echo "ERROR: pip install failed - nothing deployed"; exit 1; }
-    cp $SRC_DIR/requirements.txt $INSTALL_DIR/
-fi
-cp -r $SRC_DIR/panel/ $SRC_DIR/web/ $INSTALL_DIR/
-cp $SRC_DIR/app.py $INSTALL_DIR/
-# Keep the displayed version in step with what was deployed (version.txt
-# takes precedence over the repo VERSION file in the panel).
-if [ -f $SRC_DIR/VERSION ]; then
-    cp $SRC_DIR/VERSION $INSTALL_DIR/
-    echo "v\$(tr -d ' \n' < $SRC_DIR/VERSION | sed 's/^v//')" > $INSTALL_DIR/version.txt
-fi
-find $INSTALL_DIR -name "__pycache__" -exec rm -rf {} + 2>/dev/null
-systemctl restart vortexpanel && sleep 3
-UNIT=/etc/systemd/system/vortexpanel.service
-PORT=\$(grep -o -- '--bind [^ ]*' \$UNIT | head -1 | sed 's/.*://')
-SCHEME=http; grep -q -- '--certfile' \$UNIT && SCHEME=https
-curl -sk -o /dev/null -w "Panel: %{http_code}\n" "\$SCHEME://127.0.0.1:\${PORT:-8888}/"
-echo "Deployed (backup saved: \$BACKUP_DIR - run 'bash /root/rollback.sh' to undo)"
-EOF
-chmod +x /root/deploy.sh
-log "Created /root/deploy.sh (source: $SRC_DIR -> install: $INSTALL_DIR)"
-
-# Generate rollback.sh — restores code + configs from the most recent (or a
-# specific) deploy.sh backup snapshot. A backup nobody can easily restore
-# from isn't worth much, so this ships alongside deploy.sh automatically.
-cat > /root/rollback.sh << EOF
-#!/bin/bash
-# Usage: rollback.sh [backup_timestamp]
-#   No argument   -> restores the most recent backup
-#   With argument -> restores that specific one, e.g. rollback.sh 20260712-073135
-INSTALL_DIR="$INSTALL_DIR"
-BACKUP_ROOT="\$INSTALL_DIR/update_backups"
-if [ -n "\$1" ]; then
-    BACKUP_DIR="\$BACKUP_ROOT/\$1"
+set -e
+cd $INSTALL_DIR
+BDIR=\$(VP_NO_INIT=1 $INSTALL_DIR/venv/bin/python -c "from panel import updater; print(updater.snapshot('deploy'))")
+echo "Snapshot: \$BDIR"
+$INSTALL_DIR/venv/bin/pip install -q --disable-pip-version-check -r $SRC_DIR/requirements.txt || { echo "pip install failed - nothing deployed"; exit 1; }
+for item in panel web; do rm -rf $INSTALL_DIR/\$item; cp -r $SRC_DIR/\$item $INSTALL_DIR/; done
+for item in app.py requirements.txt install.sh VERSION; do cp $SRC_DIR/\$item $INSTALL_DIR/ 2>/dev/null || true; done
+echo "v\$(tr -d ' \n' < $SRC_DIR/VERSION | sed 's/^v//')" > $INSTALL_DIR/version.txt
+find $INSTALL_DIR/panel $INSTALL_DIR/web -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+if VP_NO_INIT=1 $INSTALL_DIR/venv/bin/python -c "from panel import updater; import sys; sys.exit(updater.schedule_restart(None, '\$BDIR', wait=True))"; then
+    echo "Deployed. Undo with: bash /root/rollback.sh"
 else
-    if [ -f "\$INSTALL_DIR/.last_backup" ]; then
-        BACKUP_DIR=\$(cat "\$INSTALL_DIR/.last_backup")
-    else
-        BACKUP_DIR=\$(ls -1dt "\$BACKUP_ROOT"/*/ 2>/dev/null | head -1)
-    fi
+    echo "The new code did not start - the snapshot was restored."; exit 1
 fi
-if [ -z "\$BACKUP_DIR" ] || [ ! -d "\$BACKUP_DIR" ]; then
-    echo "ERROR: No backup found\${1:+ for timestamp \$1}."
-    echo "Available backups:"
-    ls -1 "\$BACKUP_ROOT" 2>/dev/null || echo "  (none)"
-    exit 1
-fi
-echo "Rolling back to: \$BACKUP_DIR"
-echo "This will restore panel/, web/, app.py, and config files from that snapshot."
-read -p "Continue? [y/N] " confirm
-if [ "\$confirm" != "y" ] && [ "\$confirm" != "Y" ]; then
-    echo "Cancelled."
-    exit 0
-fi
-for item in panel web app.py requirements.txt VERSION version.txt; do
-    if [ -e "\$BACKUP_DIR/\$item" ]; then
-        rm -rf "\$INSTALL_DIR/\$item"
-        cp -r "\$BACKUP_DIR/\$item" "\$INSTALL_DIR/"
-        echo "Restored \$item"
-    fi
-done
-for f in config.json credentials.json admin_password.txt ai_config.json cdn_config.json secret.key; do
-    if [ -f "\$BACKUP_DIR/\$f" ]; then
-        cp "\$BACKUP_DIR/\$f" "\$INSTALL_DIR/"
-        echo "Restored \$f"
-    fi
-done
-find "\$INSTALL_DIR" -name "__pycache__" -exec rm -rf {} + 2>/dev/null
-systemctl restart vortexpanel 2>/dev/null && sleep 3
-UNIT=/etc/systemd/system/vortexpanel.service
-PORT=\$(grep -o -- '--bind [^ ]*' \$UNIT | head -1 | sed 's/.*://')
-SCHEME=http; grep -q -- '--certfile' \$UNIT && SCHEME=https
-curl -sk -o /dev/null -w "Panel: %{http_code}\n" "\$SCHEME://127.0.0.1:\${PORT:-8888}/" 2>/dev/null
-echo "Rollback complete"
-EOF
-chmod +x /root/rollback.sh
-log "Created /root/rollback.sh"
-
-# Firewall rules
-if command -v ufw &>/dev/null; then
-    ufw allow "$PANEL_PORT"/tcp 2>/dev/null || true
-fi
-# firewalld is checked independently of ufw (both can be installed) and
-# only when it is actually running.
-if command -v firewall-cmd &>/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port="$PANEL_PORT"/tcp 2>/dev/null || true
-    firewall-cmd --reload 2>/dev/null || true
+DEPLOYEOF
+cat > /root/rollback.sh << 'ROLLEOF'
+#!/bin/bash
+exec /usr/local/bin/vortexpanel rollback
+ROLLEOF
+chmod 700 /root/deploy.sh /root/rollback.sh
+log "Developer scripts: /root/deploy.sh and /root/rollback.sh"
 fi
 
-IP=$(curl -s --max-time 10 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
+# Firewall: open the panel port (and keep SSH open) wherever a firewall exists.
+SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+SSH_PORT=${SSH_PORT:-22}
+if command -v ufw >/dev/null 2>&1; then
+    ufw allow "$SSH_PORT"/tcp >/dev/null 2>&1 || true
+    ufw allow "$PANEL_PORT"/tcp >/dev/null 2>&1 || true
+fi
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="$PANEL_PORT"/tcp >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+
+# Wait until the panel answers.
+UP=0
+for _ in $(seq 1 60); do
+    if curl -sk --noproxy '*' -o /dev/null -w '%{http_code}' "$PANEL_SCHEME://127.0.0.1:$PANEL_PORT/api/health" 2>/dev/null | grep -q 200; then UP=1; break; fi
+    sleep 1
+done
+[ "$UP" = "1" ] || warn "The panel is not answering yet - check: vortexpanel logs"
+
 log "============================================"
-log "VortexPanel installed successfully!"
-log "URL: $PANEL_SCHEME://$IP:$PANEL_PORT"
-log "Username: admin"
-log "Password: $(cat $INSTALL_DIR/admin_password.txt 2>/dev/null || echo 'See credentials.json')"
+if [ "$FRESH" = "1" ]; then
+    log "VortexPanel installed."
+else
+    log "VortexPanel updated - settings, accounts and passwords were kept."
+fi
+/usr/local/bin/vortexpanel info || true
+if [ "$FRESH" = "1" ]; then
+    log "Save these details now. Run 'vortexpanel' to see them again; the password"
+    log "is removed from the server after your first sign-in."
+    [ "$PANEL_SCHEME" = "https" ] && log "Your browser warns about the self-signed certificate once: that is expected."
+    if command -v ufw >/dev/null 2>&1 && ! ufw status 2>/dev/null | grep -q "Status: active"; then
+        log "The ufw firewall is installed but off (rules for SSH port $SSH_PORT and the panel are ready)."
+        log "Turn it on in Security > Firewall or with: ufw enable"
+    fi
+fi
 log "============================================"

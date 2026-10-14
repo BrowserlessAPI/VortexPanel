@@ -27,8 +27,34 @@ let _editorCM = null;
 // page load), so they are answered locally; each page loads again on
 // 'vortex-logged-in'.
 let _vpAuthed = false;
+// Mirror of panel/users.py for limited roles, so pages that a viewer or site
+// manager cannot use do not fire requests the server would refuse anyway
+// (the server stays the authority).
+let _vpRole = 'admin', _vpSites = [];
+function _vpRoleAllows(method, url) {
+  if (_vpRole === 'admin') return true;
+  const p = url.split('?')[0];
+  if (/^\/api\/auth\/(security-settings|audit-log)/.test(p)) return false;
+  if (/^\/api\/(auth|i18n|health|users\/me)\b/.test(p)) return true;
+  if (_vpRole === 'viewer') {
+    return method === 'GET' && (/^\/api\/(dashboard|system|monitor|monitoring|bandwidth|services|alerts\/history)(\/|$)/.test(p)
+      || p === '/api/websites' || p === '/api/modules' || p === '/api/modules/list');
+  }
+  if (_vpRole === 'site') {
+    if (method === 'GET' && /^\/api\/(dashboard|system)(\/|$)/.test(p)) return true;
+    if (method === 'GET' && ['/api/websites', '/api/wp/sites', '/api/backups/sites', '/api/websites/php-versions',
+        '/api/wp/php-versions', '/api/wp/wp-versions', '/api/wp/db-engines'].includes(p)) return true;
+    const m = p.match(/^\/api\/(?:websites|wp)\/([^\/]+)/) || p.match(/^\/api\/backups\/sites\/([^\/]+)\//);
+    if (m) return _vpSites.includes(decodeURIComponent(m[1]));
+    return /^\/api\/files\//.test(p);
+  }
+  return false;
+}
 async function api(method, url, body) {
-  if (!_vpAuthed && url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
+  if (_vpAuthed && url.startsWith('/api/') && !_vpRoleAllows(method, url)) {
+    return { ok: false, forbidden: true, error: 'Your account does not have access to this.' };
+  }
+  if (!_vpAuthed && url.startsWith('/api/') && !/^\/api\/(auth\/(check|login|verify-2fa|logout)|i18n|health)/.test(url)) {
     return { ok: false, error: 'Unauthorized' };
   }
   const opts = { method, headers: {'Content-Type':'application/json'}, cache: 'no-store' };
@@ -153,26 +179,30 @@ document.addEventListener('alpine:init', () => {
       show2FA:false, showPw:false, showIP:false, showAudit:false,
       twofa: {enabled:false, secret:'', qr_svg:'', code:'', err:'',
               setupLoading:false, enabling:false,
-              disableConfirm:false, disablePw:'', disabling:false},
+              disableConfirm:false, disablePw:'', disabling:false,
+              backupCodes:[], codesLeft:0, regenConfirm:false, regenPw:''},
       pwForm: {current:'', newpw:'', confirm:''},
       allowlistText: '', sessionHours: 24,
       auditLog: [], auditLoading: false,
     },
+    role: 'admin',
   });
 }); // end alpine:init
 
-function toast(msg, type='info') {
+function toast(msg, type='info', ms) {
   // Pages mounted behind the login screen may call the API before the user
   // signs in; their "Unauthorized" replies are expected, not errors to show.
   if (msg === 'Unauthorized' && vpActivePage() === null) return;
+  if (msg === 'Your account does not have access to this.' && _vpRole !== 'admin') return;
   const c = document.getElementById('toast-container');
   const d = document.createElement('div');
   if (type === 'warn') type = 'warning';
   if (!['success','error','info','warning'].includes(type)) type = 'info';
   d.className = `toast toast-${type}`;
-  d.textContent = (type==='success'?'✓ ':type==='error'?'✕ ':'') + (msg == null ? '' : msg);
+  d.textContent = (msg == null ? '' : (window.vpT ? vpT(String(msg)) : msg));
+  d.setAttribute('role', type === 'error' ? 'alert' : 'status');
   c.appendChild(d);
-  setTimeout(() => d.remove(), 3500);
+  setTimeout(() => d.remove(), ms || (type === 'error' ? 6000 : 3500));
 }
 
 // --- Security settings modals (2FA / password / IP allowlist / audit log) —
@@ -183,7 +213,7 @@ function toast(msg, type='info') {
 async function openSecurityModal(which) {
   const s = Alpine.store('vp').security;
   const r = await get('/api/auth/2fa/status').catch(()=>({ok:false}));
-  if (r.ok) s.twofa.enabled = r.enabled;
+  if (r.ok) { s.twofa.enabled = r.enabled; s.twofa.codesLeft = r.backup_codes_left || 0; }
   const sc = await get('/api/auth/security-settings').catch(()=>({ok:false}));
   if (sc.ok) { s.allowlistText = (sc.allowed_ips||[]).join('\n'); s.sessionHours = sc.session_hours||24; }
   if (which === 'Audit') await loadLoginAuditLog();
@@ -232,8 +262,55 @@ async function enable2FA() {
   s.twofa.enabling=true; s.twofa.err='';
   const r = await post('/api/auth/2fa/enable', {code:s.twofa.code});
   s.twofa.enabling=false;
-  if (r.ok) { s.twofa.enabled=true; s.twofa.secret=''; s.twofa.qr_svg=''; s.twofa.code=''; toast('2FA enabled','success'); }
+  if (r.ok) {
+    s.twofa.enabled=true; s.twofa.secret=''; s.twofa.qr_svg=''; s.twofa.code='';
+    s.twofa.backupCodes = r.backup_codes || []; s.twofa.codesLeft = s.twofa.backupCodes.length;
+    toast('2FA enabled','success');
+  }
   else { s.twofa.err=r.error||'Invalid code'; }
+}
+
+async function regenBackupCodes() {
+  const s = Alpine.store('vp').security;
+  if (!s.twofa.regenPw) { toast('Enter your password','error'); return; }
+  const r = await post('/api/auth/2fa/backup-codes', {password:s.twofa.regenPw});
+  if (r.ok) {
+    s.twofa.backupCodes = r.backup_codes || []; s.twofa.codesLeft = s.twofa.backupCodes.length;
+    s.twofa.regenConfirm = false; s.twofa.regenPw = '';
+  } else toast(r.error||'Failed','error');
+}
+
+// Confirmation for removing an app: what it affects on this server (sites,
+// databases, FTP accounts, ...) and where its configuration is saved.
+async function vpConfirmUninstall(name, id, ver) {
+  const r = await get(`/api/modules/${id}/uninstall-impact` + (ver ? `?version=${encodeURIComponent(ver)}` : '')).catch(() => ({ok:false}));
+  let msg = `Uninstall ${name}${ver ? ' ' + ver : ''}?`;
+  const w = (r && r.ok && r.warnings) || [];
+  if (w.length) msg += '\n\nThis will affect your server:\n- ' + w.join('\n- ');
+  if (r && r.ok && r.config_backup) msg += `\n\nIts configuration (${r.config_paths.join(', ')}) is saved to ${r.backup_dir} first.`;
+  msg += '\n\nData that is deleted cannot be recovered.';
+  return confirm(msg);
+}
+
+function copyText(text) {
+  const done = () => toast('Copied','success');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done, () => fallback());
+  } else fallback();
+  function fallback() {
+    const t = document.createElement('textarea');
+    t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); done(); } catch (e) { toast('Copy failed','error'); }
+    t.remove();
+  }
+}
+
+function downloadText(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type:'text/plain'}));
+  a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
 async function disable2FA() {
@@ -468,6 +545,7 @@ function rootApp() {
     loginLoading: false,
     show2fa: false,
     totpCode: '',
+    useBackupCode: false,
     totpErr: '',
     totpLoading: false,
 
@@ -512,14 +590,37 @@ function rootApp() {
         { id:'disk',       icon:'hard-drive', label:'Disk Usage', color:'#b45309', colorBg:'#fef3c7' },
         { id:'logs',       icon:'clipboard', label:'Log Viewer', color:'#374151', colorBg:'#f3f4f6' },
         { id:'bandwidth',  icon:'trending-up', label:'Bandwidth',  color:'#0369a1', colorBg:'#e0f2fe' },
+        { id:'alerts',     icon:'alert', label:'Alerts',     color:'#c2410c', colorBg:'#ffedd5' },
         { id:'security',   icon:'lock', label:'Security',   color:'#b91c1c', colorBg:'#fee2e2' },
         { id:'waf',        icon:'shield', label:'WAF',        color:'#9333ea', colorBg:'#f3e8ff' },
+        { id:'users',      icon:'users', label:'Users & API', color:'#4338ca', colorBg:'#e0e7ff' },
         { id:'settings',   icon:'settings', label:'Settings',   color:'#374151', colorBg:'#f3f4f6' },
       ]},
     ],
+    role: 'admin', userSites: [],
+    languages: [], lang: (window.vpLang ? vpLang() : 'en'),
+    // Pages each limited role can open (the server enforces the same rules).
+    _rolePages: {
+      site:   ['dashboard', 'websites', 'wp', 'files'],
+      viewer: ['dashboard', 'monitoring', 'bandwidth', 'services', 'alerts'],
+    },
+    visibleNav() {
+      const allow = this._rolePages[this.role];
+      if (!allow) return this.nav;
+      return this.nav.map(g => ({group: g.group, items: g.items.filter(i => allow.includes(i.id))}))
+                     .filter(g => g.items.length);
+    },
 
     async init() {
       window.addEventListener('nav', e => this.go(e.detail.page));
+      if (window.vpLanguages) vpLanguages().then(l => { this.languages = l; });
+      // Connection indicator: the server answers /api/health or it does not.
+      const ping = async () => {
+        try { const r = await fetch('/api/health', {cache:'no-store'}); this.online = r.ok; }
+        catch (e) { this.online = false; }
+      };
+      setInterval(() => { if (!document.hidden) ping(); }, 15000);
+      window.addEventListener('online', ping); window.addEventListener('offline', () => { this.online = false; });
       // Follow the OS setting while the theme is "System".
       try {
         const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -533,6 +634,7 @@ function rootApp() {
         const r = await get('/api/auth/check');
         if (r.ok && r.logged_in) {
           this.username = r.username || 'admin';
+          this.role = r.role || 'admin'; this.userSites = r.sites || [];
           this.loggedIn = true;
           await this._onLoggedIn();
         }
@@ -558,7 +660,8 @@ function rootApp() {
           this.totpCode = '';
           this.totpErr = '';
         } else if (r.ok) {
-          this.username = this.loginUser;
+          this.username = r.username || this.loginUser;
+          this.role = r.role || 'admin';
           this.loggedIn = true;
           this.loginPass = '';
           await this._onLoggedIn();
@@ -572,14 +675,18 @@ function rootApp() {
     },
 
     async verify2fa() {
-      if (!this.totpCode) { this.totpErr = 'Enter the 6-digit code'; return; }
+      if (!this.totpCode) { this.totpErr = this.useBackupCode ? 'Enter a backup code' : 'Enter the 6-digit code'; return; }
       this.totpLoading = true;
       this.totpErr = '';
       try {
         const r = await post('/api/auth/verify-2fa', { code: this.totpCode });
         if (r.ok) {
           this.show2fa = false;
+          this.useBackupCode = false;
+          if (r.backup_codes_left !== null && r.backup_codes_left !== undefined)
+            setTimeout(() => toast(`Signed in with a backup code. ${r.backup_codes_left} left - create new codes in Settings > Security.`, r.backup_codes_left < 3 ? 'error' : 'info'), 500);
           this.username = r.username || this.loginUser;
+          this.role = r.role || 'admin';
           this.loggedIn = true;
           this.loginPass = '';
           this.totpCode = '';
@@ -595,15 +702,24 @@ function rootApp() {
 
     async _onLoggedIn() {
       _vpAuthed = true;
-      // Restore page from URL hash (e.g. #files → go to files page)
+      // Restore page from URL hash (e.g. #files > go to files page)
       const hash = window.location.hash.replace('#', '');
       const validPages = ['dashboard','websites','databases','files','modules',
                           'services','firewall','terminal','backups','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy',
-                          'cdn','logs','settings','node-projects','go-projects','wp','waf','disk'];
-      if (hash && validPages.includes(hash)) {
+                          'cdn','logs','settings','node-projects','go-projects','wp','waf','disk',
+                          'users','alerts'];
+      try { const me = await get('/api/auth/check'); if (me.ok && me.logged_in) { this.role = me.role || 'admin'; this.userSites = me.sites || []; } } catch {}
+      const allowed = this._rolePages[this.role];
+      if (hash && validPages.includes(hash) && (!allowed || allowed.includes(hash))) {
         this.page = hash;
+      } else if (allowed && !allowed.includes(this.page)) {
+        this.page = allowed[0];
       }
+      _vpRole = this.role; _vpSites = this.userSites || [];
+      document.documentElement.setAttribute('data-role', this.role);
+      try { Alpine.store('vp').role = this.role; } catch (e) {}
+      if (this.role !== 'admin') { document.dispatchEvent(new CustomEvent('vortex-logged-in')); return; }
       // Load module status for sidebar indicators
       try {
         const r = await get('/api/modules');
@@ -837,8 +953,8 @@ function dashboardPage() {
         charts.net = new Chart(netEl, {
           type: 'line',
           data: { labels: hist.labels, datasets: [
-            { label:'↓ In',  data:hist.netRx, borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
-            { label:'↑ Out', data:hist.netTx, borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'In',  data:hist.netRx, borderColor:c.rx, backgroundColor:c.rx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
+            { label:'Out', data:hist.netTx, borderColor:c.tx, backgroundColor:c.tx+'22', fill:true, tension:.35, pointRadius:0, borderWidth:2 },
           ]},
           options: { ...baseOpts(undefined, ''),
             scales: { ...baseOpts(undefined,'').scales,
@@ -876,7 +992,7 @@ function websitesPage() {
     sites:[], phpVersions:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
     backupCounts:{}, requestCounts:{},
     form:{domain:'',path:'',php:'8.3',type:'PHP',createDb:false,createFtp:false,path_edited:false},
-    batchDomains:'', deployApps:[], deployApp:'', deployDomain:'',
+    batchDomains:'', batchLog:[], batchRunning:false, deployApps:[], deployApp:'', deployDomain:'',
     drawer:{
       show:false,site:null,tab:'config',
       confContent:'',confPath:'',
@@ -903,6 +1019,7 @@ function websitesPage() {
       directory: {path:'', antixss:false, accesslog:false},
       hotlink: {enabled:false, suffixes:'jpg,jpeg,gif,png,js,css', domains:'', response:'404'},
       limitRules: [], limitForm: {name:'', path:'/admin', user:'', pass:''},
+      extras: {},
     },
     drawerTabs:[
       {id:'domains',label:'Domain Manager'},
@@ -916,6 +1033,7 @@ function websitesPage() {
       {id:'defaultdoc',label:'Default Doc'},
       {id:'limit',label:'Limit Access'},
       {id:'hotlink',label:'Hotlink'},
+      {id:'extras',label:'Security & Limits'},
       {id:'nodejs',label:'App Runner'},
       {id:'maintenance',label:'Maintenance'},
       {id:'composer',label:'Composer'},
@@ -925,7 +1043,7 @@ function websitesPage() {
     // Tabs that edit nginx configs only; hidden for sites served by Apache,
     // OpenLiteSpeed or Caddy (their Config tab edits the real vhost instead).
     // Default Doc is also supported for Apache sites (backend _set_index).
-    _nginxOnlyTabs:['rewrite','proxy','redirect','limit','hotlink','nodejs','maintenance'],
+    _nginxOnlyTabs:['rewrite','proxy','redirect','limit','hotlink','nodejs','maintenance','extras'],
     siteDrawerTabs() {
       const ws = this.drawer?.site?.webserver || 'nginx';
       if (ws === 'nginx') return this.drawerTabs;
@@ -1000,6 +1118,20 @@ function websitesPage() {
       const r=await post('/api/backups/create',{domain});
       if(r.ok){ toast('Backup started for '+domain,'success'); setTimeout(()=>this.loadBackupCounts(),3000); }
       else toast(r.error||'Backup failed','error');
+    },
+    async createBatch() {
+      const doms=(this.batchDomains||'').split(/[\s,]+/).map(d=>d.trim().toLowerCase()).filter(Boolean);
+      if(!doms.length){toast('Enter at least one domain','error');return;}
+      this.batchRunning=true; this.batchLog=[]; let ok=0;
+      for(const d of doms){
+        const r=await post('/api/websites',{domain:d, php:this.form.php, createDb:this.form.createDb,
+                                            path:(this.webroot||'/www/wwwroot')+'/'+d.replace(/^\*\./,'')});
+        this.batchLog.push(d+': '+(r.ok?'created'+(r.db?' (database '+(r.db.name||'')+')':''):'failed - '+(r.error||'unknown error')));
+        if(r.ok) ok++;
+      }
+      this.batchRunning=false;
+      toast('Created '+ok+' of '+doms.length+' sites', ok===doms.length?'success':'error');
+      await this.load();
     },
     async create() {
       const r=await post('/api/websites',this.form);
@@ -1090,6 +1222,7 @@ function websitesPage() {
       else if(d.tab==='directory'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok){d.directory.path=r.path||d.site?.path||'';d.directory.antixss=!!r.antixss;d.directory.accesslog=!!r.accesslog;} this.loadDiskUsage();}
       else if(d.tab==='defaultdoc'){const r=await get('/api/websites/'+domain+'/directory');if(r.ok){const ix=Array.isArray(r.indexes)?r.indexes:String(r.indexes||'').split(/[\s,]+/);d.defaultDoc=ix.map(x=>String(x).trim()).filter(Boolean).join('\n');}else toast(r.error||'Could not load the default documents','error');}
       else if(d.tab==='rewrite'){const r=await get('/api/websites/'+domain+'/rewrite');if(r.ok)d.rewriteContent=r.content||'';const rt=await get('/api/websites/'+domain+'/rewrite/templates');if(rt.ok)d.rewriteTemplates=rt.templates||[];}
+      else if(d.tab==='extras'){const r=await get('/api/websites/'+domain+'/extras');if(r.ok){d.extras=Object.assign({},r,{deny_text:(r.deny_paths||[]).join('\n')});}else{d.extras={error:r.error||'Not available'};}}
       else if(d.tab==='hotlink'){const r=await get('/api/websites/'+domain+'/hotlink');if(r.ok){d.hotlink.enabled=r.enabled||false;d.hotlink.suffixes=r.suffixes||'jpg,jpeg,gif,png,js,css';d.hotlink.domains=r.access_domain||'';d.hotlink.response=r.response||'404';}}
       else if(d.tab==='limit'){const r=await get('/api/websites/'+domain+'/limit-access');if(r.ok)d.limitRules=r.rules||[];}
       else if(d.tab==='logs'){const r=await get('/api/websites/'+domain+'/logs');if(r.ok){d.accessLog=r.access||'No access logs';d.errorLog=r.error||'No error logs';}}
@@ -1196,6 +1329,15 @@ function websitesPage() {
       } else {
         toast(r.error||'Upgrade failed','error');
       }
+    },
+    async saveExtras(){
+      const e=this.drawer.extras, domain=this.drawer.site?.domain;
+      const body={force_https:e.force_https, hsts:e.hsts, hsts_subdomains:e.hsts_subdomains, http2:e.http2,
+                  deny_paths:(e.deny_text||'').split(/[\s,]+/).filter(Boolean), rate_kbps:e.rate_kbps||0,
+                  conn_limit:e.conn_limit||0, expires:e.expires||''};
+      const r=await put('/api/websites/'+domain+'/extras', body);
+      toast(r.ok?'Saved':(r.error||'Failed'), r.ok?'success':'error', r.ok?undefined:8000);
+      if(r.ok) await this.loadDrawerTab();
     },
     async savePhpVer(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/php',{version:this.drawer.phpVer});toast(r.ok?'PHP applied':(r.error||'Failed'),r.ok?'success':'error');if(r.ok)await this.load();},
     async addProxy(){
@@ -1616,7 +1758,11 @@ function wpPage() {
 function databasesPage() {
   return {
     dbs:[], users:[], showAdd:false, showAddUser:false,
-    engines:[], activeEngine:'auto', dbInfo:{}, noEngine:false,
+    engines:[], activeEngine:'auto', dbInfo:{}, noEngine:false, pmaUrl:'',
+    async loadPma() {
+      const r = await get('/api/modules/phpmyadmin/settings').catch(()=>({ok:false}));
+      this.pmaUrl = (r.ok && r.installed) ? ('http://' + location.hostname + ':' + (r.port || '8082')) : '';
+    },
     form:{name:'',user:'',pass:'',charset:'utf8mb4'},
     userForm:{name:'',pass:'',host:'localhost'},
     selUser:null, showUserDetail:false, newPass:'', grantDb:'',
@@ -1638,9 +1784,10 @@ function databasesPage() {
     get isPg(){ return this.activeEngine==='postgresql'; },
     async init(){
       await this.load();
+      this.loadPma();
       if (!vpOnce(this, 'init')) return;
       document.addEventListener('vortex-logged-in', () => { this.init(); });
-      window.addEventListener("vp:page", (e) => { if(e.detail==="databases") this.load(); });
+      window.addEventListener("vp:page", (e) => { if(e.detail==="databases") { this.load(); this.loadPma(); } });
       // Listen for modal submit event from global portal
       window.addEventListener('vp-submit-nodejs-add', async () => {
         const s = Alpine.store('vp').nodeAdd;
@@ -1861,6 +2008,13 @@ function filesPage() {
         document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="files") this.loadDir(this.path||this.webroot); });
         // Disk Usage > "Open in File Manager"
         window.addEventListener('vp:files-open', (e) => { if (e.detail) this.loadDir(e.detail); });
+      }
+      // A site manager starts in the folder of their first website.
+      if (_vpRole === 'site') {
+        const ws = await get('/api/websites');
+        const site = (ws.sites || [])[0];
+        if (site && site.path) { this.webroot = site.path; await this.loadDir(site.path); }
+        return;
       }
       // Find first accessible webroot silently
       for (const p of ['/www/wwwroot', '/var/www/html', '/var/www', '/root', '/tmp']) {
@@ -2288,9 +2442,62 @@ function filesPage() {
 
     // --- File operations -------------------------------------------------------
     async deleteItem(f) {
-      if (!confirm('Delete "' + f.name + '"?')) return;
+      if (!confirm('Delete "' + f.name + '"? It goes to the recycle bin and can be restored.')) return;
       const r = await post('/api/files/delete', { path: f.path });
-      if (r.ok) { toast('Deleted', 'success'); await this.loadDir(this.path); }
+      if (r.ok) { toast(r.recycled ? 'Moved to the recycle bin' : 'Deleted', 'success'); await this.loadDir(this.path); }
+      else toast(r.error || 'Failed', 'error');
+    },
+
+    // --- Recycle bin / edit history / owner (v3.7.0) -------------------------------
+    recycle: {show:false, items:[], enabled:true, days:30},
+    hist: {show:false, path:'', name:'', versions:[], sel:'', content:''},
+    owner: {show:false, path:'', name:'', owner:'', group:'', users:[], groups:[], recursive:false, isDir:false},
+    remoteJob: {id:'', running:false, text:''},
+    async openRecycle() {
+      const r = await get('/api/files/recycle');
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      this.recycle = {show:true, items:r.items, enabled:r.enabled, days:r.days};
+    },
+    async saveRecycleSettings() { await put('/api/files/recycle/settings', {enabled:this.recycle.enabled, days:this.recycle.days}); },
+    async restoreRecycled(e) {
+      const r = await post('/api/files/recycle/restore', {id:e.id});
+      if (r.ok) { toast('Restored to ' + r.path, 'success'); await this.openRecycle(); await this.loadDir(this.path); }
+      else toast(r.error || 'Failed', 'error');
+    },
+    async purgeRecycled(e) {
+      if (!confirm('Delete ' + e.name + ' permanently?')) return;
+      const r = await del('/api/files/recycle/' + e.id); if (r.ok) await this.openRecycle();
+    },
+    async emptyRecycle() {
+      if (!confirm('Permanently delete everything in the recycle bin?')) return;
+      const r = await del('/api/files/recycle/all'); if (r.ok) { toast('Removed ' + r.removed + ' items', 'success'); await this.openRecycle(); }
+    },
+    async openHistory(f) {
+      if (!f) return;
+      const r = await get('/api/files/history?path=' + encodeURIComponent(f.path));
+      this.hist = {show:true, path:f.path, name:f.name, versions:(r.ok ? r.versions : []), sel:'', content:''};
+    },
+    async viewVersion(v) {
+      const r = await get('/api/files/history?path=' + encodeURIComponent(this.hist.path) + '&version=' + v);
+      if (r.ok) { this.hist.sel = v; this.hist.content = r.content; }
+    },
+    async restoreVersion() {
+      if (!confirm('Replace the current file with this version? The current content is kept in the history.')) return;
+      const r = await post('/api/files/history/restore', {path:this.hist.path, version:this.hist.sel});
+      toast(r.ok ? 'Version restored' : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+      if (r.ok) await this.openHistory({path:this.hist.path, name:this.hist.name});
+    },
+    async openOwner(f) {
+      if (!f) return;
+      const [o, p] = await Promise.all([get('/api/files/owners'), get('/api/files/properties?path=' + encodeURIComponent(f.path))]);
+      if (!o.ok) { toast(o.error || 'Failed', 'error'); return; }
+      this.owner = {show:true, path:f.path, name:f.name, users:o.users, groups:o.groups, recursive:false,
+                    isDir: f.type === 'dir', owner:(p.props||{}).owner||'', group:(p.props||{}).group||''};
+    },
+    async saveOwner() {
+      const o = this.owner;
+      const r = await post('/api/files/chown', {path:o.path, owner:o.owner, group:o.group, recursive:o.recursive});
+      if (r.ok) { toast('Owner changed (' + r.changed + ' item' + (r.changed===1?'':'s') + ')', 'success'); this.owner.show = false; }
       else toast(r.error || 'Failed', 'error');
     },
 
@@ -2455,8 +2662,15 @@ function filesPage() {
     async doRemoteDownload() {
       if (!this.remoteUrl) { toast('Enter a URL', 'error'); return; }
       const r = await post('/api/files/remote-download', { url: this.remoteUrl, dest: this.remoteDest || this.path });
-      if (r.ok) { toast('Download started: ' + r.filename, 'success'); this.showRemoteDl = false; }
-      else toast(r.error || 'Failed', 'error');
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      this.remoteJob = {id:r.job_id, running:true, text:'Downloading ' + r.filename + '...'};
+      vpPollJob('/api/files/remote-download/' + r.job_id, j => {
+        this.remoteJob.text = 'Downloading ' + r.filename + ': ' + fmtSize(j.bytes || 0) + (j.total ? ' of ' + fmtSize(j.total) : '');
+      }, async j => {
+        this.remoteJob.running = false;
+        this.remoteJob.text = j.success ? ('Saved ' + j.path) : ('Download failed: ' + (j.error || 'unknown error'));
+        if (j.success) { toast('Downloaded ' + r.filename, 'success'); await this.loadDir(this.path); }
+      }, {interval: 1500, maxMisses: 40});
     },
 
     // --- Context menu -----------------------------------------------------------
@@ -2583,7 +2797,7 @@ function aiAssistant() {
       const text = this.input.trim();
       if (!text || this.thinking) return;
       if (!this.configured) {
-        toast('Set your NeonCodex API key in Settings → AI Assistant first', 'error');
+        toast('Set your NeonCodex API key in Settings > AI Assistant first', 'error');
         return;
       }
       this.input = '';
@@ -2664,7 +2878,7 @@ function aiAssistant() {
         // Bold
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
         // Bullet points
-        .replace(/^[•\-\*]\s(.+)$/gm, '<div style="padding-left:12px;margin:2px 0">• $1</div>')
+        .replace(/^[•\-\*]\s(.+)$/gm, '<div style="padding-left:12px;margin:2px 0">- $1</div>')
         // Numbered lists
         .replace(/^\d+\.\s(.+)$/gm, '<div style="padding-left:12px;margin:2px 0">$1</div>')
         // Line breaks
@@ -2869,7 +3083,7 @@ function modulesPage() {
         ...m,
         loading:   false,
         svcStatus: m.svcStatus ? (m.svcStatus.startsWith('active') ? 'active' : m.svcStatus) : m.svcStatus,
-        selVer:    m.versions?.length ? m.versions[0].value : '',
+        selVer:    m.versions?.length ? (m.versions.find(v=>v.recommended) || m.versions[0]).value : '',
       }));
     },
 
@@ -2897,21 +3111,7 @@ function modulesPage() {
         this.verModal = {show:true, mod:{...m, versions:removable}, selVer:removable[0].value, action:'uninstall'};
         return;
       }
-      const dataWarn = {
-        mysql:      'ALL MySQL databases in /var/lib/mysql will be deleted.',
-        mariadb:    'ALL MariaDB databases in /var/lib/mysql will be deleted.',
-        postgresql: 'ALL PostgreSQL databases in /var/lib/postgresql will be deleted.',
-        mongodb:    'ALL MongoDB databases in /var/lib/mongodb will be deleted.',
-        nginx:      'All nginx configuration in /etc/nginx (every website config) will be deleted. Websites will stop working.',
-        caddy:      'The Caddyfile and all Caddy configuration in /etc/caddy will be deleted. Websites will stop working.',
-        apache2:    'Websites served by Apache will stop working.',
-        openlitespeed: 'Everything in /usr/local/lsws (OpenLiteSpeed configs) will be deleted. Websites will stop working.',
-        bind9:      'All DNS zone files in /etc/bind/zones will be deleted.',
-        redis:      'Redis and its stored data will be removed.',
-        roundcube:  'The Roundcube folder /var/www/roundcube and its webmail site will be deleted.',
-        docker:     'Docker will be removed. Running containers will stop.',
-      }[m.id];
-      if (!confirm(`Uninstall ${m.name}?` + (dataWarn ? '\n\nWARNING: '+dataWarn : '') + '\n\nThis cannot be undone.')) return;
+      if (!(await vpConfirmUninstall(m.name, m.id, ''))) return;
       await this._startJob(m, 'uninstall', '');
     },
 
@@ -2945,10 +3145,10 @@ function modulesPage() {
         await this._startJob(m, 'install', m.selVer);
         return;
       }
-      // If user already selected a version from the inline dropdown → install directly
+      // If user already selected a version from the inline dropdown > install directly
       // Only show the version picker modal if NO version is selected yet
       if (m.versions?.length > 1 && !m.selVer) {
-        this.verModal = {show:true, mod:m, selVer:m.versions[0].value, action:'install'};
+        this.verModal = {show:true, mod:m, selVer:(m.versions.find(v=>v.recommended) || m.versions[0]).value, action:'install'};
         return;
       }
       // Use selected version directly (from dropdown or single-version)
@@ -2958,6 +3158,7 @@ function modulesPage() {
     async installWithVer() {
       const {mod, selVer, action} = this.verModal;
       this.verModal.show = false;
+      if (action === 'uninstall' && !(await vpConfirmUninstall(mod.name, mod.id, selVer))) return;
       await this._startJob(mod, action||'install', selVer);
     },
 
@@ -3105,6 +3306,7 @@ function modulesPage() {
       this.phpUninstallModal.show = false;
       const m = this.modules.find(x => x.id === 'php');
       if (!m || !ver) return;
+      if (!(await vpConfirmUninstall('PHP', 'php', ver))) return;
       await this._startJob(m, 'uninstall', ver);
     },
 
@@ -3552,8 +3754,17 @@ function modulesPage() {
 // --- FIREWALL -------------------------------------------------------------------
 function firewallPage() {
   return {
-    rules: [], status: '', showAdd: false, backend: '', fwError: '',
+    rules: [], status: '', showAdd: false, backend: '', fwError: '', loaded: false, installing: false,
     form: {port:'', protocol:'tcp', action:'allow', comment:''},
+
+    async installFw() {
+      this.installing = true;
+      const r = await post('/api/firewall/install', {});
+      this.installing = false;
+      if (r.ok) toast('Firewall installed (still off). Allowed ports: ' + (r.allowed_ports||[]).join(', '), 'success', 6000);
+      else toast(r.error || 'Install failed', 'error');
+      await this.load();
+    },
 
     async init() { await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="firewall") this.load(); }); },
 
@@ -3563,8 +3774,9 @@ function firewallPage() {
         this.rules   = r.rules  || [];
         this.status  = r.status || '';
         this.backend = r.backend || '';
-        this.fwError = r.error || '';
+        this.fwError = r.backend ? (r.error || '') : '';
       } else if (r.error) this.fwError = r.error;
+      this.loaded = true;
     },
 
     get backendLabel() { return this.backend === 'firewalld' ? 'firewalld' : this.backend === 'ufw' ? 'UFW' : 'No firewall manager'; },
@@ -3697,6 +3909,103 @@ function backupsPage() {
     showUpload:   false, uploadFile:null, uploadType:'website', uploadTarget:'',
     uploading:    false,
     form: {website:{domain:''}, db:{name:''}},
+    storageTargets: [], rcloneInstalled: false, rcloneInstalling: false,
+    targetForm: {show:false}, targetSaving: false, browse: {show:false, id:'', name:'', files:[], loading:false},
+    pb: {settings:{enabled:false, hour:2, keep:14, target:'', keep_remote:30}, backups:[], targets:[]},
+
+    async loadTargets() {
+      const r = await get('/api/storage/targets');
+      if (r.ok) { this.storageTargets = r.targets; this.rcloneInstalled = r.rclone_installed; }
+    },
+    openTarget(type, t) {
+      this.targetForm = t ? Object.assign({show:true, password:'', config:''}, JSON.parse(JSON.stringify(t)))
+        : {show:true, type, id:'', name:'', host:'', port:21, username:'', password:'', tls:true, passive:true,
+           config:'', prefix:'vortexpanel-backups'};
+      if (type === 'rclone') this.loadTargets();
+    },
+    async saveTarget() {
+      const f = this.targetForm; this.targetSaving = true;
+      const body = {type:f.type, name:f.name, prefix:f.prefix, host:f.host, port:f.port, username:f.username,
+                    password:f.password, tls:f.tls, passive:f.passive, config:f.config};
+      const r = f.id ? await put('/api/storage/targets/' + f.id, body) : await post('/api/storage/targets', body);
+      if (!r.ok) { this.targetSaving = false; toast(r.error || 'Failed', 'error'); return; }
+      const t = await post('/api/storage/targets/' + r.target.id + '/test', {});
+      this.targetSaving = false;
+      toast(t.ok ? t.message : ('Saved, but the test failed: ' + t.error), t.ok ? 'success' : 'error', 8000);
+      this.targetForm.show = false; await this.loadTargets(); await this.loadSites();
+    },
+    async testTarget(t) {
+      toast('Testing ' + t.name + '...', 'info');
+      const r = await post('/api/storage/targets/' + t.id + '/test', {});
+      toast(r.ok ? r.message : r.error, r.ok ? 'success' : 'error', 8000);
+    },
+    async deleteTarget(t) {
+      if (!confirm(`Remove the destination "${t.name}"? Files already there are not deleted.`)) return;
+      const r = await del('/api/storage/targets/' + t.id);
+      if (r.ok) { await this.loadTargets(); await this.loadSites(); } else toast(r.error || 'Failed', 'error');
+    },
+    async browseTarget(t) {
+      this.browse = {show:true, id:t.id, name:t.name, files:[], loading:true};
+      const r = await get('/api/storage/targets/' + t.id + '/files');
+      this.browse.loading = false;
+      if (r.ok) this.browse.files = r.files; else toast(r.error || 'Failed', 'error');
+    },
+    async _storageJob(jid, title) {
+      this.jobModal = {show:true, title, lines:[], done:false, success:false, error:''};
+      await new Promise(res => vpPollJob('/api/storage/job/' + jid, j => { this.jobModal.lines = j.lines || []; },
+        j => { this.jobModal.done = true; this.jobModal.success = !!j.success && !j.error;
+               if (j.error) this.jobModal.lines.push('Failed: ' + j.error); res(); }, {interval: 1000, maxMisses: 30}));
+    },
+    async fetchFromTarget(name) {
+      const r = await post('/api/storage/targets/' + this.browse.id + '/fetch', {name});
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      await this._storageJob(r.job_id, 'Copying ' + name + ' to this server');
+      await this.load(); if (name.startsWith('panel_')) await this.loadPanelBackups();
+    },
+    async deleteTargetFile(name) {
+      if (!confirm('Delete ' + name + ' from ' + this.browse.name + '?')) return;
+      const r = await del('/api/storage/targets/' + this.browse.id + '/files/' + encodeURIComponent(name));
+      if (r.ok) await this.browseTarget({id:this.browse.id, name:this.browse.name}); else toast(r.error || 'Failed', 'error');
+    },
+    async installRclone() {
+      this.rcloneInstalling = true;
+      const r = await post('/api/storage/rclone/install', {});
+      if (r.ok) await this._storageJob(r.job_id, 'Installing rclone');
+      this.rcloneInstalling = false; await this.loadTargets();
+    },
+    async loadPanelBackups() {
+      const r = await get('/api/panel-backup');
+      if (r.ok) this.pb = {settings:r.settings, backups:r.backups, targets:r.targets};
+    },
+    async savePanelBackupSettings() {
+      const r = await put('/api/panel-backup/settings', this.pb.settings);
+      toast(r.ok ? 'Schedule saved' : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+    },
+    async createPanelBackup() {
+      const r = await post('/api/panel-backup/create', {upload: !!this.pb.settings.target});
+      if (r.ok) toast('Panel backup created' + (r.upload ? ' (' + r.upload + ')' : ''), r.upload && r.upload !== 'uploaded' ? 'error' : 'success', 6000);
+      else toast(r.error || 'Failed', 'error');
+      await this.loadPanelBackups();
+    },
+    async restorePanelBackup(name) {
+      const acc = confirm('Restore accounts and passwords too?\n\nOK = settings AND accounts (passwords, 2FA, API keys)\nCancel = settings only');
+      if (!confirm(`Restore ${name}? The current state is saved first, and the panel restarts.`)) return;
+      const r = await post('/api/panel-backup/' + name + '/restore', {settings:true, accounts:acc});
+      if (r.ok) toast(`Restored ${r.restored} files. The panel restarts now - reload in a few seconds.`, 'success', 9000);
+      else toast(r.error || 'Failed', 'error');
+    },
+    async deletePanelBackup(name) {
+      if (!confirm('Delete ' + name + '?')) return;
+      const r = await del('/api/panel-backup/' + name);
+      if (r.ok) await this.loadPanelBackups();
+    },
+    async uploadPanelBackup(ev) {
+      const f = ev.target.files[0]; if (!f) return;
+      const fd = new FormData(); fd.append('file', f);
+      const r = await fetch('/api/panel-backup/upload', {method:'POST', body:fd}).then(x => x.json()).catch(() => ({ok:false}));
+      toast(r.ok ? 'Uploaded' : (r.error || 'Upload failed'), r.ok ? 'success' : 'error');
+      ev.target.value = ''; await this.loadPanelBackups();
+    },
 
     async init() {
       await Promise.all([this.load(), this.loadInfo(), this.loadSites(), this.loadCloudConfig()]);
@@ -4056,6 +4365,24 @@ function ftpPage() {
     showAdd: false, sites: [],
     form:    {user:'', password:'', home:'', selectedDomain:''},
     pwModal: {show:false, user:'', password:''},
+    logs: [], logsShown: false,
+
+    async loadLogs() {
+      const r = await get('/api/ftp/logs'); this.logsShown = true;
+      if (r.ok) this.logs = r.lines || []; else toast(r.error || 'Failed', 'error');
+    },
+    async toggleAcct(a) {
+      if (!a.disabled && !confirm(`Disable ${a.user}? The account keeps its password and files but cannot sign in.`)) return;
+      const r = await put('/api/ftp/accounts/' + a.user + '/settings', {disabled: !a.disabled});
+      if (r.ok) { a.disabled = r.disabled; toast(a.disabled ? 'Account disabled' : 'Account enabled', 'success'); }
+      else toast(r.error || 'Failed', 'error');
+    },
+    async setQuota(a) {
+      const v = prompt(`Disk quota for ${a.user} in MB (0 = no limit):`, a.quota_mb || 0);
+      if (v === null) return;
+      const r = await put('/api/ftp/accounts/' + a.user + '/settings', {quota_mb: parseInt(v, 10) || 0});
+      if (r.ok) { a.quota_mb = r.quota_mb; toast('Quota saved', 'success'); } else toast(r.error || 'Failed', 'error');
+    },
 
     async init() {
       await this.load();
@@ -4215,8 +4542,24 @@ function settingsPage() {
     },
 
     async saveSettings() {
-      const r = await put('/api/settings', {panel_name:this.cfg.panel_name, auto_update:this.cfg.auto_update, timezone:this.cfg.timezone, panel_domain:this.cfg.panel_domain});
+      const r = await put('/api/settings', {panel_name:this.cfg.panel_name, auto_update:this.cfg.auto_update, timezone:this.cfg.timezone});
       toast(r.ok?'Settings saved':(r.error||'Failed'), r.ok?'success':'error');
+    },
+
+    async savePanelDomain() {
+      const dom = (this.cfg.panel_domain||'').trim().toLowerCase();
+      if (dom && !confirm('From now on the panel answers only at '+dom+'. Continue?')) return;
+      const r = await put('/api/settings', {panel_domain: dom});
+      toast(r.ok?(dom?'Panel domain saved':'Panel domain removed'):(r.error||'Failed'), r.ok?'success':'error', r.ok?undefined:9000);
+    },
+
+    async saveSecurityPath() {
+      const sp = (this.cfg.security_path||'').trim().replace(/^\/+|\/+$/g,'');
+      if (sp && !/^[A-Za-z0-9_-]{4,64}$/.test(sp)) { toast('Login path: 4-64 letters, digits, dash or underscore','error'); return; }
+      if (sp && !confirm('From now on the panel can only be opened at\n\n'+location.origin+'/'+sp+'\n\nWrite it down. You stay signed in now. Continue?')) return;
+      const r = await put('/api/settings', {security_path: sp});
+      if (r.ok) this.cfg.security_path = sp;
+      toast(r.ok?(sp?'Login path saved':'Login path turned off'):(r.error||'Failed'), r.ok?'success':'error');
     },
 
     async savePanelName() {
@@ -4511,17 +4854,57 @@ function settingsPage() {
   };
 }
 
+// Chart.js instances live outside Alpine's reactive state (see dashboard).
+const _vpHistCharts = {};
 function monitoringPage() {
   return {
     stats: {cpu:0,ram:'',ramPct:0,disk:0,diskStr:'',uptime:'',load:''},
     processes: [],
+    histRange: '1h', histCollector: true, histEmpty: false,
+
+    async loadHistory(range) {
+      if (range) this.histRange = range;
+      const r = await get('/api/monitoring/history?range=' + this.histRange);
+      if (!r.ok || typeof Chart === 'undefined') return;
+      this.histCollector = r.collector_active !== false;
+      const pts = r.points || [];
+      this.histEmpty = !pts.length;
+      const long = ['7d','30d','90d'].includes(this.histRange);
+      const labels = pts.map(p => { const d = new Date(p.ts * 1000);
+        return long ? d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})
+                    : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); });
+      const css = getComputedStyle(document.documentElement);
+      const grid = css.getPropertyValue('--border').trim() || 'rgba(148,163,184,.15)';
+      const text = css.getPropertyValue('--text-muted').trim() || '#94a3b8';
+      const opts = (yMax, fmt) => ({ responsive:true, maintainAspectRatio:false, animation:false,
+        interaction:{mode:'index', intersect:false},
+        scales:{ x:{grid:{display:false}, ticks:{color:text, maxTicksLimit:7, font:{size:10}}},
+                 y:{min:0, max:yMax, grid:{color:grid}, ticks:{color:text, font:{size:10}, callback: fmt}} },
+        plugins:{ legend:{labels:{color:text, boxWidth:10, font:{size:11}}},
+                  tooltip:{callbacks:{label: c => c.dataset.label + ': ' + fmt(c.parsed.y)}} } });
+      const ds = (label, data, color) => ({label, data, borderColor:color, backgroundColor:color + '22', fill:false,
+                                          tension:.3, pointRadius:0, borderWidth:2});
+      const usage = [ds('CPU', pts.map(p => p.cpu), '#f97316'), ds('Memory', pts.map(p => p.mem), '#6366f1'),
+                     ds('Disk', pts.map(p => p.disk), '#14b8a6')];
+      const io = [ds('Network in', pts.map(p => p.net_rx), '#22c55e'), ds('Network out', pts.map(p => p.net_tx), '#3b82f6'),
+                  ds('Disk read', pts.map(p => p.io_r), '#a855f7'), ds('Disk write', pts.map(p => p.io_w), '#eab308')];
+      const put_ = (key, id, sets, o) => {
+        const el = document.getElementById(id); if (!el) return;
+        if (_vpHistCharts[key]) { _vpHistCharts[key].data.labels = labels; _vpHistCharts[key].data.datasets = sets; _vpHistCharts[key].update('none'); }
+        else _vpHistCharts[key] = new Chart(el, {type:'line', data:{labels, datasets:sets}, options:o});
+      };
+      put_('usage', 'vp-hist-usage', usage, opts(100, v => Math.round(v) + '%'));
+      put_('io', 'vp-hist-io', io, opts(undefined, v => fmtBytes(v) + '/s'));
+    },
 
     wsConflict: {conflict:false, active:[]},
     async init() {
       await this.load();
       if (!vpOnce(this, 'init')) return;
       setInterval(()=>{ if (vpActivePage()==='monitoring' && !document.hidden) this.load(); }, 5000);
-      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="monitoring") this.load(); });
+      setInterval(()=>{ if (vpActivePage()==='monitoring' && !document.hidden) this.loadHistory(); }, 60000);
+      document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="monitoring") { this.load(); this.$nextTick(() => this.loadHistory()); } });
+      if (vpActivePage()==='monitoring') this.$nextTick(() => this.loadHistory());
     },
     async killProcess(pid) {
       if (!confirm('Kill process PID '+pid+'?')) return;
@@ -6358,7 +6741,7 @@ function updateModalData() {
     checkState: 'checking',
     updating: false, updateDone: false, updateSuccess: false,
     updateError: '', updateLines: [], updateProgress: 0,
-    errorMsg: '', _pollTimer: null,
+    errorMsg: '', _pollTimer: null, allowUnsigned: false,
 
     async init() {
       if (vpOnce(this, 'init')) {
@@ -6373,8 +6756,9 @@ function updateModalData() {
       try {
         const r = await get('/api/update/check');
 
-        this.current   = r.current   || 'v3.0.0';
-        this.latest    = r.latest    || r.current || 'v3.0.0';
+        this.current   = r.current   || '';
+        this.latest    = r.latest    || r.current || '';
+        this.allowUnsigned = !!r.allow_unsigned;
         this.name      = r.name      || 'VortexPanel';
         this.body      = r.body      || '';
         this.published = r.published || '';
@@ -6395,6 +6779,12 @@ function updateModalData() {
         this.errorMsg = 'Network error: '+(e.message||'Cannot reach server');
         this.checkState = 'error';
       }
+    },
+
+    async setAllowUnsigned(v) {
+      const r = await post('/api/update/settings', {allow_unsigned_updates: !!v});
+      if (r.ok) this.allowUnsigned = !!r.allow_unsigned;
+      else toast(r.error || 'Could not save', 'error');
     },
 
     async startUpdate() {
@@ -6965,7 +7355,7 @@ function onboardingWizard() {
       {id:'done',     short:'Done',     title:'All set'},
     ],
     server: {}, modules: [], modulesLoaded: false, phpInstalled: [],
-    pick: {web:'nginx', db:'mysql', php:['8.3'], extras:['phpmyadmin','fail2ban']},
+    pick: {web:'nginx', db:'mysql', php:[], extras:['phpmyadmin','fail2ban']},
     queue: [], done: [],
     secChecks: [], secLoaded: false, secBusy: false,
     site: {domain:'', php:'static', createDb:false}, sitePhp: [], siteErr: '', siteResult: null,
@@ -6999,7 +7389,7 @@ function onboardingWizard() {
       const db = ['mysql','mariadb','postgresql','mongodb'].find(inst);
       this.pick.db = db || 'mysql';
       const php = this.phpVersions();
-      const want = php.find(v => v.value === '8.3') ? '8.3' : (php[0] && php[0].value);
+      const want = (php.find(v => v.recommended) || php[0] || {}).value;
       this.pick.php = this.phpInstalled.length ? [] : (want ? [want] : []);
       this.pick.extras = ['phpmyadmin','fail2ban'].filter(id => this.modules.find(x => x.id === id && !x.installed));
       this.modulesLoaded = true;
@@ -7012,17 +7402,21 @@ function onboardingWizard() {
     phpVersions() {
       const m = this.mod('php');
       if (!m) return [];
-      return (m.versions || []).map(v => ({value: v.value, installed: this.phpInstalled.includes(v.value)}));
+      return (m.versions || []).map(v => ({value: v.value, label: v.label, recommended: !!v.recommended, eol: !!v.eol,
+                                           installed: this.phpInstalled.includes(v.value)}));
     },
     // The items "Install" will run, in dependency order.
     plan() {
       const out = [];
       const add = (id, ver, label) => { const m = this.mod(id); if (m && !(id !== 'php' && m.installed)) out.push({id, ver, label: label || m.name}); };
-      if (this.pick.web && !this.webInstalled) add(this.pick.web, ((this.mod(this.pick.web)||{}).versions||[{}])[0].value || '');
-      if (this.pick.db && !this.dbInstalled) add(this.pick.db, ((this.mod(this.pick.db)||{}).versions||[{}])[0].value || '');
+      // The recommended track (an LTS where the app has one), never simply
+      // the first/newest entry.
+      const rec = id => { const vs = (this.mod(id)||{}).versions || []; return ((vs.find(v => v.recommended) || vs[0]) || {}).value || ''; };
+      if (this.pick.web && !this.webInstalled) add(this.pick.web, rec(this.pick.web));
+      if (this.pick.db && !this.dbInstalled) add(this.pick.db, rec(this.pick.db));
       this.pick.php.filter(v => !this.phpInstalled.includes(v)).forEach(v => add('php', v, 'PHP ' + v));
       ['redis','pure-ftpd','fail2ban','phpmyadmin'].filter(id => this.pick.extras.includes(id))
-        .forEach(id => add(id, ((this.mod(id)||{}).versions||[{}])[0].value || ''));
+        .forEach(id => add(id, rec(id)));
       return out;
     },
     pendingCount() { return this.modulesLoaded ? this.plan().length : 0; },
@@ -7074,10 +7468,14 @@ function onboardingWizard() {
       if (a.kind === '2fa') { await openSecurityModal('2FA'); return; }
       this.secBusy = true;
       let r;
-      if (a.kind === 'firewall') r = await post('/api/firewall/toggle', {enable: true});
+      if (a.kind === 'firewall') {
+        r = await post('/api/firewall/install', {});          // no-op when ufw/firewalld exists
+        if (r && r.ok) r = await post('/api/firewall/toggle', {enable: true});
+      }
       else if (a.kind === 'f2b-start') r = await post('/api/modules/fail2ban/control', {action: 'start'});
       else if (a.kind === 'f2b-install') {
-        r = await post('/api/modules/fail2ban/install', {version: ((this.mod('fail2ban')||{}).versions||[{}])[0].value || ''});
+        const fv = (this.mod('fail2ban')||{}).versions || [];
+        r = await post('/api/modules/fail2ban/install', {version: ((fv.find(v => v.recommended) || fv[0]) || {}).value || ''});
         if (r && r.ok) r = await new Promise(res => vpPollJob(`/api/modules/job/${r.job_id}/status`, null, j => res({ok: !!j.success, error: j.message || j.error}), {interval: 1500, maxMisses: 120}));
       }
       if (r && r.ok) { toast('Done', 'success'); this.done.push(a.kind === 'firewall' ? 'Turned on the firewall' : 'Enabled fail2ban'); }
@@ -7092,7 +7490,7 @@ function onboardingWizard() {
     async prepareSite() {
       const r = await get('/api/websites/php-versions');
       this.sitePhp = (r && r.ok) ? (r.versions || []).map(v => v.version) : [];
-      if (this.site.php === 'static' && this.sitePhp.length) this.site.php = this.sitePhp.includes('8.3') ? '8.3' : this.sitePhp[0];
+      if (this.site.php === 'static' && this.sitePhp.length) this.site.php = [...this.sitePhp].sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}))[0];
       this.site.createDb = this.mysqlReady() && this.site.php !== 'static';
     },
     async createSite() {
@@ -7214,5 +7612,112 @@ function diskPage() {
       if (s < 86400) return Math.floor(s / 3600) + ' h ago'; return Math.floor(s / 86400) + ' days ago';
     },
     fmtBytes, fmtDate,
+  };
+}
+
+
+// --- Users & API keys (v3.7.0) ---------------------------------------------------
+function vpRandomPassword() {
+  const a = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const r = new Uint32Array(16); crypto.getRandomValues(r);
+  return Array.from(r, x => a[x % a.length]).join('');
+}
+
+function usersPage() {
+  return {
+    tab: 'users', users: [], keys: [], roles: {}, allSites: [], busy: false, newToken: '',
+    userForm: {show:false}, keyForm: {show:false},
+    init() {
+      if (!vpOnce(this, 'init')) return;
+      window.addEventListener('vp:page', e => { if (e.detail === 'users') this.load(); });
+      if (vpActivePage() === 'users') this.load();
+    },
+    roleName(r) { return {admin:'Administrator', site:'Site manager', viewer:'Viewer'}[r] || r; },
+    async load() {
+      const r = await get('/api/users');
+      if (r.ok) { this.users = r.users; this.roles = r.roles; }
+      if (this.tab === 'keys') await this.loadKeys();
+    },
+    async loadKeys() { const r = await get('/api/apikeys'); if (r.ok) this.keys = r.keys; },
+    async openUser(u) {
+      const s = await get('/api/websites').catch(() => ({ok:false}));
+      this.allSites = (s.ok ? s.sites : []).map(x => x.domain).sort();
+      this.userForm = u ? {show:true, id:u.id, username:u.username, password:'', role:u.role, sites:[...(u.sites||[])],
+                           note:u.note||'', disabled:u.disabled, twofa:u.twofa, reset_2fa:false}
+                        : {show:true, id:'', username:'', password:vpRandomPassword(), role:'site', sites:[], note:'', disabled:false};
+    },
+    async saveUser() {
+      const f = this.userForm; this.busy = true;
+      const body = {role:f.role, sites:f.sites, note:f.note};
+      let r;
+      if (f.id) {
+        Object.assign(body, {disabled:f.disabled, reset_2fa:f.reset_2fa});
+        if (f.password) body.password = f.password;
+        r = await put('/api/users/' + f.id, body);
+      } else {
+        r = await post('/api/users', Object.assign(body, {username:f.username, password:f.password}));
+      }
+      this.busy = false;
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      if (!f.id) copyText(`Panel: ${location.origin}\nUsername: ${f.username}\nPassword: ${f.password}`);
+      toast(f.id ? 'User saved' : 'User created - sign-in details copied to the clipboard', 'success', 5000);
+      this.userForm.show = false; await this.load();
+    },
+    async removeUser(u) {
+      if (!confirm(`Delete the user ${u.username}? They are signed out immediately.`)) return;
+      const r = await del('/api/users/' + u.id);
+      toast(r.ok ? 'User deleted' : (r.error || 'Failed'), r.ok ? 'success' : 'error'); await this.load();
+    },
+    async createKey() {
+      const f = this.keyForm; this.busy = true;
+      const r = await post('/api/apikeys', {name:f.name, role:f.role, allowed_ips:f.allowed_ips, expires_days:f.expires_days});
+      this.busy = false;
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      this.newToken = r.token; this.keyForm.show = false; await this.loadKeys();
+    },
+    async toggleKey(k) { const r = await put('/api/apikeys/' + k.id, {disabled: !k.disabled}); if (r.ok) await this.loadKeys(); },
+    async removeKey(k) {
+      if (!confirm(`Delete the API key "${k.name}"? Scripts using it stop working.`)) return;
+      const r = await del('/api/apikeys/' + k.id); if (r.ok) await this.loadKeys();
+    },
+  };
+}
+
+// --- Alerts (v3.7.0) ---------------------------------------------------------------
+function alertsPage() {
+  return {
+    cfg: {enabled:false, channels:{email:{}, telegram:{}, webhook:{}}, rules:{cpu:{},mem:{},disk:{},services:{},sites:{},ssl:{},backups:{},logins:{}}, repeat_minutes:180},
+    history: [], busy: false, isAdmin: true,
+    init() {
+      if (!vpOnce(this, 'init')) return;
+      window.addEventListener('vp:page', e => { if (e.detail === 'alerts') this.load(); });
+      if (vpActivePage() === 'alerts') this.load();
+    },
+    async load() {
+      const r = await get('/api/alerts');
+      if (r.ok) { this.cfg = r.settings; this.history = r.history || []; this.isAdmin = true; return; }
+      this.isAdmin = false;
+      const h = await get('/api/alerts/history'); if (h.ok) this.history = h.history || [];
+    },
+    async save() {
+      this.busy = true;
+      const r = await put('/api/alerts', this.cfg);
+      this.busy = false;
+      if (r.ok) { this.cfg = r.settings; toast('Alert settings saved', 'success'); }
+      else toast(r.error || 'Failed', 'error');
+    },
+    async test(ch) {
+      const s = await put('/api/alerts', this.cfg);
+      if (!s.ok) { toast(s.error || 'Save failed', 'error'); return; }
+      this.cfg = s.settings;
+      const r = await post('/api/alerts/test', {channel: ch});
+      toast(r.ok ? 'Test sent - check that it arrived' : ('Not sent: ' + (r.error || 'unknown error')), r.ok ? 'success' : 'error', 7000);
+    },
+    deliveryText(res) {
+      if (!res) return '';
+      const e = Object.entries(res);
+      if (!e.length) return 'No channel enabled';
+      return e.map(([k, v]) => k + ': ' + (v ? 'failed (' + v + ')' : 'sent')).join(', ');
+    },
   };
 }

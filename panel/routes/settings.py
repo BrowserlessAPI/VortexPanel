@@ -46,8 +46,9 @@ def load_config():
 
 def save_config(cfg):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-    tmp = CONFIG_FILE + '.tmp'
-    with open(tmp, 'w') as f: json.dump(cfg, f, indent=2)
+    tmp = CONFIG_FILE + f'.tmp.{os.getpid()}'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f: json.dump(cfg, f, indent=2)
     os.replace(tmp, CONFIG_FILE)
 
 # --- Gunicorn bind management ---------------------------------------------------
@@ -214,6 +215,25 @@ def save_settings():
             if r.returncode != 0:
                 return jsonify({'ok':False,'error':'Could not set timezone: ' + (r.stderr or r.stdout).strip()[:300]}), 500
         d['timezone'] = tz
+    if 'panel_domain' in d:
+        dom = str(d.get('panel_domain') or '').strip().lower().rstrip('.')
+        if dom and not re.fullmatch(r'[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+', dom):
+            return jsonify({'ok':False,'error':'Invalid domain name'}), 400
+        host = (request.host or '').lower()
+        host = host[1:host.find(']')] if host.startswith('[') else host.rsplit(':', 1)[0]
+        if dom and host != dom and host not in ('127.0.0.1', 'localhost', '::1'):
+            return jsonify({'ok':False,'error':f'Open the panel through https://{dom}:{request.host.rsplit(":",1)[-1]} '
+                                              f'first (point the DNS record at this server), then save - '
+                                              f'otherwise you would lock yourself out.'}), 400
+        d['panel_domain'] = dom
+        cfg['panel_domain_enforced'] = bool(dom)
+    if 'security_path' in d:
+        sp = str(d.get('security_path') or '').strip().strip('/')
+        if sp and not re.fullmatch(r'[A-Za-z0-9_-]{4,64}', sp):
+            return jsonify({'ok':False,'error':'Login path: 4-64 letters, digits, dash or underscore'}), 400
+        if sp.lower() in ('api', 'static', 'ws', 'favicon.ico'):
+            return jsonify({'ok':False,'error':'That login path is reserved'}), 400
+        d['security_path'] = sp
     cfg.update({k:v for k,v in d.items() if k in allowed})
     save_config(cfg)
     return jsonify({'ok':True})

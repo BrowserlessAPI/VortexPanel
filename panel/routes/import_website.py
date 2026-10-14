@@ -17,11 +17,12 @@ Site files and databases, plus (v3.6.0) the SSL certificate, cron jobs and
 mailboxes found in the backup -- see panel/import_extras.py.
 """
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import os, re, subprocess, threading, time, json, uuid, shutil, shlex
 
 import_bp = Blueprint('import_website', __name__)
 
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 def sh(cmd, timeout=30):
     try:

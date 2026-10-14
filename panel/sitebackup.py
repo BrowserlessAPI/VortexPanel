@@ -118,7 +118,7 @@ def _update_site_state(domain, **kw):
 
 
 DEFAULT_SCHEDULE = {'enabled': False, 'frequency': 'daily', 'time': '03:00', 'weekday': 0,
-                    'monthday': 1, 'every_hours': 6, 'keep_local': 7, 'cloud': False,
+                    'monthday': 1, 'every_hours': 6, 'keep_local': 7, 'cloud': False, 'target': 's3',
                     'keep_cloud': 30, 'databases': None, 'excludes': []}
 
 
@@ -151,6 +151,11 @@ def validate_schedule(d, dbs_on_server=None):
     if s['every_hours'] not in (1, 2, 3, 4, 6, 8, 12):
         return None, 'Hourly backups can run every 1, 2, 3, 4, 6, 8 or 12 hours'
     s['cloud'] = bool(d.get('cloud'))
+    s['target'] = str(d.get('target') or 's3')
+    if s['cloud']:
+        from panel import storage
+        if not storage.get_target(s['target']):
+            return None, 'Choose a backup destination (Backups > Storage) for the remote copy'
     if s['enabled'] and s['keep_local'] == 0 and not s['cloud']:
         return None, 'Keep at least one local copy, or upload to cloud storage'
     dbs = d.get('databases')
@@ -382,42 +387,38 @@ def cloud_config():
         return None
 
 
-def cloud_upload(path, name, log=None):
-    log = log or (lambda m: None)
-    cfg = cloud_config()
-    if not cfg:
-        raise BackupError('Cloud storage is not connected (Backups > Cloud Storage)')
-    from panel.routes.cloud_backup import get_client
-    client = get_client(cfg)
-    prefix = cfg.get('prefix', 'vortexpanel-backups/')
-    log(f'Uploading to {cfg.get("provider", "s3")} bucket {cfg["bucket"]}...')
-    client.upload_file(path, cfg['bucket'], prefix + name)
-    log('Uploaded to cloud storage')
+def _target_of(domain):
+    """The backup destination of a site schedule ('s3' = Cloud Storage settings)."""
+    return get_schedule(domain).get('target') or 's3'
 
 
-def cloud_prune(domain, keep, log=None):
-    log = log or (lambda m: None)
-    cfg = cloud_config()
-    if not cfg or keep is None or keep <= 0:
+def cloud_upload(path, name, log=None, target=None):
+    from panel import storage
+    target = target or 's3'
+    if target == 's3' and not cloud_config():
+        raise BackupError('Cloud storage is not connected (Backups > Storage)')
+    try:
+        storage.upload(target, path, name, log=log)
+    except storage.StorageError as e:
+        raise BackupError(str(e))
+
+
+def cloud_prune(domain, keep, log=None, target=None):
+    from panel import storage
+    target = target or 's3'
+    if keep is None or keep <= 0 or not storage.get_target(target):
         return 0
-    from panel.routes.cloud_backup import get_client
-    client = get_client(cfg)
-    prefix = cfg.get('prefix', 'vortexpanel-backups/') + f'site_{_slug(domain)}_'
-    keys = []
-    for page in client.get_paginator('list_objects_v2').paginate(Bucket=cfg['bucket'], Prefix=prefix):
-        for o in page.get('Contents', []):
-            if NAME_RE.match(o['Key'].rsplit('/', 1)[-1]) and archive_domain(o['Key'].rsplit('/', 1)[-1]) == domain:
-                keys.append(o['Key'])
-    keys.sort(reverse=True)
     removed = 0
-    for k in keys[keep:]:
-        client.delete_object(Bucket=cfg['bucket'], Key=k)
+    files = [f for f in storage.list_files(target, f'site_{_slug(domain)}_')
+             if NAME_RE.match(f['name']) and archive_domain(f['name']) == domain]
+    files.sort(key=lambda x: x['name'], reverse=True)
+    for f in files[keep:]:
+        storage.delete(target, f['name'])
         removed += 1
-        log(f'Removed old cloud backup {k.rsplit("/", 1)[-1]}')
+        (log or (lambda m: None))(f'Removed old cloud backup {f["name"]}')
     return removed
 
 
-# --- restore ---------------------------------------------------------------------
 def restore_backup(name, log=None, files=True, databases=True, target=None):
     """Restore a site backup: files go back to the site folder (or `target`),
     databases are imported into the databases they came from. The old files
@@ -529,9 +530,10 @@ def run_one(domain, trigger='schedule', log=None):
         cloud_msg = ''
         if sched.get('cloud'):
             try:
-                cloud_upload(res['path'], res['name'], log=_log)
-                cloud_prune(domain, sched.get('keep_cloud', 30), log=_log)
-                cloud_msg = ', uploaded to cloud storage'
+                tgt = sched.get('target') or 's3'
+                cloud_upload(res['path'], res['name'], log=_log, target=tgt)
+                cloud_prune(domain, sched.get('keep_cloud', 30), log=_log, target=tgt)
+                cloud_msg = ', uploaded to remote storage'
             except Exception as e:
                 cloud_msg = f', but the cloud upload failed: {e}'
                 _log(f'Cloud upload failed: {e}')
@@ -576,3 +578,19 @@ def run_due(now=None):
         _update_site_state(domain, next_run=next_run(get_schedule(domain), int(time.time())))
         ran.append((domain, ok, msg))
     return ran
+
+
+def recent_failures(hours=48):
+    """Scheduled backups whose last run failed in the last `hours` (for alerts)."""
+    out = []
+    cutoff = time.time() - hours * 3600
+    for domain, e in load_schedules().items():
+        if e.get('last_ok') is False and e.get('last_trigger') == 'schedule':
+            t = e.get('last_run')
+            try:
+                ts = time.mktime(time.strptime(str(t)[:19], '%Y-%m-%d %H:%M:%S')) if isinstance(t, str) else float(t or 0)
+            except Exception:
+                ts = 0
+            if ts >= cutoff:
+                out.append({'id': f'{domain}:{t}', 'domain': domain, 'time': t, 'error': e.get('last_message', '')})
+    return out

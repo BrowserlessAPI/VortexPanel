@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.6.0-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.6.0">
+<img src="https://img.shields.io/badge/VortexPanel-v3.7.0-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.7.0">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
 <img src="https://img.shields.io/badge/Alpine.js-3.15-8bc0d0?style=for-the-badge">
@@ -34,11 +34,15 @@ Built with Python/Flask + Alpine.js. No Node.js build step. No bloat. 2-minute i
 | **Load Balancer** | ❌ | ❌ | ❌ | ✅ paid | ❌ | **✅ Built-in** |
 | **WP Toolkit** | ❌ | Paid (Deluxe+) | ❌ | ❌ | ❌ | **✅ Built-in, free** |
 | **Firewall (UFW + firewalld)** | ❌ | via ext. | UFW only | UFW only | UFW only | **✅ Both, native** |
-| **Panel 2FA (TOTP)** | ✅ | ✅ | ✅ | ✅ | ❌ | **✅ Built-in** |
+| **Panel 2FA (TOTP)** | ✅ | ✅ | ✅ | ✅ | ❌ | **✅ Built-in, with backup codes** |
+| **Multi-user with roles** | ✅ | ✅ | ❌ | ✅ paid | ✅ | **✅ Admin / Site manager / Viewer** |
+| **API keys** | ✅ | ✅ | ✅ | ✅ | ✅ | **✅ Role + IP allowlist** |
+| **Alerts (email, Telegram, webhook)** | ✅ | ✅ | ✅ | ✅ | ❌ | **✅ Built-in** |
+| **Signed, verified updates** | ✅ | ✅ | ❌ | ❌ | ❌ | **✅ git verify-tag + auto rollback** |
 | **Panel HTTPS (self-hosted)** | ✅ | ✅ | ✅ | ✅ | ✅ | **✅ Custom port, never 443** |
 | **Password hashing** | Unknown | Unknown | Unknown | Unknown | Unknown | **Argon2id (OWASP #1)** |
 | **PHP Webshell Scanner** | ❌ | ❌ | ❌ | ❌ | ❌ | **✅ Built-in** |
-| **Cloud Backup (S3)** | Paid | Paid ext. | ❌ | ✅ paid | Manual | **✅ Built-in** |
+| **Cloud Backup** | Paid | Paid ext. | ❌ | ✅ paid | Manual | **✅ S3, FTP, Google Drive, OneDrive, Dropbox, SFTP** |
 | **Docker UI** | ❌ | ❌ | ✅ | ✅ | ❌ | **✅ Built-in** |
 | **RHEL/AlmaLinux/Rocky** | ✅ | ✅ | Partial | Partial | ❌ | **✅ 9 distros** |
 | **Web Terminal** | ✅ | ✅ | ✅ | ✅ | ❌ | **✅ Built-in** |
@@ -91,11 +95,15 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - **Security Score** dashboard — SSH config, firewall (UFW or firewalld), Fail2ban, auto-updates, panel password strength, 2FA status, secret key — all in one glance
 
 ### 🛡 Panel Security *(hardened to OWASP standards)*
+- **Secure from the first minute**: a new install gets a random port, a random login path (every other address answers 404), a random admin username and password, and HTTPS
 - **Argon2id password hashing** (OWASP's #1 recommendation) with transparent migration from legacy SHA-256/bcrypt — existing users never notice
-- **2FA / TOTP** — QR-code setup with any authenticator app (Google Authenticator, Authy, 1Password), required on every login once enabled
-- **Brute-force lockout** — 5 failed attempts → 15-minute lockout, persists across panel restarts
-- **Panel HTTPS** — self-signed or Let's Encrypt, served on your **custom port** (never the well-known 443), so enabling HTTPS never makes the panel newly discoverable by a generic port scan
-- **IP allowlist**, session timeout, login audit log, auto-generated 64-byte secret key, security headers (CSP, X-Frame-Options, HSTS-ready) on every response
+- **2FA / TOTP** with single-use codes and 10 backup codes, QR code drawn in the browser
+- **Brute-force lockout** per address and per account, persists across panel restarts
+- **Accounts with roles** (Administrator, Site manager limited to assigned websites, Viewer) and **API keys** with role, IP allowlist and expiry
+- **Signed updates**: releases are verified with `git verify-tag` before they are installed; code and Python packages are snapshotted and restored automatically if the new version does not start
+- **Panel HTTPS** — self-signed or Let's Encrypt on your **custom port**; correct Secure cookie and HSTS behind a TLS reverse proxy
+- **IP allowlist**, panel domain binding, session timeout, login audit log, security headers (CSP, HSTS, X-Frame-Options) on every response
+- **`vortexpanel` command** for recovery: reset password, disable 2FA, change port or login path, clear the IP allowlist, unlock, update, rollback
 
 ### 🗄 Databases
 - MySQL, MariaDB, PostgreSQL, MongoDB — multi-engine
@@ -125,10 +133,14 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - **DNS** — BIND9 zone management + Cloudflare DDNS
 - **Mail** — Postfix + Dovecot, domains, accounts, Roundcube webmail
 - **CDN** — Cloudflare, BunnyCDN, Akamai, CloudFront, KeyCDN
-- **Monitoring & Dashboard** — realtime CPU/RAM/Network charts, process list, bandwidth, **login audit log viewer**
-- **File Manager** — code editor, chmod, AES-encrypted zip support, ClamAV scan
+- **Monitoring & Dashboard** — realtime CPU/RAM/Network charts, **history from 1 hour to 90 days**, process list, bandwidth, login audit log viewer
+- **Alerts** — email, Telegram or webhook (Slack, Discord) for high CPU/memory/disk, stopped services, websites that are down, expiring SSL, failed backups and sign-in attacks
+- **File Manager** — code editor with edit history, recycle bin, owner and permission changes, download from URL, AES-encrypted zip support, ClamAV scan
 - **Web Terminal** — full PTY shell in browser over WebSocket
-- **Website Backups** — each site's files and databases in one archive, one-click restore, per-site schedules (every few hours / daily / weekly / monthly) with retention, automatic upload to S3-compatible cloud storage
+- **Website Backups** — each site's files and databases in one archive, one-click restore, per-site schedules (every few hours / daily / weekly / monthly) with retention, copies to S3, FTP/FTPS or (with rclone) Google Drive, OneDrive, Dropbox, SFTP
+- **Panel backup** — accounts, settings and keys in one archive, daily schedule, restore on a reinstalled server
+- **Website Security & Limits** — force HTTPS, HSTS, HTTP/2, blocked paths, speed and connection limits, site expiry date
+- **Language packs** — English, Simplified Chinese, Spanish, Portuguese (Brazil), German, French, Russian
 - **Bandwidth** — per-website traffic history (24 hours / 7 / 30 days / 12 months) from the access logs, plus live interface traffic
 - **Disk Usage analyzer** — scan a disk, drill into folders, see the largest files, open them in the File Manager or delete them (system and database folders are protected)
 - **Dark mode** (Light / Dark / follow the system) and a **mobile layout** with a slide-in menu
@@ -141,17 +153,40 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 ## 🚀 Quick Install
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/install.sh && bash install.sh
+curl -fsSL https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/install.sh -o install.sh && sudo bash install.sh
 ```
-If wget not default installed.
-```bash
-curl -O https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/install.sh && bash install.sh
+(or `wget -O install.sh https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/install.sh && sudo bash install.sh`)
+
+The installer installs the newest signed release and prints everything you need, for example:
+
 ```
-Access the panel at: **`http://YOUR-SERVER-IP:8888`**
+VortexPanel v3.7.0  (active)
+  Address:   https://203.0.113.10:23817/k4m9q2xd
+  Username:  hq7tmc2e
+  Password:  ...
+```
+
+The port, the login path at the end of the address and the username are random, and the panel uses HTTPS with a self-signed certificate (your browser warns once; add a domain and a Let's Encrypt certificate in Settings > Panel SSL to remove the warning). Choose your own with `--port 8888`, `--path off`, `--user admin`, `--http` or install a specific release with `--version v3.7.0`.
+
+Lost the address or the password? On the server, run `vortexpanel` (shows the address and username) or `vortexpanel reset-password`. `vortexpanel --help` lists every command.
 
 The installer auto-detects your OS and package manager. On RHEL 8-family systems (AlmaLinux 8 / Rocky 8, where default Python is 3.6) it automatically installs Python 3.11.
 
-**First things to do after install:** the setup guide opens on first login (web stack, firewall, fail2ban, first website). Then enable 2FA and Panel SSL from Settings.
+**First things to do after install:** the setup guide opens on first login (web stack, firewall, fail2ban, first website). Then enable 2FA (Settings > Security) and set up Alerts.
+
+### Updating
+
+Use Settings > Panel Update (or `vortexpanel update`). Only signed release tags are installed; the previous version is restored automatically if the new one does not start, and `vortexpanel rollback` goes back by hand.
+
+### API
+
+Create a key in Users & API and send it as a bearer token:
+
+```bash
+curl -k -H "Authorization: Bearer vp_xxxxxxxx_..." https://YOUR-SERVER:PORT/api/dashboard/stats
+```
+
+Viewer keys can read monitoring and status; administrator keys can call every `/api/` endpoint the panel itself uses.
 
 ---
 
@@ -198,7 +233,7 @@ Contributions are welcome — bug reports, feature requests, and pull requests a
 git clone https://github.com/BrowserlessAPI/VortexPanel.git
 cd VortexPanel
 pip install -r requirements.txt
-python3 app.py   # runs on :8888
+python3 app.py   # development server on :8888
 ```
 
 ---
@@ -227,22 +262,24 @@ python3 app.py   # runs on :8888
 - [x] Full audit of every route, page and App Store app (v3.5.3)
 - [x] PHP Webshell Scanner
 
-**v3.6.0 (current):**
-- [x] Bandwidth Monitor — per-domain traffic graphs (24 h / 7 d / 30 d / 12 months)
-- [x] Website-level Backup — files + database together in one click per domain
-- [x] Scheduled per-site backups with retention and upload to cloud storage
-- [x] Dark mode — Light / Dark / System toggle with a full dark variable set
-- [x] Onboarding wizard — guided first-run flow
-- [x] Mobile responsiveness — slide-in sidebar and layouts for small screens
-- [x] Disk usage analyzer — drill-down, largest files, delete from the panel
-- [x] Website Import — SSL, cron and email migration
-- [x] Mail Server in the App Store, with a setup screen
+**v3.6.0:** bandwidth monitor, website backups with schedules and cloud upload, dark mode, setup guide, mobile layout, disk usage analyzer, import of SSL/cron/email, Mail Server in the App Store.
+
+**v3.7.0 (current):**
+- [x] Secure install defaults (random port, login path, username; HTTPS) and the `vortexpanel` command
+- [x] Signed release updates with package snapshots and automatic rollback
+- [x] 2FA backup codes, single-use codes, per-account lockout
+- [x] Multi-user accounts with roles, API keys
+- [x] Alerts (email, Telegram, webhook) and monitoring history
+- [x] Backup destinations: FTP/FTPS, Google Drive, OneDrive, Dropbox, SFTP (rclone); panel backup
+- [x] Website Security & Limits (force HTTPS, HSTS, HTTP/2, blocked paths, rate and connection limits, expiry)
+- [x] File manager recycle bin, edit history, owner change, download from URL; FTP disable, quota, log
+- [x] Live App Store version data and distribution-package fallbacks
+- [x] Language packs
 
 **Next:**
-- [ ] Alerting — CPU/RAM/disk/SSL-expiry/service-down notifications (email, Telegram, webhook)
 - [ ] Coraza WAF installer for Caddy
-- [ ] Multi-user accounts with roles
-- [ ] Documented API keys for automation
+- [ ] Site manager access to their own databases
+- [ ] Two-way file sync between servers
 
 ---
 

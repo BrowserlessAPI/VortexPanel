@@ -1,9 +1,10 @@
 from flask import Blueprint, jsonify, request, session
-import os, shutil, stat as _stat
+from panel.utils.authctx import authed as _vp_authed
+import os, re, shutil, stat as _stat
 import subprocess, urllib.request, urllib.parse, threading, zipfile, gzip
 
 files_bp = Blueprint('files', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 ROOT = '/'
 def get_webroot():
     """The panel's web root (/www/wwwroot) -- one implementation for the
@@ -107,6 +108,7 @@ def write_file():
     if os.path.isdir(path): return jsonify({'ok':False,'error':'Path is a directory'}),400
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        _history_save(path)
         with open(path,'w', encoding='utf-8', newline='') as f: f.write(content)
         return jsonify({'ok':True})
     except Exception as e: return _err(e)
@@ -114,8 +116,18 @@ def write_file():
 @files_bp.route('/api/files/delete', methods=['POST'])
 def delete_file():
     if not req(): return jsonify({'ok':False}),401
-    path = safe_path((request.get_json() or {}).get('path',''))
+    d = request.get_json() or {}
+    path = safe_path(d.get('path',''))
     if _is_protected(path, follow=not os.path.islink(path)): return _protected_resp(path)
+    if not os.path.lexists(path): return jsonify({'ok':False,'error':'Not found'}),404
+    # Recycle bin (Files > Recycle bin): deleted items can be restored for
+    # RECYCLE_DAYS days unless the caller asks for a permanent delete.
+    if not d.get('permanent') and _recycle_enabled():
+        try:
+            entry = _recycle_put(path)
+            return jsonify({'ok':True, 'recycled':entry['id']})
+        except Exception as e:
+            return _err(f'Could not move it to the recycle bin ({e}); delete permanently instead')
     try:
         # A symlink to a directory: remove the link, never the target tree
         # (rmtree refuses symlinks and the delete used to fail outright).
@@ -376,21 +388,50 @@ def remote_download():
     fname = os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(url).path)) or 'download'
     if fname in ('.', '..'): fname = 'download'
     fpath = os.path.join(dest, fname)
+    from panel.routes.job_state import save_job
+    import uuid as _u
+    jid = 'dl_' + _u.uuid4().hex[:12]
+    state = {'done': False, 'success': False, 'bytes': 0, 'total': 0, 'path': fpath, 'error': ''}
+    save_job(jid, state)
+
     def do_dl():
-        # Bounded socket timeout (urlretrieve had none and could hang forever)
-        # and a .part file so a failed download never leaves a truncated file
-        # under the real name.
+        # Bounded socket timeout and a .part file so a failed download never
+        # leaves a truncated file under the real name. Progress is written to
+        # a job file every 2 seconds for the File Manager to show.
         part = fpath + '.part'
         try:
             rq = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (VortexPanel)'})
             with urllib.request.urlopen(rq, timeout=60) as resp, open(part, 'wb') as out:
-                shutil.copyfileobj(resp, out, 1024 * 1024)
+                state['total'] = int(resp.headers.get('Content-Length') or 0)
+                last = 0
+                import time as _t
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    state['bytes'] += len(chunk)
+                    if _t.time() - last > 2:
+                        last = _t.time(); save_job(jid, state)
             os.replace(part, fpath)
-        except Exception:
+            state['success'] = True
+        except Exception as e:
+            state['error'] = str(e)[:300]
             try: os.unlink(part)
             except OSError: pass
+        state['done'] = True
+        save_job(jid, state)
     threading.Thread(target=do_dl, daemon=True).start()
-    return jsonify({'ok':True,'filename':fname,'path':fpath,'message':'Download started in background'})
+    return jsonify({'ok':True,'filename':fname,'path':fpath,'job_id':jid,'message':'Download started in background'})
+
+
+@files_bp.route('/api/files/remote-download/<jid>')
+def remote_download_status(jid):
+    if not req(): return jsonify({'ok':False}),401
+    from panel.routes.job_state import load_job
+    st = load_job(jid if re.fullmatch(r'dl_[0-9a-f]{12}', jid) else 'x', None)
+    if not st: return jsonify({'ok':False,'error':'No such download'}),404
+    return jsonify({'ok':True, **st})
 
 @files_bp.route('/api/files/properties')
 def file_properties():
@@ -514,3 +555,240 @@ def scan_file():
         return jsonify({'ok':False,'error':'Scan timed out (30 min limit)'})
     except Exception as e:
         return jsonify({'ok':False,'error':str(e)})
+
+
+# --- Recycle bin, edit history, owner change, remote downloads (v3.7.0) -----------
+import json as _json, time as _time, hashlib as _hashlib, uuid as _uuid, pwd as _pwd, grp as _grp
+
+RECYCLE_DIR = '/opt/vortexpanel/data/recycle'
+RECYCLE_DAYS = 30
+HISTORY_DIR = '/opt/vortexpanel/data/file_history'
+HISTORY_KEEP = 20
+_SETTINGS = '/opt/vortexpanel/data/files_settings.json'
+
+
+def _settings():
+    try:
+        return _json.load(open(_SETTINGS))
+    except Exception:
+        return {}
+
+
+def _recycle_enabled():
+    return _settings().get('recycle', True)
+
+
+def _bin_for(path):
+    """A recycle directory on the same filesystem as `path` (a rename, not a
+    copy), falling back to the panel's data directory."""
+    try:
+        dev = os.stat(path if os.path.isdir(path) else os.path.dirname(path)).st_dev
+        for root in ('/www', '/home', '/var/www', '/srv'):
+            if path.startswith(root + '/') and os.path.isdir(root) and os.stat(root).st_dev == dev:
+                return os.path.join(root, '.recycle_bin')
+    except OSError:
+        pass
+    return RECYCLE_DIR
+
+
+def _recycle_dirs():
+    return [d for d in {RECYCLE_DIR, '/www/.recycle_bin', '/home/.recycle_bin', '/var/www/.recycle_bin',
+                        '/srv/.recycle_bin'} if os.path.isdir(d)]
+
+
+def _du_quick(p):
+    if os.path.islink(p) or not os.path.isdir(p):
+        try:
+            return os.lstat(p).st_size
+        except OSError:
+            return 0
+    return _du(p) or 0
+
+
+def _recycle_put(path):
+    bin_ = _bin_for(path)
+    os.makedirs(bin_, mode=0o700, exist_ok=True)
+    os.chmod(bin_, 0o700)
+    rid = f'{int(_time.time())}_{_uuid.uuid4().hex[:8]}'
+    slot = os.path.join(bin_, rid)
+    os.makedirs(slot, mode=0o700)
+    entry = {'id': rid, 'path': path, 'name': os.path.basename(path), 'deleted': int(_time.time()),
+             'type': 'dir' if (os.path.isdir(path) and not os.path.islink(path)) else 'file',
+             'size': _du_quick(path), 'bin': bin_}
+    shutil.move(path, os.path.join(slot, 'item'))
+    with open(os.path.join(slot, 'meta.json'), 'w') as f:
+        _json.dump(entry, f)
+    return entry
+
+
+def _recycle_list():
+    out = []
+    for b in _recycle_dirs():
+        for rid in os.listdir(b):
+            try:
+                e = _json.load(open(os.path.join(b, rid, 'meta.json')))
+                e['bin'] = b
+                out.append(e)
+            except Exception:
+                continue
+    out.sort(key=lambda e: e.get('deleted', 0), reverse=True)
+    return out
+
+
+def _recycle_find(rid):
+    if not re.fullmatch(r'\d+_[0-9a-f]{8}', rid or ''):
+        return None
+    for e in _recycle_list():
+        if e['id'] == rid:
+            return e
+    return None
+
+
+def recycle_purge_old(days=None):
+    days = days if days is not None else int(_settings().get('recycle_days', RECYCLE_DAYS))
+    cutoff = _time.time() - days * 86400
+    n = 0
+    for e in _recycle_list():
+        if e.get('deleted', 0) < cutoff:
+            shutil.rmtree(os.path.join(e['bin'], e['id']), ignore_errors=True)
+            n += 1
+    return n
+
+
+@files_bp.route('/api/files/recycle')
+def recycle_list():
+    if not req(): return jsonify({'ok':False}),401
+    st = _settings()
+    return jsonify({'ok':True, 'items':_recycle_list()[:1000], 'enabled':st.get('recycle', True),
+                    'days':int(st.get('recycle_days', RECYCLE_DAYS))})
+
+
+@files_bp.route('/api/files/recycle/settings', methods=['PUT'])
+def recycle_settings():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    st = _settings()
+    if 'enabled' in d: st['recycle'] = bool(d['enabled'])
+    if 'days' in d:
+        try: st['recycle_days'] = max(1, min(365, int(d['days'])))
+        except (TypeError, ValueError): return jsonify({'ok':False,'error':'Days must be a number'}),400
+    os.makedirs(os.path.dirname(_SETTINGS), exist_ok=True)
+    with open(_SETTINGS, 'w') as f: _json.dump(st, f)
+    return jsonify({'ok':True})
+
+
+@files_bp.route('/api/files/recycle/restore', methods=['POST'])
+def recycle_restore():
+    if not req(): return jsonify({'ok':False}),401
+    e = _recycle_find((request.get_json() or {}).get('id'))
+    if not e: return jsonify({'ok':False,'error':'Not found in the recycle bin'}),404
+    dest = e['path']
+    if os.path.lexists(dest):
+        base, ext = os.path.splitext(dest)
+        dest = f'{base}.restored-{_time.strftime("%Y%m%d%H%M%S")}{ext}'
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.move(os.path.join(e['bin'], e['id'], 'item'), dest)
+    shutil.rmtree(os.path.join(e['bin'], e['id']), ignore_errors=True)
+    return jsonify({'ok':True, 'path':dest})
+
+
+@files_bp.route('/api/files/recycle/<rid>', methods=['DELETE'])
+def recycle_delete(rid):
+    if not req(): return jsonify({'ok':False}),401
+    if rid == 'all':
+        n = 0
+        for e in _recycle_list():
+            shutil.rmtree(os.path.join(e['bin'], e['id']), ignore_errors=True); n += 1
+        return jsonify({'ok':True, 'removed':n})
+    e = _recycle_find(rid)
+    if not e: return jsonify({'ok':False,'error':'Not found'}),404
+    shutil.rmtree(os.path.join(e['bin'], e['id']), ignore_errors=True)
+    return jsonify({'ok':True})
+
+
+def _hist_dir(path):
+    return os.path.join(HISTORY_DIR, _hashlib.sha256(path.encode()).hexdigest()[:24])
+
+
+def _history_save(path):
+    """Keep the previous content of a file before the editor overwrites it."""
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > MAX_EDIT_SIZE:
+            return
+        d = _hist_dir(path)
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        with open(os.path.join(d, 'path'), 'w') as f: f.write(path)
+        name = _time.strftime('%Y%m%d-%H%M%S') + f'-{_uuid.uuid4().hex[:4]}'
+        shutil.copy2(path, os.path.join(d, name))
+        versions = sorted(v for v in os.listdir(d) if v != 'path')
+        for v in versions[:-HISTORY_KEEP]:
+            os.unlink(os.path.join(d, v))
+    except Exception:
+        pass
+
+
+@files_bp.route('/api/files/history')
+def file_history():
+    if not req(): return jsonify({'ok':False}),401
+    path = safe_path(request.args.get('path',''))
+    d = _hist_dir(path)
+    out = []
+    if os.path.isdir(d):
+        for v in sorted((v for v in os.listdir(d) if v != 'path'), reverse=True):
+            st = os.stat(os.path.join(d, v))
+            out.append({'version': v, 'size': st.st_size, 'time': int(st.st_mtime)})
+    ver = request.args.get('version')
+    if ver:
+        if not re.fullmatch(r'\d{8}-\d{6}-[0-9a-f]{4}', ver) or not os.path.exists(os.path.join(d, ver)):
+            return jsonify({'ok':False,'error':'No such version'}),404
+        with open(os.path.join(d, ver), 'r', encoding='utf-8', errors='replace') as f:
+            return jsonify({'ok':True, 'content':f.read()})
+    return jsonify({'ok':True, 'versions':out})
+
+
+@files_bp.route('/api/files/history/restore', methods=['POST'])
+def file_history_restore():
+    if not req(): return jsonify({'ok':False}),401
+    d0 = request.get_json() or {}
+    path = safe_path(d0.get('path',''))
+    ver = str(d0.get('version') or '')
+    src = os.path.join(_hist_dir(path), ver)
+    if not re.fullmatch(r'\d{8}-\d{6}-[0-9a-f]{4}', ver) or not os.path.exists(src):
+        return jsonify({'ok':False,'error':'No such version'}),404
+    _history_save(path)
+    shutil.copyfile(src, path)
+    return jsonify({'ok':True})
+
+
+@files_bp.route('/api/files/chown', methods=['POST'])
+def chown_path():
+    if not req(): return jsonify({'ok':False}),401
+    d = request.get_json() or {}
+    path = safe_path(d.get('path',''))
+    if _is_protected(path): return _protected_resp(path)
+    if not os.path.lexists(path): return jsonify({'ok':False,'error':'Not found'}),404
+    try:
+        uid = _pwd.getpwnam(str(d.get('owner') or '')).pw_uid
+        gid = _grp.getgrnam(str(d.get('group') or d.get('owner') or '')).gr_gid
+    except KeyError:
+        return jsonify({'ok':False,'error':'Unknown user or group'}),400
+    n = 0
+    try:
+        os.lchown(path, uid, gid); n += 1
+        if d.get('recursive') and os.path.isdir(path) and not os.path.islink(path):
+            for root, dirs, files in os.walk(path):
+                for x in dirs + files:
+                    os.lchown(os.path.join(root, x), uid, gid); n += 1
+    except OSError as e:
+        return _err(e)
+    return jsonify({'ok':True, 'changed':n})
+
+
+@files_bp.route('/api/files/owners')
+def owner_choices():
+    if not req(): return jsonify({'ok':False}),401
+    users = sorted({p.pw_name for p in _pwd.getpwall()
+                    if p.pw_uid == 0 or p.pw_uid >= 1000 or p.pw_name in ('www-data', 'nginx', 'apache', 'nobody', 'www', 'lsadm', 'caddy')})
+    groups = sorted({g.gr_name for g in _grp.getgrall()
+                     if g.gr_gid == 0 or g.gr_gid >= 1000 or g.gr_name in ('www-data', 'nginx', 'apache', 'nogroup', 'nobody', 'www', 'lsadm', 'caddy')})
+    return jsonify({'ok':True, 'users':users, 'groups':groups})

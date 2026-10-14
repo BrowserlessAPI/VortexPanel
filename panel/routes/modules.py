@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, session, Response
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, threading, time, json, uuid, re, shutil
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, nginx_install_script, php_install_script, mariadb_install_script, postgresql_install_script, redis_install_script, mongodb_install_script, docker_install_script, nodejs_install_script, panel_cache
@@ -105,7 +106,7 @@ def translate_install_cmd(cmd):
         return cmd
     return os_cmd(cmd)
 
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 # --- Job store: JSONL append-only files shared across all gunicorn workers ----
 # Each job = one .jsonl file where every line is a complete JSON object.
@@ -117,8 +118,14 @@ def req(): return 'user' in session
 #    "installed": true, "installedVer": "x.y.z", "message": "..."}
 # Job files are kept after completion (so a browser that lost its stream can
 # still fetch the result) and cleaned up after 24 hours.
-_JOBS_DIR = '/tmp/vortex_jobs'
-os.makedirs(_JOBS_DIR, exist_ok=True)
+# Kept under the panel's data directory (0700), not world-readable /tmp.
+_JOBS_DIR = '/opt/vortexpanel/data/jobs/modules'
+try:
+    os.makedirs(_JOBS_DIR, mode=0o700, exist_ok=True)
+    os.chmod(os.path.dirname(_JOBS_DIR), 0o700)
+    os.chmod(_JOBS_DIR, 0o700)
+except OSError:
+    pass
 _JOB_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 _finished_jobs = set()
 
@@ -320,7 +327,7 @@ while :; do
   fi
   sleep 3
 done
-log=$(mktemp 2>/dev/null || echo /tmp/vp_apt_$$.log)
+log=$(mktemp 2>/dev/null || echo /opt/vortexpanel/data/tmp/vp_apt_$$.log)
 while :; do
   "$REAL" -o DPkg::Lock::Timeout=60 "${args[@]}" 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
@@ -356,7 +363,7 @@ case " $* " in
   *) exec "$REAL" "$@" ;;
 esac
 if [ "$(readlink -f /proc/$$/fd/2 2>/dev/null)" = "/dev/null" ]; then exec 2>&1; fi
-log=$(mktemp 2>/dev/null || echo /tmp/vp_dpkg_$$.log)
+log=$(mktemp 2>/dev/null || echo /opt/vortexpanel/data/tmp/vp_dpkg_$$.log)
 while :; do
   "$REAL" "$@" 2>&1 | tee "$log"
   rc=${PIPESTATUS[0]}
@@ -789,8 +796,8 @@ MODULES = [
         'desc':'High-performance HTTP & reverse proxy server',
         'check':'which nginx 2>/dev/null',
         'versions':[
-            {'label':'1.30.5 (Stable - security fix)', 'value':'stable'},
-            {'label':'1.31.6 (Mainline - security fix)', 'value':'mainline'},
+            {'label':'Stable (nginx.org stable branch)', 'value':'stable', 'recommended':True},
+            {'label':'Mainline (nginx.org newest features)', 'value':'mainline'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -823,8 +830,8 @@ fi''',
         'desc':'Apache HTTP Server — widely-used web server',
         'check':'which apache2 2>/dev/null || which httpd 2>/dev/null',
         'versions':[
-            {'label':'2.4.68 (Latest Stable)', 'value':'2.4.68'},
-            {'label':'2.4.67 (Stable)',         'value':'2.4.67'},
+            {'label':'2.4 (current stable)', 'value':'2.4.68', 'recommended':True},
+            {'label':'2.4 (previous patch)', 'value':'2.4.67'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -832,7 +839,7 @@ fi''',
             '  export DEBIAN_FRONTEND=noninteractive; '
             '  (command -v add-apt-repository >/dev/null 2>&1 || apt-get install -y software-properties-common); '
             '  add-apt-repository -y ppa:ondrej/apache2 2>/dev/null; '
-            '  if ! apt-get update -qq 2>/tmp/vp_apache_repo_err.log; then '
+            '  if ! apt-get update -qq 2>/opt/vortexpanel/data/tmp/vp_apache_repo_err.log; then '
             '    echo "[VortexPanel] ondrej/apache2 has no release for {codename} yet -- using stock apache2"; '
             '    add-apt-repository --remove -y ppa:ondrej/apache2 2>/dev/null; '
             '    rm -f /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.list /etc/apt/sources.list.d/ondrej-ubuntu-apache2-*.sources 2>/dev/null; '
@@ -854,15 +861,17 @@ fi''',
         'desc':'LiteSpeed open source web server',
         'check':'test -f /usr/local/lsws/bin/lshttpd && echo found',
         'versions':[
-            {'label':'1.9.2 (Latest)', 'value':'1.9'},
-            {'label':'1.8.5 (Stable)', 'value':'1.8.5'},
-            {'label':'1.8.4 (Stable)', 'value':'1.8.4'},
+            {'label':'1.8 (current stable)', 'value':'1.8.5', 'recommended':True},
+            {'label':'1.9 (newest)', 'value':'1.9'},
+            {'label':'1.8.4', 'value':'1.8.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
-  wget -q https://repo.litespeed.sh -O ls_repo.sh && bash ls_repo.sh; \
-  if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_ols_err.log; then \
-    if grep -q litespeedtech.com /tmp/vp_ols_err.log 2>/dev/null; then \
+  if ! wget -q --timeout=30 https://repo.litespeed.sh -O /opt/vortexpanel/data/tmp/ls_repo.sh || ! bash /opt/vortexpanel/data/tmp/ls_repo.sh; then \
+    echo "[VortexPanel] repo.litespeed.sh could not be reached. OpenLiteSpeed is only published in LiteSpeed's own repository, so it cannot be installed until this server can reach repo.litespeed.sh and rpms.litespeedtech.com."; exit 1; \
+  fi; \
+  if ! apt-get update -o APT::Update::Error-Mode=any 2>/opt/vortexpanel/data/tmp/vp_ols_err.log; then \
+    if grep -q litespeedtech.com /opt/vortexpanel/data/tmp/vp_ols_err.log 2>/dev/null; then \
       echo "[VortexPanel] litespeedtech.com has no build for $(. /etc/os-release 2>/dev/null; echo "$VERSION_CODENAME") yet -- retrying with the previous stable codename (bullseye), a confirmed working substitution for this exact situation"; \
       for f in /etc/apt/sources.list.d/*.list; do \
         [ -f "$f" ] && grep -qi litespeedtech "$f" && sed -i "s/$(. /etc/os-release 2>/dev/null; echo "$VERSION_CODENAME")/bullseye/g" "$f"; \
@@ -870,7 +879,10 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
     fi; \
     apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; \
   fi; \
-  apt-get install -y openlitespeed={ver} 2>/dev/null || apt-get install -y openlitespeed; \
+  OLS_PKG=$(apt-cache madison openlitespeed 2>/dev/null | awk -F'|' '{gsub(/ /,"",$2); print $2}' | grep "^{ver}" | head -1); \
+  if [ -n "$OLS_PKG" ]; then apt-get install -y openlitespeed=$OLS_PKG; \
+  else echo "[VortexPanel] OpenLiteSpeed {ver} is not offered by the LiteSpeed repository for this OS -- installing the newest version it offers"; apt-get install -y openlitespeed; fi; \
+  [ -x /usr/local/lsws/bin/lshttpd ] || { echo "[VortexPanel] The openlitespeed package did not install (see the apt output above). PHP for LiteSpeed (lsphp) is skipped."; exit 1; }; \
   systemctl enable lsws && systemctl start lsws; \
   LSPHP_VER="lsphp83" && \
   apt-get install -y $LSPHP_VER $LSPHP_VER-common 2>&1 && \
@@ -924,8 +936,8 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
         'desc':'Auto-HTTPS web server — HTTP/3, zero-config TLS via Lets Encrypt',
         'check':'which caddy 2>/dev/null',
         'versions':[
-            {'label':'v2.11.4 (Latest — security)', 'value':'2.11.4'},
-            {'label':'v2.11.3 (Stable — security)', 'value':'2.11.3'},
+            {'label':'2.11 (latest)', 'value':'2.11.4', 'recommended':True},
+            {'label':'2.11 (previous patch)', 'value':'2.11.3'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -939,7 +951,10 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
             '  curl -fsSL \'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt\' | tee /etc/apt/sources.list.d/caddy-stable.list && '
             '  chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg && '
             '  chmod o+r /etc/apt/sources.list.d/caddy-stable.list && '
-            '  (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && apt-get install -y caddy && '
+            '  (apt-get update -o APT::Update::Error-Mode=any 2>/dev/null; true) && '
+            '  CADDY_PKG=$(apt-cache madison caddy 2>/dev/null | awk -F"|" "{gsub(/ /,\\"\\",\\$2); print \\$2}" | grep "^{ver}" | head -1); '
+            '  if [ -z "$CADDY_PKG" ]; then echo "[VortexPanel] Caddy {ver} is not offered by the Caddy repository -- installing the newest version it offers"; fi; '
+            '  apt-get install -y caddy${CADDY_PKG:+=$CADDY_PKG} && '
             '  systemctl enable caddy && systemctl start caddy; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
                 # Caddy's officially documented Fedora/EL method — COPR repo.
@@ -975,10 +990,10 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
         'desc':'The world\'s most popular open source database',
         'check':'systemctl is-active mysql 2>/dev/null | grep -qx active && ! systemctl is-active mariadb 2>/dev/null | grep -qx active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
         'versions':[
-            {'label':'Innovation (rolling — currently 26.7.0, latest quarterly release)', 'value':'innovation'},
-            {'label':'9.7.2 (LTS)',           'value':'9.7'},
-            {'label':'8.4.11 (LTS)',          'value':'8.4'},
-            {'label':'8.0.46 (EOL since Apr 2026 — no security patches, not recommended)', 'value':'8.0'},
+            {'label':'8.4 LTS', 'value':'8.4', 'recommended':True},
+            {'label':'9.7 LTS', 'value':'9.7'},
+            {'label':'Innovation (rolling quarterly releases, short support)', 'value':'innovation'},
+            {'label':'8.0 (end of life - no security fixes)', 'value':'8.0'},
         ],
         'install_tpl':(
             # Hard guard, independent of the higher-level conflict check:
@@ -1022,7 +1037,7 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  apt-get install -y wget lsb-release gnupg debconf-utils && '
-            '  wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.39-1_all.deb -O /tmp/mysql-apt.deb && '
+            '  wget -q https://dev.mysql.com/get/mysql-apt-config_0.8.39-1_all.deb -O /opt/vortexpanel/data/tmp/mysql-apt.deb && '
             # mysql-apt-config presents server-track selection as a debconf
             # question (mysql-apt-config/select-server) -- without an answer
             # preseeded, it silently defaults to whichever track it
@@ -1044,7 +1059,7 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
             '  case "{ver}" in 8.0*) MYSQL_TRACK_GUESS="mysql-8.0";; 8.4*) MYSQL_TRACK_GUESS="mysql-8.4-lts";; 9.7*) MYSQL_TRACK_GUESS="mysql-9.7-lts";; innovation) MYSQL_TRACK_GUESS="mysql-innovation";; esac; '
             '  echo "[VortexPanel] debconf preseed attempt: mysql-apt-config/select-server = $MYSQL_TRACK_GUESS"; '
             '  echo "mysql-apt-config mysql-apt-config/select-server select $MYSQL_TRACK_GUESS" | debconf-set-selections; '
-            '  DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt.deb && '
+            '  DEBIAN_FRONTEND=noninteractive dpkg -i /opt/vortexpanel/data/tmp/mysql-apt.deb && '
             # Self-discovering correction, independent of both the debconf
             # answer and my track-name guesses above: mysql-apt-config
             # writes every ACTUAL track name it knows about into the repo
@@ -1108,9 +1123,9 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
             '  for f in /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; do '
             '    [ -f "$f" ] && MYSQL_KEYRING_PATH=$(grep -oP "(?:signed-by=|Signed-By:\\s*)\\K[^]\\s]+" "$f" 2>/dev/null | head -1) && [ -n "$MYSQL_KEYRING_PATH" ] && break; '
             '  done; '
-            '  (gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C 2>/dev/null && '
-            '   gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > /etc/apt/trusted.gpg.d/mysql-refreshed.gpg 2>/dev/null && '
-            '   if [ -n "$MYSQL_KEYRING_PATH" ]; then mkdir -p "$(dirname "$MYSQL_KEYRING_PATH")"; gpg --no-default-keyring --keyring /tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > "$MYSQL_KEYRING_PATH" 2>/dev/null; fi) || true; '
+            '  (gpg --no-default-keyring --keyring /opt/vortexpanel/data/tmp/mysql-refresh.gpg --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C 2>/dev/null && '
+            '   gpg --no-default-keyring --keyring /opt/vortexpanel/data/tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > /etc/apt/trusted.gpg.d/mysql-refreshed.gpg 2>/dev/null && '
+            '   if [ -n "$MYSQL_KEYRING_PATH" ]; then mkdir -p "$(dirname "$MYSQL_KEYRING_PATH")"; gpg --no-default-keyring --keyring /opt/vortexpanel/data/tmp/mysql-refresh.gpg --export B7B3B788A8D3785C > "$MYSQL_KEYRING_PATH" 2>/dev/null; fi) || true; '
             # mysql-apt-config is a pinned package (0.8.39-1, confirmed
             # current as of the user's own check against dev.mysql.com --
             # was previously hardcoded to the much older 0.8.33-1, which may
@@ -1124,7 +1139,7 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
             # behind, poisoning every unrelated apt-get update afterward
             # (it broke a completely separate PHP install in the same way
             # already seen for ondrej/php, mariadb, postgresql, etc).
-            '  if ! apt-get update -q 2>/tmp/vp_mysql_repo_err.log; then '
+            '  if ! apt-get update -q 2>/opt/vortexpanel/data/tmp/vp_mysql_repo_err.log; then '
             # repo.mysql.com has no build for the running codename yet.
             # Confirmed directly from repo.mysql.com's real directory listing
             # (not a guess): questing, plucky, oracular, noble, jammy all
@@ -1138,7 +1153,7 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
             '      for f in /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.sources; do '
             '        [ -f "$f" ] && sed -i "s/${RUNNING_CODENAME}/${CN}/g; s/\\b\\(questing\\|plucky\\|oracular\\|noble\\|jammy\\)\\b/${CN}/g" "$f"; '
             '      done; '
-            '      if apt-get update -q 2>/tmp/vp_mysql_${CN}_err.log; then '
+            '      if apt-get update -q 2>/opt/vortexpanel/data/tmp/vp_mysql_${CN}_err.log; then '
             '        echo "[VortexPanel] repo.mysql.com has no build for ${RUNNING_CODENAME} yet -- using its ${CN} build instead (closest available match)"; '
             '        MYSQL_OK=1; break; '
             '      fi; '
@@ -1254,14 +1269,14 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
         'desc':'Community-developed MySQL fork by MariaDB Foundation',
         'check':'systemctl is-active mariadb 2>/dev/null | grep -q "^active" && echo found || (which mariadbd 2>/dev/null && mariadbd --version 2>/dev/null | grep -c MariaDB)',
         'versions':[
-            {'label':'13.0.2 (Latest Stable)', 'value':'13.0'},
-            {'label':'12.3.3 (Stable)', 'value':'12.3'},
-            {'label':'11.8.9 (LTS)', 'value':'11.8'},
-            {'label':'11.4.13 (LTS)', 'value':'11.4'},
-            {'label':'10.11.19 (LTS)', 'value':'10.11'},
+            {'label':'11.8 LTS', 'value':'11.8', 'recommended':True},
+            {'label':'13.0 (rolling stable, short support)', 'value':'13.0'},
+            {'label':'12.3 (rolling stable, short support)', 'value':'12.3'},
+            {'label':'11.4 LTS', 'value':'11.4'},
+            {'label':'10.11 LTS', 'value':'10.11'},
         ],
-        'install_tpl':'''curl -fLsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /tmp/mariadb_repo.sh && \
-bash /tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" --skip-maxscale; \
+        'install_tpl':'''curl -fLsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /opt/vortexpanel/data/tmp/mariadb_repo.sh && \
+bash /opt/vortexpanel/data/tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" --skip-maxscale; \
 for f in /etc/apt/sources.list.d/*.sources; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then awk -v RS="" -v ORS="\n\n" \'tolower($0) !~ /maxscale/\' "$f" > "$f.tmp" && mv "$f.tmp" "$f"; fi; done; \
 for f in /etc/apt/sources.list.d/*.list; do [ -f "$f" ] || continue; if grep -qi maxscale "$f"; then sed -i \'/[Mm]ax[Ss]cale/d\' "$f"; fi; done; \
 if command -v apt-get >/dev/null 2>&1; then apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server; else (dnf install -y MariaDB-server 2>/dev/null || yum install -y MariaDB-server 2>/dev/null || dnf install -y mariadb-server 2>/dev/null || yum install -y mariadb-server); fi && \
@@ -1275,9 +1290,9 @@ systemctl enable --now mariadb''',
         'desc':'Document-oriented NoSQL database',
         'check':'which mongod 2>/dev/null',
         'versions':[
-            {'label':'8.0.32 (LTS)', 'value':'8.0'},
-            {'label':'8.2.12 (Latest minor release)', 'value':'8.2'},
-            {'label':'7.0.43 (LTS)', 'value':'7.0'},
+            {'label':'8.0 (long-term)', 'value':'8.0', 'recommended':True},
+            {'label':'8.2 (minor release)', 'value':'8.2'},
+            {'label':'7.0 (long-term)', 'value':'7.0'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -1285,9 +1300,9 @@ systemctl enable --now mariadb''',
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  apt-get install -y gnupg curl && '
             '  rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-            '  curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.key && '
-            '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.key && '
-            '  rm -f /tmp/mongo.key && '
+            '  curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /opt/vortexpanel/data/tmp/mongo.key && '
+            '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /opt/vortexpanel/data/tmp/mongo.key && '
+            '  rm -f /opt/vortexpanel/data/tmp/mongo.key && '
             '  echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg ] '
             'https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/{ver} multiverse" '
             '  > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
@@ -1296,7 +1311,7 @@ systemctl enable --now mariadb''',
             # back to if repo.mongodb.org has no release for this codename yet
             # -- but the broken repo file must still be cleaned up, or it
             # poisons every unrelated apt-get update run afterward.
-            '  if ! apt-get update -qq 2>/tmp/vp_mongo_repo_err.log; then '
+            '  if ! apt-get update -qq 2>/opt/vortexpanel/data/tmp/vp_mongo_repo_err.log; then '
             '    echo "[VortexPanel] repo.mongodb.org has no release for $(lsb_release -cs) yet -- removing the broken repo entry so it does not block other installs"; '
             '    rm -f /etc/apt/sources.list.d/mongodb-org-{ver}.list; '
             '    apt-get update -qq; '
@@ -1321,10 +1336,11 @@ systemctl enable --now mariadb''',
         'desc':'Advanced open source relational database',
         'check':'which psql 2>/dev/null',
         'versions':[
-            {'label':'18.6 (Latest)', 'value':'18'},
-            {'label':'17.11 (Stable)', 'value':'17'},
-            {'label':'16.15 (Stable)', 'value':'16'},
-            {'label':'15.19 (Stable)', 'value':'15'},
+            {'label':'19 (latest)', 'value':'19'},
+            {'label':'18', 'value':'18', 'recommended':True},
+            {'label':'17', 'value':'17'},
+            {'label':'16', 'value':'16'},
+            {'label':'15', 'value':'15'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -1332,9 +1348,9 @@ systemctl enable --now mariadb''',
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  apt-get install -y gnupg2 curl lsb-release && '
             '  rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
-            '  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
-            '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
-            '  rm -f /tmp/pg.asc && '
+            '  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /opt/vortexpanel/data/tmp/pg.asc && '
+            '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /opt/vortexpanel/data/tmp/pg.asc && '
+            '  rm -f /opt/vortexpanel/data/tmp/pg.asc && '
             '  PG_CODENAME=$(lsb_release -cs) && '
             '  echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] '
             'http://apt.postgresql.org/pub/repos/apt ${PG_CODENAME}-pgdg main" '
@@ -1344,7 +1360,7 @@ systemctl enable --now mariadb''',
             # brand-new Ubuntu codename can still lag behind by days/weeks
             # before PGDG publishes for it. Leaving a broken pgdg.list in
             # place would poison every future apt-get update on the system.
-            '  if ! apt-get update -qq 2>/tmp/vp_pg_repo_err.log; then '
+            '  if ! apt-get update -qq 2>/opt/vortexpanel/data/tmp/vp_pg_repo_err.log; then '
             '    echo "[VortexPanel] apt.postgresql.org has no release for ${PG_CODENAME} yet -- removing pgdg.list so it does not block other installs"; '
             '    rm -f /etc/apt/sources.list.d/pgdg.list; '
             '    apt-get update -qq; '
@@ -1386,12 +1402,12 @@ systemctl enable --now mariadb''',
                       '(test -x /opt/remi/php$(echo {ver} | tr -d .)/root/usr/bin/php && echo found) || '
                       '(php -r "echo PHP_MAJOR_VERSION.chr(46).PHP_MINOR_VERSION;" 2>/dev/null | grep -x "{ver}")'),
         'versions':[
-            {'label':'8.5.11 (Latest - security release)', 'value':'8.5'},
-            {'label':'8.4.26 (Active support)', 'value':'8.4'},
-            {'label':'8.3.35 (Security fixes only)', 'value':'8.3'},
-            {'label':'8.2.34 (Security fixes only - EOL Dec 2026)', 'value':'8.2'},
-            {'label':'8.1.34 (EOL - unpatched)', 'value':'8.1'},
-            {'label':'7.4.33 (EOL - unpatched)', 'value':'7.4'},
+            {'label':'8.5 (latest)', 'value':'8.5'},
+            {'label':'8.4 (active support)', 'value':'8.4', 'recommended':True},
+            {'label':'8.3 (security fixes only)', 'value':'8.3'},
+            {'label':'8.2 (security fixes only)', 'value':'8.2'},
+            {'label':'8.1 (end of life)', 'value':'8.1'},
+            {'label':'7.4 (end of life)', 'value':'7.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
 apt-get install -y software-properties-common && \
@@ -1499,12 +1515,12 @@ if [ -z "$SOCK" ]; then
 fi
 echo "[VortexPanel] Using the PHP-FPM socket $SOCK (pool user $PUSER)"
 command -v wget >/dev/null 2>&1 || apt-get install -y wget || exit 1
-wget -q --timeout=60 https://files.phpmyadmin.net/phpMyAdmin/$PMA_VER/phpMyAdmin-$PMA_VER-all-languages.tar.gz -O /tmp/pma.tar.gz \
-  || { echo "[VortexPanel] Download of phpMyAdmin $PMA_VER failed."; rm -f /tmp/pma.tar.gz; exit 1; }
+wget -q --timeout=60 https://files.phpmyadmin.net/phpMyAdmin/$PMA_VER/phpMyAdmin-$PMA_VER-all-languages.tar.gz -O /opt/vortexpanel/data/tmp/pma.tar.gz \
+  || { echo "[VortexPanel] Download of phpMyAdmin $PMA_VER failed."; rm -f /opt/vortexpanel/data/tmp/pma.tar.gz; exit 1; }
 mkdir -p /usr/share/phpmyadmin
-tar -xzf /tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 --no-same-owner \
-  || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /tmp/pma.tar.gz; exit 1; }
-rm -f /tmp/pma.tar.gz
+tar -xzf /opt/vortexpanel/data/tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 --no-same-owner \
+  || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /opt/vortexpanel/data/tmp/pma.tar.gz; exit 1; }
+rm -f /opt/vortexpanel/data/tmp/pma.tar.gz
 if [ ! -f /usr/share/phpmyadmin/config.inc.php ]; then
   cp /usr/share/phpmyadmin/config.sample.inc.php /usr/share/phpmyadmin/config.inc.php || exit 1
   SECRET=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
@@ -1516,8 +1532,8 @@ __VP_SEL_PMA__
 CONFIGURED=""
 if systemctl is-active --quiet nginx; then
   mkdir -p /etc/nginx/conf.d
-  rm -f /tmp/vp-pma-nginx.bak
-  [ -f /etc/nginx/conf.d/phpmyadmin.conf ] && cp -f /etc/nginx/conf.d/phpmyadmin.conf /tmp/vp-pma-nginx.bak
+  rm -f /opt/vortexpanel/data/tmp/vp-pma-nginx.bak
+  [ -f /etc/nginx/conf.d/phpmyadmin.conf ] && cp -f /etc/nginx/conf.d/phpmyadmin.conf /opt/vortexpanel/data/tmp/vp-pma-nginx.bak
   cat > /etc/nginx/conf.d/phpmyadmin.conf <<PMAEOF
 server {
     listen 8082;
@@ -1540,13 +1556,13 @@ PMAEOF
     systemctl reload nginx && CONFIGURED=nginx
   else
     echo "[VortexPanel] nginx rejected the phpMyAdmin site (shown above) -- reverted, nginx is unchanged."
-    if [ -f /tmp/vp-pma-nginx.bak ]; then mv -f /tmp/vp-pma-nginx.bak /etc/nginx/conf.d/phpmyadmin.conf; else rm -f /etc/nginx/conf.d/phpmyadmin.conf; fi
+    if [ -f /opt/vortexpanel/data/tmp/vp-pma-nginx.bak ]; then mv -f /opt/vortexpanel/data/tmp/vp-pma-nginx.bak /etc/nginx/conf.d/phpmyadmin.conf; else rm -f /etc/nginx/conf.d/phpmyadmin.conf; fi
   fi
 elif systemctl is-active --quiet caddy && [ -f /etc/caddy/Caddyfile ]; then
   if grep -q "root \* /usr/share/phpmyadmin" /etc/caddy/Caddyfile; then
     CONFIGURED=caddy
   else
-    cp -f /etc/caddy/Caddyfile /tmp/vp-pma-caddy.bak
+    cp -f /etc/caddy/Caddyfile /opt/vortexpanel/data/tmp/vp-pma-caddy.bak
     printf '\n:8082 {\n  root * /usr/share/phpmyadmin\n  php_fastcgi unix/%s\n  file_server\n}\n' "$SOCK" >> /etc/caddy/Caddyfile
     # Caddy runs as 'caddy': it needs the socket's group to connect.
     G=$(stat -c %G "$SOCK" 2>/dev/null)
@@ -1556,9 +1572,9 @@ elif systemctl is-active --quiet caddy && [ -f /etc/caddy/Caddyfile ]; then
       CONFIGURED=caddy
     else
       echo "[VortexPanel] Caddy rejected the phpMyAdmin site (shown above) -- reverted."
-      cp -f /tmp/vp-pma-caddy.bak /etc/caddy/Caddyfile; systemctl restart caddy
+      cp -f /opt/vortexpanel/data/tmp/vp-pma-caddy.bak /etc/caddy/Caddyfile; systemctl restart caddy
     fi
-    rm -f /tmp/vp-pma-caddy.bak
+    rm -f /opt/vortexpanel/data/tmp/vp-pma-caddy.bak
   fi
 elif [ -d /etc/httpd/conf.d ] && systemctl is-active --quiet httpd; then
   cat > /etc/httpd/conf.d/phpmyadmin.conf <<APACHEEOF
@@ -1642,8 +1658,8 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
   apt-get install -y python3 python3-pip python3-systemd curl gzip && \
   F2B_VER=$(curl -fsSL https://api.github.com/repos/fail2ban/fail2ban/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+') && \
   F2B_VER=${F2B_VER:-1.1.0} && \
-  curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /tmp/fail2ban.deb 2>/dev/null && \
-  dpkg -i /tmp/fail2ban.deb 2>/dev/null; \
+  curl -fsSL https://github.com/fail2ban/fail2ban/releases/download/${F2B_VER}/fail2ban_${F2B_VER#v}-1.upstream1_all.deb -o /opt/vortexpanel/data/tmp/fail2ban.deb 2>/dev/null && \
+  dpkg -i /opt/vortexpanel/data/tmp/fail2ban.deb 2>/dev/null; \
   if [ ! -f /lib/systemd/system/fail2ban.service ] && [ ! -f /usr/lib/systemd/system/fail2ban.service ]; then \
     echo "[VortexPanel] Upstream package did not provide a systemd unit -- falling back to the distro package"; \
     apt-get install -y fail2ban; \
@@ -1751,33 +1767,34 @@ fi''',
         'desc':'Industry standard authoritative DNS server',
         'check':'which named 2>/dev/null',
         'versions':[
-            {'label':'9.20.x (Stable - ISC official)', 'value':'9.20'},
-            {'label':'9.18.x (Ubuntu repo - upstream EOL Jun 2026)', 'value':'9.18'},
+            {'label':'9.22 (Stable - ISC PPA isc/bind)', 'value':'9.22'},
+            {'label':'9.20 (Extended support - ISC PPA isc/bind-esv)', 'value':'9.20', 'recommended':True},
+            {'label':'9.18 (Ubuntu/Debian package - end of upstream support)', 'value':'9.18'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && '
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
-            '  apt-get install -y software-properties-common && '
-            '  if [ "{ver}" = "9.20" ]; then '
-                 # Same failure class already confirmed for ondrej/php and
-                 # ondrej/apache2: isc/bind may have no release for a very new
-                 # Ubuntu codename, and add-apt-repository writes it regardless,
-                 # poisoning every future apt-get update if left behind.
-            '    add-apt-repository -y ppa:isc/bind && '
-            '    if ! apt-get update -q 2>/tmp/vp_bind_repo_err.log; then '
-            '      echo "[VortexPanel] isc/bind has no release for {codename} yet -- removing it, using stock Ubuntu bind9 (9.18) instead"; '
-            '      add-apt-repository --remove -y ppa:isc/bind 2>/dev/null; '
-            '      rm -f /etc/apt/sources.list.d/isc-ubuntu-bind-*.list /etc/apt/sources.list.d/isc-ubuntu-bind-*.sources 2>/dev/null; '
+            # ISC publishes the current stable release in ppa:isc/bind and the
+            # extended-support release in ppa:isc/bind-esv; the distribution
+            # ships one fixed version. A PPA that has no build for this
+            # codename (or cannot be reached) is removed again so it does not
+            # break later apt-get update runs.
+            '  case "{ver}" in 9.22) PPA=isc/bind;; 9.20) PPA=isc/bind-esv;; *) PPA="";; esac; '
+            '  if [ -n "$PPA" ] && grep -qi ubuntu /etc/os-release; then '
+            '    apt-get install -y software-properties-common; '
+            '    if add-apt-repository -y ppa:$PPA && apt-get update -q 2>/opt/vortexpanel/data/tmp/vp_bind_repo_err.log; then :; else '
+            '      echo "[VortexPanel] ppa:$PPA is unavailable (unreachable, or no release for {codename}) -- removing it; the distribution\'s BIND package will be installed instead"; '
+            '      add-apt-repository --remove -y ppa:$PPA 2>/dev/null; '
+            '      rm -f /etc/apt/sources.list.d/isc-ubuntu-bind*.list /etc/apt/sources.list.d/isc-ubuntu-bind*.sources 2>/dev/null; '
             '      apt-get update -q; '
             '    fi; '
-            '    apt-get install -y bind9 bind9utils bind9-doc; '
-            '  else '
-            '    apt-get update -q && apt-get install -y bind9 bind9utils bind9-doc; '
-            '  fi && '
+            '  elif [ -n "$PPA" ]; then echo "[VortexPanel] ISC publishes BIND {ver} packages for Ubuntu only -- installing the Debian BIND package"; apt-get update -q; '
+            '  else apt-get update -q; fi; '
+            '  apt-get install -y bind9 bind9utils bind9-doc && '
             '  mkdir -p /etc/bind/zones && '
             '  (systemctl enable named 2>/dev/null || systemctl enable bind9 2>/dev/null) && '
             '  (systemctl start named 2>/dev/null || systemctl start bind9 2>/dev/null); '
-            'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
+'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
                  # Package names are 'bind'+'bind-utils' on RHEL-family, NOT
                  # 'bind9' -- confirmed against multiple current, official
                  # RHEL/AlmaLinux/Rocky documentation sources. No verified
@@ -1813,9 +1830,9 @@ fi''',
         'desc':'JavaScript runtime built on Chrome V8 engine',
         'check':'which node 2>/dev/null || which nodejs 2>/dev/null',
         'versions':[
-            {'label':'v24 LTS - Active (Krypton, 24.21)', 'value':'24'},
-            {'label':'v22 LTS - Maintenance (Jod, 22.23)', 'value':'22'},
-            {'label':'v26 Current (26.10, LTS from Oct 2026)', 'value':'26'},
+            {'label':'24 LTS (active)', 'value':'24', 'recommended':True},
+            {'label':'22 LTS (maintenance)', 'value':'22'},
+            {'label':'26 (current, LTS from Oct 2026)', 'value':'26'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then mkdir -p /etc/apt/keyrings && \\
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\
@@ -1842,11 +1859,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; else curl -fsSL https:
                  'python3 -m pip --version >/dev/null 2>&1 && python3 -c "import ensurepip" >/dev/null 2>&1 && echo found'),
         'verify_tpl':'command -v python{ver} 2>/dev/null',
         'versions':[
-            {'label':'3.14 (Latest)', 'value':'3.14'},
-            {'label':'3.13 (Stable)', 'value':'3.13'},
-            {'label':'3.12 (Security)', 'value':'3.12'},
-            {'label':'3.11 (Security)', 'value':'3.11'},
-            {'label':'3.10 (Security - EOL Oct 2026)', 'value':'3.10'},
+            {'label':'3.15 (latest)', 'value':'3.15'},
+            {'label':'3.14', 'value':'3.14', 'recommended':True},
+            {'label':'3.13', 'value':'3.13'},
+            {'label':'3.12 (security fixes only)', 'value':'3.12'},
+            {'label':'3.11 (security fixes only)', 'value':'3.11'},
+            {'label':'3.10 (end of life Oct 2026)', 'value':'3.10'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian)
 SYS_PY=$(/usr/bin/python3 -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
@@ -1863,8 +1881,8 @@ if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then
           echo "[VortexPanel] Could not add the deadsnakes PPA (reason above) -- Python {ver} cannot be installed right now."
           exit 1
         fi
-        if ! apt-get update -q 2>/tmp/vp_python_repo_err.log; then
-          cat /tmp/vp_python_repo_err.log
+        if ! apt-get update -q 2>/opt/vortexpanel/data/tmp/vp_python_repo_err.log; then
+          cat /opt/vortexpanel/data/tmp/vp_python_repo_err.log
           echo "[VortexPanel] deadsnakes/ppa has no release for {codename} yet -- removing the broken repo entry so it does not block other installs."
           add-apt-repository --remove -y ppa:deadsnakes/ppa 2>/dev/null
           rm -f /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.list /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-*.sources 2>/dev/null
@@ -1914,7 +1932,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'Container platform — build, ship, run anywhere',
         'check':'which docker 2>/dev/null',
         'versions':[
-            {'label':'29.8.1 (Latest - only supported release)', 'value':'29'},
+            {'label':'Latest stable (Docker CE)', 'value':'29', 'recommended':True},
         ],
         'install':'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker',
         'uninstall':'systemctl stop docker 2>/dev/null; systemctl disable docker 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; dnf remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; yum remove -y docker-ce docker-ce-cli containerd.io 2>/dev/null; apt-get autoremove -y 2>/dev/null; true && rm -f /usr/share/keyrings/docker-archive-keyring.gpg /etc/apt/sources.list.d/docker.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
@@ -1926,21 +1944,22 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'PHP dependency & package manager',
         'check':'which composer 2>/dev/null',
         'versions':[
-            {'label':'2.10 (Latest Stable)', 'value':'2'},
+            {'label':'2.x (Latest)', 'value':'2', 'recommended':True},
+            {'label':'2.2 LTS (for PHP 5.3 - 7.1 projects)', 'value':'2.2'},
         ],
+        # The installer's SHA-384 is checked against getcomposer.org's
+        # published signature before it runs.
         'install_tpl':(
-            'curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php && '
-            'php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && '
-            'rm /tmp/composer-setup.php && '
+            'command -v php >/dev/null 2>&1 || { echo "[VortexPanel] Composer needs PHP. Install PHP first (App Store > PHP)."; exit 1; }; '
+            'curl -fsSL --connect-timeout 20 https://getcomposer.org/installer -o /opt/vortexpanel/data/tmp/composer-setup.php '
+            '|| { echo "[VortexPanel] getcomposer.org could not be reached - Composer is downloaded from there, so it cannot be installed right now."; exit 1; }; '
+            'EXPECTED=$(curl -fsSL --connect-timeout 20 https://composer.github.io/installer.sig) && '
+            'ACTUAL=$(php -r "echo hash_file(\'sha384\', \'/opt/vortexpanel/data/tmp/composer-setup.php\');") && '
+            'if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then echo "[VortexPanel] The Composer installer signature does not match -- not running it."; rm -f /opt/vortexpanel/data/tmp/composer-setup.php; exit 1; fi && '
+            'php /opt/vortexpanel/data/tmp/composer-setup.php --{ver} --install-dir=/usr/local/bin --filename=composer && '
+            'rm -f /opt/vortexpanel/data/tmp/composer-setup.php && '
             'chmod +x /usr/local/bin/composer'
         ),
-        'install':(
-            'curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php && '
-            'php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer && '
-            'rm /tmp/composer-setup.php && '
-            'chmod +x /usr/local/bin/composer'
-        ),
-        'uninstall':'rm -f /usr/local/bin/composer',
         'uninstall':'rm -f /usr/local/bin/composer',
         'manage':False,
     },
@@ -1950,13 +1969,13 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'In-memory data store, cache & message broker',
         'check':'which redis-server 2>/dev/null',
         'versions':[
-            {'label':'8.10.2 (Latest - security release)', 'value':'8.10'},
-            {'label':'8.8.3 (Stable - security release)', 'value':'8.8'},
-            {'label':'7.4.11 (Legacy - security release)', 'value':'7.4'},
+            {'label':'8.10 (latest)', 'value':'8.10'},
+            {'label':'8.8', 'value':'8.8', 'recommended':True},
+            {'label':'7.4 (legacy)', 'value':'7.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
-if ! apt-get update -o APT::Update::Error-Mode=any 2>/tmp/vp_redis_repo_err.log; then \
+if ! apt-get update -o APT::Update::Error-Mode=any 2>/opt/vortexpanel/data/tmp/vp_redis_repo_err.log; then \
   echo "[VortexPanel] packages.redis.io has no release for $(lsb_release -cs) yet -- removing it, using distro-packaged redis-server instead"; \
   rm -f /etc/apt/sources.list.d/redis.list; \
   apt-get update -qq; \
@@ -2051,8 +2070,8 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'desc':'Modern web-based IMAP email client',
         'check':'test -d /var/www/roundcube && echo found',
         'versions':[
-            {'label':'1.7.4 (Latest)', 'value':'1.7.4'},
-            {'label':'1.6.19 (LTS)', 'value':'1.6.19'},
+            {'label':'1.7 (latest)', 'value':'1.7.4', 'recommended':True},
+            {'label':'1.6 LTS', 'value':'1.6.19'},
         ],
         'install_tpl':r'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian)
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then
@@ -2088,11 +2107,11 @@ else
   systemctl enable --now "$U"
 fi
 echo "[VortexPanel] Downloading Roundcube {ver}..."
-wget -q --timeout=60 https://github.com/roundcube/roundcubemail/releases/download/{ver}/roundcubemail-{ver}-complete.tar.gz -O /tmp/roundcube.tar.gz \
-  || { echo "[VortexPanel] Download of Roundcube {ver} from github.com failed."; rm -f /tmp/roundcube.tar.gz; exit 1; }
+wget -q --timeout=60 https://github.com/roundcube/roundcubemail/releases/download/{ver}/roundcubemail-{ver}-complete.tar.gz -O /opt/vortexpanel/data/tmp/roundcube.tar.gz \
+  || { echo "[VortexPanel] Download of Roundcube {ver} from github.com failed."; rm -f /opt/vortexpanel/data/tmp/roundcube.tar.gz; exit 1; }
 mkdir -p /var/www/roundcube
-tar -xzf /tmp/roundcube.tar.gz -C /var/www/roundcube --strip-components=1 || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /tmp/roundcube.tar.gz; exit 1; }
-rm -f /tmp/roundcube.tar.gz
+tar -xzf /opt/vortexpanel/data/tmp/roundcube.tar.gz -C /var/www/roundcube --strip-components=1 || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /opt/vortexpanel/data/tmp/roundcube.tar.gz; exit 1; }
+rm -f /opt/vortexpanel/data/tmp/roundcube.tar.gz
 [ -f /var/www/roundcube/config/config.inc.php ] || cp /var/www/roundcube/config/config.inc.php.sample /var/www/roundcube/config/config.inc.php
 # The site points at a PHP-FPM socket that really exists (Debian, Remi SCL or
 # RHEL system PHP); the app is owned by that pool's user (it writes temp/ and
@@ -2147,16 +2166,16 @@ fi''',
     # --- WAF / Security ---------------------------------------------------------
     {
         'id':'modsecurity', 'name':'ModSecurity WAF', 'icon':'/static/icons/modsecurity.svg', 'category':'Security',
-        'desc':'OWASP CRS v4 Web Application Firewall — Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)',
+        'desc':'OWASP CRS v4 Web Application Firewall - Nginx/Apache, all distros (Debian/Ubuntu/RHEL/Fedora/AlmaLinux/Rocky)',
         # "Installed" requires the CORE engine to be usable (library + modsecurity.conf) —
         # NOT the CRS ruleset, which is a separate, retriable download step (see install_tpl
         # below). Previously this only checked the library .so file, so a server where the
         # library installed but the LATER modsecurity.conf/CRS download steps failed (e.g.
         # GitHub API rate-limit, network hiccup) would show "Installed" in the App Store
         # while every actual WAF control (Engine Mode toggle, Paranoia level) failed with
-        # "not installed" / "CRS setup.conf not found" — a real, confirmed bug.
+        # "not installed" / "CRS setup.conf not found" - a real, confirmed bug.
         # "Installed" requires the library, the config, AND the nginx connector
-        # module to actually be loadable by nginx — not just present on disk.
+        # module to actually be loadable by nginx - not just present on disk.
         # Checking only the library+config (as before) is exactly the false-green
         # pattern already fixed once for the CRS chain; the connector needs the
         # same treatment now that it's a from-source build rather than an apt
@@ -2181,7 +2200,7 @@ fi''',
             {'label':'v2 + OWASP CRS v4 (Apache legacy)', 'value':'2'},
         ],
         'install_tpl':(
-    'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); echo "[VortexPanel] Installing ModSecurity engine..."; WAF_VER="{ver}"; if [ "$WAF_VER" = "2" ]; then apt-get install -y libapache2-mod-security2 2>&1   || echo "[WARN] libapache2-mod-security2 install reported errors"; a2enmod security2 >/dev/null 2>&1 || true; mkdir -p /etc/modsecurity; if [ -f /etc/modsecurity/modsecurity.conf-recommended ]; then   cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf;   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/modsecurity/modsecurity.conf;   sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/modsecurity/unicode.mapping#" /etc/modsecurity/modsecurity.conf;   echo "[VortexPanel] OK Core engine config written (Apache)"; else   echo "[ERROR] modsecurity.conf-recommended not found - writing fallback";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/modsecurity/modsecurity.conf; fi; if [ -f /usr/share/modsecurity-crs/owasp-crs.load ]; then   mv /usr/share/modsecurity-crs/owasp-crs.load /usr/share/modsecurity-crs/owasp-crs.load.disabled-by-vortexpanel 2>/dev/null; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/modsecurity/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/modsecurity/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/modsecurity/crs/crs-setup.conf.example ]; then   cp /etc/modsecurity/crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf;   printf "Include /etc/modsecurity/crs/crs-setup.conf\\nInclude /etc/modsecurity/crs/rules/*.conf\\n" > /etc/modsecurity/main.conf;   echo "[VortexPanel] OK OWASP CRS $CRS_TAG installed"; else   printf "" > /etc/modsecurity/main.conf;   echo "[WARN] Could not download CRS after 3 attempts."; fi; CRS_CRON_FILE=/etc/cron.d/vortex-crs-update-apache; __VP_CRS_CRON__; if apache2ctl configtest 2>&1; then   systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null;   echo "[VortexPanel] OK apache2 config test passed"; else   echo "[ERROR] apache2 configtest failed - disabling security2 module";   a2dismod security2 >/dev/null 2>&1;   (apache2ctl configtest 2>&1 && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null) && echo "[VortexPanel] OK security2 disabled, apache2 back up")     || echo "[ERROR] apache2 still failing even with security2 disabled"; fi; else CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules; if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then   apt-get update -qq && apt-get install -y libmodsecurity-dev build-essential git     zlib1g-dev libssl-dev 2>&1     || echo "[WARN] libmodsecurity/build-tooling install reported errors";   apt-get install -y libpcre2-dev 2>&1 || apt-get install -y libpcre3-dev 2>&1     || echo "[WARN] Neither libpcre2-dev nor libpcre3-dev available on this system — proceeding anyway, nginx\'s own ./configure will report clearly if it actually needs one";   NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\');   DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\');   [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP";   if [ -n "$NGINX_VER" ]; then     BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&     echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER...";     if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz         && tar -xzf nginx.tar.gz         && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git         && cd "nginx-${NGINX_VER}"         && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx              > /tmp/modsec-connector-configure.log 2>&1         && make modules > /tmp/modsec-connector-make.log 2>&1         && mkdir -p "$MODULES_PATH"         && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then       CONNECTOR_OK=1;       echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER — WAF can actually load in nginx";     else       echo "[ERROR] Connector build failed against nginx $NGINX_VER — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server. nginx.conf will NOT be modified, so nginx stays working; the engine/CRS below still get prepared but the WAF will not actually be active until this is resolved.";     fi;     cd / && rm -rf "$BUILD_DIR";   else     echo "[ERROR] Could not detect installed nginx version via "nginx -v" — skipping connector build. nginx.conf will NOT be modified.";   fi; elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then   __VP_EPEL__;   (dnf install -y gcc make automake autoconf libtool pcre2-devel openssl-devel zlib-devel git 2>&1 || echo "[WARN] build-tooling install reported errors"); NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\'); DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\'); [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP"; if [ -n "$NGINX_VER" ]; then   BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&   echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER (RHEL-family)...";   if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz       && tar -xzf nginx.tar.gz       && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git       && cd "nginx-${NGINX_VER}"       && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx            > /tmp/modsec-connector-configure.log 2>&1       && make modules > /tmp/modsec-connector-make.log 2>&1       && mkdir -p "$MODULES_PATH"       && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then     CONNECTOR_OK=1;     echo "[VortexPanel] ✓ Connector compiled for nginx $NGINX_VER (RHEL-family) — WAF can actually load in nginx";   else     echo "[ERROR] Connector build failed against nginx $NGINX_VER on RHEL-family — see /tmp/modsec-connector-configure.log and /tmp/modsec-connector-make.log on this server.";   fi;   cd / && rm -rf "$BUILD_DIR"; else   echo "[ERROR] Could not detect installed nginx version via nginx -v on RHEL-family — skipping connector build."; fi;   dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"; fi; echo "[VortexPanel] Writing core engine config..."; mkdir -p /etc/nginx/modsec && CONF_OK=0; for attempt in 1 2 3; do   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended     -O /etc/nginx/modsec/modsecurity.conf && CONF_OK=1 && break;   echo "[VortexPanel] modsecurity.conf download attempt $attempt failed, retrying..."; sleep 2; done; if [ "$CONF_OK" = "1" ]; then   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf;   sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf;   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/unicode.mapping     -O /etc/nginx/modsec/unicode.mapping &&     sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/nginx/modsec/unicode.mapping#" /etc/nginx/modsec/modsecurity.conf     || echo "[WARN] Could not download unicode.mapping — nginx -t will fail until this is retried from the WAF page";   echo "[VortexPanel] ✓ Core engine config written — Engine Mode toggle will work"; else   echo "[ERROR] Could not download modsecurity.conf after 3 attempts — writing a minimal fallback config so the engine is still usable";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/nginx/modsec/modsecurity.conf; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/nginx/modsec/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   CRS_TAG=${CRS_TAG:-v4.0.0};   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /tmp/crs.tar.gz     && tar -xzf /tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 2>/dev/null     && rm -f /tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/nginx/modsec/crs/crs-setup.conf.example ]; then   cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf;   echo "[VortexPanel] ✓ OWASP CRS $CRS_TAG installed — Paranoia level control will work"; else   echo "[WARN] Could not download OWASP CRS ruleset after 3 attempts. The core engine (Engine Mode toggle) is still usable, but no attack-pattern rules are loaded yet and Paranoia level will show unavailable until you retry from the WAF page (Repair CRS button)."; fi; if [ "$CRS_OK" = "1" ]; then   printf "Include /etc/nginx/modsec/modsecurity.conf\\nInclude /etc/nginx/modsec/crs/crs-setup.conf\\nInclude /etc/nginx/modsec/crs/rules/*.conf\\n" > /etc/nginx/modsec/main.conf; else   printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; fi; cp /etc/nginx/nginx.conf /tmp/nginx.conf.pre-modsecurity 2>/dev/null; if [ "$CONNECTOR_OK" = "1" ]; then   grep -q "ngx_http_modsecurity_module.so" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "1i load_module ${MODULES_PATH}/ngx_http_modsecurity_module.so;" /etc/nginx/nginx.conf;   grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;"     /etc/nginx/nginx.conf 2>/dev/null || true; else   echo "[VortexPanel] Skipping nginx.conf changes — connector module isn\'t present. nginx stays working; WAF stays inactive until the connector build succeeds."; fi; CRS_CRON_FILE=/etc/cron.d/vortex-crs-update; __VP_CRS_CRON__; if nginx -t 2>&1; then   systemctl reload nginx 2>/dev/null;   echo "[VortexPanel] ✓ nginx config test passed — WAF is actually serving traffic"; else   echo "[ERROR] nginx -t failed after this install — restoring nginx.conf to its pre-install state so the server keeps working. WAF is NOT active; fix the underlying issue and reinstall.";   if [ -f /tmp/nginx.conf.pre-modsecurity ]; then     cp /tmp/nginx.conf.pre-modsecurity /etc/nginx/nginx.conf;     nginx -t 2>&1 && systemctl reload nginx 2>/dev/null && echo "[VortexPanel] ✓ nginx.conf restored, server is back up"       || echo "[ERROR] Restore also failed nginx -t — nginx.conf may have been broken before this install ran too. Manual check required.";   fi; fi; echo "[VortexPanel] ModSecurity install finished. Connector: $([ \\"$CONNECTOR_OK\\" = \\"1\\" ] && echo compiled-and-enabled || echo FAILED — WAF NOT active, see /tmp/modsec-connector-*.log). Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING — use Repair CRS on the WAF page)."; fi; '
+    'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); echo "[VortexPanel] Installing ModSecurity engine..."; WAF_VER="{ver}"; if [ "$WAF_VER" = "2" ]; then command -v apache2 >/dev/null 2>&1 || command -v httpd >/dev/null 2>&1 || { echo "[VortexPanel] ModSecurity v2 protects Apache, and Apache is not installed. Install Apache first (App Store > Apache2), or choose v3 for Nginx."; exit 1; }; else command -v nginx >/dev/null 2>&1 || { echo "[VortexPanel] ModSecurity v3 protects Nginx, and Nginx is not installed. Install Nginx first (App Store > Nginx), or choose v2 for Apache."; exit 1; }; fi; if [ "$WAF_VER" = "2" ]; then apt-get install -y libapache2-mod-security2 2>&1   || echo "[WARN] libapache2-mod-security2 install reported errors"; a2enmod security2 >/dev/null 2>&1 || true; mkdir -p /etc/modsecurity; if [ -f /etc/modsecurity/modsecurity.conf-recommended ]; then   cp /etc/modsecurity/modsecurity.conf-recommended /etc/modsecurity/modsecurity.conf;   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/modsecurity/modsecurity.conf;   sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/modsecurity/unicode.mapping#" /etc/modsecurity/modsecurity.conf;   echo "[VortexPanel] OK Core engine config written (Apache)"; else   echo "[ERROR] modsecurity.conf-recommended not found - writing fallback";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/modsecurity/modsecurity.conf; fi; if [ -f /usr/share/modsecurity-crs/owasp-crs.load ]; then   mv /usr/share/modsecurity-crs/owasp-crs.load /usr/share/modsecurity-crs/owasp-crs.load.disabled-by-vortexpanel 2>/dev/null; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/modsecurity/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   [ -n "$CRS_TAG" ] || CRS_TAG=$(curl -sI -o /dev/null -w "%{redirect_url}" --max-time 10 https://github.com/coreruleset/coreruleset/releases/latest | sed "s#.*/##" | grep -E "^v[0-9]+\\.[0-9]+\\.[0-9]+$");   if [ -z "$CRS_TAG" ]; then echo "[VortexPanel] Could not look up the latest OWASP CRS release (api.github.com unreachable), attempt $attempt"; sleep 3; continue; fi;   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /opt/vortexpanel/data/tmp/crs.tar.gz     && tar -xzf /opt/vortexpanel/data/tmp/crs.tar.gz -C /etc/modsecurity/crs --strip-components=1 2>/dev/null     && rm -f /opt/vortexpanel/data/tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/modsecurity/crs/crs-setup.conf.example ]; then   cp /etc/modsecurity/crs/crs-setup.conf.example /etc/modsecurity/crs/crs-setup.conf;   printf "Include /etc/modsecurity/crs/crs-setup.conf\\nInclude /etc/modsecurity/crs/rules/*.conf\\n" > /etc/modsecurity/main.conf;   echo "[VortexPanel] OK OWASP CRS $CRS_TAG installed"; else   printf "" > /etc/modsecurity/main.conf;   echo "[WARN] Could not download CRS after 3 attempts."; fi; CRS_CRON_FILE=/etc/cron.d/vortex-crs-update-apache; __VP_CRS_CRON__; if apache2ctl configtest 2>&1; then   systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null;   echo "[VortexPanel] OK apache2 config test passed"; else   echo "[ERROR] apache2 configtest failed - disabling security2 module";   a2dismod security2 >/dev/null 2>&1;   (apache2ctl configtest 2>&1 && (systemctl reload apache2 2>/dev/null || service apache2 reload 2>/dev/null) && echo "[VortexPanel] OK security2 disabled, apache2 back up")     || echo "[ERROR] apache2 still failing even with security2 disabled"; fi; else CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules; if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then   apt-get update -qq && apt-get install -y libmodsecurity-dev build-essential git     zlib1g-dev libssl-dev 2>&1     || echo "[WARN] libmodsecurity/build-tooling install reported errors";   apt-get install -y libpcre2-dev 2>&1 || apt-get install -y libpcre3-dev 2>&1     || echo "[WARN] Neither libpcre2-dev nor libpcre3-dev available on this system - proceeding anyway, nginx\'s own ./configure will report clearly if it actually needs one";   NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\');   DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\');   [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP";   if [ -n "$NGINX_VER" ]; then     BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&     echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER...";     if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz         && tar -xzf nginx.tar.gz         && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git         && cd "nginx-${NGINX_VER}"         && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx              > /opt/vortexpanel/data/tmp/modsec-connector-configure.log 2>&1         && make modules > /opt/vortexpanel/data/tmp/modsec-connector-make.log 2>&1         && mkdir -p "$MODULES_PATH"         && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then       CONNECTOR_OK=1;       echo "[VortexPanel] OK Connector compiled for nginx $NGINX_VER - WAF can actually load in nginx";     else       echo "[ERROR] Connector build failed against nginx $NGINX_VER - see /opt/vortexpanel/data/tmp/modsec-connector-configure.log and /opt/vortexpanel/data/tmp/modsec-connector-make.log on this server. nginx.conf will NOT be modified, so nginx stays working; the engine/CRS below still get prepared but the WAF will not actually be active until this is resolved.";     fi;     cd / && rm -rf "$BUILD_DIR";   else     echo "[ERROR] Could not detect installed nginx version via "nginx -v" - skipping connector build. nginx.conf will NOT be modified.";   fi; elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then   __VP_EPEL__;   (dnf install -y gcc make automake autoconf libtool pcre2-devel openssl-devel zlib-devel git 2>&1 || echo "[WARN] build-tooling install reported errors"); NGINX_VER=$(nginx -v 2>&1 | grep -oP \'nginx/\\K[0-9.]+\'); DETECTED_MP=$(nginx -V 2>&1 | grep -oP -- \'--modules-path=\\K[^ ]+\'); [ -n "$DETECTED_MP" ] && MODULES_PATH="$DETECTED_MP"; if [ -n "$NGINX_VER" ]; then   BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR" &&   echo "[VortexPanel] Compiling nginx-ModSecurity connector for nginx $NGINX_VER (RHEL-family)...";   if wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" -O nginx.tar.gz       && tar -xzf nginx.tar.gz       && git clone --depth 1 https://github.com/owasp-modsecurity/ModSecurity-nginx.git       && cd "nginx-${NGINX_VER}"       && ./configure --with-compat --add-dynamic-module=../ModSecurity-nginx            > /opt/vortexpanel/data/tmp/modsec-connector-configure.log 2>&1       && make modules > /opt/vortexpanel/data/tmp/modsec-connector-make.log 2>&1       && mkdir -p "$MODULES_PATH"       && cp objs/ngx_http_modsecurity_module.so "$MODULES_PATH/"; then     CONNECTOR_OK=1;     echo "[VortexPanel] OK Connector compiled for nginx $NGINX_VER (RHEL-family) - WAF can actually load in nginx";   else     echo "[ERROR] Connector build failed against nginx $NGINX_VER on RHEL-family - see /opt/vortexpanel/data/tmp/modsec-connector-configure.log and /opt/vortexpanel/data/tmp/modsec-connector-make.log on this server.";   fi;   cd / && rm -rf "$BUILD_DIR"; else   echo "[ERROR] Could not detect installed nginx version via nginx -v on RHEL-family - skipping connector build."; fi;   dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"; fi; echo "[VortexPanel] Writing core engine config..."; mkdir -p /etc/nginx/modsec && CONF_OK=0; for attempt in 1 2 3; do   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/modsecurity.conf-recommended     -O /etc/nginx/modsec/modsecurity.conf && CONF_OK=1 && break;   echo "[VortexPanel] modsecurity.conf download attempt $attempt failed, retrying..."; sleep 2; done; if [ "$CONF_OK" = "1" ]; then   sed -i "s/SecRuleEngine DetectionOnly/SecRuleEngine On/" /etc/nginx/modsec/modsecurity.conf;   sed -i "s/SecAuditLogParts ABIJDEFHZ/SecAuditLogParts ABCEFHJKZ/" /etc/nginx/modsec/modsecurity.conf;   wget -q https://raw.githubusercontent.com/owasp-modsecurity/ModSecurity/v3/master/unicode.mapping     -O /etc/nginx/modsec/unicode.mapping &&     sed -i "s#SecUnicodeMapFile unicode.mapping#SecUnicodeMapFile /etc/nginx/modsec/unicode.mapping#" /etc/nginx/modsec/modsecurity.conf     || echo "[WARN] Could not download unicode.mapping - nginx -t will fail until this is retried from the WAF page";   echo "[VortexPanel] OK Core engine config written - Engine Mode toggle will work"; else   echo "[ERROR] Could not download modsecurity.conf after 3 attempts - writing a minimal fallback config so the engine is still usable";   printf "SecRuleEngine On\\nSecRequestBodyAccess On\\nSecAuditEngine RelevantOnly\\nSecAuditLog /var/log/modsec_audit.log\\n" > /etc/nginx/modsec/modsecurity.conf; fi; echo "[VortexPanel] Downloading OWASP CRS ruleset..."; mkdir -p /etc/nginx/modsec/crs && CRS_OK=0; for attempt in 1 2 3; do   CRS_TAG=$(curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest     | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])" 2>/dev/null);   [ -n "$CRS_TAG" ] || CRS_TAG=$(curl -sI -o /dev/null -w "%{redirect_url}" --max-time 10 https://github.com/coreruleset/coreruleset/releases/latest | sed "s#.*/##" | grep -E "^v[0-9]+\\.[0-9]+\\.[0-9]+$");   if [ -z "$CRS_TAG" ]; then echo "[VortexPanel] Could not look up the latest OWASP CRS release (api.github.com unreachable), attempt $attempt"; sleep 3; continue; fi;   wget -q --timeout=15 "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz" -O /opt/vortexpanel/data/tmp/crs.tar.gz     && tar -xzf /opt/vortexpanel/data/tmp/crs.tar.gz -C /etc/nginx/modsec/crs --strip-components=1 2>/dev/null     && rm -f /opt/vortexpanel/data/tmp/crs.tar.gz && CRS_OK=1 && break;   echo "[VortexPanel] CRS download attempt $attempt failed, retrying..."; sleep 3; done; if [ "$CRS_OK" = "1" ] && [ -f /etc/nginx/modsec/crs/crs-setup.conf.example ]; then   cp /etc/nginx/modsec/crs/crs-setup.conf.example /etc/nginx/modsec/crs/crs-setup.conf;   echo "[VortexPanel] OK OWASP CRS $CRS_TAG installed - Paranoia level control will work"; else   echo "[WARN] Could not download OWASP CRS ruleset after 3 attempts. The core engine (Engine Mode toggle) is still usable, but no attack-pattern rules are loaded yet and Paranoia level will show unavailable until you retry from the WAF page (Repair CRS button)."; fi; if [ "$CRS_OK" = "1" ]; then   printf "Include /etc/nginx/modsec/modsecurity.conf\\nInclude /etc/nginx/modsec/crs/crs-setup.conf\\nInclude /etc/nginx/modsec/crs/rules/*.conf\\n" > /etc/nginx/modsec/main.conf; else   printf "Include /etc/nginx/modsec/modsecurity.conf\\n" > /etc/nginx/modsec/main.conf; fi; cp /etc/nginx/nginx.conf /opt/vortexpanel/data/tmp/nginx.conf.pre-modsecurity 2>/dev/null; if [ "$CONNECTOR_OK" = "1" ]; then   grep -q "ngx_http_modsecurity_module.so" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "1i load_module ${MODULES_PATH}/ngx_http_modsecurity_module.so;" /etc/nginx/nginx.conf;   grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null ||     sed -i "/^http {/a\\    modsecurity on;\\n    modsecurity_rules_file /etc/nginx/modsec/main.conf;"     /etc/nginx/nginx.conf 2>/dev/null || true; else   echo "[VortexPanel] Skipping nginx.conf changes - connector module isn\'t present. nginx stays working; WAF stays inactive until the connector build succeeds."; fi; CRS_CRON_FILE=/etc/cron.d/vortex-crs-update; __VP_CRS_CRON__; if nginx -t 2>&1; then   systemctl reload nginx 2>/dev/null;   echo "[VortexPanel] OK nginx config test passed - WAF is actually serving traffic"; else   echo "[ERROR] nginx -t failed after this install - restoring nginx.conf to its pre-install state so the server keeps working. WAF is NOT active; fix the underlying issue and reinstall.";   if [ -f /opt/vortexpanel/data/tmp/nginx.conf.pre-modsecurity ]; then     cp /opt/vortexpanel/data/tmp/nginx.conf.pre-modsecurity /etc/nginx/nginx.conf;     nginx -t 2>&1 && systemctl reload nginx 2>/dev/null && echo "[VortexPanel] OK nginx.conf restored, server is back up"       || echo "[ERROR] Restore also failed nginx -t - nginx.conf may have been broken before this install ran too. Manual check required.";   fi; fi; echo "[VortexPanel] ModSecurity install finished. Connector: $([ \\"$CONNECTOR_OK\\" = \\"1\\" ] && echo compiled-and-enabled || echo FAILED - WAF NOT active, see /opt/vortexpanel/data/tmp/modsec-connector-*.log). Engine: $([ \\"$CONF_OK\\" = \\"1\\" ] && echo ready || echo fallback-config). CRS ruleset: $([ \\"$CRS_OK\\" = \\"1\\" ] && echo loaded || echo MISSING - use Repair CRS on the WAF page)."; fi; '
         ),
         'uninstall':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -2214,8 +2233,13 @@ fi''',
             '  fi; '
             '  find /usr/lib/nginx/modules /usr/lib64/nginx/modules -name "ngx_http_modsecurity_module.so" -delete 2>/dev/null; '
             '  rm -rf /etc/nginx/modsec /etc/cron.d/vortex-crs-update; '
-            '  sed -i "/modsecurity/d" /etc/nginx/nginx.conf 2>/dev/null || true; '
-            '  nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true; '
+            '  cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.vp-pre-modsec-removal 2>/dev/null; '
+            # Only the lines the installer and the WAF page add -- the old
+            # sed deleted every line that mentioned modsecurity anywhere.
+            '  sed -i -E "/^[[:space:]]*load_module[[:space:]].*ngx_http_modsecurity_module\\.so;/d; /^[[:space:]]*modsecurity[[:space:]]+(on|off);/d; /^[[:space:]]*modsecurity_rules_file[[:space:]]+\\/etc\\/nginx\\/modsec\\//d" /etc/nginx/nginx.conf 2>/dev/null; '
+            '  for f in /etc/nginx/sites-enabled/* /etc/nginx/sites-available/* /etc/nginx/conf.d/*.conf; do [ -f "$f" ] && sed -i -E "/^[[:space:]]*modsecurity[[:space:]]+(on|off);/d; /^[[:space:]]*modsecurity_rules(_file)?[[:space:]]/d" "$f"; done; '
+            '  if nginx -t 2>/dev/null; then systemctl reload nginx 2>/dev/null; rm -f /etc/nginx/nginx.conf.vp-pre-modsec-removal; '
+            '  else echo "[VortexPanel] nginx -t failed after removing ModSecurity -- your previous nginx.conf is saved as /etc/nginx/nginx.conf.vp-pre-modsec-removal"; nginx -t; fi; '
             'fi'
         ),
         'manage':False,
@@ -2264,10 +2288,10 @@ go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 BUILD_DIR=$(mktemp -d) && cd "$BUILD_DIR"
 echo "[VortexPanel] Building Caddy with the caddy-waf module (this can take a few minutes)..."
 "$(go env GOPATH)/bin/xcaddy" build --with github.com/fabriziosalmi/caddy-waf --output ./caddy-new \\
-  > /tmp/caddy-waf-build.log 2>&1
+  > /opt/vortexpanel/data/tmp/caddy-waf-build.log 2>&1
 
 if [ ! -f ./caddy-new ]; then
-  echo "[ERROR] xcaddy build failed - see /tmp/caddy-waf-build.log on this server for details."
+  echo "[ERROR] xcaddy build failed - see /opt/vortexpanel/data/tmp/caddy-waf-build.log on this server for details."
   cd / && rm -rf "$BUILD_DIR"
   exit 1
 fi
@@ -2307,8 +2331,8 @@ curl -fsSL https://raw.githubusercontent.com/fabriziosalmi/caddy-waf/main/ip_bla
 curl -fsSL https://raw.githubusercontent.com/fabriziosalmi/caddy-waf/main/dns_blacklist.txt -o /etc/caddy/waf/dns_blacklist.txt 2>/dev/null || touch /etc/caddy/waf/dns_blacklist.txt
 
 ROLLED_BACK=0
-if [ -f /etc/caddy/Caddyfile ] && ! caddy validate --config /etc/caddy/Caddyfile >/tmp/caddy-waf-validate.log 2>&1; then
-  echo "[ERROR] The existing Caddyfile does not validate against the new binary - see /tmp/caddy-waf-validate.log. Rolling back."
+if [ -f /etc/caddy/Caddyfile ] && ! caddy validate --config /etc/caddy/Caddyfile >/opt/vortexpanel/data/tmp/caddy-waf-validate.log 2>&1; then
+  echo "[ERROR] The existing Caddyfile does not validate against the new binary - see /opt/vortexpanel/data/tmp/caddy-waf-validate.log. Rolling back."
   cp "$BACKUP_PATH" "$CADDY_BIN"
   ROLLED_BACK=1
 fi
@@ -2478,6 +2502,10 @@ def _load_catalog_override():
         apps = data.get('apps', {})
         if not isinstance(apps, dict):
             return {}
+        # Catalogs before v3 carried hard-coded patch numbers that are stale
+        # now; the live version data replaces them.
+        if int(data.get('catalog_version') or 0) < 3:
+            return {}
         return apps
     except Exception:
         return {}
@@ -2507,7 +2535,7 @@ def _get_mod(mod_id):
         # this can only ever change the TEXT shown for a version the panel
         # already knows how to install, never add one it doesn't.
         merged['versions'] = [
-            {'label': override_by_value.get(v.get('value'), v.get('label')), 'value': v.get('value')}
+            dict(v, label=override_by_value.get(v.get('value'), v.get('label')))
             for v in m.get('versions', [])
         ]
     return merged
@@ -2566,6 +2594,14 @@ def _check_update_available(installed_ver, versions):
 @modules_bp.route('/api/modules/catalog/refresh', methods=['POST'])
 def refresh_catalog():
     if not req(): return jsonify({'ok': False}), 401
+    live_note = ''
+    try:
+        from panel import versions as _live
+        d = _live.refresh(force=True)
+        live_note = f'{len(d.get("products") or {})} apps have live version data'
+    except Exception as e:
+        live_note = f'live version data unavailable: {e}'
+    panel_cache.invalidate('modules_list')
     import urllib.request
     url = 'https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/app_catalog.json'
     try:
@@ -2574,7 +2610,7 @@ def refresh_catalog():
         with urllib.request.urlopen(req_obj, timeout=10) as resp:
             raw = resp.read().decode()
     except Exception as e:
-        return jsonify({'ok': False, 'error': f'Could not reach GitHub: {e}'}), 502
+        return jsonify({'ok': False, 'error': f'Could not reach GitHub: {e} ({live_note})'}), 502
 
     try:
         data = json.loads(raw)
@@ -2601,7 +2637,7 @@ def refresh_catalog():
             clean['desc'] = entry['desc']
         if isinstance(entry.get('versions'), list):
             clean['versions'] = [
-                {'label': v['label'], 'value': v['value']}
+                {'label': v['label'], 'value': v['value'], **({'recommended': True} if v.get('recommended') is True else {})}
                 for v in entry['versions']
                 if isinstance(v, dict) and isinstance(v.get('label'), str) and isinstance(v.get('value'), str)
             ]
@@ -2613,7 +2649,7 @@ def refresh_catalog():
         json.dump({'catalog_version': data.get('catalog_version', 1), 'apps': clean_apps}, f)
 
     panel_cache.invalidate('modules_list')
-    return jsonify({'ok': True, 'updated_apps': len(clean_apps), 'skipped_unknown': skipped})
+    return jsonify({'ok': True, 'updated_apps': len(clean_apps), 'skipped_unknown': skipped, 'live': live_note})
 
 
 @modules_bp.route('/api/modules')
@@ -2622,8 +2658,19 @@ def list_modules():
     cached = panel_cache.get('modules_list')
     if cached: return jsonify(cached)
     result = []
+    try:
+        from panel import versions as _live
+        _live.refresh_async()          # at most once a day, in the background
+        live = _live.load()
+    except Exception:
+        _live, live = None, {}
     for base_m in MODULES:
         m = _get_mod(base_m['id'])  # merged with any catalog override
+        if _live:
+            try:
+                m = dict(m, versions=_live.apply(m, live))
+            except Exception:
+                pass
         installed   = is_installed(m['check'])
         svc_status  = ''
         installed_ver = ''
@@ -2692,7 +2739,7 @@ def install_module(mod_id):
     if mod_id == 'nginx': cmd = nginx_install_script(ver or 'stable')
     elif mod_id == 'mariadb': cmd = mariadb_install_script(ver or '11.7')
     elif mod_id == 'postgresql': cmd = postgresql_install_script(ver or '17')
-    elif mod_id == 'redis': cmd = redis_install_script()
+    elif mod_id == 'redis': cmd = redis_install_script(ver if re.fullmatch(r'\d+\.\d+', ver or '') else '')
     elif mod_id == 'mongodb': cmd = mongodb_install_script(ver or '8.0')
     elif mod_id == 'docker': cmd = docker_install_script()
     elif mod_id == 'nodejs': cmd = nodejs_install_script(ver or '22')
@@ -2732,6 +2779,13 @@ def install_module(mod_id):
         inst_ver = get_version(mod['id'], ver) if installed else ''
         if installed:
             msg = 'Installed successfully' + (f' -- version {inst_ver}' if inst_ver else '') + '.' + svc_note
+            # Say so when the package sources could not provide the chosen
+            # track (the install script falls back rather than failing).
+            if ver and re.fullmatch(r'\d+(\.\d+)*', ver) and inst_ver and mod['id'] not in ('composer', 'modsecurity'):
+                got = re.search(r'\d+(\.\d+)*', inst_ver)
+                if got and not (got.group(0) == ver or got.group(0).startswith(ver + '.')):
+                    msg += (f' Note: you chose {ver}, but the available package sources provided {got.group(0)} '
+                            f'(see the output above for why).')
         elif timed_out:
             msg = 'Installation was stopped because it took longer than 30 minutes.'
         elif rc < 0:
@@ -2747,6 +2801,110 @@ def install_module(mod_id):
 
     _start_job_thread(job_id, run_job, installed_on_error=False)
     return jsonify({'ok':True, 'job_id':job_id, 'action':'install'})
+
+# Configuration saved to /opt/vortexpanel/backups/app-config/ before an app
+# is removed, so an uninstall (or a purge that deletes /etc/<app>) can be
+# undone by hand: tar -xzf <file> -C /
+_ETC_PATHS = {
+    'nginx': ['/etc/nginx'], 'apache2': ['/etc/apache2', '/etc/httpd'],
+    'openlitespeed': ['/usr/local/lsws/conf'], 'caddy': ['/etc/caddy'],
+    'mysql': ['/etc/mysql', '/etc/my.cnf', '/etc/my.cnf.d'], 'mariadb': ['/etc/mysql', '/etc/my.cnf', '/etc/my.cnf.d'],
+    'postgresql': ['/etc/postgresql'], 'mongodb': ['/etc/mongod.conf'],
+    'php': ['/etc/php', '/etc/php-fpm.d', '/etc/opt/remi'], 'pure-ftpd': ['/etc/pure-ftpd', '/etc/pure-ftpd.conf'],
+    'fail2ban': ['/etc/fail2ban'], 'postfix': ['/etc/postfix', '/etc/dovecot'], 'bind9': ['/etc/bind', '/etc/named.conf', '/var/named'],
+    'redis': ['/etc/redis'], 'supervisor': ['/etc/supervisor', '/etc/supervisord.conf', '/etc/supervisord.d'],
+    'memcached': ['/etc/memcached.conf'], 'modsecurity': ['/etc/nginx/modsec', '/etc/modsecurity', '/etc/nginx/nginx.conf'],
+    'phpmyadmin': ['/etc/phpmyadmin'], 'clamav': ['/etc/clamav'], 'roundcube': ['/etc/roundcube'],
+    'ddns': ['/opt/vortexpanel/data/ddns', '/opt/vortexpanel/ddns_config.json'],
+}
+_APP_CFG_DIR = '/opt/vortexpanel/backups/app-config'
+
+
+def _backup_app_config(mod_id, ver=''):
+    paths = [p for p in _ETC_PATHS.get(mod_id, []) if os.path.exists(p)]
+    if mod_id == 'php' and ver:
+        paths = [p for p in (f'/etc/php/{ver}', f'/etc/opt/remi/php{ver.replace(".", "")}') if os.path.exists(p)] or paths
+    if not paths:
+        return ''
+    os.makedirs(_APP_CFG_DIR, mode=0o700, exist_ok=True)
+    out = os.path.join(_APP_CFG_DIR, f'{mod_id}{("-" + ver) if ver else ""}-{time.strftime("%Y%m%d-%H%M%S")}.tar.gz')
+    r = subprocess.run(['tar', '-czf', out, '--ignore-failed-read'] + paths, capture_output=True, text=True, timeout=600)
+    if r.returncode not in (0, 1) or not os.path.exists(out):
+        return ''
+    os.chmod(out, 0o600)
+    return out
+
+
+def _uninstall_impact(mod_id, ver=''):
+    """Plain-language list of what removing this app affects on THIS server."""
+    w = []
+    try:
+        from panel.routes.websites_core import list_sites
+        sites = list_sites()
+    except Exception:
+        sites = []
+    n = len(sites)
+    static = {
+        'mysql': 'Every MySQL database in /var/lib/mysql is deleted.',
+        'mariadb': 'Every MariaDB database in /var/lib/mysql is deleted.',
+        'postgresql': 'Every PostgreSQL database in /var/lib/postgresql is deleted.',
+        'mongodb': 'Every MongoDB database in /var/lib/mongodb is deleted.',
+        'redis': 'Data stored in Redis is deleted; sites using Redis caching or sessions lose them.',
+        'bind9': 'All DNS zones in /etc/bind/zones are deleted; domains served by this DNS server stop resolving.',
+        'roundcube': 'The webmail site and /var/www/roundcube are deleted.',
+        'docker': 'Docker is removed and every running container stops.',
+        'pure-ftpd': 'All FTP accounts stop working (their files stay in place).',
+        'fail2ban': 'Brute-force protection stops: IPs banned now are unbanned, SSH and the panel are no longer protected by jails.',
+        'supervisor': 'Every process managed by Supervisor (queue workers, Node/Go apps started by it) stops.',
+        'ddns': 'Dynamic DNS records stop being updated.',
+        'modsecurity': 'The web application firewall stops protecting your sites; per-site WAF settings are removed.',
+        'postfix': 'Mail for your domains is no longer received or sent; mailboxes stay on disk.',
+        'clamav': 'Malware scans of uploads and websites stop.',
+        'phpmyadmin': 'The phpMyAdmin web interface is removed (databases are kept).',
+        'memcached': 'Cached data is lost; sites using memcached fall back to slower storage.',
+        'openlitespeed': 'Everything in /usr/local/lsws is deleted.',
+        'caddy': 'The Caddyfile and /etc/caddy are deleted.',
+    }
+    if mod_id in ('nginx', 'apache2', 'openlitespeed', 'caddy') and n:
+        w.append(f'{n} website{"s" if n != 1 else ""} on this server will stop answering until another web server is installed.')
+    if mod_id == 'php':
+        using = [x['domain'] for x in sites if str(x.get('php') or x.get('php_version') or '') == ver] if ver else []
+        if using:
+            w.append(f'{len(using)} website{"s use" if len(using) != 1 else " uses"} PHP {ver} and will show errors: '
+                     + ', '.join(using[:8]) + (' ...' if len(using) > 8 else ''))
+        else:
+            w.append(f'No website uses PHP {ver}.' if ver else 'Websites using PHP will show errors.')
+    if mod_id in ('mysql', 'mariadb'):
+        try:
+            out = subprocess.run("ls -1d /var/lib/mysql/*/ 2>/dev/null | grep -vE '/(mysql|performance_schema|sys|#.*)/$' | wc -l",
+                                 shell=True, capture_output=True, text=True, timeout=10).stdout.strip()
+            if out and out != '0':
+                w.append(f'{out} database{"s" if out != "1" else ""} will be deleted. Back them up first (Databases > Export).')
+        except Exception:
+            pass
+    if mod_id == 'pure-ftpd':
+        try:
+            out = subprocess.run('pure-pw list 2>/dev/null | wc -l', shell=True, capture_output=True, text=True, timeout=10).stdout.strip()
+            if out and out != '0':
+                w.append(f'{out} FTP account{"s" if out != "1" else ""} will stop working.')
+        except Exception:
+            pass
+    if static.get(mod_id):
+        w.append(static[mod_id])
+    paths = [p for p in _ETC_PATHS.get(mod_id, []) if os.path.exists(p)]
+    return {'warnings': w, 'config_backup': bool(paths), 'config_paths': paths, 'backup_dir': _APP_CFG_DIR}
+
+
+@modules_bp.route('/api/modules/<mod_id>/uninstall-impact')
+def uninstall_impact(mod_id):
+    if not req(): return jsonify({'ok': False}), 401
+    if not _get_mod(mod_id):
+        return jsonify({'ok': False, 'error': 'Not found'}), 404
+    ver = str(request.args.get('version', '') or '').strip()
+    if ver and not re.match(r'^[0-9A-Za-z._-]{1,20}$', ver):
+        return jsonify({'ok': False, 'error': 'Invalid version'}), 400
+    return jsonify({'ok': True, **_uninstall_impact(mod_id, ver)})
+
 
 # Apps whose uninstall must NOT stop their 'service' first (the service
 # belongs to another app that has to keep running).
@@ -2806,6 +2964,11 @@ def uninstall_module(mod_id):
                                 f'for {str(lock_wait // 60) + " minutes" if lock_wait >= 120 else str(lock_wait) + " seconds"}. Try the uninstall again when it has finished.')
             return
 
+        cfg_backup = _backup_app_config(mod_id, ver)
+        if cfg_backup:
+            _job_append_line(job_id, f'[VortexPanel] Saved the configuration to {cfg_backup} '
+                                     f'(restore with: tar -xzf {cfg_backup} -C /)')
+
         # Stop the service first so dpkg does not hang on restart triggers.
         # Only for apps that really have a service (previously every app,
         # e.g. "systemctl stop php", "systemctl stop roundcube").
@@ -2830,6 +2993,8 @@ def uninstall_module(mod_id):
 
         if removed:
             msg = f'{mod["name"]}{" " + ver if ver else ""} removed successfully.'
+            if cfg_backup:
+                msg += f' Its configuration was saved to {cfg_backup}.'
         else:
             msg = f'{mod["name"]}{" " + ver if ver else ""} could NOT be fully removed -- the reason is in the output above.'
             if svc and was_active:
@@ -3079,7 +3244,7 @@ def ffmpeg_install_version(version):
 
     url, fname = _ffmpeg_url(v)
     arch = _ffmpeg_arch()
-    tmp_archive = f'/tmp/{fname}'
+    tmp_archive = f'/opt/vortexpanel/data/tmp/{fname}'
     job_id = str(uuid.uuid4())[:8]
     _job_create(job_id)
 
@@ -3150,9 +3315,9 @@ def ffmpeg_install_version(version):
                     subprocess.run(f'ln -sf "{tool_bin}" "/usr/local/bin/{tool}{v["alias"][6:]}"', shell=True)
 
             ver_line = verify.stdout.splitlines()[0] if verify.stdout else ''
-            _job_append_line(job_id, f'[VortexPanel] ✓ Verified: {ver_line}')
-            _job_append_line(job_id, f'[VortexPanel] ✓ Installed to {dest_dir}/bin/ffmpeg')
-            _job_append_line(job_id, f'[VortexPanel] ✓ Command alias: {v["alias"]} -> {binary}')
+            _job_append_line(job_id, f'[VortexPanel] OK Verified: {ver_line}')
+            _job_append_line(job_id, f'[VortexPanel] OK Installed to {dest_dir}/bin/ffmpeg')
+            _job_append_line(job_id, f'[VortexPanel] OK Command alias: {v["alias"]} -> {binary}')
             _job_finish(job_id, True, True, version)
 
         except Exception as e:
@@ -3712,7 +3877,11 @@ def _get_module_settings_impl(mod_id):
         port    = mvar('port') or '3306'
         datadir = mvar('datadir') or '/var/lib/mysql'
         uptime  = mstat('Uptime') or ''
-        launch_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - int(uptime))) if uptime.isdigit() else ''
+        # Uptime can be garbage after the clock jumps backwards (it is unsigned
+        # in MySQL), so only trust values that give a start time after 1970.
+        launch_time = ''
+        if uptime.isdigit() and 0 <= int(uptime) < time.time():
+            launch_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time() - int(uptime)))
         if mod_id == 'mysql':
             current_status = {
                 'launch_time':       launch_time,
@@ -4163,11 +4332,11 @@ _VP_PICK = (
 def _st_key_dl(url, keyring):
     """Download+dearmor a signing key to a temp file and only then replace the
     keyring, so a failed download never breaks the existing repo."""
-    return (f'curl -fsSL --connect-timeout 20 --max-time 90 "{url}" -o /tmp/vp_switch_key.asc && '
-            'gpg --batch --no-tty --yes --dearmor -o /tmp/vp_switch_key.gpg /tmp/vp_switch_key.asc && '
-            f'mkdir -p "$(dirname {keyring})" && mv -f /tmp/vp_switch_key.gpg {keyring} || '
-            f'{{ echo "[VortexPanel] Could not download the signing key from {url}."; rm -f /tmp/vp_switch_key.*; exit 1; }}\n'
-            'rm -f /tmp/vp_switch_key.asc\n')
+    return (f'curl -fsSL --connect-timeout 20 --max-time 90 "{url}" -o /opt/vortexpanel/data/tmp/vp_switch_key.asc && '
+            'gpg --batch --no-tty --yes --dearmor -o /opt/vortexpanel/data/tmp/vp_switch_key.gpg /opt/vortexpanel/data/tmp/vp_switch_key.asc && '
+            f'mkdir -p "$(dirname {keyring})" && mv -f /opt/vortexpanel/data/tmp/vp_switch_key.gpg {keyring} || '
+            f'{{ echo "[VortexPanel] Could not download the signing key from {url}."; rm -f /opt/vortexpanel/data/tmp/vp_switch_key.*; exit 1; }}\n'
+            'rm -f /opt/vortexpanel/data/tmp/vp_switch_key.asc\n')
 
 _SWITCH_NO_DOWNGRADE = {'mysql', 'mariadb', 'mongodb', 'redis', 'postgresql'}
 _SWITCH_DEBIAN_ONLY = {
@@ -4250,8 +4419,8 @@ def _st_switch_script(mod_id, ver, mod):
                   'apachectl configtest || exit 1\nsystemctl restart httpd || exit 1\n')
         return S, None
     if mod_id == 'openlitespeed':
-        S += ('curl -fsSL --max-time 90 https://repo.litespeed.sh -o /tmp/vp_ls_repo.sh || { echo "[VortexPanel] Could not download the LiteSpeed repository script."; exit 1; }\n'
-              'bash /tmp/vp_ls_repo.sh || exit 1\nrm -f /tmp/vp_ls_repo.sh\n')
+        S += ('curl -fsSL --max-time 90 https://repo.litespeed.sh -o /opt/vortexpanel/data/tmp/vp_ls_repo.sh || { echo "[VortexPanel] Could not download the LiteSpeed repository script."; exit 1; }\n'
+              'bash /opt/vortexpanel/data/tmp/vp_ls_repo.sh || exit 1\nrm -f /opt/vortexpanel/data/tmp/vp_ls_repo.sh\n')
         if fam == 'debian':
             S += ('apt-get update -qq || exit 1\n'
                   f'V=$(VP_PICK openlitespeed "^([0-9]+:)?{vre}([.-]|$)" "")\n'
@@ -4306,8 +4475,8 @@ def _st_switch_script(mod_id, ver, mod):
                   f'[ -n "$V" ] || {{ echo "[VortexPanel] NodeSource has no Node.js {ver} build."; exit 1; }}\n'
                   'apt-get install -y --allow-downgrades "nodejs=$V" || exit 1\n')
         else:
-            S += (f'curl -fsSL --max-time 90 https://rpm.nodesource.com/setup_{ver}.x -o /tmp/vp_nodesource.sh || exit 1\n'
-                  'bash /tmp/vp_nodesource.sh || exit 1\nrm -f /tmp/vp_nodesource.sh\n'
+            S += (f'curl -fsSL --max-time 90 https://rpm.nodesource.com/setup_{ver}.x -o /opt/vortexpanel/data/tmp/vp_nodesource.sh || exit 1\n'
+                  'bash /opt/vortexpanel/data/tmp/vp_nodesource.sh || exit 1\nrm -f /opt/vortexpanel/data/tmp/vp_nodesource.sh\n'
                   'dnf -y distro-sync nodejs || exit 1\n')
         return S, None
     if mod_id == 'bind9':

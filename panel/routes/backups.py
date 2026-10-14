@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session, send_file
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, glob, time, threading, uuid, re, gzip, shutil, tarfile, zipfile, tempfile
 
 backups_bp = Blueprint('backups', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 BACKUP_DIR = '/opt/vortexpanel/backups'
 
 _DOMAIN_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$')
@@ -629,6 +630,14 @@ def _site_entry(sb, domain, path, existing, sched_all, cloud_on):
     }
 
 
+def _targets_public():
+    try:
+        from panel import storage
+        return [{'id': t['id'], 'name': t['name'], 'type': t['type']} for t in storage.list_targets()]
+    except Exception:
+        return []
+
+
 @backups_bp.route('/api/backups/sites')
 def site_backups_overview():
     if not req(): return jsonify({'ok':False}), 401
@@ -645,6 +654,7 @@ def site_backups_overview():
     return jsonify({'ok': True, 'sites': out, 'databases': sorted(existing),
                     'cloud': {'connected': bool(cloud), 'bucket': (cloud or {}).get('bucket', ''),
                               'provider': (cloud or {}).get('provider', '')},
+                    'targets': _targets_public(),
                     'scheduler_active': bool(timer.get('active'))})
 
 
@@ -662,8 +672,6 @@ def site_backup_schedule(domain):
         missing = [n for n in s['databases'] if n not in existing]
         if missing:
             return jsonify({'ok': False, 'error': 'Database not found: ' + ', '.join(missing)}), 400
-    if s['cloud'] and not sb.cloud_config():
-        return jsonify({'ok': False, 'error': 'Connect cloud storage first (Backups > Cloud Storage)'}), 400
     s['next_run'] = sb.next_run(s) if s['enabled'] else None
     sb._update_site_state(domain, **s)
     return jsonify({'ok': True, 'next_run': s['next_run']})

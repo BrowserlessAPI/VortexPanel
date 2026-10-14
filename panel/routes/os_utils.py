@@ -4,6 +4,29 @@ Supports: Ubuntu, Debian, Fedora, RHEL, AlmaLinux, Rocky Linux
 """
 import subprocess, os, re
 
+# Downloads, repo keys and installer logs go to a root-only directory, not
+# the shared /tmp, where another local user could pre-create or swap a file
+# that root then executes.
+PRIVATE_TMP = '/opt/vortexpanel/data/tmp'
+try:
+    os.makedirs(PRIVATE_TMP, mode=0o700, exist_ok=True)
+    os.chmod(PRIVATE_TMP, 0o700)
+except OSError:
+    pass
+
+# Distro packages ship default sites with `listen [::]:80`, which stops the
+# web server from starting on a kernel without IPv6 (IPv6 disabled at boot,
+# some VPS and container hosts). Comment those lines out there.
+NO_IPV6_FIX = (
+    'if [ ! -f /proc/net/if_inet6 ]; then '
+    'for f in /etc/nginx/sites-enabled/* /etc/nginx/sites-available/default /etc/nginx/conf.d/*.conf '
+    '/etc/apache2/ports.conf /etc/apache2/sites-enabled/*; do '
+    '[ -f "$f" ] && grep -qE "^[[:space:]]*listen[[:space:]]+\\[::\\]" "$f" && '
+    'sed -i -E "s/^([[:space:]]*)(listen[[:space:]]+\\[::\\])/\\1# no IPv6 on this server: \\2/" "$f" && '
+    'echo "[VortexPanel] IPv6 is not available: disabled the IPv6 listen line in $f"; '
+    'done; true; fi'
+)
+
 def sh(cmd, timeout=30):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
@@ -167,9 +190,9 @@ def pkg_remove(packages):
 def add_repo_key(url, keyring_path):
     """Download and add GPG key, works on all distros"""
     return (
-        f'curl -fsSL {url} -o /tmp/repo.key && '
-        f'gpg --batch --no-tty --dearmor -o {keyring_path} /tmp/repo.key && '
-        f'rm -f /tmp/repo.key'
+        f'curl -fsSL {url} -o /opt/vortexpanel/data/tmp/repo.key && '
+        f'gpg --batch --no-tty --dearmor -o {keyring_path} /opt/vortexpanel/data/tmp/repo.key && '
+        f'rm -f /opt/vortexpanel/data/tmp/repo.key'
     )
 
 def nginx_install_script(channel='stable'):
@@ -215,18 +238,39 @@ def nginx_install_script(channel='stable'):
         distro_path = _deb_base(os_info)
         cn = os_info["codename"]
         repo = f'http://nginx.org/packages/{distro_path}' if channel == 'stable' else f'http://nginx.org/packages/mainline/{distro_path}'
+        T = PRIVATE_TMP
         return (
-            f'rm -f /usr/share/keyrings/nginx-archive-keyring.gpg && curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --batch --no-tty --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg && '
-            f'echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} {cn} nginx" > /etc/apt/sources.list.d/nginx.list && '
-            # nginx.org lags new codenames: never leave a broken nginx.list
-            # behind (it poisons every later apt-get update) -- fall back to
-            # the distro nginx package instead.
-            f'(if ! {pkg_update()} 2>/tmp/vp_nginx_repo_err.log; then '
-            f'  echo "[VortexPanel] nginx.org has no release for {cn} yet -- removing it, using the distro nginx package instead"; '
+            # nginx.org first; when its key or repository cannot be reached
+            # (firewalled server, new codename not published yet) or its
+            # package does not install, fall back to the distro nginx so the
+            # install still succeeds -- and say which one was installed.
+            'VP_NGX_REPO=0; '
+            f'if curl -fsSL --connect-timeout 20 --max-time 60 https://nginx.org/keys/nginx_signing.key -o {T}/nginx.key '
+            f'&& gpg --batch --no-tty --yes --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg {T}/nginx.key; then '
+            f'  echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] {repo} {cn} nginx" > /etc/apt/sources.list.d/nginx.list; '
+            f'  if {pkg_update()} 2>{T}/vp_nginx_repo_err.log; then VP_NGX_REPO=1; '
+            f'  else echo "[VortexPanel] nginx.org has no release for {cn} -- using the distro nginx package instead"; '
+            f'    rm -f /etc/apt/sources.list.d/nginx.list; {pkg_update()}; fi; '
+            'else '
+            '  echo "[VortexPanel] nginx.org could not be reached -- installing the distro nginx package instead (older, but receives security updates from your distribution)"; '
             f'  rm -f /etc/apt/sources.list.d/nginx.list; {pkg_update()}; '
-            'fi) && '
-            f'{pkg_install("nginx")} && '
-            f'systemctl enable nginx && nginx -t && systemctl start nginx && '
+            f'fi; rm -f {T}/nginx.key; '
+            # The package starts nginx in its postinst; on a server without
+            # IPv6 the default site's `listen [::]:80` makes that fail and
+            # leaves the package half-configured. Fix the config and finish
+            # the configuration instead of giving up.
+            'vp_ngx_ok() { dpkg -s nginx 2>/dev/null | grep -q "install ok installed" && command -v nginx >/dev/null; }; '
+            f'if ! {pkg_install("nginx")}; then '
+            f'  {NO_IPV6_FIX}; dpkg --configure -a >/dev/null 2>&1; '
+            '  if vp_ngx_ok; then echo "[VortexPanel] nginx is installed (its first start failed and was fixed)"; '
+            '  elif [ "$VP_NGX_REPO" = 1 ]; then '
+            '    echo "[VortexPanel] the nginx.org package did not install -- trying the distro package"; '
+            f'    rm -f /etc/apt/sources.list.d/nginx.list; {pkg_update()}; {pkg_install("nginx")} || {{ {NO_IPV6_FIX}; dpkg --configure -a >/dev/null 2>&1; }}; '
+            '    vp_ngx_ok || exit 1; '
+            '  else exit 1; fi; '
+            'fi; '
+            f'{NO_IPV6_FIX}; '
+            f'systemctl enable nginx && nginx -t && systemctl restart nginx && '
             f'{stream_setup}'
         )
     elif os_info['family'] == 'fedora':
@@ -295,7 +339,7 @@ def php_install_script(ver):
                 'apt-get install -y ca-certificates apt-transport-https gnupg2 && '
                 'curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
                 f'echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ {codename} main" > /etc/apt/sources.list.d/php-sury.list && '
-                f'if ! {pkg_update()} 2>/tmp/vp_php_sury_err.log; then '
+                f'if ! {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_php_sury_err.log; then '
                 f'  echo "[VortexPanel] packages.sury.org has no release for {codename} yet -- falling back to bookworm packages"; '
                 '  echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ bookworm main" > /etc/apt/sources.list.d/php-sury.list && '
                 f'  {pkg_update()}; '
@@ -314,14 +358,14 @@ def php_install_script(ver):
                 # at all (Launchpad unreachable) as well as when it has no
                 # release for this codename -- previously only the second case
                 # was handled and an unreachable Launchpad ended the install.
-                f'if add-apt-repository -y ppa:ondrej/php && {pkg_update()} 2>/tmp/vp_php_repo_err.log; then :; else '
+                f'if add-apt-repository -y ppa:ondrej/php && {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_php_repo_err.log; then :; else '
                 f'  echo "[VortexPanel] ondrej/php is unavailable (unreachable, or no release for {codename}) -- removing it and trying packages.sury.org"; '
                 '  add-apt-repository --remove -y ppa:ondrej/php 2>/dev/null; '
                 '  rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources 2>/dev/null; '
                 '  apt-get install -y ca-certificates apt-transport-https gnupg2 && '
                 '  curl -fsSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg && '
                 f'  echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ {codename} main" > /etc/apt/sources.list.d/php-sury.list && '
-                f'  if ! {pkg_update()} 2>/tmp/vp_php_sury_err.log; then '
+                f'  if ! {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_php_sury_err.log; then '
                 f'    echo "[VortexPanel] packages.sury.org has no release for {codename} yet either -- falling back to noble (24.04) packages"; '
                 '    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ noble main" > /etc/apt/sources.list.d/php-sury.list && '
                 f'    {pkg_update()}; '
@@ -333,9 +377,18 @@ def php_install_script(ver):
                 '  fi; '
                 'fi'
             )
+        core = f"php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml php{ver}-curl php{ver}-mbstring php{ver}-zip php{ver}-gd php{ver}-bcmath php{ver}-intl php{ver}-soap"
         return (
-            f'{php_repo_setup} && '
-            f'{pkg_install(f"php{ver} php{ver}-fpm php{ver}-common php{ver}-mysql php{ver}-xml php{ver}-curl php{ver}-mbstring php{ver}-zip php{ver}-gd php{ver}-bcmath php{ver}-intl php{ver}-soap php{ver}-redis")} && '
+            # A third-party repository that cannot be reached is not the end:
+            # the distribution's own PHP version installs without it.
+            f'( {php_repo_setup} ) || echo "[VortexPanel] The third-party PHP repository is not available -- checking the packages of your distribution"; '
+            f'if ! apt-cache policy php{ver}-fpm 2>/dev/null | grep -q "Candidate: [0-9]"; then '
+            '  DISTRO_PHP=$(apt-cache policy php-fpm 2>/dev/null | sed -n "s/.*Candidate: [0-9]*:*\\([0-9]*\\.[0-9]*\\).*/\\1/p" | head -1); '
+            f'  echo "[VortexPanel] PHP {ver} is not available on this server. Your distribution ships PHP ${{DISTRO_PHP:-(none)}}, which installs without the extra repository -- choose that version, or allow access to ppa.launchpadcontent.net / packages.sury.org."; '
+            '  exit 1; '
+            'fi; '
+            f'{pkg_install(core)} && '
+            f'( {pkg_install(f"php{ver}-redis")} || echo "[VortexPanel] Note: php{ver}-redis is not available -- skipped" ) && '
             f'systemctl enable php{ver}-fpm && systemctl start php{ver}-fpm && '
             f'( {fix_pool_owner} ) && systemctl restart php{ver}-fpm'
         )
@@ -458,11 +511,11 @@ def mariadb_install_script(ver='11.7'):
             # ever unavailable/changed, fall back to the keyserver method
             # using MariaDB's long-standing published key ID, so a single
             # broken URL cannot silently leave packages unverifiable.
-            '(curl -fsSL https://mariadb.org/mariadb_release_signing_key.asc -o /tmp/mariadb.key 2>/dev/null && '
-            ' gpg --batch --no-tty --dearmor -o /etc/apt/keyrings/mariadb-keyring.pgp /tmp/mariadb.key 2>/dev/null) || '
+            '(curl -fsSL https://mariadb.org/mariadb_release_signing_key.asc -o /opt/vortexpanel/data/tmp/mariadb.key 2>/dev/null && '
+            ' gpg --batch --no-tty --dearmor -o /etc/apt/keyrings/mariadb-keyring.pgp /opt/vortexpanel/data/tmp/mariadb.key 2>/dev/null) || '
             'gpg --no-default-keyring --keyring /etc/apt/keyrings/mariadb-keyring.pgp '
             '--keyserver keyserver.ubuntu.com --recv-keys 0xF1656F24C74CD1D8 2>/dev/null; '
-            'rm -f /tmp/mariadb.key; '
+            'rm -f /opt/vortexpanel/data/tmp/mariadb.key; '
             f'printf "Types: deb\\nURIs: https://dlm.mariadb.com/repo/mariadb-server/{ver}/repo/{deb_path}\\nSuites: %s\\nComponents: main main/debug\\nSigned-By: /etc/apt/keyrings/mariadb-keyring.pgp\\n" "{codename}" '
             '> /etc/apt/sources.list.d/mariadb.sources && '
             f'{pkg_update()} && '
@@ -498,14 +551,14 @@ def postgresql_install_script(ver='17'):
     if os_info['family'] == 'debian':
         return (
             f'rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
-            f'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pg.asc && '
-            f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/pg.asc && '
+            f'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /opt/vortexpanel/data/tmp/pg.asc && '
+            f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /opt/vortexpanel/data/tmp/pg.asc && '
             f'echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt {os_info["codename"]}-pgdg main" > /etc/apt/sources.list.d/pgdg.list && '
             # A brand-new Ubuntu codename can lag behind PGDG's own release
             # cadence by days/weeks. Leaving a broken pgdg.list in place
             # would poison every future apt-get update on the system, the
             # same failure class already confirmed for mariadb/php/apache2.
-            f'(if ! {pkg_update()} 2>/tmp/vp_pg_repo_err.log; then '
+            f'(if ! {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_pg_repo_err.log; then '
             f'  echo "[VortexPanel] apt.postgresql.org has no release for {os_info["codename"]} yet -- removing pgdg.list so it does not block other installs"; '
             f'  rm -f /etc/apt/sources.list.d/pgdg.list; {pkg_update()}; exit 1; fi) && '
             # postgresql-contrib (unversioned) depends on the "postgresql"
@@ -536,8 +589,9 @@ def postgresql_install_script(ver='17'):
         )
     return f'{pkg_install(f"postgresql-{ver}")} && systemctl enable postgresql'
 
-def redis_install_script():
-    """Redis official install script for all distros"""
+def redis_install_script(ver=''):
+    """Redis official install script for all distros. `ver` is a major.minor
+    track (8.2, 7.4); packages.redis.io keeps several, the distro only one."""
     os_info = get_os()
     if os_info['family'] == 'debian':
         cn = os_info["codename"]
@@ -547,10 +601,10 @@ def redis_install_script():
         # only covered (2)); (2) the repo has no release for this codename.
         return (
             'rm -f /usr/share/keyrings/redis-archive-keyring.gpg /etc/apt/sources.list.d/redis.list; '
-            'if curl -fsSL --connect-timeout 20 --max-time 60 https://packages.redis.io/gpg -o /tmp/vp_redis.gpg '
-            '&& gpg --batch --no-tty --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg /tmp/vp_redis.gpg; then '
+            'if curl -fsSL --connect-timeout 20 --max-time 60 https://packages.redis.io/gpg -o /opt/vortexpanel/data/tmp/vp_redis.gpg '
+            '&& gpg --batch --no-tty --yes --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg /opt/vortexpanel/data/tmp/vp_redis.gpg; then '
             f'  echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb {cn} main" > /etc/apt/sources.list.d/redis.list; '
-            f'  if ! {pkg_update()} 2>/tmp/vp_redis_repo_err.log; then '
+            f'  if ! {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_redis_repo_err.log; then '
             f'    echo "[VortexPanel] packages.redis.io has no release for {cn} yet -- removing it, using distro-packaged redis-server instead"; '
             f'    rm -f /etc/apt/sources.list.d/redis.list /usr/share/keyrings/redis-archive-keyring.gpg; {pkg_update()}; '
             '  fi; '
@@ -558,8 +612,13 @@ def redis_install_script():
             '  echo "[VortexPanel] packages.redis.io could not be reached -- using the distro-packaged redis-server instead"; '
             f'  rm -f /usr/share/keyrings/redis-archive-keyring.gpg; {pkg_update()}; '
             'fi; '
-            'rm -f /tmp/vp_redis.gpg; '
-            f'{pkg_install("redis-server")} && '
+            'rm -f /opt/vortexpanel/data/tmp/vp_redis.gpg; '
+            # packages.redis.io versions look like 6:8.2.1-1rl1~noble1
+            f'RV=$(apt-cache madison redis-server 2>/dev/null | awk -F"|" \'{{gsub(/ /,"",$2); print $2}}\' | grep -E "^([0-9]+:)?{re.escape(ver)}\\." | head -1); '
+            f'if [ -n "{ver}" ] && [ -z "$RV" ]; then echo "[VortexPanel] Redis {ver} is not offered by the available package sources -- installing the newest version they offer"; fi; '
+            'if [ -n "$RV" ]; then RT=$(apt-cache show redis-server=$RV 2>/dev/null | sed -n "s/^Depends:.*redis-tools (= \\([^)]*\\)).*/\\1/p" | head -1); '
+            f'  {pkg_install("redis-server=$RV ${RT:+redis-tools=$RT}")}; '
+            f'else {pkg_install("redis-server")}; fi && '
             f'systemctl enable redis-server && systemctl restart redis-server'
         )
     elif os_info['family'] in ('rhel','fedora'):
@@ -590,17 +649,17 @@ def mongodb_install_script(ver='8.0'):
         fallback_codename = 'bookworm' if is_debian else 'noble'
         return (
             f'rm -f /usr/share/keyrings/mongodb-server-{ver}.gpg /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
-            f'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /tmp/mongo.asc && '
-            f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /tmp/mongo.asc && '
+            f'curl -fsSL https://www.mongodb.org/static/pgp/server-{ver}.asc -o /opt/vortexpanel/data/tmp/mongo.asc && '
+            f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/mongodb-server-{ver}.gpg /opt/vortexpanel/data/tmp/mongo.asc && '
             f'echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/{deb_path} {codename}/mongodb-org/{ver} {component}" > /etc/apt/sources.list.d/mongodb-org-{ver}.list && '
             # If repo.mongodb.org has no release for this exact codename yet,
             # fall back to the previous stable release for the SAME distro
             # family (bookworm for Debian, noble for Ubuntu) rather than
             # ever crossing between them.
-            f'(if ! {pkg_update()} 2>/tmp/vp_mongo_repo_err.log; then '
+            f'(if ! {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_mongo_repo_err.log; then '
             f'  echo "[VortexPanel] repo.mongodb.org has no release for {codename} yet -- trying {fallback_codename} packages instead"; '
             f'  echo "deb [signed-by=/usr/share/keyrings/mongodb-server-{ver}.gpg arch=amd64,arm64] https://repo.mongodb.org/apt/{deb_path} {fallback_codename}/mongodb-org/{ver} {component}" > /etc/apt/sources.list.d/mongodb-org-{ver}.list; '
-            f'  if ! {pkg_update()} 2>/tmp/vp_mongo_fallback_err.log; then '
+            f'  if ! {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_mongo_fallback_err.log; then '
             f'    echo "[VortexPanel] repo.mongodb.org has no release for {fallback_codename} either -- removing the broken repo entry so it does not block other installs"; '
             f'    rm -f /etc/apt/sources.list.d/mongodb-org-{ver}.list; {pkg_update()}; exit 1; '
             f'  fi; '
@@ -638,7 +697,7 @@ def docker_install_script():
             # applying the same defensive pattern as everywhere else on this
             # server for consistency: never leave a broken repo entry behind
             # to poison unrelated future installs.
-            f'(if ! {pkg_update()} 2>/tmp/vp_docker_repo_err.log; then '
+            f'(if ! {pkg_update()} 2>/opt/vortexpanel/data/tmp/vp_docker_repo_err.log; then '
             f'  echo "[VortexPanel] download.docker.com has no release for {codename} yet -- removing it and falling back to get.docker.com'"'"'s own installer"; '
             '  rm -f /etc/apt/sources.list.d/docker.list; '
             f'  curl -fsSL https://get.docker.com | sh; '

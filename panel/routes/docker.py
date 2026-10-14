@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, session, Response
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, json, threading, time, uuid, re, shlex, shutil
 try:
     from panel.routes import os_utils as _ou
@@ -13,7 +14,7 @@ except ImportError:
     from job_state import save_job, load_job
 
 docker_bp = Blueprint('docker', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 _jobs = {}
 
 # Container names/ids, image references, network names: everything that is

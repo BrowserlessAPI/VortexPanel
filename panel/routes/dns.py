@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, re, os, time, ipaddress
 
 dns_bp = Blueprint('dns', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 def sh(c):
     try: return subprocess.run(c, shell=True, text=True, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL, timeout=30).stdout.strip()

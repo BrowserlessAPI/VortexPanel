@@ -1,10 +1,11 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, re, os, json
 from datetime import datetime, timedelta
 from panel.routes.os_utils import get_os
 
 security_bp = Blueprint('security', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 def sh(c, t=10):
     try:
         r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)
@@ -16,7 +17,7 @@ def sh(c, t=10):
 @security_bp.route('/api/security/status')
 def security_status():
     from flask import jsonify, session
-    if 'user' not in session: return jsonify({'ok':False}), 401
+    if not _vp_authed(): return jsonify({'ok':False}), 401
     import subprocess
     def check(cmd):
         try: r = subprocess.run(cmd,shell=True,capture_output=True,text=True,timeout=3); return r.returncode==0
@@ -919,6 +920,19 @@ def security_score():
             checks.append({'label':'Panel Two-Factor Authentication Enabled',
                            'pass': bool(creds.get('totp_enabled') and creds.get('totp_secret')),
                            'severity':'medium'})
+    except Exception:
+        pass
+
+    # --- Panel exposure -----------------------------------------------------------
+    try:
+        import json as _json2
+        unit = open('/etc/systemd/system/vortexpanel.service').read()
+        cfg = _json2.load(open('/opt/vortexpanel/config.json')) if os.path.exists('/opt/vortexpanel/config.json') else {}
+        checks.append({'label':'Panel Uses HTTPS', 'pass': '--certfile' in unit, 'severity':'high'})
+        checks.append({'label':'Panel Login Path Set (hidden from scanners)',
+                       'pass': bool(str(cfg.get('security_path') or '').strip()), 'severity':'low'})
+        checks.append({'label':'Initial Password File Removed',
+                       'pass': not os.path.exists('/opt/vortexpanel/admin_password.txt'), 'severity':'medium'})
     except Exception:
         pass
 
@@ -2002,11 +2016,13 @@ def modsec_repair():
     if not crs_ok:
         log.append('OWASP CRS missing — downloading...')
         os.makedirs(_modsec_crs_dir(), exist_ok=True)
-        tag = _crs_latest_tag() or 'v4.0.0'
+        tag = _crs_latest_tag()
         import tempfile
         _fd, tmp_tar = tempfile.mkstemp(prefix='crs_repair_', suffix='.tar.gz')
         os.close(_fd)
-        rc = _fetch(f'https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz', tmp_tar, t=90)
+        rc = _fetch(f'https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz', tmp_tar, t=90) if tag else 1
+        if not tag:
+            log.append('Could not look up the latest OWASP CRS release (GitHub unreachable) - an old ruleset is never installed instead.')
         if rc == 0:
             _, _, rc = sh(f'tar -xzf {tmp_tar} -C {_modsec_crs_dir()} --strip-components=1', t=60)
         try: os.unlink(tmp_tar)
@@ -2104,7 +2120,14 @@ def _crs_latest_tag():
     out, _, rc = sh('curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest'
                     ' | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])"', t=15)
     tag = out.strip()
-    return tag if rc == 0 and re.fullmatch(r'v\d+\.\d+\.\d+', tag) else ''
+    if rc == 0 and re.fullmatch(r'v\d+\.\d+\.\d+', tag):
+        return tag
+    # api.github.com rate-limited or blocked: github.com redirects
+    # /releases/latest to /releases/tag/<tag>.
+    out, _, rc = sh('curl -sI -o /dev/null -w "%{redirect_url}" --max-time 10 '
+                    'https://github.com/coreruleset/coreruleset/releases/latest', t=15)
+    tag = out.strip().rstrip('/').rsplit('/', 1)[-1]
+    return tag if re.fullmatch(r'v\d+\.\d+\.\d+', tag) else ''
 
 
 @security_bp.route('/api/security/modsecurity/update-crs', methods=['POST'])

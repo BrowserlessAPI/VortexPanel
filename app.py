@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""VortexPanel v3.0 — Main Application"""
-import os, sys, secrets
+"""VortexPanel - main application (Flask, served by gunicorn)."""
+import os, sys, secrets, json
 from datetime import timedelta
 sys.path.insert(0, os.path.dirname(__file__))
 
-from flask import Flask, request, g, jsonify
+from flask import Flask, request, g, jsonify, session, redirect, send_from_directory, Response
 try:
     from flask_compress import Compress
     _compress_available = True
@@ -24,6 +24,7 @@ from panel.routes.websites_ssl import *  # noqa
 from panel.routes.websites_proxy import *  # noqa
 from panel.routes.websites_security import *  # noqa
 from panel.routes.websites_nodejs import *  # noqa
+from panel.routes.websites_extras import *  # noqa
 from panel.routes.http3 import *  # noqa
 from panel.routes.websites_deploy import *  # noqa
 from panel.routes.websites_composer import *  # noqa
@@ -61,6 +62,9 @@ from panel.routes.go_projects import go_bp
 from panel.routes.import_website import import_bp
 from panel.routes.onboarding import onboarding_bp
 from panel.routes.diskusage import disk_bp
+from panel.routes.users_admin import users_bp
+from panel.routes.storage_routes import storage_bp
+from panel.routes.alerts_routes import alerts_bp
 
 # -- Secret key: auto-generate and persist on first run -----------------------
 _SECRET_KEY_FILE = '/opt/vortexpanel/secret.key'
@@ -119,6 +123,41 @@ def _read_panel_config():
 
 
 _lifetime_cache = {'mtime': None}
+_entrance_cache = {'mtime': None, 'path': '', 'domain': ''}
+
+def _entrance_path():
+    """The panel's secret login path ("security entrance"), '' when off.
+    Cached by config.json mtime: it is read on every request."""
+    try:
+        mtime = os.path.getmtime('/opt/vortexpanel/config.json')
+    except OSError:
+        mtime = 0
+    if _entrance_cache['mtime'] != mtime:
+        p = str(_read_panel_config().get('security_path') or '').strip().strip('/')
+        import re as _re
+        _cfg = _read_panel_config()
+        # Only enforced once saved by v3.7+ (older versions stored the domain
+        # without enforcing it; enforcing it silently after an upgrade could
+        # lock people out).
+        dom = str(_cfg.get('panel_domain') or '').strip().lower().rstrip('.') if _cfg.get('panel_domain_enforced') else ''
+        _entrance_cache.update(mtime=mtime, path=p if _re.fullmatch(r'[A-Za-z0-9_-]{4,64}', p) else '',
+                               domain=dom if _re.fullmatch(r'[a-z0-9.-]{3,253}', dom) else '')
+    return _entrance_cache['path']
+
+
+def _panel_domain():
+    _entrance_path()
+    return _entrance_cache['domain']
+
+
+def _request_is_https():
+    """TLS served by gunicorn itself, or by a local reverse proxy that says so."""
+    if request.is_secure:
+        return True
+    peer = (request.remote_addr or '').replace('::ffff:', '')
+    if peer in ('127.0.0.1', '::1') or os.environ.get('VORTEX_TRUST_PROXY'):
+        return request.headers.get('X-Forwarded-Proto', '').split(',')[0].strip().lower() == 'https'
+    return False
 
 def _apply_session_lifetime(app):
     try:
@@ -196,7 +235,7 @@ def create_app():
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
                caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
                logs_bp, wp_bp, nodejs_bp, go_bp, import_bp, livepatch_bp,
-               onboarding_bp, disk_bp]:
+               onboarding_bp, disk_bp, users_bp, storage_bp, alerts_bp]:
         app.register_blueprint(bp)
     terminal_sock.init_app(app)
 
@@ -217,9 +256,89 @@ def create_app():
             pass  # another worker is doing it
         except Exception as e:
             print('[VortexPanel] task timers not installed:', e)
-    if os.geteuid() == 0 and not app.config.get('TESTING'):
+    # VP_NO_INIT=1: import without side effects (the updater's import test).
+    if os.geteuid() == 0 and not app.config.get('TESTING') and not os.environ.get('VP_NO_INIT'):
         import threading as _th
         _th.Thread(target=_ensure_task_timers, daemon=True).start()
+
+    # -- Health probe (used by the updater, deploy and the CLI) ---------------
+    @app.route('/api/health')
+    def health():
+        return jsonify({'ok': True})
+
+    @app.route('/favicon.ico')
+    def favicon():
+        return send_from_directory(os.path.join(app.root_path, 'web', 'static'), 'favicon.svg',
+                                   mimetype='image/svg+xml', max_age=86400)
+
+    # -- Language packs (public: the sign-in page is translated too) ---------
+    _I18N_DIRS = (os.path.join(app.root_path, 'web', 'static', 'i18n'), '/opt/vortexpanel/data/i18n')
+
+    @app.route('/api/i18n')
+    def i18n_list():
+        langs = {'en': 'English'}
+        import re as _re
+        for d in _I18N_DIRS:
+            try:
+                for f in sorted(os.listdir(d)):
+                    code = f[:-5]
+                    if f.endswith('.json') and _re.fullmatch(r'[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?', code):
+                        try:
+                            with open(os.path.join(d, f), encoding='utf-8') as fh:
+                                langs[code] = (json.load(fh) or {}).get('_name') or code
+                        except Exception:
+                            continue
+            except OSError:
+                continue
+        return jsonify({'ok': True, 'languages': [{'code': k, 'name': v} for k, v in langs.items()]})
+
+    @app.route('/api/i18n/<code>')
+    def i18n_pack(code):
+        import re as _re
+        if not _re.fullmatch(r'[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?', code):
+            return jsonify({'ok': False}), 404
+        for d in reversed(_I18N_DIRS):        # your own packs win
+            fp = os.path.join(d, code + '.json')
+            if os.path.isfile(fp):
+                return send_from_directory(d, code + '.json', mimetype='application/json', max_age=300)
+        return jsonify({'ok': False, 'error': 'No such language'}), 404
+
+    # -- Security entrance (secret login path) --------------------------------
+    # When Settings > Panel > Login path is set (the installer sets a random
+    # one), the panel answers 404 to everything until that path has been
+    # opened once in this browser session, so a port scan finds nothing that
+    # looks like a control panel. Signed-in sessions, static files, the health
+    # probe and API-key requests are not affected.
+    def _not_found():
+        return Response('<!doctype html><title>404 Not Found</title><h1>Not Found</h1>'
+                        '<p>The requested URL was not found on this server.</p>', 404, mimetype='text/html')
+
+    @app.before_request
+    def enforce_entrance():
+        path = _entrance_path()
+        p = request.path
+        # Settings > Panel domain: answer only on that name (loopback, e.g. an
+        # SSH tunnel, always works so the setting can be undone).
+        dom = _panel_domain()
+        if dom and p != '/api/health':
+            host = (request.host or '').lower()
+            host = host[1:host.find(']')] if host.startswith('[') else host.rsplit(':', 1)[0]
+            peer = (request.remote_addr or '').replace('::ffff:', '')
+            if host != dom and peer not in ('127.0.0.1', '::1') and host not in ('127.0.0.1', 'localhost', '::1'):
+                return _not_found()
+        if not path:
+            return None
+        if p.startswith('/static/') or p in ('/api/health', '/favicon.ico'):
+            return None
+        if request.headers.get('Authorization', '').startswith('Bearer vp_'):
+            return None          # API keys are checked by the auth gate
+        if session.get('entrance_ok') or 'user' in session or session.get('2fa_pending'):
+            return None
+        if p.rstrip('/') == '/' + path:
+            session['entrance_ok'] = True
+            session.permanent = True
+            return redirect('/')
+        return _not_found()
 
     # -- IP allowlist enforcement on EVERY API request ------------------------
     # The allowlist in auth.py is also checked at login, but checking every
@@ -296,32 +415,71 @@ def create_app():
         p = request.path
         if not (p.startswith('/api/') or p.startswith('/ws/')):
             return None
-        if p.startswith('/api/auth/'):
+        if p.startswith('/api/auth/') or p == '/api/health' or p == '/api/i18n' or p.startswith('/api/i18n/'):
             return None
         from panel.routes.auth import check_ip_and_session
         if not check_ip_and_session():
             return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
+        u = g.get('vp_user') or {}
+        if u.get('role', 'admin') != 'admin':
+            from panel.users import is_allowed
+            body = None
+            if p.startswith('/api/files/'):
+                body = dict(request.form) if request.form else (request.get_json(silent=True) or {})
+            ok, why = is_allowed(u.get('role'), u.get('sites'), request.method, p,
+                                 dict(request.args), body)
+            if not ok:
+                return jsonify({'ok': False, 'error': why, 'forbidden': True}), 403
         return None
+
+    # Site managers only see their own websites in the site lists.
+    @app.after_request
+    def filter_site_lists(response):
+        u = g.get('vp_user') or {}
+        if u.get('role') != 'site' or request.method != 'GET':
+            return response
+        if request.path not in ('/api/websites', '/api/wp/sites', '/api/backups/sites'):
+            return response
+        try:
+            data = response.get_json(silent=True)
+            if isinstance(data, dict) and isinstance(data.get('sites'), list):
+                allowed = set(u.get('sites') or [])
+                data['sites'] = [x for x in data['sites']
+                                 if isinstance(x, dict) and (x.get('domain') or x.get('name')) in allowed]
+                response.set_data(json.dumps(data))
+                response.headers['Content-Length'] = str(len(response.get_data()))
+        except Exception:
+            pass
+        return response
 
     # -- Security headers on every response -----------------------------------
     @app.after_request
     def add_security_headers(response):
         response.headers['X-Frame-Options']        = 'SAMEORIGIN'
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-XSS-Protection']       = '1; mode=block'
         response.headers['Referrer-Policy']         = 'strict-origin-when-cross-origin'
         response.headers['Permissions-Policy']      = 'geolocation=(), camera=(), microphone=()'
-        # CSP — everything is self-hosted now (Alpine, Chart.js, xterm, CodeMirror),
-        # so no external script/style origins need to be trusted anymore.
+        # Everything is self-hosted (Alpine, Chart.js, xterm, CodeMirror, fonts).
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src 'self' data: https://fonts.gstatic.com; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' data:; "
             "img-src 'self' data: https:; "
             "connect-src 'self' wss: ws:; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'; "
             "frame-ancestors 'self';"
         )
+        if _request_is_https():
+            response.headers['Strict-Transport-Security'] = 'max-age=31536000'
+            # Behind a TLS reverse proxy gunicorn itself speaks plain HTTP, so
+            # the Secure flag is not set by the config above: add it here.
+            if not app.config.get('SESSION_COOKIE_SECURE'):
+                cookies = response.headers.getlist('Set-Cookie')
+                if cookies:
+                    response.headers.remove('Set-Cookie')
+                    for c in cookies:
+                        response.headers.add('Set-Cookie', c if '; Secure' in c else c + '; Secure')
         return response
 
     # -- Auto-init built-in features -------------------------------------------

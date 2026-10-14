@@ -5,6 +5,7 @@ Webserver proxy: nginx / Apache2 / httpd / OpenLiteSpeed / Caddy
 OS family: Debian/Ubuntu + RHEL/AlmaLinux/Rocky/CentOS/Oracle/Fedora
 """
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, json, re, shutil, shlex, pwd, glob
 try:
     from panel.routes.os_utils import get_webserver_user as _get_web_user
@@ -133,7 +134,7 @@ LEGACY_NVM_DIR = '/root/.nvm'
 NVM_INSTALL_URL = 'https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh'
 
 
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 
 def _nvm_versions(d):

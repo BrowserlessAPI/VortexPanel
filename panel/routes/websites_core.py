@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import os, re, subprocess, shlex, shutil
 from datetime import datetime
 import json, time
@@ -37,7 +38,7 @@ WEB_USER  = 'www-data'
 WEB_GROUP = 'www-data'
 
 
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 
 # Per-site features that currently edit nginx configs only. For a site served

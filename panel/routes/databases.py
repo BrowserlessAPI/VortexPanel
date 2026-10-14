@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session, send_file
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, re, os, tempfile, shlex, shutil, json
 
 databases_bp = Blueprint('databases', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 def sh(cmd, timeout=15):
     try:

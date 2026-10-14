@@ -261,8 +261,8 @@ def livepatch_install():
         o, e, rc = sh('command -v kcarectl', t=20)
         if rc != 0:
             # TuxCare's own documented installer.
-            o, e, rc2 = sh('curl -fsSL https://repo.tuxcare.com/kcare/kcare-installer -o /tmp/kcare-installer '
-                           '&& bash /tmp/kcare-installer 2>&1', t=600)
+            o, e, rc2 = sh('curl -fsSL https://repo.tuxcare.com/kcare/kcare-installer -o /opt/vortexpanel/data/tmp/kcare-installer '
+                           '&& bash /opt/vortexpanel/data/tmp/kcare-installer 2>&1', t=600)
             if rc2 != 0:
                 return jsonify({'ok': False,
                                 'error': f'KernelCare installer failed: {(o or e)[:500]}'}), 500

@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, re, glob
 
 caddy_bp = Blueprint('caddy', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 def sh(c, t=15):
     try:
         r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=t)

@@ -14,6 +14,7 @@ Go version support (June 2026):
   - 1.24.x  — EOL (Go 1.26 + 1.25 = 2 newer releases)
 """
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, json, re, tempfile, shutil
 try:
     from panel.routes import os_utils as _ou
@@ -113,7 +114,7 @@ GO_PROFILE     = '/etc/profile.d/go.sh'
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 def sh(cmd, timeout=60):
     try:

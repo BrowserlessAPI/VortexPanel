@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import os, json, threading, uuid
 
 cloud_backup_bp = Blueprint('cloud_backup', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 CONFIG_FILE = '/opt/vortexpanel/cloud_backup_config.json'
 BACKUP_DIR  = '/opt/vortexpanel/backups'

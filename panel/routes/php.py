@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, re, os, time
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, pkg_remove
@@ -13,7 +14,7 @@ except ImportError:
 
 
 php_bp = Blueprint('php', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 def sh(c, t=15):
     try: return subprocess.check_output(c, shell=True, text=True, stderr=subprocess.DEVNULL, timeout=t).strip()
     except: return ''

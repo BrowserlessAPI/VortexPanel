@@ -185,15 +185,9 @@ def stats():
 
 @dashboard_bp.route('/api/dashboard/history')
 def history():
+    """Last 30 minutes of real samples (the old endpoint returned random
+    numbers). Full history: /api/monitoring/history."""
     if not req(): return jsonify({'ok': False}), 401
-    import random, math
-    now = int(time.time())
-    points = []
-    for i in range(30):
-        t = now - (29 - i) * 60
-        points.append({
-            'time': t,
-            'cpu':  round(15 + 25*abs(math.sin(i*0.4)) + random.uniform(-3,3), 1),
-            'ram':  round(45 + 15*abs(math.sin(i*0.3)) + random.uniform(-2,2), 1),
-        })
-    return jsonify({'ok': True, 'history': points})
+    from panel import metrics
+    pts = [{'time': p['ts'], 'cpu': p['cpu'], 'ram': p['mem']} for p in metrics.recent(30)]
+    return jsonify({'ok': True, 'history': pts})

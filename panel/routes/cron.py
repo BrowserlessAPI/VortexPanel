@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, re, os, time, json, uuid, threading
 
 cron_bp = Blueprint('cron', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 CRON_META_FILE = '/opt/vortexpanel/cron_meta.json'
 

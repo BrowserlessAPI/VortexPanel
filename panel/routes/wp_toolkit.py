@@ -3,6 +3,7 @@ VortexPanel WP Toolkit
 Supports: PHP 7.4–8.5 | Nginx / Apache / OpenLiteSpeed / Caddy | MariaDB / MySQL
 """
 import os, re, json, uuid, shutil, subprocess, secrets, string, threading, shlex
+from panel.utils.authctx import authed as _vp_authed
 from datetime import datetime
 from flask import Blueprint, jsonify, request, session
 
@@ -78,7 +79,7 @@ WEBROOTS      = ['/www/wwwroot', '/var/www/html', '/var/www', '/home']
 # ===============================================================================
 
 def req():
-    return 'user' in session
+    return _vp_authed()
 
 def sh(cmd, t=30):
     try:

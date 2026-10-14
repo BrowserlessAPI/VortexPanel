@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, re
 
 mail_bp = Blueprint('mail', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 def sh(c, timeout=60):
     """stdout of a shell command, also when it exits non-zero (check_output
     raised on rc!=0, so `systemctl is-active postfix` for a stopped service

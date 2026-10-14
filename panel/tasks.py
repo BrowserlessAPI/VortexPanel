@@ -3,10 +3,13 @@ workers (gunicorn runs several processes, and none of them should own a
 schedule):
 
     vortexpanel-bandwidth.timer  every 5 minutes  per-site traffic history
-    vortexpanel-backups.timer    every 5 minutes  scheduled website backups
+    vortexpanel-backups.timer    every 5 minutes  scheduled website and panel backups
+    vortexpanel-metrics.timer    every minute     monitoring history, alerts,
+                                                  App Store version data (daily)
 
     python3 -m panel.tasks bandwidth
     python3 -m panel.tasks backups
+    python3 -m panel.tasks metrics
     python3 -m panel.tasks install-timers
 """
 import os, sys, subprocess
@@ -17,6 +20,7 @@ UNIT_DIR = '/etc/systemd/system'
 _UNITS = {
     'vortexpanel-bandwidth': ('VortexPanel per-site traffic history', 'bandwidth', 'OnCalendar=*:0/5\nRandomizedDelaySec=30'),
     'vortexpanel-backups': ('VortexPanel scheduled website backups', 'backups', 'OnCalendar=*:0/5'),
+    'vortexpanel-metrics': ('VortexPanel monitoring history and alerts', 'metrics', 'OnCalendar=*:*:00\nAccuracySec=5s'),
 }
 
 
@@ -102,6 +106,41 @@ def main(argv):
         from panel import sitebackup
         for domain, ok, msg in sitebackup.run_due():
             print(f'{domain}: {"ok" if ok else "FAILED"} - {msg}')
+        try:
+            from panel.routes.files import recycle_purge_old
+            n = recycle_purge_old()
+            if n:
+                print(f'recycle bin: {n} old item(s) removed')
+        except Exception as e:
+            print(f'recycle bin: {e}')
+        try:
+            from panel.routes.websites_extras import run_expiry
+            for domain, ok, err in run_expiry():
+                print(f'{domain}: expired - {"stopped" if ok else "could not stop: " + str(err)}')
+        except Exception as e:
+            print(f'site expiry: {e}')
+        try:
+            from panel import panelbackup
+            r = panelbackup.run_due()
+            if r:
+                print(r)
+        except Exception as e:
+            print(f'panel backup: {e}')
+        return 0
+    if cmd == 'metrics':
+        from panel import metrics, alerts
+        s = metrics.collect()
+        print(f'cpu {s["cpu"]}% mem {s["mem"]}% disk {s["disk"]}%')
+        try:
+            for m in alerts.evaluate():
+                print('alert:', m)
+        except Exception as e:
+            print(f'alerts: {e}')
+        try:
+            from panel import versions
+            versions.refresh()
+        except Exception:
+            pass
         return 0
     if cmd == 'install-timers':
         p = install_timers()

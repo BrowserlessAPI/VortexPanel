@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import urllib.request, urllib.error, urllib.parse, json, os, re, subprocess
 
 cdn_bp = Blueprint('cdn', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 CONFIG_FILE = '/opt/vortexpanel/cdn_config.json'
 

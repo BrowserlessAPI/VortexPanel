@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import os, json, threading, time, ipaddress, fcntl, requests as req_lib
 
 ddns_bp = Blueprint('ddns', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 
 DDNS_CONFIG = '/opt/vortexpanel/ddns_config.json'
 DDNS_LOG    = '/opt/vortexpanel/ddns.log'

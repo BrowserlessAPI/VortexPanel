@@ -148,11 +148,14 @@ def nginx_add_ssl(content, domain, cert_path, key_path):
     Both additions carry markers so Disable SSL can remove them exactly."""
     content = _CORRUPT_SN.sub(r'\1\2', content)
     blocks = nginx_server_blocks(content)
+    # SSL already configured in ANY block (the loop below stops at the first
+    # port-80 block, so a 443 block after it was missed and every certificate
+    # upload/renewal added another copy of the HTTPS server block).
+    if any(re.search(r'listen[^;]*\b443\b', content[a:b]) or 'ssl_certificate' in content[a:b] for a, b in blocks):
+        return None
     http = None
     for s_, e_ in blocks:
         b = content[s_:e_]
-        if re.search(r'listen[^;]*\b443\b', b) or 'ssl_certificate' in b:
-            return None  # SSL already configured
         if re.search(r'^\s*listen[^;]*\b80\b', b, re.M) and 'managed by Certbot' not in b:
             http = (s_, e_); break
     if not http and blocks:
@@ -176,6 +179,25 @@ def nginx_add_ssl(content, domain, cert_path, key_path):
                           + block[m2.end():])
     return (content[:s_] + redirect_block + content[e_:].rstrip('\n') +
             f'\n\n{SSL_BEGIN}\n{ssl}\n{SSL_END}\n')
+
+
+def nginx_dedupe_ssl(content):
+    """Repair vhosts damaged by the duplicate-HTTPS-block bug (fixed in
+    3.7.0): keep the first VortexPanel SSL block and one redirect line."""
+    pat = re.compile(r'\n*' + re.escape(SSL_BEGIN) + r'.*?' + re.escape(SSL_END) + r'[^\n]*\n?', re.S)
+    found = list(pat.finditer(content))
+    for m in reversed(found[1:]):
+        content = content[:m.start()] + '\n' + content[m.end():]
+    out, seen = [], False
+    for line in content.split('\n'):
+        if SSL_REDIRECT_TAG in line:
+            if seen:
+                continue
+            seen = True
+        elif line.strip() == '}' or line.lstrip().startswith('server {'):
+            seen = False
+        out.append(line)
+    return '\n'.join(out)
 
 
 def nginx_remove_ssl(content):
@@ -532,6 +554,11 @@ def install_manual_cert(domain, cert, key):
     conf_path = _nginx_conf_path(domain)
     if os.path.exists(conf_path):
         with open(conf_path) as f: content = f.read()
+        fixed = nginx_dedupe_ssl(content)
+        if fixed != content:
+            ok, err = _nginx_apply(conf_path, fixed)
+            if ok:
+                content = fixed
         new = nginx_add_ssl(content, domain, cert_path, key_path)
         if new is None:
             # SSL already configured (possibly with a Let's Encrypt path):

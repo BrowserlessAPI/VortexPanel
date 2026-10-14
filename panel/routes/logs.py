@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from panel.utils.authctx import authed as _vp_authed
 import os, re, shlex, subprocess
 
 logs_bp = Blueprint('logs', __name__)
@@ -35,7 +36,7 @@ _PM2_NAME_RE = re.compile(r'^[A-Za-z0-9._@-]{1,100}$')
 def log_files():
     from flask import jsonify, session
     import os, glob
-    if 'user' not in session: return jsonify({'ok':False}), 401
+    if not _vp_authed(): return jsonify({'ok':False}), 401
     log_paths = [
         '/var/log/nginx', '/var/log/apache2', '/var/log/httpd',
         '/var/log/mysql', '/var/log/mariadb', '/var/log/mongodb',

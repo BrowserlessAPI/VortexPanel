@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, session
+from panel.utils.authctx import authed as _vp_authed
 import subprocess, os, re, pwd, shutil
 try:
     from panel.routes import os_utils as _ou
@@ -6,7 +7,7 @@ except ImportError:
     import os_utils as _ou
 
 ftp_bp = Blueprint('ftp', __name__)
-def req(): return 'user' in session
+def req(): return _vp_authed()
 def sh(c):
     try: return subprocess.check_output(c, shell=True, text=True, stderr=subprocess.DEVNULL, timeout=30).strip()
     except Exception: return ''
@@ -227,9 +228,10 @@ def _list_ftp_accounts():
     seen = set()
 
     # Pure-FTPd virtual users
+    info = _pure_user_info()
     for user, home in _pure_users().items():
         seen.add(user)
-        accounts.append({'user': user, 'home': home})
+        accounts.append({'user': user, 'home': home, **info.get(user, {})})
 
     # ProFTPD virtual users
     for f in ['/etc/proftpd/ftpd.passwd']:
@@ -286,7 +288,7 @@ def create_ftp_account(user, pwd_, home=''):
         return 400, {'ok':False, 'error':'Password cannot contain line breaks or ":"'}
     if not home:
         home = os.path.join(_ou.get_webroot(), user)
-    home = os.path.normpath('/' + home.strip())
+    home = os.path.normpath('/' + home.strip().lstrip('/'))
     if home in _PROTECTED_HOMES or os.path.realpath(home) in _PROTECTED_HOMES:
         return 400, {'ok':False, 'error':f'{home} cannot be used as an FTP home directory'}
 
@@ -395,3 +397,78 @@ def change_password(user):
     else:
         return jsonify({'ok':False,'error':f'{user} is not an FTP account'}), 404
     return jsonify({'ok':True})
+
+
+# --- account settings: disable, quota, logs (v3.7.0) --------------------------------
+def _pure_user_info():
+    """{user: {'disabled': bool, 'quota_mb': int}} from the Pure-FTPd passwd file."""
+    out = {}
+    if not os.path.exists(PURE_PASSWD):
+        return out
+    with open(PURE_PASSWD) as fh:
+        for line in fh:
+            p = line.rstrip('\n').split(':')
+            if len(p) < 13:
+                continue
+            try:
+                q = int(p[12]) if p[12] else 0
+            except ValueError:
+                q = 0
+            out[p[0]] = {'disabled': p[1].startswith('!'), 'quota_mb': q // (1024 * 1024) if q else 0}
+    return out
+
+
+def _pure_set_disabled(user, disabled):
+    """Disable by prefixing the password hash with '!' (no password can match
+    it); enabling removes the prefix, so the password is kept."""
+    with open(PURE_PASSWD) as fh:
+        lines = fh.readlines()
+    found = False
+    for i, line in enumerate(lines):
+        p = line.split(':')
+        if p and p[0] == user and len(p) > 2:
+            found = True
+            h = p[1].lstrip('!')
+            p[1] = ('!' + h) if disabled else h
+            lines[i] = ':'.join(p)
+    if not found:
+        return False, 'No such FTP account'
+    tmp = PURE_PASSWD + '.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as fh:
+        fh.writelines(lines)
+    os.replace(tmp, PURE_PASSWD)
+    rc, err = run(['pure-pw', 'mkdb', PURE_PDB, '-f', PURE_PASSWD])
+    return rc == 0, err
+
+
+@ftp_bp.route('/api/ftp/accounts/<user>/settings', methods=['PUT'])
+def account_settings(user):
+    if not req(): return jsonify({'ok':False}), 401
+    user = re.sub(r'[^a-zA-Z0-9_-]', '', user)
+    if user not in _pure_users():
+        return jsonify({'ok':False,'error':'Disabling and quotas are available for Pure-FTPd accounts'}), 400
+    d = request.get_json(silent=True) or {}
+    if 'quota_mb' in d:
+        try:
+            q = max(0, min(10_000_000, int(d.get('quota_mb') or 0)))
+        except (TypeError, ValueError):
+            return jsonify({'ok':False,'error':'Quota must be a number of MB'}), 400
+        rc, err = run(['pure-pw', 'usermod', user, '-N', str(q) if q else '', '-f', PURE_PASSWD, '-F', PURE_PDB, '-m'])
+        if rc != 0:
+            return jsonify({'ok':False,'error':f'pure-pw failed: {err}'}), 500
+    if 'disabled' in d:
+        ok, err = _pure_set_disabled(user, bool(d['disabled']))
+        if not ok:
+            return jsonify({'ok':False,'error':err or 'Could not update the account'}), 500
+    return jsonify({'ok':True, **_pure_user_info().get(user, {})})
+
+
+@ftp_bp.route('/api/ftp/logs')
+def ftp_logs():
+    if not req(): return jsonify({'ok':False}), 401
+    out = sh('journalctl -t pure-ftpd -t proftpd -t vsftpd -n 300 --no-pager -o short-iso 2>/dev/null')
+    if not out.strip():
+        out = sh("grep -hE 'pure-ftpd|proftpd|vsftpd' /var/log/syslog /var/log/messages /var/log/vsftpd.log 2>/dev/null | tail -300")
+    lines = [l for l in out.splitlines() if l.strip() and not l.startswith('-- ')]
+    return jsonify({'ok':True, 'lines': lines[-300:]})
