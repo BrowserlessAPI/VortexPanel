@@ -442,6 +442,41 @@ def cmd_users(a):
               f'{",".join(u.get("sites") or [])}')
 
 
+def cmd_plugins(a):
+    from panel import plugins as P
+    act = a.action
+    if act == 'list':
+        off = P.disabled_ids()
+        found = P.discover()
+        if P.safe_mode():
+            print('Safe mode is ON: the panel loads no plugins (vortexpanel plugins safe-mode off).')
+        if not found:
+            print(f'No plugins in {P.PLUGINS_DIR}')
+        cv = P.core_version()
+        for pid, d, man, err in found:
+            man = man or {}
+            st = 'error: ' + err if err else ('disabled' if pid in off else
+                 ('incompatible: needs ' + man.get('requires_core', '') if not P.version_matches(cv, man.get('requires_core', '')) else 'enabled'))
+            print(f'{pid:<16} {man.get("version", ""):<10} {st}')
+        return
+    if act in ('enable', 'disable'):
+        need_root()
+        if not a.id:
+            die('Usage: vortexpanel plugins ' + act + ' <id>')
+        if a.id not in [x[0] for x in P.discover()]:
+            die(f'No plugin "{a.id}" in {P.PLUGINS_DIR}')
+        P.set_enabled(a.id, act == 'enable')
+        print(f'Plugin {a.id} {act}d. Restarting the panel...', flush=True)
+        os.system('systemctl restart vortexpanel')
+        return
+    if act == 'safe-mode':
+        need_root()
+        on = (a.id or 'on') == 'on'
+        P.set_safe_mode(on)
+        print(f'Safe mode {"on: plugins are not loaded" if on else "off"}. Restarting the panel...', flush=True)
+        os.system('systemctl restart vortexpanel')
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog='vortexpanel', description='Manage VortexPanel from the shell.')
     sp = p.add_subparsers(dest='command')
@@ -487,6 +522,10 @@ def main(argv=None):
     x.set_defaults(fn=cmd_update)
     sp.add_parser('rollback', help='go back to the version before the last update').set_defaults(fn=cmd_rollback)
     sp.add_parser('backup', help='back up the panel settings and accounts').set_defaults(fn=cmd_backup)
+    x = sp.add_parser('plugins', help='list, enable or disable plugins; "safe-mode on|off" loads none')
+    x.add_argument('action', nargs='?', choices=['list', 'enable', 'disable', 'safe-mode'], default='list')
+    x.add_argument('id', nargs='?')
+    x.set_defaults(fn=cmd_plugins)
     a = p.parse_args(argv)
     if not getattr(a, 'fn', None):
         a = p.parse_args(['info'])

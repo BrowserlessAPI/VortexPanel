@@ -37,6 +37,17 @@ def _wp_guard():
             return jsonify({'ok': False, 'error': f'Invalid {k} slug'}), 400
     if 'filename' in va and not re.match(r'^[A-Za-z0-9._-]+\.tar\.gz$', va['filename'] or ''):
         return jsonify({'ok': False, 'error': 'Invalid backup file name'}), 400
+    # Site managers (and the hosting portal) act on their own site only: a
+    # path in the request must be that site's own document root (or a
+    # folder inside it, e.g. a staging copy next to it is refused).
+    from panel.utils.authctx import is_admin
+    if dom is not None and not is_admin():
+        body_ = request.get_json(silent=True) or {}
+        own = os.path.realpath(_default_wp_path(dom)).rstrip('/')
+        for key in ('path', 'staging_path', 'live_path', 'dest_path', 'src_path'):
+            p = body_.get(key) if key in body_ else request.args.get(key)
+            if p and not (os.path.realpath(str(p)).rstrip('/') == own or os.path.realpath(str(p)).startswith(own + '/')):
+                return jsonify({'ok': False, 'error': 'You can only manage your own site', 'forbidden': True}), 403
     # every path a request names must be a real WordPress install (it is
     # used for rm -rf, rsync --delete, chown -R and wp-cli as root)
     if request.method in ('POST', 'PUT', 'DELETE') or request.args.get('path'):
@@ -122,7 +133,12 @@ def _fix_site_tree(path, php=None, ws=None, mail=True):
     WordPress site needs on SELinux (outbound HTTP for updates/plugins, DB,
     mail()). Without the label every request was 403/permission denied on
     RHEL-family servers for sites created/cloned/restored here."""
-    sh(f'chown -R {Q(_owner_spec(php, ws))} {Q(path)} 2>/dev/null || true', t=600)
+    owner = _site_owner(path)
+    if owner:
+        # a hosting account's site stays the account's (its PHP pool runs as it)
+        sh(f'chown -R -h -P {Q(owner)}:{Q(owner)} {Q(path)} 2>/dev/null || true', t=600)
+    else:
+        sh(f'chown -R {Q(_owner_spec(php, ws))} {Q(path)} 2>/dev/null || true', t=600)
     try:
         _ou.selinux_label_path(path, writable=True)
         _ou.selinux_web_booleans(proxy=True, db=True, mail=mail)
@@ -164,6 +180,59 @@ def _default_wp_path(domain):
     except Exception:
         return os.path.join(_ou.get_webroot(), domain)
 
+def _site_owner(path):
+    """The account that owns a site's files, when it is a normal Linux user
+    (a hosting account), else None. WordPress of such a site is run as that
+    user - never as root - so a plugin's code cannot act as root."""
+    import pwd
+    try:
+        st = os.stat(path if os.path.exists(path) else os.path.dirname(path.rstrip('/')))
+        pw = pwd.getpwuid(st.st_uid)
+    except (OSError, KeyError):
+        return None
+    if st.st_uid < 1000 or pw.pw_name in ('nobody', 'nogroup') or not pw.pw_dir.startswith('/home/'):
+        return None
+    return pw.pw_name
+
+
+def _wpx(path):
+    """wp-cli prefix for a site: runs as the site's owner when it belongs to
+    a hosting account, otherwise as root with --allow-root (panel-owned sites,
+    owned by root or the web user)."""
+    owner = _site_owner(path)
+    if owner:
+        import pwd
+        home = pwd.getpwnam(owner).pw_dir
+        return f'runuser -u {Q(owner)} -- env HOME={Q(home)} {_wpc()} --path={Q(path)}'
+    return f'{_wpc()} --path={Q(path)} --allow-root'
+
+
+def _wp_tmpdir(path, prefix):
+    """Scratch folder for a wp-cli db export/import of the site at `path`.
+    wp-cli runs as a hosting account's own user for account sites, so the
+    folder must be theirs (the panel's backup folder is root-only)."""
+    import tempfile
+    owner = _site_owner(path)
+    if owner:
+        import pwd as _pwd
+        d = tempfile.mkdtemp(prefix=prefix)
+        pw = _pwd.getpwnam(owner)
+        os.chown(d, pw.pw_uid, pw.pw_gid)
+        return d
+    os.makedirs(WP_BACKUP_DIR, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix, dir=WP_BACKUP_DIR)
+
+
+_ZIP_RE = re.compile(r'^https://[A-Za-z0-9.-]+(:\d+)?/[A-Za-z0-9._~%/+-]{1,300}\.zip$')
+
+
+def _valid_slug(name, allow_zip=False):
+    """Plugin/theme names go into a root shell: letters, digits . _ - only
+    (or an https:// .zip URL for installs)."""
+    name = str(name or '')
+    return bool(_SLUG_RE.match(name) or (allow_zip and _ZIP_RE.match(name)))
+
+
 def _wp(path, cmd, t=60):
     """Run a wp-cli command in the given path."""
     web_user = _web_user()
@@ -171,7 +240,7 @@ def _wp(path, cmd, t=60):
     if os.path.exists(WP_CLI):
         out, err, rc = sh3(f'sudo -u {web_user} {_wpc()} --path={Q(path)} {cmd} 2>&1', t=t)
         if rc != 0 and 'sudo' in err:
-            out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root {cmd} 2>&1', t=t)
+            out, err, rc = sh3(f'{_wpx(path)} {cmd} 2>&1', t=t)
         return out, err, rc
     return '', 'wp-cli not installed', 1
 
@@ -338,6 +407,12 @@ def _nginx_vhost(domain, path, php_ver):
     # IPv6 listener only where the kernel has IPv6 (nginx refuses to start
     # with `listen [::]:80` when IPv6 is disabled)
     v6 = '\n    listen [::]:80;' if os.path.exists('/proc/net/if_inet6') else ''
+    try:
+        # maintenance mode for all sites covers new sites too
+        from panel.routes.websites_security import maintenance_all_block
+        v6 += '\n' + maintenance_all_block().rstrip('\n') if maintenance_all_block() else ''
+    except Exception:
+        pass
     if _is_static(php_ver):
         return f"""server {{
     listen 80;{v6}
@@ -382,6 +457,11 @@ def _nginx_vhost(domain, path, php_ver):
         deny all;
     }}
     location ~* wp-config\\.php {{
+        deny all;
+    }}
+    # version control data and dotfiles (.git, .env, .svn) are never served;
+    # .well-known stays reachable for certificates
+    location ~ /\\.(?!well-known/) {{
         deny all;
     }}
 
@@ -436,6 +516,10 @@ def _apache_vhost(domain, path, php_ver):
     <FilesMatch "wp-config\\.php">
         Require all denied
     </FilesMatch>
+    # version control data and dotfiles (.git, .env, .svn) are never served
+    <LocationMatch "/\\.(?!well-known/)">
+        Require all denied
+    </LocationMatch>
 
     ErrorLog  {_apache_log_dir()}/{domain}.error.log
     CustomLog {_apache_log_dir()}/{domain}.access.log combined
@@ -1107,33 +1191,33 @@ def _get_wp_info(path, domain=None):
 
     # wp-cli extended info (when available)
     if _wp_installed():
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root option get siteurl 2>/dev/null')
+        out = sh(f'{_wpx(path)} option get siteurl 2>/dev/null')
         if out and 'http' in out:
             info['site_url'] = out
 
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root option get blogname 2>/dev/null')
+        out = sh(f'{_wpx(path)} option get blogname 2>/dev/null')
         if out: info['site_title'] = out
 
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root option get admin_email 2>/dev/null')
+        out = sh(f'{_wpx(path)} option get admin_email 2>/dev/null')
         if out: info['admin_email'] = out
 
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root option get blog_public 2>/dev/null')
+        out = sh(f'{_wpx(path)} option get blog_public 2>/dev/null')
         info['search_visible'] = out.strip() != '0'
 
         # Admin user
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root user list --role=administrator --field=user_login --format=csv 2>/dev/null')
+        out = sh(f'{_wpx(path)} user list --role=administrator --field=user_login --format=csv 2>/dev/null')
         if out: info['admin_user'] = out.split('\n')[0].strip()
 
         # DB engine
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root db query "SELECT @@version_comment" 2>/dev/null')
+        out = sh(f'{_wpx(path)} db query "SELECT @@version_comment" 2>/dev/null')
         if 'mariadb' in out.lower() or 'Maria' in out:
             info['db_engine'] = 'mariadb'
         elif out:
             info['db_engine'] = 'mysql'
 
         # Update count
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root core check-update --field=version --format=count 2>/dev/null')
-        plugin_updates = sh(f'{_wpc()} --path={Q(path)} --allow-root plugin update --all --dry-run --format=count 2>/dev/null')
+        out = sh(f'{_wpx(path)} core check-update --field=version --format=count 2>/dev/null')
+        plugin_updates = sh(f'{_wpx(path)} plugin update --all --dry-run --format=count 2>/dev/null')
         try:
             core_upd  = 1 if out and out.strip() and not out.strip().startswith('0') and 'Success' not in out else 0
             plug_upd  = int(plugin_updates) if plugin_updates.isdigit() else 0
@@ -1141,7 +1225,7 @@ def _get_wp_info(path, domain=None):
         except: pass
 
         # System cron check
-        out = sh(f'{_wpc()} --path={Q(path)} --allow-root config get DISABLE_WP_CRON 2>/dev/null')
+        out = sh(f'{_wpx(path)} config get DISABLE_WP_CRON 2>/dev/null')
         info['system_cron'] = out.strip().lower() in ('true', '1')
 
         # Maintenance mode
@@ -1303,12 +1387,19 @@ def install_wp():
                     return fail('Failed to install wp-cli')
 
             step('Creating database...')
-            db_name = re.sub(r'[^a-zA-Z0-9_]', '_', domain.replace('.', '_'))[:32]
+            base = re.sub(r'[^a-zA-Z0-9_]', '_', domain.replace('.', '_'))[:26]
             db_user = 'wp_' + _rand_str(8)
             db_pass = _rand_pass(16)
-            _, db_err, db_rc = _mysql_cmd(
-                f"CREATE DATABASE IF NOT EXISTS `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
-                engine=db_engine)
+            # a new, empty database: never reuse (and grant access to) an
+            # existing database that happens to have the same name
+            db_name, db_err, db_rc = base, '', 1
+            for attempt in range(5):
+                _, db_err, db_rc = _mysql_cmd(
+                    f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;",
+                    engine=db_engine)
+                if db_rc == 0 or 'exists' not in (db_err or '').lower():
+                    break
+                db_name = f'{base}_{_rand_str(4).lower()}'
             if db_rc != 0:
                 return fail(f'DB creation failed: {db_err}')
             _, db_err, db_rc = _mysql_cmd(f"CREATE USER IF NOT EXISTS '{db_user}'@'localhost' IDENTIFIED BY '{db_pass}';", engine=db_engine)
@@ -1321,7 +1412,7 @@ def install_wp():
             ver_flag = f'--version={wp_ver}' if wp_ver and wp_ver != 'latest' else ''
             locale_q = Q(locale)
             out, err, rc = sh3(
-                f'{_wpc()} core download --path={Q(path)} --locale={locale_q} {ver_flag} --allow-root --force 2>&1', t=180)
+                f'{_wpx(path)} core download --locale={locale_q} {ver_flag} --force 2>&1', t=180)
             if rc != 0:
                 return fail(f'WP download failed: {out}{err}')
 
@@ -1331,7 +1422,7 @@ def install_wp():
             # without ever requesting a certificate -> unreachable site).
             site_url = f'http://{domain}'
             out, err, rc = sh3(
-                f'{_wpc()} config create --path={Q(path)} --allow-root'
+                f'{_wpx(path)} config create'
                 f' --dbname={db_name} --dbuser={db_user} --dbpass={Q(db_pass)}'
                 f' --dbhost=localhost --dbprefix={prefix} --force 2>&1', t=30)
             if rc != 0:
@@ -1349,7 +1440,7 @@ def install_wp():
 
             step('Running WordPress installer...')
             out, err, rc = sh3(
-                f'{_wpc()} core install --path={Q(path)} --allow-root'
+                f'{_wpx(path)} core install'
                 f' --url={Q(site_url)} --title={Q(title)}'
                 f' --admin_user={Q(admin_user)} --admin_password={Q(admin_pass)}'
                 f' --admin_email={Q(admin_email)} --skip-email 2>&1', t=90)
@@ -1385,12 +1476,12 @@ def install_wp():
                 if ssl_ok:
                     site_url = f'https://{domain}'
                     for opt in ('home', 'siteurl'):
-                        sh3(f'{_wpc()} --path={Q(path)} --allow-root option update {opt} {Q(site_url)} 2>&1', t=60)
+                        sh3(f'{_wpx(path)} option update {opt} {Q(site_url)} 2>&1', t=60)
                 else:
                     ssl_note = 'SSL certificate could not be issued (the domain must point to this server); the site uses http:// -- issue SSL later from Websites.'
 
             if system_cron:
-                cron_line = f'*/5 * * * * {web_user} {_wpc()} --path={Q(path)} --allow-root cron event run --due-now >/dev/null 2>&1'
+                cron_line = f'*/5 * * * * {web_user} {_wpx(path)} cron event run --due-now >/dev/null 2>&1'
                 cron_file = f'/etc/cron.d/vortex-wp-{re.sub(chr(46), "_", domain)}'
                 try:
                     with open(cron_file, 'w') as f: f.write(cron_line + '\n')
@@ -1455,15 +1546,15 @@ def one_click_login(domain):
     if not _wp_installed():
         return jsonify({'ok': False, 'error': 'wp-cli not installed'}), 400
 
-    admin_user = sh(f'{_wpc()} --path={Q(path)} --allow-root user list --role=administrator --field=user_login --format=csv 2>/dev/null').split('\n')[0].strip()
+    admin_user = sh(f'{_wpx(path)} user list --role=administrator --field=user_login --format=csv 2>/dev/null').split('\n')[0].strip()
     if not admin_user:
         return jsonify({'ok': False, 'error': 'No admin user found'}), 404
 
-    login_url, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root user session create {Q(admin_user)} --url-only 2>&1')
+    login_url, err, rc = sh3(f'{_wpx(path)} user session create {Q(admin_user)} --url-only 2>&1')
     if rc != 0 or not login_url.startswith('http'):
         # Fallback: magic link via eval
         login_url, err, rc = sh3(
-            f'{_wpc()} --path={Q(path)} --allow-root eval '
+            f'{_wpx(path)} eval '
             f'"echo wp_login_url(admin_url(), true);" 2>/dev/null'
         )
     return jsonify({'ok': True, 'login_url': login_url.strip()})
@@ -1479,14 +1570,14 @@ def list_plugins(domain):
         return jsonify({'ok': False, 'error': 'wp-cli not installed'}), 400
 
     out, err, rc = sh3(
-        f'{_wpc()} --path={Q(path)} --allow-root plugin list --format=json 2>/dev/null', t=30
+        f'{_wpx(path)} plugin list --format=json 2>/dev/null', t=30
     )
     try:
         plugins = json.loads(out) if out else []
     except: plugins = []
 
     # Check for updates
-    upd_out = sh(f'{_wpc()} --path={Q(path)} --allow-root plugin update --all --dry-run --format=json 2>/dev/null')
+    upd_out = sh(f'{_wpx(path)} plugin update --all --dry-run --format=json 2>/dev/null')
     try:
         updates = {p['name']: p for p in json.loads(upd_out)} if upd_out else {}
     except: updates = {}
@@ -1504,21 +1595,26 @@ def plugin_action(domain, plugin):
     d    = request.get_json() or {}
     path = (d.get('path') or _default_wp_path(domain))
     action = d.get('action', 'activate')  # activate | deactivate | update | delete | install
+    if not _valid_slug(plugin, allow_zip=(action == 'install')):
+        return jsonify({'ok': False, 'error': 'Invalid plugin name'}), 400
+    perr = _wp_path_error(path)
+    if perr:
+        return jsonify({'ok': False, 'error': perr}), 400
 
     if not _wp_installed():
         return jsonify({'ok': False, 'error': 'wp-cli not installed'}), 400
 
     if action == 'install':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root plugin install {plugin} --activate 2>&1', t=120)
+        out, err, rc = sh3(f'{_wpx(path)} plugin install {Q(plugin)} --activate 2>&1', t=120)
     elif action == 'activate':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root plugin activate {plugin} 2>&1')
+        out, err, rc = sh3(f'{_wpx(path)} plugin activate {Q(plugin)} 2>&1')
     elif action == 'deactivate':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root plugin deactivate {plugin} 2>&1')
+        out, err, rc = sh3(f'{_wpx(path)} plugin deactivate {Q(plugin)} 2>&1')
     elif action == 'update':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root plugin update {plugin} 2>&1', t=120)
+        out, err, rc = sh3(f'{_wpx(path)} plugin update {Q(plugin)} 2>&1', t=120)
     elif action == 'delete':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root plugin deactivate {plugin} 2>/dev/null; '
-                           f'{_wpc()} --path={Q(path)} --allow-root plugin delete {plugin} 2>&1')
+        out, err, rc = sh3(f'{_wpx(path)} plugin deactivate {Q(plugin)} 2>/dev/null; '
+                           f'{_wpx(path)} plugin delete {Q(plugin)} 2>&1')
     else:
         return jsonify({'ok': False, 'error': 'Unknown action'}), 400
 
@@ -1531,7 +1627,7 @@ def update_all_plugins(domain):
     if not req(): return jsonify({'ok': False}), 401
     d    = request.get_json() or {}
     path = (d.get('path') or _default_wp_path(domain))
-    out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root plugin update --all 2>&1', t=300)
+    out, err, rc = sh3(f'{_wpx(path)} plugin update --all 2>&1', t=300)
     panel_cache.invalidate('wp_sites')
     return jsonify({'ok': rc == 0, 'output': (out + err)[-1000:]})
 
@@ -1544,7 +1640,7 @@ def list_themes(domain):
     path = (request.args.get('path') or _default_wp_path(domain))
     if not _wp_installed():
         return jsonify({'ok': False, 'error': 'wp-cli not installed'}), 400
-    out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root theme list --format=json 2>/dev/null', t=30)
+    out, err, rc = sh3(f'{_wpx(path)} theme list --format=json 2>/dev/null', t=30)
     try: themes = json.loads(out) if out else []
     except: themes = []
     return jsonify({'ok': True, 'themes': themes})
@@ -1556,18 +1652,23 @@ def theme_action(domain, theme):
     d      = request.get_json() or {}
     path   = (d.get('path') or _default_wp_path(domain))
     action = d.get('action', 'activate')
+    if not _valid_slug(theme, allow_zip=(action == 'install')):
+        return jsonify({'ok': False, 'error': 'Invalid theme name'}), 400
+    perr = _wp_path_error(path)
+    if perr:
+        return jsonify({'ok': False, 'error': perr}), 400
 
     if not _wp_installed():
         return jsonify({'ok': False, 'error': 'wp-cli not installed'}), 400
 
     if action == 'install':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root theme install {theme} 2>&1', t=120)
+        out, err, rc = sh3(f'{_wpx(path)} theme install {Q(theme)} 2>&1', t=120)
     elif action == 'activate':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root theme activate {theme} 2>&1')
+        out, err, rc = sh3(f'{_wpx(path)} theme activate {Q(theme)} 2>&1')
     elif action == 'update':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root theme update {theme} 2>&1', t=120)
+        out, err, rc = sh3(f'{_wpx(path)} theme update {Q(theme)} 2>&1', t=120)
     elif action == 'delete':
-        out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root theme delete {theme} 2>&1')
+        out, err, rc = sh3(f'{_wpx(path)} theme delete {Q(theme)} 2>&1')
     else:
         return jsonify({'ok': False, 'error': 'Unknown action'}), 400
 
@@ -1582,8 +1683,8 @@ def update_core(domain):
     if not req(): return jsonify({'ok': False}), 401
     d    = request.get_json() or {}
     path = (d.get('path') or _default_wp_path(domain))
-    out, err, rc = sh3(f'{_wpc()} --path={Q(path)} --allow-root core update 2>&1', t=300)
-    out2, err2, _ = sh3(f'{_wpc()} --path={Q(path)} --allow-root core update-db 2>&1', t=60)
+    out, err, rc = sh3(f'{_wpx(path)} core update 2>&1', t=300)
+    out2, err2, _ = sh3(f'{_wpx(path)} core update-db 2>&1', t=60)
     panel_cache.invalidate('wp_sites')
     return jsonify({'ok': rc == 0, 'output': (out + err + out2 + err2)[-1000:]})
 
@@ -1600,7 +1701,7 @@ def security_scan(domain):
         checks.append({'label': label, 'passed': passed, 'detail': detail, 'fix': fix})
 
     # 1. Admin username check
-    admin_users = sh(f'{_wpc()} --path={Q(path)} --allow-root user list --role=administrator --field=user_login --format=csv 2>/dev/null')
+    admin_users = sh(f'{_wpx(path)} user list --role=administrator --field=user_login --format=csv 2>/dev/null')
     bad_users = [u for u in admin_users.split('\n') if u.strip().lower() in ('admin', 'administrator', 'root')]
     chk('No weak admin username', len(bad_users) == 0,
         'Admin account uses a non-obvious username' if not bad_users else f'Weak admin username: {", ".join(bad_users)}',
@@ -1613,7 +1714,7 @@ def security_scan(domain):
         'fix_permissions')
 
     # 3. WP version up to date
-    update_check = sh(f'{_wpc()} --path={Q(path)} --allow-root core check-update --field=version 2>/dev/null')
+    update_check = sh(f'{_wpx(path)} core check-update --field=version 2>/dev/null')
     has_core_update = bool(update_check and not update_check.startswith('Success'))
     chk('WordPress core up to date', not has_core_update,
         'Running latest version' if not has_core_update else f'Update available: {update_check}',
@@ -1649,7 +1750,7 @@ def security_scan(domain):
     # 8. No vulnerable plugins (basic check via wp update list)
     vuln_count = 0
     if _wp_installed():
-        upd = sh(f'{_wpc()} --path={Q(path)} --allow-root plugin update --all --dry-run --format=count 2>/dev/null')
+        upd = sh(f'{_wpx(path)} plugin update --all --dry-run --format=count 2>/dev/null')
         try: vuln_count = int(upd)
         except: vuln_count = 0
     chk('Plugins up to date', vuln_count == 0,
@@ -1658,8 +1759,8 @@ def security_scan(domain):
     # 9. Login URL exposed
     login_hidden = False
     if _wp_installed():
-        wps = sh(f'{_wpc()} --path={Q(path)} --allow-root plugin is-installed wps-hide-login 2>/dev/null')
-        login_hidden = 'installed' not in (sh(f'{_wpc()} --path={Q(path)} --allow-root plugin status wps-hide-login 2>/dev/null') or '').lower()
+        wps = sh(f'{_wpx(path)} plugin is-installed wps-hide-login 2>/dev/null')
+        login_hidden = 'installed' not in (sh(f'{_wpx(path)} plugin status wps-hide-login 2>/dev/null') or '').lower()
     chk('Login URL protected', login_hidden,
         'Login URL is changed/hidden' if login_hidden else '/wp-admin is accessible at default URL', 'hide_login')
 
@@ -1725,17 +1826,17 @@ def security_fix(domain):
                 cfg = cfg.replace("/* That's all, stop editing!", "define('DISABLE_WP_CRON', true);\n/* That's all, stop editing!")
                 with open(f'{path}/wp-config.php', 'w') as f: f.write(cfg)
         web_user = _web_user(_site_php_of(domain))
-        cron_line = f'*/5 * * * * {web_user} {_wpc()} --path={Q(path)} --allow-root cron event run --due-now >/dev/null 2>&1'
+        cron_line = f'*/5 * * * * {web_user} {_wpx(path)} cron event run --due-now >/dev/null 2>&1'
         cron_file = f'/etc/cron.d/vortex-wp-{re.sub(chr(46), "_", domain)}'
         with open(cron_file, 'w') as f: f.write(cron_line + '\n')
         out = 'System cron configured, wp-cron disabled'
 
     elif fix == 'update_core':
-        out_c, err_c, _ = sh3(f'{_wpc()} --path={Q(path)} --allow-root core update 2>&1', t=300)
+        out_c, err_c, _ = sh3(f'{_wpx(path)} core update 2>&1', t=300)
         out = out_c or err_c
 
     elif fix == 'update_plugins':
-        out_p, err_p, _ = sh3(f'{_wpc()} --path={Q(path)} --allow-root plugin update --all 2>&1', t=300)
+        out_p, err_p, _ = sh3(f'{_wpx(path)} plugin update --all 2>&1', t=300)
         out = out_p or err_p
 
     panel_cache.invalidate('wp_sites')
@@ -1755,23 +1856,23 @@ def save_settings(domain):
 
     results = []
     if 'site_title' in d:
-        sh(f'{_wpc()} --path={Q(path)} --allow-root option update blogname {Q(d["site_title"])} 2>/dev/null')
+        sh(f'{_wpx(path)} option update blogname {Q(d["site_title"])} 2>/dev/null')
         results.append('title updated')
     if 'admin_email' in d:
-        sh(f'{_wpc()} --path={Q(path)} --allow-root option update admin_email {Q(d["admin_email"])} 2>/dev/null')
+        sh(f'{_wpx(path)} option update admin_email {Q(d["admin_email"])} 2>/dev/null')
         results.append('email updated')
     if 'language' in d:
-        sh(f'{_wpc()} --path={Q(path)} --allow-root option update WPLANG {Q(d["language"])} 2>/dev/null')
+        sh(f'{_wpx(path)} option update WPLANG {Q(d["language"])} 2>/dev/null')
         results.append('language updated')
     if 'admin_password' in d and d['admin_password']:
-        admin_user = sh(f'{_wpc()} --path={Q(path)} --allow-root user list --role=administrator --field=user_login --format=csv 2>/dev/null').split('\n')[0].strip()
+        admin_user = sh(f'{_wpx(path)} user list --role=administrator --field=user_login --format=csv 2>/dev/null').split('\n')[0].strip()
         if admin_user:
-            sh(f'{_wpc()} --path={Q(path)} --allow-root user update {Q(admin_user)} --user_pass={Q(d["admin_password"])} 2>/dev/null')
+            sh(f'{_wpx(path)} user update {Q(admin_user)} --user_pass={Q(d["admin_password"])} 2>/dev/null')
             results.append('password updated')
 
     if 'search_visible' in d:
         val = '1' if d['search_visible'] else '0'
-        sh(f'{_wpc()} --path={Q(path)} --allow-root option update blog_public {val} 2>/dev/null')
+        sh(f'{_wpx(path)} option update blog_public {val} 2>/dev/null')
 
     if 'debug_mode' in d:
         if os.path.exists(f'{path}/wp-config.php'):
@@ -1852,9 +1953,9 @@ def create_backup(domain):
     tmpdir = None
     if _wp_installed():
         import tempfile
-        tmpdir = tempfile.mkdtemp(prefix='vp-wpbak-', dir=WP_BACKUP_DIR)
+        tmpdir = _wp_tmpdir(path, 'vp-wpbak-')
         db_dump = os.path.join(tmpdir, 'vortex_db.sql')
-        _, derr, drc = sh3(f'{_wpc()} --path={Q(path)} --allow-root db export {Q(db_dump)} 2>&1', t=600)
+        _, derr, drc = sh3(f'{_wpx(path)} db export {Q(db_dump)} 2>&1', t=600)
         if drc != 0:
             shutil.rmtree(tmpdir, ignore_errors=True)
             return jsonify({'ok': False, 'error': f'Database export failed: {derr[-300:]}'}), 500
@@ -1897,10 +1998,10 @@ def restore_backup(domain, filename):
     db_msg = ''
     if 'vortex_db.sql' in names and _wp_installed():
         import tempfile
-        tmpdir = tempfile.mkdtemp(prefix='vp-wprst-', dir=WP_BACKUP_DIR)
+        tmpdir = _wp_tmpdir(path, 'vp-wprst-')
         try:
             sh3(f'tar -xzf {Q(backup_path)} -C {Q(tmpdir)} vortex_db.sql 2>&1', t=600)
-            o2, e2, rc2 = sh3(f'{_wpc()} --path={Q(path)} --allow-root db import {Q(os.path.join(tmpdir, "vortex_db.sql"))} 2>&1', t=1800)
+            o2, e2, rc2 = sh3(f'{_wpx(path)} db import {Q(os.path.join(tmpdir, "vortex_db.sql"))} 2>&1', t=1800)
             if rc2 != 0:
                 return jsonify({'ok': False, 'error': f'Files restored but the database import failed: {(o2 + e2)[-300:]}'})
             db_msg = 'database restored'
@@ -1971,7 +2072,17 @@ def clone_site(domain):
         return jsonify({'ok': False, 'error': f'A site for {dest_domain} already exists'}), 400
     if os.path.isdir(dest_path) and os.listdir(dest_path):
         return jsonify({'ok': False, 'error': f'{dest_path} already exists and is not empty'}), 400
+    created_dir = not os.path.exists(dest_path)
     os.makedirs(dest_path, exist_ok=True)
+    made_db = []
+
+    def undo(msg, code=500):
+        # a failed clone leaves nothing behind (a second try then works)
+        if created_dir:
+            shutil.rmtree(dest_path, ignore_errors=True)
+        for q in made_db:
+            _mysql_cmd(q)
+        return jsonify({'ok': False, 'error': msg}), code
 
     results = []
 
@@ -1979,7 +2090,7 @@ def clone_site(domain):
     if clone_type in ('full', 'files'):
         _, err, rc = sh3(f'rsync -a --exclude=wp-content/cache/ {Q(src_path + "/")} {Q(dest_path + "/")} 2>&1', t=1800)
         if rc != 0:
-            return jsonify({'ok': False, 'error': f'File copy failed: {err}'}), 500
+            return undo(f'File copy failed: {err}')
         results.append('files copied')
 
     # 2. Clone database
@@ -1989,13 +2100,14 @@ def clone_site(domain):
         new_pass = _rand_str(20)
         out, err_s, _rc = _mysql_cmd(f"SHOW DATABASES LIKE '{new_db}';")
         if new_db in (out or '').split():
-            return jsonify({'ok': False, 'error': f'A database named {new_db} already exists'}), 400
+            return undo(f'A database named {new_db} already exists', 400)
+        made_db[:] = [f'DROP DATABASE IF EXISTS `{new_db}`;', f"DROP USER IF EXISTS '{new_user}'@'localhost';"]
         for q in (f'CREATE DATABASE `{new_db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;',
                   f"CREATE USER '{new_user}'@'localhost' IDENTIFIED BY '{new_pass}';",
                   f"GRANT ALL PRIVILEGES ON `{new_db}`.* TO '{new_user}'@'localhost'; FLUSH PRIVILEGES;"):
             _o, qerr, qrc = _mysql_cmd(q)
             if qrc != 0:
-                return jsonify({'ok': False, 'error': f'Database setup failed: {qerr}'}), 500
+                return undo(f'Database setup failed: {qerr}')
 
         # Update wp-config.php in destination FIRST: every later wp-cli call on
         # dest_path must hit the new database, never the live one
@@ -2004,32 +2116,32 @@ def clone_site(domain):
         cfg = open(f'{dest_path}/wp-config.php').read()
         cfg, cfg_ok = _set_wp_db_config(cfg, new_db, new_user, new_pass)
         if not cfg_ok:
-            return jsonify({'ok': False, 'error': 'Could not rewrite the DB settings in the staging wp-config.php -- aborted before touching any database'}), 500
+            return undo('Could not rewrite the DB settings in the staging wp-config.php -- aborted before touching any database')
         with open(f'{dest_path}/wp-config.php', 'w') as f: f.write(cfg)
 
         import tempfile
-        tmpdir = tempfile.mkdtemp(prefix='vp-clone-', dir=WP_BACKUP_DIR)
+        tmpdir = _wp_tmpdir(src_path, 'vp-clone-')
         dump_file = os.path.join(tmpdir, 'db.sql')
         try:
-            _, err, rc = sh3(f'{_wpc()} --path={Q(src_path)} --allow-root db export {Q(dump_file)} 2>&1', t=600)
+            _, err, rc = sh3(f'{_wpx(src_path)} db export {Q(dump_file)} 2>&1', t=600)
             if rc == 0:
-                _, err, rc = sh3(f'{_wpc()} --path={Q(dest_path)} --allow-root db import {Q(dump_file)} 2>&1', t=1800)
+                _, err, rc = sh3(f'{_wpx(dest_path)} db import {Q(dump_file)} 2>&1', t=1800)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
         if rc != 0:
-            return jsonify({'ok': False, 'error': f'Database copy failed: {err[-300:]}'}), 500
+            return undo(f'Database copy failed: {err[-300:]}')
 
         # Update siteurl + home in staging DB
         staging_url = f'http://{dest_domain}'
-        src_url = sh(f'{_wpc()} --path={Q(src_path)} --allow-root option get siteurl 2>/dev/null')
+        src_url = sh(f'{_wpx(src_path)} option get siteurl 2>/dev/null')
         if src_url.startswith('http'):
-            sh(f'{_wpc()} --path={Q(dest_path)} --allow-root search-replace {Q(src_url)} {Q(staging_url)} --all-tables-with-prefix 2>/dev/null', t=600)
+            sh(f'{_wpx(dest_path)} search-replace {Q(src_url)} {Q(staging_url)} --all-tables-with-prefix 2>/dev/null', t=600)
         results.append('database cloned')
 
     # 3. Create vhost for staging
     ok, result = _write_vhost(dest_domain, dest_path, php_ver, webserver)
     if not ok:
-        return jsonify({'ok': False, 'error': f'Staging vhost failed: {result}'}), 500
+        return undo(f'Staging vhost failed: {result}')
 
     # 4. Fix ownership + SELinux label (a clone next to a site outside the
     # labelled web root was 403 on RHEL)
@@ -2073,20 +2185,20 @@ def push_staging(domain):
     # 3. Sync DB if wp-cli available
     if _wp_installed():
         import tempfile
-        live_url = sh(f'{_wpc()} --path={Q(live_path)} --allow-root option get siteurl 2>/dev/null')
-        staging_url = sh(f'{_wpc()} --path={Q(staging_path)} --allow-root option get siteurl 2>/dev/null')
-        tmpdir = tempfile.mkdtemp(prefix='vp-push-', dir=WP_BACKUP_DIR)
+        live_url = sh(f'{_wpx(live_path)} option get siteurl 2>/dev/null')
+        staging_url = sh(f'{_wpx(staging_path)} option get siteurl 2>/dev/null')
+        tmpdir = _wp_tmpdir(staging_path, 'vp-push-')
         dump = os.path.join(tmpdir, 'db.sql')
         try:
-            _, e1, r1 = sh3(f'{_wpc()} --path={Q(staging_path)} --allow-root db export {Q(dump)} 2>&1', t=600)
+            _, e1, r1 = sh3(f'{_wpx(staging_path)} db export {Q(dump)} 2>&1', t=600)
             if r1 == 0:
-                _, e1, r1 = sh3(f'{_wpc()} --path={Q(live_path)} --allow-root db import {Q(dump)} 2>&1', t=1800)
+                _, e1, r1 = sh3(f'{_wpx(live_path)} db import {Q(dump)} 2>&1', t=1800)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
         if r1 != 0:
             return jsonify({'ok': False, 'error': f'Files pushed but the database push failed: {e1[-300:]}', 'backup': os.path.basename(bak)}), 500
         if staging_url.startswith('http') and live_url.startswith('http') and staging_url != live_url:
-            sh(f'{_wpc()} --path={Q(live_path)} --allow-root search-replace {Q(staging_url)} {Q(live_url)} --all-tables-with-prefix 2>/dev/null', t=600)
+            sh(f'{_wpx(live_path)} search-replace {Q(staging_url)} {Q(live_url)} --all-tables-with-prefix 2>/dev/null', t=600)
 
     # 4. Fix ownership
     _fix_site_tree(live_path, _site_php_of(domain))

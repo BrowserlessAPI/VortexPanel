@@ -369,6 +369,9 @@ def check_ip_and_session():
     """
     if g.get('vp_user'):
         return True
+    from panel.utils.authctx import is_elevated
+    if is_elevated():          # a plugin acting after its own checks
+        return True
     ip = _client_ip()
     if request.headers.get('Authorization', '').startswith('Bearer '):
         if not _ip_allowed(ip):

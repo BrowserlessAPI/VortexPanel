@@ -269,8 +269,9 @@ def apache_reload():
     else:
         sh('systemctl reload httpd 2>/dev/null || apachectl graceful 2>/dev/null')
 
-def write_proxy(p):
-    """Write reverse proxy config for active webserver."""
+def write_proxy(p, prefix='vortex-go'):
+    """Write reverse proxy config for active webserver. `prefix` names the
+    files (vortex-go-<id>, vortex-py-<id>) so other project types reuse it."""
     domain = (p.get('domain') or '').strip()
     port   = str(p.get('port') or '').strip()
     pid    = p['id']
@@ -284,14 +285,14 @@ def write_proxy(p):
     primary = domain.splitlines()[0].strip().split(':')[0]
     all_d   = ' '.join(d.strip().split(':')[0] for d in domain.splitlines() if d.strip())
 
-    remove_proxy(pid)  # clean old configs first
+    remove_proxy(pid, prefix)  # clean old configs first
 
     if ws == 'nginx':
         conf = f"""server {{
     listen 80;{_v6_listen()}
     server_name {all_d};
-    access_log /var/log/nginx/vortex-go-{pid}-access.log;
-    error_log  /var/log/nginx/vortex-go-{pid}-error.log;
+    access_log /var/log/nginx/{prefix}-{pid}-access.log;
+    error_log  /var/log/nginx/{prefix}-{pid}-error.log;
 
     location / {{
         proxy_pass http://127.0.0.1:{port};
@@ -308,8 +309,13 @@ def write_proxy(p):
     }}
 }}
 """
-        conf_path = f'/etc/nginx/conf.d/vortex-go-{pid}.conf'
+        conf_path = f'/etc/nginx/conf.d/{prefix}-{pid}.conf'
         os.makedirs('/etc/nginx/conf.d', exist_ok=True)
+        try:
+            from panel.routes.websites_security import maint_wrap
+            conf = maint_wrap(conf)
+        except Exception:
+            pass
         with open(conf_path, 'w') as f: f.write(conf)
         _ensure_nginx_ws_map()
         out, err, rc = sh('nginx -t 2>&1')
@@ -326,7 +332,7 @@ def write_proxy(p):
         _selinux_proxy()
         log_dir  = apache_log_dir()
         conf_dir = apache_conf_dir()
-        conf_name = f'vortex-go-{pid}'
+        conf_name = f'{prefix}-{pid}'
         conf = f"""<VirtualHost *:80>
     ServerName {primary}
     ServerAlias {all_d}
@@ -341,8 +347,8 @@ def write_proxy(p):
     RewriteCond %{{HTTP:Connection}} upgrade [NC]
     RewriteRule ^/?(.*) "ws://127.0.0.1:{port}/$1" [P,L]
     ProxyTimeout 3600
-    ErrorLog {log_dir}/vortex-go-{pid}-error.log
-    CustomLog {log_dir}/vortex-go-{pid}-access.log combined
+    ErrorLog {log_dir}/{prefix}-{pid}-error.log
+    CustomLog {log_dir}/{prefix}-{pid}-access.log combined
 </VirtualHost>
 """
         os.makedirs(conf_dir, exist_ok=True)
@@ -358,11 +364,11 @@ def write_proxy(p):
         apache_reload()
 
     elif ws == 'openlitespeed':
-        vhost_dir = f'/usr/local/lsws/conf/vhosts/vortex-go-{pid}'
+        vhost_dir = f'/usr/local/lsws/conf/vhosts/{prefix}-{pid}'
         os.makedirs(vhost_dir, exist_ok=True)
         conf = f"""docRoot                   /var/www/html
 virtualHostConfig {{
-  extprocessor vortex-go-{pid} {{
+  extprocessor {prefix}-{pid} {{
     type                    proxy
     address                 127.0.0.1:{port}
     maxConns                100
@@ -373,7 +379,7 @@ virtualHostConfig {{
   }}
   context / {{
     type                    proxy
-    handler                 vortex-go-{pid}
+    handler                 {prefix}-{pid}
     addDefaultCharset       off
   }}
 }}
@@ -386,28 +392,28 @@ virtualHostConfig {{
         conf = f"""{all_d} {{
     reverse_proxy 127.0.0.1:{port}
     log {{
-        output file /var/log/caddy/vortex-go-{pid}.log
+        output file /var/log/caddy/{prefix}-{pid}.log
     }}
 }}
 """
-        open(f'/etc/caddy/sites/vortex-go-{pid}.caddy', 'w').write(conf)
+        open(f'/etc/caddy/sites/{prefix}-{pid}.caddy', 'w').write(conf)
         caddyfile = '/etc/caddy/Caddyfile'
         if os.path.exists(caddyfile) and 'import sites/*' not in open(caddyfile).read():
             open(caddyfile,'a').write('\nimport sites/*\n')
         _, err, rc = sh('caddy validate --config /etc/caddy/Caddyfile 2>&1')
         if rc != 0:
-            sh(f'rm -f /etc/caddy/sites/vortex-go-{pid}.caddy')
+            sh(f'rm -f /etc/caddy/sites/{prefix}-{pid}.caddy')
             return False, f'Caddy config validate failed: {err}'
         sh('systemctl reload caddy 2>/dev/null')
 
     return True, ws
 
-def remove_proxy(pid):
+def remove_proxy(pid, prefix='vortex-go'):
     """Remove all proxy configs — cleans ALL webservers, both Debian and RHEL paths."""
-    sh(f'rm -f /etc/nginx/conf.d/vortex-go-{pid}.conf 2>/dev/null')
-    sh(f'a2dissite vortex-go-{pid} 2>/dev/null; rm -f /etc/apache2/sites-available/vortex-go-{pid}.conf /etc/apache2/sites-enabled/vortex-go-{pid}.conf /etc/httpd/conf.d/vortex-go-{pid}.conf 2>/dev/null')
-    sh(f'rm -rf /usr/local/lsws/conf/vhosts/vortex-go-{pid}/ 2>/dev/null')
-    sh(f'rm -f /etc/caddy/sites/vortex-go-{pid}.caddy 2>/dev/null')
+    sh(f'rm -f /etc/nginx/conf.d/{prefix}-{pid}.conf 2>/dev/null')
+    sh(f'a2dissite {prefix}-{pid} 2>/dev/null; rm -f /etc/apache2/sites-available/{prefix}-{pid}.conf /etc/apache2/sites-enabled/{prefix}-{pid}.conf /etc/httpd/conf.d/{prefix}-{pid}.conf 2>/dev/null')
+    sh(f'rm -rf /usr/local/lsws/conf/vhosts/{prefix}-{pid}/ 2>/dev/null')
+    sh(f'rm -f /etc/caddy/sites/{prefix}-{pid}.caddy 2>/dev/null')
     ws = detect_active_webserver()
     if ws == 'nginx':        sh('nginx -t 2>/dev/null && (systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null)')
     elif ws == 'apache2':    apache_reload()

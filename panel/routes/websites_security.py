@@ -153,17 +153,29 @@ def manage_limit_access(domain):
         except Exception:
             os.chmod(htfile + '.new', 0o644)
         os.replace(htfile + '.new', htfile)
-        block = (
-            '    #VP_LIMIT:' + name + '|' + path + '\n'
-            '    location ' + path + ' {\n'
-            '        auth_basic "Restricted";\n'
-            '        auth_basic_user_file ' + htfile + ';\n'
-            '        try_files $uri $uri/ /index.php?$query_string;\n'
-            '    }\n'
-        )
         def fn(content):
             if f'#VP_LIMIT:{name}|' in content:
                 return (None, f'A rule named {name} already exists')
+            # ^~ wins over the site's `location ~ \.php$`, so PHP files in the
+            # folder are protected too; the site's PHP handler is nested inside
+            # so they still run (without it they would be downloaded as source)
+            php = re.search(r'location\s+~\s+\\?\.php\$?\s*\{([^{}]*)\}', content)
+            nested = ''
+            if php:
+                inner = '\n'.join('            ' + l.strip() for l in php.group(1).strip().splitlines() if l.strip())
+                nested = '        location ~ \\.php$ {\n' + inner + '\n        }\n'
+            block = (
+                '    #VP_LIMIT:' + name + '|' + path + '\n'
+                '    location ^~ ' + path + ' {\n'
+                '        auth_basic "Restricted";\n'
+                # bot protection on: the folder keeps its own password prompt
+                + ('        auth_request off; error_page 401 = @vp_anubis_basic401; #VP_ANUBIS\n'
+                   if '#VP_ANUBIS' in content else '') +
+                '        auth_basic_user_file ' + htfile + ';\n'
+                + nested +
+                '        try_files $uri $uri/ /index.php?$query_string;\n'
+                '    }\n'
+            )
             return nginx_insert_in_servers(content, block, at='end')
     elif action == 'deny_ip':
         ip = str(d.get('ip','')).strip()
@@ -182,7 +194,7 @@ def manage_limit_access(domain):
         name = str(d.get('name','')).strip()
         path = str(d.get('path','')).strip()
         def fn(content):
-            return re.sub(r'\n[ \t]*#VP_LIMIT:' + re.escape(name) + r'\|' + re.escape(path) + r'[ \t]*\n[ \t]*location[^{]+\{[^}]+\}[ \t]*(?=\n)', '', content)
+            return re.sub(r'\n[ \t]*#VP_LIMIT:' + re.escape(name) + r'\|' + re.escape(path) + r'[ \t]*\n[ \t]*location[^{]+\{(?:[^{}]|\{[^{}]*\})*\}[ \t]*(?=\n)', '', content)
     elif action == 'remove_deny_ip':
         ip = str(d.get('ip','')).strip()
         def fn(content):
@@ -217,7 +229,7 @@ def delete_limit_access(domain, name):
     htfile = f'/etc/nginx/htpasswd/{domain}_{name}'
     pat = re.escape(path) if path else r'[^\n]+'
     ok, err, code = nginx_edit_site(domain, lambda c: re.sub(
-        r'\n[ \t]*#VP_LIMIT:' + re.escape(name) + r'\|' + pat + r'[ \t]*\n[ \t]*location[^{]+\{[^}]+\}[ \t]*(?=\n)', '', c))
+        r'\n[ \t]*#VP_LIMIT:' + re.escape(name) + r'\|' + pat + r'[ \t]*\n[ \t]*location[^{]+\{(?:[^{}]|\{[^{}]*\})*\}[ \t]*(?=\n)', '', c))
     if not ok:
         return jsonify({'ok':False,'error':err}), code
     # only after nginx no longer references it
@@ -260,10 +272,10 @@ def set_maintenance(domain):
     fp = os.path.join('/etc/nginx/vortex', f'{domain}.conf')
     if not os.path.exists(fp): return jsonify({'ok':False,'error':'Site not found'}), 404
 
-    # Write maintenance HTML file
-    webroot_m = re.search(r'^[ \t]*root\s+([^;]+);', open(fp).read(), re.M)
-    webroot = webroot_m.group(1).strip() if webroot_m else _get_site_path(domain)
-    maint_file = f'{webroot}/maintenance.html'
+    # The page lives outside the site (written as root: inside a docroot a
+    # planted symlink could point the write anywhere)
+    os.makedirs(MAINT_DIR, mode=0o755, exist_ok=True)
+    maint_file = os.path.join(MAINT_DIR, f'{domain}.html')
 
     if enable:
         try:
@@ -282,7 +294,8 @@ def set_maintenance(domain):
     }}
     error_page 503 /maintenance.html;
     location = /maintenance.html {{
-        root {webroot};
+        alias {maint_file};
+        add_header Retry-After 600 always;
         internal;
     }}
     #VP_MAINTENANCE_END
@@ -321,3 +334,175 @@ def get_maintenance(domain):
     with open(fp) as f: content = f.read()
     return jsonify({'ok':True,'enabled':'#VP_MAINTENANCE' in content})
 
+
+
+# --- Maintenance mode for every site ------------------------------------------
+# One switch for all nginx sites. Each server block gets an inert block once
+# (#VP_MAINT_ALL); turning the mode on or off only rewrites the http-level
+# map in MAINT_HTTP_CONF and reloads, so it is instant and cannot break a
+# vhost. Addresses in the allow list (and the server itself) see the sites.
+MAINT_DIR = '/etc/nginx/vortex-maint'
+MAINT_HTTP_CONF = '/etc/nginx/conf.d/vortex-maintenance.conf'
+MAINT_STATE = '/opt/vortexpanel/data/maintenance_all.json'
+MAINT_ALL_BLOCK = """    #VP_MAINT_ALL
+    set $vp_maint $vp_maint_all;
+    if ($uri = "/vp-maintenance-all.html") {
+        set $vp_maint 0;
+    }
+    if ($vp_maint = 1) {
+        return 503;
+    }
+    error_page 503 /vp-maintenance-all.html;
+    location = /vp-maintenance-all.html {
+        internal;
+        if ($vp_maint_all = 0) {
+            return 503;
+        }
+        alias /etc/nginx/vortex-maint/all.html;
+        default_type text/html;
+        add_header Retry-After 600 always;
+    }
+    #VP_MAINT_ALL_END
+"""
+
+
+def _maint_state():
+    try:
+        import json
+        return json.load(open(MAINT_STATE))
+    except Exception:
+        return {'enabled': False, 'message': '', 'allow': []}
+
+
+def _maint_http_conf(enabled, allow):
+    lines = ['# Managed by VortexPanel (Websites > Maintenance mode). Do not edit.',
+             'geo $vp_maint_bypass {', '    default 0;', '    127.0.0.1 1;', '    ::1 1;']
+    lines += [f'    {a} 1;' for a in allow]
+    # certificate renewals (ACME http-01) keep working during maintenance
+    lines += ['}', 'map "$vp_maint_bypass:$uri" $vp_maint_all {', f'    default {1 if enabled else 0};',
+              '    "~^1:" 0;', '    "~^0:/\\.well-known/acme-challenge/" 0;', '}', '']
+    return '\n'.join(lines)
+
+
+def _nginx_conf_includes_confd():
+    for p in ('/etc/nginx/nginx.conf', '/usr/local/nginx/conf/nginx.conf'):
+        try:
+            if re.search(r'include\s+/etc/nginx/conf\.d/\*\.conf', open(p).read()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def maintenance_all_block():
+    """For new vhosts: the inert block, when the feature is set up."""
+    return MAINT_ALL_BLOCK if os.path.exists(MAINT_HTTP_CONF) else ''
+
+
+def maint_wrap(conf):
+    """Add the block to every server of a generated nginx config (app and
+    container proxies) when maintenance-for-all-sites is set up."""
+    if not os.path.exists(MAINT_HTTP_CONF) or '#VP_MAINT_ALL' in conf:
+        return conf
+    return re.sub(r'(\n[ \t]*server_name[^;]*;[^\n]*\n)', lambda m: m.group(1) + MAINT_ALL_BLOCK, conf)
+
+
+def _maint_targets():
+    avail, _ = get_nginx_dirs()
+    out = []
+    for d, pat in ((avail, r'.+\.conf$'), ('/etc/nginx/conf.d', r'vortex-(node|go|py|docker)-.+\.conf$')):
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            fp = os.path.join(d, fn)
+            if re.fullmatch(pat, fn) and os.path.isfile(fp):
+                out.append(fp)
+    return out
+
+
+@websites_bp.route('/api/websites/maintenance-all')
+def get_maintenance_all():
+    if not req(): return jsonify({'ok':False}), 401
+    st = _maint_state()
+    total = covered = 0
+    for fp in _maint_targets():
+        total += 1
+        try:
+            covered += '#VP_MAINT_ALL' in open(fp).read()
+        except OSError:
+            pass
+    from panel.routes.websites_core import list_sites
+    others = [x['domain'] for x in list_sites() if x.get('webserver') not in (None, 'nginx')]
+    ip = request.headers.get('X-Real-IP') or request.remote_addr or ''
+    return jsonify({'ok':True, 'enabled':bool(st.get('enabled')), 'message':st.get('message',''),
+                    'allow':st.get('allow',[]), 'nginx_sites':total, 'covered':covered,
+                    'not_covered':others, 'your_ip':ip, 'since':st.get('since')})
+
+
+@websites_bp.route('/api/websites/maintenance-all', methods=['POST'])
+def set_maintenance_all():
+    if not req(): return jsonify({'ok':False}), 401
+    import json, time as _t
+    from panel.routes.websites_core import nginx_test, nginx_insert_in_servers
+    d = request.get_json() or {}
+    enabled = bool(d.get('enabled'))
+    message = str(d.get('message') or 'We are performing scheduled maintenance. Please check back soon.')[:600]
+    allow = []
+    for a in d.get('allow') or []:
+        a = str(a).strip()
+        if not a:
+            continue
+        try:
+            allow.append(str(ipaddress.ip_network(a, strict=False)) if '/' in a else str(ipaddress.ip_address(a)))
+        except ValueError:
+            return jsonify({'ok':False,'error':f'Not an IP address or range: {a}'}), 400
+    if not os.path.isdir('/etc/nginx'):
+        return jsonify({'ok':False,'error':'Maintenance mode for all sites needs Nginx'}), 400
+    os.makedirs(MAINT_DIR, mode=0o755, exist_ok=True)
+    with open(os.path.join(MAINT_DIR, 'all.html'), 'w') as f:
+        f.write(MAINTENANCE_HTML.format(message=html.escape(message)))
+    os.chmod(os.path.join(MAINT_DIR, 'all.html'), 0o644)
+    # http-level switch
+    os.makedirs(os.path.dirname(MAINT_HTTP_CONF), exist_ok=True)
+    old_http = open(MAINT_HTTP_CONF).read() if os.path.exists(MAINT_HTTP_CONF) else None
+    if not _nginx_conf_includes_confd():
+        return jsonify({'ok':False,'error':'nginx.conf does not include /etc/nginx/conf.d/*.conf'}), 400
+    with open(MAINT_HTTP_CONF, 'w') as f:
+        f.write(_maint_http_conf(enabled, allow))
+    # the inert block in every server of every nginx site (once)
+    changed = {}
+    for fp in _maint_targets():
+        content = open(fp).read()
+        if '#VP_MAINT_ALL' in content and 'set $vp_maint $vp_maint_all' not in content:   # older block
+            content_new = re.sub(r'[ \t]*#VP_MAINT_ALL\n.*?#VP_MAINT_ALL_END\n', MAINT_ALL_BLOCK, content, flags=re.S)
+            changed[fp] = content
+            with open(fp, 'w') as f:
+                f.write(content_new)
+            continue
+        if '#VP_MAINT_ALL' in content or 'server' not in content:
+            continue
+        new = (maint_wrap(content) if fp.startswith('/etc/nginx/conf.d/')
+               else nginx_insert_in_servers(content, MAINT_ALL_BLOCK, at='start'))
+        if new and new != content:
+            changed[fp] = content
+            with open(fp, 'w') as f:
+                f.write(new)
+    ok, out = nginx_test()
+    if not ok:
+        for fp, content in changed.items():
+            with open(fp, 'w') as f:
+                f.write(content)
+        if old_http is None:
+            os.unlink(MAINT_HTTP_CONF)
+        else:
+            with open(MAINT_HTTP_CONF, 'w') as f:
+                f.write(old_http)
+        return jsonify({'ok':False,'error':'nginx rejected the change, nothing was changed: ' + out.strip()[-500:]}), 500
+    reload_nginx()
+    prev = _maint_state()
+    st = {'enabled': enabled, 'message': message, 'allow': allow,
+          'since': (prev.get('since') if prev.get('enabled') else _t.time()) if enabled else None}
+    os.makedirs(os.path.dirname(MAINT_STATE), mode=0o700, exist_ok=True)
+    with open(MAINT_STATE, 'w') as f:
+        json.dump(st, f)
+    return jsonify({'ok':True, 'enabled':enabled, 'sites_updated':len(changed)})

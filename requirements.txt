@@ -12,3 +12,4 @@ boto3>=1.34,<2               # 1.43.111
 bcrypt>=4.1,<6               # 5.0.0
 pyotp>=2.9,<3                # 2.10.0
 argon2-cffi>=23.1,<26        # 25.1.0
+cryptography>=42,<47         # 46.0 (Hosting Module licence signatures)

@@ -498,6 +498,8 @@ def ssl_apply_log():
 def ssl_self_signed():
     if not req(): return jsonify({'ok':False}), 401
     domain = (request.get_json() or {}).get('domain', '').strip()
+    from panel.routes import acme as _acme
+    _acme.remove_panel_ip_cert()
     ok, err = _gen_selfsigned(domain)
     if not ok:
         return jsonify({'ok':False,'error':f'Certificate generation failed: {err}'}), 500
@@ -514,7 +516,23 @@ def ssl_letsencrypt():
     if not req(): return jsonify({'ok':False}), 401
     domain = (request.get_json() or {}).get('domain','').strip()
     if not domain:
-        return jsonify({'ok':False,'error':"Domain name required for Let's Encrypt"}), 400
+        return jsonify({'ok':False,'error':"Domain name or IP address required for Let's Encrypt"}), 400
+    from panel.routes import acme as _acme
+    if _acme.is_ip(domain):
+        # Let's Encrypt certificates for IP addresses: 6-day profile, HTTP validation (acme.sh)
+        import ipaddress as _ipa
+        if not _ipa.ip_address(domain).is_global and _acme._settings()['server'].startswith('letsencrypt'):
+            return jsonify({'ok':False,'error':'Let\'s Encrypt only issues certificates for public IP addresses'}), 400
+        ok, msg = _acme.issue_panel_ip(domain, (request.get_json() or {}).get('email', '').strip())
+        if not ok:
+            return jsonify({'ok':False,'error':msg}), 500
+        ok2, err2, apply_id = _switch_panel_scheme(True, '')
+        if not ok2:
+            return jsonify({'ok':False,'error':err2}), 500
+        cfg = load_config()
+        return jsonify({'ok':True,'type':'letsencrypt-ip','domain':domain,'port':cfg.get('port'),'apply_id':apply_id,
+                        'message':msg + f" HTTPS active on port {cfg.get('port')}"})
+    _acme.remove_panel_ip_cert()
     if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}$', domain):
         return jsonify({'ok':False,'error':'Invalid domain format'}), 400
 
@@ -603,6 +621,8 @@ def ssl_disable():
     ok, err, apply_id = _switch_panel_scheme(False)
     if not ok:
         return jsonify({'ok':False,'error':err}), 500
+    from panel.routes import acme as _acme
+    _acme.remove_panel_ip_cert()
     port = load_config().get('port', PANEL_PORT)
     return jsonify({'ok':True, 'apply_id':apply_id,
                     'message': f'Switching the panel back to HTTP on port {port}'})

@@ -10,7 +10,7 @@ collector runs late.
 Runs every 5 minutes from the vortexpanel-tasks timer (panel/tasks.py) and on
 demand from the Bandwidth page.
 """
-import os, re, json, time, sqlite3, fcntl, calendar
+import os, re, json, time, sqlite3, fcntl, calendar, hashlib
 from datetime import datetime, timezone
 
 DB_PATH = '/opt/vortexpanel/data/bandwidth.db'
@@ -38,6 +38,11 @@ def _db():
         CREATE TABLE IF NOT EXISTS daily (domain TEXT, day TEXT, bytes INTEGER, requests INTEGER,
                                           PRIMARY KEY (domain, day));
         CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+        CREATE TABLE IF NOT EXISTS vis_daily (domain TEXT, day TEXT, pv INTEGER, hits INTEGER, bots INTEGER,
+                                              s2 INTEGER, s3 INTEGER, s4 INTEGER, s5 INTEGER, PRIMARY KEY (domain, day));
+        CREATE TABLE IF NOT EXISTS vis_uv (domain TEXT, day TEXT, h INTEGER, PRIMARY KEY (domain, day, h)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS vis_top (domain TEXT, day TEXT, kind TEXT, k TEXT, hits INTEGER,
+                                            PRIMARY KEY (domain, day, kind, k)) WITHOUT ROWID;
     ''')
     return con
 
@@ -69,6 +74,14 @@ class _Acc:
     def __init__(self):
         self.hours = {}
         self._cache = {}
+        self.vis = {}
+        self._days = {}
+
+    def day_of(self, hour):
+        d = self._days.get(hour)
+        if d is None:
+            d = self._days[hour] = time.strftime('%Y-%m-%d', time.localtime(hour))
+        return d
 
     def hour_of(self, stamp, tz):
         key = (stamp, tz)
@@ -97,10 +110,69 @@ class _Acc:
             e[1] += 1
 
 
+# ip - - [time] "METHOD path HTTP/x" status bytes "referer" "user agent"
+_FULL = re.compile(rb'^(\S+) \S+ \S+ \[(\d{2}/\w{3}/\d{4}:\d{2}):\d{2}:\d{2} ([+-]\d{4})\] '
+                   rb'"(\S+) (\S+)[^"]*" (\d{3}) (\d+|-)(?: "([^"]*)" "([^"]*)")?', re.M)
+_BOT = re.compile(rb'bot|crawl|spider|slurp|curl|wget|python-|go-http|java/|libwww|httpclient|monitor|uptime|'
+                  rb'headless|facebookexternalhit|preview|scan|feedfetcher|lighthouse|pingdom', re.I)
+_ASSET = re.compile(rb'\.(?:css|js|mjs|png|jpe?g|gif|svg|ico|webp|avif|bmp|woff2?|ttf|otf|eot|map|mp4|webm|mp3|ogg|'
+                    rb'pdf|zip|gz|txt|xml|json)(?:\?|$)', re.I)
+
+
+def _browser(ua):
+    for name, pat in ((b'Edge', b'Edg/'), (b'Opera', b'OPR/'), (b'Samsung', b'SamsungBrowser'), (b'Chrome', b'Chrome/'),
+                      (b'Firefox', b'Firefox/'), (b'Safari', b'Safari/')):
+        if pat in ua:
+            return name.decode()
+    return 'Other'
+
+
+def _vis(acc, day):
+    v = acc.vis.get(day)
+    if v is None:
+        v = acc.vis[day] = {'pv': 0, 'hits': 0, 'bots': 0, 's': [0, 0, 0, 0, 0, 0], 'uv': set(),
+                            'path': {}, 'ref': {}, 'ip': {}, 'browser': {}, 'device': {}, 'status': {}}
+    return v
+
+
+def _inc(d, k):
+    d[k] = d.get(k, 0) + 1
+
+
 def _parse_combined(data, acc):
     for m in _COMBINED.finditer(data):
         size = m.group(3)
         acc.add(acc.hour_of(m.group(1), m.group(2)), int(size) if size != b'-' else 0)
+    # visitor statistics (page views, unique visitors, top lists)
+    for m in _FULL.finditer(data):
+        hour = acc.hour_of(m.group(2), m.group(3))
+        if not hour:
+            continue
+        day = acc.day_of(hour)
+        v = _vis(acc, day)
+        ip, method, path, status = m.group(1), m.group(4), m.group(5), m.group(6)
+        ref, ua = m.group(8) or b'', m.group(9) or b''
+        v['hits'] += 1
+        st = int(status) // 100
+        if 1 <= st <= 5:
+            v['s'][st] += 1
+        if st >= 4:
+            _inc(v['status'], status.decode())
+        if _BOT.search(ua) or not ua or ua == b'-':
+            v['bots'] += 1
+            continue
+        if method not in (b'GET', b'POST') or st not in (2, 3) or _ASSET.search(path):
+            continue
+        v['pv'] += 1
+        v['uv'].add(int.from_bytes(hashlib.blake2b(ip + b'|' + ua, digest_size=8).digest(), 'big') & 0x7fffffffffffffff)
+        _inc(v['path'], path.split(b'?')[0][:200].decode('utf-8', 'replace'))
+        _inc(v['ip'], ip.decode('ascii', 'replace'))
+        _inc(v['browser'], _browser(ua))
+        _inc(v['device'], 'Mobile' if (b'Mobi' in ua or b'Android' in ua) else 'Desktop')
+        if ref and ref != b'-':
+            mm = re.match(rb'https?://([^/:]+)', ref)
+            if mm:
+                _inc(v['ref'], mm.group(1).decode('ascii', 'replace').lower())
 
 
 def _parse_caddy(data, acc):
@@ -191,6 +263,26 @@ def collect():
                 con.execute('''INSERT INTO daily (domain, day, bytes, requests) VALUES (?, ?, ?, ?)
                                ON CONFLICT(domain, day) DO UPDATE SET bytes = bytes + excluded.bytes,
                                requests = requests + excluded.requests''', (domain, day, nbytes, nreq))
+            for day, v in acc.vis.items():
+                con.execute('''INSERT INTO vis_daily (domain, day, pv, hits, bots, s2, s3, s4, s5) VALUES (?,?,?,?,?,?,?,?,?)
+                               ON CONFLICT(domain, day) DO UPDATE SET pv = pv + excluded.pv, hits = hits + excluded.hits,
+                               bots = bots + excluded.bots, s2 = s2 + excluded.s2, s3 = s3 + excluded.s3,
+                               s4 = s4 + excluded.s4, s5 = s5 + excluded.s5''',
+                            (domain, day, v['pv'], v['hits'], v['bots'], v['s'][2], v['s'][3], v['s'][4], v['s'][5]))
+                con.executemany('INSERT OR IGNORE INTO vis_uv (domain, day, h) VALUES (?, ?, ?)',
+                                [(domain, day, h) for h in v['uv']])
+                for kind in ('path', 'ref', 'ip', 'browser', 'device', 'status'):
+                    if v[kind]:
+                        con.executemany('''INSERT INTO vis_top (domain, day, kind, k, hits) VALUES (?,?,?,?,?)
+                                           ON CONFLICT(domain, day, kind, k) DO UPDATE SET hits = hits + excluded.hits''',
+                                        [(domain, day, kind, k, n) for k, n in v[kind].items()])
+                        # keep the 300 biggest entries of each list per day
+                        con.execute('''DELETE FROM vis_top WHERE domain=? AND day=? AND kind=? AND k NOT IN
+                                       (SELECT k FROM vis_top WHERE domain=? AND day=? AND kind=? ORDER BY hits DESC LIMIT 300)''',
+                                    (domain, day, kind, domain, day, kind))
+        cutoff_day = time.strftime('%Y-%m-%d', time.localtime(time.time() - HOURLY_KEEP_DAYS * 86400))
+        con.execute('DELETE FROM vis_uv WHERE day < ?', (cutoff_day,))
+        con.execute('DELETE FROM vis_top WHERE day < ?', (cutoff_day,))
         con.execute('DELETE FROM hourly WHERE hour < ?', (int(time.time()) - HOURLY_KEEP_DAYS * 86400,))
         con.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('last_collect', ?)", (str(int(time.time())),))
         con.commit()
@@ -308,3 +400,34 @@ def site_totals(period='30d'):
     for dom, e in out.items():
         e['trend'] = [trend.get(dom, {}).get(k, 0) for k in keys]
     return sorted(out.values(), key=lambda e: e['bytes'], reverse=True)
+
+
+def visitors(domain, days=7):
+    """Visitor statistics of one site for the last `days` days."""
+    days = max(1, min(HOURLY_KEEP_DAYS, int(days)))
+    start = time.strftime('%Y-%m-%d', time.localtime(time.time() - (days - 1) * 86400))
+    con = _db()
+    try:
+        series = []
+        rows = {r[0]: r for r in con.execute(
+            'SELECT day, pv, hits, bots, s2, s3, s4, s5 FROM vis_daily WHERE domain=? AND day>=?', (domain, start))}
+        uv = {r[0]: r[1] for r in con.execute(
+            'SELECT day, COUNT(*) FROM vis_uv WHERE domain=? AND day>=? GROUP BY day', (domain, start))}
+        tot = {'pv': 0, 'uv': 0, 'hits': 0, 'bots': 0, 's2': 0, 's3': 0, 's4': 0, 's5': 0}
+        for i in range(days - 1, -1, -1):
+            d = time.strftime('%Y-%m-%d', time.localtime(time.time() - i * 86400))
+            r = rows.get(d)
+            item = {'day': d, 'pv': r[1] if r else 0, 'uv': uv.get(d, 0), 'hits': r[2] if r else 0, 'bots': r[3] if r else 0}
+            series.append(item)
+            for k in ('pv', 'uv', 'hits', 'bots'):
+                tot[k] += item[k]
+            if r:
+                tot['s2'] += r[4]; tot['s3'] += r[5]; tot['s4'] += r[6]; tot['s5'] += r[7]
+        tops = {}
+        for kind, n in (('path', 20), ('ref', 15), ('ip', 15), ('browser', 8), ('device', 3), ('status', 10)):
+            tops[kind] = [{'key': k, 'hits': h} for k, h in con.execute(
+                'SELECT k, SUM(hits) s FROM vis_top WHERE domain=? AND day>=? AND kind=? GROUP BY k ORDER BY s DESC LIMIT ?',
+                (domain, start, kind, n))]
+        return {'days': days, 'series': series, 'totals': tot, 'top': tops, 'last_collect': last_collect()}
+    finally:
+        con.close()

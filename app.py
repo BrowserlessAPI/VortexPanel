@@ -28,6 +28,8 @@ from panel.routes.websites_extras import *  # noqa
 from panel.routes.http3 import *  # noqa
 from panel.routes.websites_deploy import *  # noqa
 from panel.routes.websites_composer import *  # noqa
+from panel.routes.websites_clone import *  # noqa
+from panel.routes.websites_git import *  # noqa
 from panel.routes.websites_integrity import *  # noqa
 from panel.routes.databases import databases_bp
 from panel.routes.files     import files_bp
@@ -60,11 +62,17 @@ from panel.routes.logs import logs_bp
 from panel.routes.nodejs_projects import nodejs_bp
 from panel.routes.go_projects import go_bp
 from panel.routes.import_website import import_bp
+from panel.routes.acme import acme_bp
+from panel.routes.migration import migration_bp
+from panel.routes.bot_protection import botprot_bp
+from panel.routes.licence_routes import licence_bp
 from panel.routes.onboarding import onboarding_bp
 from panel.routes.diskusage import disk_bp
 from panel.routes.users_admin import users_bp
 from panel.routes.storage_routes import storage_bp
 from panel.routes.alerts_routes import alerts_bp
+from panel.routes.plugins_routes import plugins_bp
+from panel.routes.python_projects import python_bp
 
 # -- Secret key: auto-generate and persist on first run -----------------------
 _SECRET_KEY_FILE = '/opt/vortexpanel/secret.key'
@@ -235,8 +243,16 @@ def create_app():
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
                caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
                logs_bp, wp_bp, nodejs_bp, go_bp, import_bp, livepatch_bp,
-               onboarding_bp, disk_bp, users_bp, storage_bp, alerts_bp]:
+               onboarding_bp, disk_bp, users_bp, storage_bp, alerts_bp, plugins_bp, python_bp, acme_bp, migration_bp, botprot_bp, licence_bp]:
         app.register_blueprint(bp)
+    # Add-on modules from /opt/vortexpanel/plugins. Each is loaded inside its
+    # own try/except: a broken or incompatible plugin is skipped and reported,
+    # never a reason for the panel not to start.
+    try:
+        from panel import plugins as _vp_plugins
+        _vp_plugins.load_all(app)
+    except Exception as _e:  # pragma: no cover - the loader itself failing
+        print(f'[plugins] loader failed, starting without plugins: {_e}', flush=True)
     terminal_sock.init_app(app)
 
     # -- Background task timers (traffic history, scheduled site backups) ----
@@ -319,6 +335,8 @@ def create_app():
         p = request.path
         # Settings > Panel domain: answer only on that name (loopback, e.g. an
         # SSH tunnel, always works so the setting can be undone).
+        if p.startswith('/api/hooks/'):
+            return None          # Git webhooks: authenticated by their secret token
         dom = _panel_domain()
         if dom and p != '/api/health':
             host = (request.host or '').lower()
@@ -354,8 +372,8 @@ def create_app():
         # cookie open the terminal from any IP.
         if not (request.path.startswith('/api/') or request.path.startswith('/ws/')):
             return None   # Static files / HTML — not checked
-        if request.path.startswith('/api/auth/'):
-            return None   # Auth endpoints handle their own IP check
+        if request.path.startswith('/api/auth/') or request.path.startswith('/api/hooks/'):
+            return None   # Auth endpoints and token webhooks handle their own checks
         # Import here to avoid circular import at module level
         from panel.routes.auth import _client_ip, _ip_allowed
         ip = _client_ip()
@@ -415,7 +433,8 @@ def create_app():
         p = request.path
         if not (p.startswith('/api/') or p.startswith('/ws/')):
             return None
-        if p.startswith('/api/auth/') or p == '/api/health' or p == '/api/i18n' or p.startswith('/api/i18n/'):
+        if p.startswith('/api/auth/') or p == '/api/health' or p == '/api/i18n' or p.startswith('/api/i18n/') \
+                or p.startswith('/api/hooks/'):
             return None
         from panel.routes.auth import check_ip_and_session
         if not check_ip_and_session():

@@ -549,7 +549,19 @@ def postgresql_install_script(ver='17'):
     """PostgreSQL official install script for all distros"""
     os_info = get_os()
     if os_info['family'] == 'debian':
+        # PGDG unreachable (firewalled server, mirror outage) while the
+        # distribution ships this major version (Ubuntu 24.04: 16, Debian 12:
+        # 15): install the distribution package instead of failing.
+        distro = (
+            f'{pkg_update()}; '
+            f'{pkg_install(f"postgresql-{ver} postgresql-contrib")} && '
+            f'systemctl enable postgresql && systemctl start postgresql'
+        )
         return (
+            f'if ! curl -fsS --connect-timeout 15 --max-time 30 -o /dev/null https://www.postgresql.org/media/keys/ACCC4CF8.asc '
+            f'&& apt-cache policy postgresql-{ver} 2>/dev/null | grep -q "Candidate: [0-9]"; then '
+            f'echo "[VortexPanel] The PostgreSQL apt repository is not reachable -- installing PostgreSQL {ver} from the distribution"; '
+            f'rm -f /etc/apt/sources.list.d/pgdg.list; {distro}; exit $?; fi; '
             f'rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
             f'curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /opt/vortexpanel/data/tmp/pg.asc && '
             f'gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /opt/vortexpanel/data/tmp/pg.asc && '

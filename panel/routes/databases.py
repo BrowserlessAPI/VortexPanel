@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request, session, send_file
 from panel.utils.authctx import authed as _vp_authed
-import subprocess, re, os, tempfile, shlex, shutil, json
+import subprocess, re, os, tempfile, shlex, shutil, json, time
 
 databases_bp = Blueprint('databases', __name__)
 def req(): return _vp_authed()
@@ -562,6 +562,12 @@ def drop_db(name):
     if bad: return jsonify({'ok':False,'error':bad}), 400
     if name.lower() in _SYSTEM_DBS.get(_engine_family(engine), set()):
         return jsonify({'ok':False,'error':'Refusing to drop a system database'}), 400
+    # Recycle bin: keep a dump for RECYCLE_DAYS days so a drop can be undone.
+    if engine in ('mysql', 'mariadb', 'postgresql') and request.args.get('skip_recycle') != '1':
+        rerr = _to_recycle(name, engine)
+        if rerr and request.args.get('force') != '1':
+            return jsonify({'ok': False, 'recycle_failed': True,
+                            'error': f'Could not save a copy to the recycle bin ({rerr}). Drop anyway?'}), 409
     if engine in ('mysql','mariadb'):
         _, err = mysql_cmd(f'DROP DATABASE IF EXISTS `{name}`;', timeout=300)
     elif engine == 'postgresql':
@@ -777,3 +783,111 @@ def grant_db(user):
         err = 'Unknown engine'
     if err: return jsonify({'ok':False,'error':err})
     return jsonify({'ok':True})
+
+
+# --- Database recycle bin -----------------------------------------------------------
+RECYCLE_DIR = '/opt/vortexpanel/data/db_recycle'
+RECYCLE_DAYS = 7
+_RID_RE = re.compile(r'^[A-Za-z0-9_$-]{1,64}__\d{8}-\d{6}$')
+
+
+def _to_recycle(name, engine):
+    from panel.routes.backups import _dump_db
+    os.makedirs(RECYCLE_DIR, mode=0o700, exist_ok=True)
+    rid = f'{name}__{time.strftime("%Y%m%d-%H%M%S")}'
+    dest = os.path.join(RECYCLE_DIR, rid + '.sql.gz')
+    err = _dump_db(name, 'mysql' if engine in ('mysql', 'mariadb') else 'pg', dest)
+    if err:
+        try: os.unlink(dest)
+        except OSError: pass
+        return err
+    with open(os.path.join(RECYCLE_DIR, rid + '.json'), 'w') as f:
+        json.dump({'id': rid, 'name': name, 'engine': 'mysql' if engine in ('mysql', 'mariadb') else 'postgresql',
+                   'time': time.time(), 'size': os.path.getsize(dest)}, f)
+    return None
+
+
+def recycle_items():
+    out = []
+    try:
+        for f in sorted(os.listdir(RECYCLE_DIR), reverse=True):
+            if f.endswith('.json'):
+                try:
+                    out.append(json.load(open(os.path.join(RECYCLE_DIR, f))))
+                except Exception:
+                    pass
+    except OSError:
+        pass
+    return out
+
+
+def recycle_purge():
+    n = 0
+    for it in recycle_items():
+        if time.time() - it.get('time', 0) > RECYCLE_DAYS * 86400:
+            for ext in ('.sql.gz', '.json'):
+                try: os.unlink(os.path.join(RECYCLE_DIR, it['id'] + ext)); n += 1
+                except OSError: pass
+    return n
+
+
+@databases_bp.route('/api/databases/recycle')
+def recycle_list():
+    if not req(): return jsonify({'ok':False}), 401
+    return jsonify({'ok': True, 'items': recycle_items(), 'days': RECYCLE_DAYS})
+
+
+@databases_bp.route('/api/databases/recycle/<rid>/restore', methods=['POST'])
+def recycle_restore(rid):
+    if not req(): return jsonify({'ok':False}), 401
+    if not _RID_RE.match(rid or ''):
+        return jsonify({'ok': False, 'error': 'Invalid id'}), 400
+    meta_p, dump = os.path.join(RECYCLE_DIR, rid + '.json'), os.path.join(RECYCLE_DIR, rid + '.sql.gz')
+    try:
+        meta = json.load(open(meta_p))
+    except Exception:
+        return jsonify({'ok': False, 'error': 'Not found'}), 404
+    name = (request.get_json(silent=True) or {}).get('name') or meta['name']
+    if not _valid_dbname(name):
+        return jsonify({'ok': False, 'error': 'Invalid database name'}), 400
+    if meta['engine'] == 'mysql':
+        exists = [d['name'] for d in mysql_dbs()[0]]
+        if name in exists:
+            return jsonify({'ok': False, 'error': f'A database named {name} exists; give the copy another name'}), 409
+        _, err = mysql_cmd(f'CREATE DATABASE `{name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;')
+        if err:
+            return jsonify({'ok': False, 'error': err}), 400
+        _, err = _mysql_import_gz(name, dump)
+    else:
+        _, err, rc = sh(f"{_pg_prefix()}createdb {shlex.quote(name)}", 120)
+        if rc == 0:
+            _, err, rc = sh(f"gunzip -c {shlex.quote(dump)} | {_pg_prefix()}psql -q {shlex.quote(name)}", 3600)
+            err = (err or 'psql failed') if rc != 0 else None
+    if err:
+        return jsonify({'ok': False, 'error': err[-400:]}), 400
+    for ext in ('.sql.gz', '.json'):
+        try: os.unlink(os.path.join(RECYCLE_DIR, rid + ext))
+        except OSError: pass
+    return jsonify({'ok': True, 'name': name})
+
+
+def _mysql_import_gz(name, dump):
+    tmp = _mk_tmp('.sql')
+    try:
+        import gzip
+        with gzip.open(dump, 'rb') as src, open(tmp, 'wb') as dst:
+            shutil.copyfileobj(src, dst)
+        return _mysql_run(_mysql_bin(), f'{shlex.quote(name)} < {shlex.quote(tmp)}', 3600)
+    finally:
+        _unlink(tmp)
+
+
+@databases_bp.route('/api/databases/recycle/<rid>', methods=['DELETE'])
+def recycle_delete(rid):
+    if not req(): return jsonify({'ok':False}), 401
+    if not _RID_RE.match(rid or ''):
+        return jsonify({'ok': False, 'error': 'Invalid id'}), 400
+    for ext in ('.sql.gz', '.json'):
+        try: os.unlink(os.path.join(RECYCLE_DIR, rid + ext))
+        except OSError: pass
+    return jsonify({'ok': True})

@@ -350,6 +350,11 @@ def write_proxy_conf(p):
 """
         conf_path = f'/etc/nginx/conf.d/vortex-node-{pid}.conf'
         os.makedirs('/etc/nginx/conf.d', exist_ok=True)
+        try:
+            from panel.routes.websites_security import maint_wrap
+            conf = maint_wrap(conf)
+        except Exception:
+            pass
         with open(conf_path, 'w') as f: f.write(conf)
         out, err, rc = sh('nginx -t 2>&1')
         if rc != 0:
@@ -626,11 +631,31 @@ def _ensure_pm2():
     out, _, rc = sh('command -v pm2 2>/dev/null', nvm=True)
     return rc == 0 and bool(out)
 
-def run_pkg_install(path, manager='npm'):
+def run_pkg_install(path, manager='npm', user=None):
+    """`npm install` runs the package's install scripts: as the project's own
+    user, never as root (a hosting account's package.json is theirs to edit)."""
     manager = manager if manager in ('npm','yarn','pnpm') else 'npm'
     if manager in ('yarn','pnpm'):
         sh(f'npm install -g {manager} 2>/dev/null', nvm=True)
-    out, err, rc = sh(f'cd {shlex.quote(path)} && {manager} install 2>&1', timeout=600, nvm=True)
+    inner = f'cd {shlex.quote(path)} && {manager} install 2>&1'
+    try:
+        # the folder's owner: an admin project in a root-owned folder keeps
+        # installing as root (the service user could not write node_modules)
+        same_owner = bool(user) and os.stat(path).st_uid == pwd.getpwnam(user).pw_uid
+    except (OSError, KeyError):
+        same_owner = False
+    if user and user != 'root' and same_owner:
+        try:
+            home = pwd.getpwnam(user).pw_dir
+        except KeyError:
+            return False, f'User {user} does not exist'
+        d = _nvm_run_dir()
+        prefix = _nvm_prefix(d) if d and os.path.exists(os.path.join(d, 'nvm.sh')) else ''
+        runuser = shutil.which('runuser') or '/usr/sbin/runuser'
+        out, err, rc = sh(f'{runuser} -u {shlex.quote(user)} -- env HOME={shlex.quote(home)} '
+                          f'npm_config_cache={shlex.quote(home + "/.npm")} bash -c {shlex.quote(prefix + inner)}', timeout=600)
+    else:
+        out, err, rc = sh(inner, timeout=600, nvm=True)
     return rc == 0, out + err
 
 def get_pkg_scripts(path):
@@ -772,7 +797,7 @@ def create_project():
         return jsonify({'ok':False,'error':f'Port {port} is already used by {clash}'})
 
     if not no_pkg_install:
-        ok, out = run_pkg_install(path, pkg_mgr)
+        ok, out = run_pkg_install(path, pkg_mgr, user)
         if not ok:
             return jsonify({'ok':False,'error':f'Package install failed: {out[:300]}'})
 
@@ -909,8 +934,27 @@ def git_pull(pid):
     projects = load_projects()
     p = next((x for x in projects if x['id']==pid), None)
     if not p: return jsonify({'ok':False,'error':'Not found'})
-    out, err, rc = sh(f'cd {shlex.quote(p["path"])} && git pull 2>&1', timeout=120)
-    return jsonify({'ok': rc==0, 'output': out or err})
+    # git as the project's own user: as root, a repo the project user can
+    # write to (.git/config core.fsmonitor, hooks) would run code as root
+    user = p.get('user') or ''
+    try:
+        pwd.getpwnam(user)
+    except KeyError:
+        return jsonify({'ok': False, 'error': f'Project user "{user}" does not exist'}), 400
+    if user == 'root':
+        argv = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
+                '-C', p['path'], 'pull', '--ff-only']
+    else:
+        argv = [shutil.which('runuser') or '/usr/sbin/runuser', '-u', user, '--',
+                'git', '-C', p['path'], 'pull', '--ff-only']
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=180,
+                           env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': pwd.getpwnam(user).pw_dir,
+                                'GIT_TERMINAL_PROMPT': '0', 'LANG': 'C.UTF-8'})
+        out, rc = (r.stdout + r.stderr).strip(), r.returncode
+    except Exception as e:
+        out, rc = str(e), 1
+    return jsonify({'ok': rc == 0, 'output': out[-4000:]})
 
 @nodejs_bp.route('/api/nodejs/pkg-scripts')
 def pkg_scripts_by_path():

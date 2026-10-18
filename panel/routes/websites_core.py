@@ -1057,6 +1057,13 @@ def _cleanup_site_runtime(domain):
     Limit-Access htpasswd files, App-Runner metadata and the integrity
     baseline. Returns a list of what was removed."""
     removed = []
+    try:
+        from panel import botprot
+        if domain in botprot.load_state()['sites']:
+            botprot.disable_site(domain, actor='website deleted', forget=True)
+            removed.append('bot protection service and settings')
+    except Exception:
+        pass
     pm2_name = domain.replace('.', '_')
     meta = f'/opt/vortexpanel/node_env/{domain}.json'
     if os.path.exists(meta) or os.path.isdir(f'/opt/vortexpanel/node_env/{domain}'):

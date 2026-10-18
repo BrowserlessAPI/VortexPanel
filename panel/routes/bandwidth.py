@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 import subprocess, re, os, time, shlex
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, pkg_remove
@@ -210,3 +210,24 @@ def bw_collect():
         return jsonify(bwstats.collect())
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@bandwidth_bp.route('/api/websites/<domain>/stats')
+def site_visitor_stats(domain):
+    """Website > Statistics: page views, unique visitors, top pages, referrers,
+    visitors' addresses, browsers, devices and error codes (from the access log)."""
+    if not req(): return jsonify({'ok': False}), 401
+    import re as _re
+    if not _re.fullmatch(r'[A-Za-z0-9.*_-]{1,253}', domain or ''):
+        return jsonify({'ok': False, 'error': 'Invalid domain'}), 400
+    from panel import bwstats
+    if request.args.get('refresh'):
+        try:
+            bwstats.collect()
+        except Exception:
+            pass
+    try:
+        days = int(request.args.get('days', 7))
+    except ValueError:
+        days = 7
+    return jsonify({'ok': True, **bwstats.visitors(domain.lower(), days)})

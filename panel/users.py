@@ -188,7 +188,9 @@ _VIEWER_EXACT_GET = ('/api/websites', '/api/modules', '/api/modules/list')
 _SITE_WEBSITE_DENY = (
     'config',        # raw web-server config: load_module etc. run as root
     'directory',     # moving the web root could expose any path
-    'deploy',        # git hooks / build commands run as root
+    'deploy',        # one-click app installers run as root
+    'git',           # Git deploy runs a command after each deploy
+    'clone',         # creates sites and databases
     'composer',      # composer scripts run as root
     'nodejs',        # process manager commands run as root
     'proxy',         # reverse proxy to local services (SSRF)
@@ -276,6 +278,11 @@ def is_allowed(role, sites, method, path, args=None, body=None):
             if path.startswith('/api/wp/') and method == 'DELETE' and not m.group(2):
                 return False, 'Only an administrator can delete a website.'
             return True, ''
+        m = re.match(r'^/api/botprot/site/([^/]+)(?:/(pause|test))?$', path)
+        if m:
+            if m.group(1) in sites:
+                return True, ''
+            return False, 'This website is not assigned to your account.'
         m = _SITE_BACKUP_RE.match(path)
         if m:
             if m.group(1) in sites:

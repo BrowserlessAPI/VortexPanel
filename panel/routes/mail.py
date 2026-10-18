@@ -130,6 +130,73 @@ def _dovecot_conf(ver):
         "}\n\n" + listeners)
 
 
+SENDER_LOGINS = '/etc/postfix/vp_sender_logins'
+MAIL_CERT_DIR = '/etc/ssl/vortexpanel'
+
+
+def _postfix_dbtype():
+    t = (sh('postconf -h default_database_type 2>/dev/null') or 'hash').strip() or 'hash'
+    return t if re.fullmatch(r'[a-z0-9_]+', t) else 'hash'
+
+
+def _sync_sender_logins():
+    """Each mailbox may send only as itself (authenticated users could put
+    any From address otherwise - on a shared server, another customer's)."""
+    addrs = []
+    try:
+        for line in open('/etc/postfix/virtual_mailbox_maps'):
+            tok = line.split()
+            if tok and '@' in tok[0] and not tok[0].startswith('#'):
+                addrs.append(tok[0].lower())
+    except OSError:
+        return
+    with open(SENDER_LOGINS + '.tmp', 'w') as f:
+        f.writelines(f'{a} {a}\n' for a in sorted(set(addrs)))
+    os.replace(SENDER_LOGINS + '.tmp', SENDER_LOGINS)
+    run(['postmap', f'{_postfix_dbtype()}:{SENDER_LOGINS}'])
+
+
+def _mail_tls(log):
+    """A certificate for SMTP when Postfix has none (RHEL ships without one)."""
+    cert = (sh('postconf -h smtpd_tls_cert_file 2>/dev/null') or '').strip()
+    key = (sh('postconf -h smtpd_tls_key_file 2>/dev/null') or '').strip()
+    if cert and key and os.path.exists(cert) and os.path.exists(key):
+        return cert, key
+    os.makedirs(MAIL_CERT_DIR, mode=0o755, exist_ok=True)
+    cert, key = os.path.join(MAIL_CERT_DIR, 'mail.crt'), os.path.join(MAIL_CERT_DIR, 'mail.key')
+    if not (os.path.exists(cert) and os.path.exists(key)):
+        host = (sh('hostname -f 2>/dev/null') or sh('hostname') or 'mail').strip()
+        if not re.fullmatch(r'[A-Za-z0-9.-]{1,253}', host):
+            host = 'mail'
+        run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '3650', '-subj', f'/CN={host}',
+             '-keyout', key, '-out', cert], timeout=120)
+        os.chmod(key, 0o600)
+        log.append(f'self-signed mail certificate created for {host} (replace it with a real one for mail clients)')
+    return cert, key
+
+
+def _mail_submission(log):
+    """Ports 587 (STARTTLS) and 465 (TLS) for mail apps: login required,
+    encrypted, and the From address must be the signed-in mailbox."""
+    common = ['smtpd_sasl_auth_enable=yes', 'smtpd_tls_auth_only=yes',
+              'smtpd_client_restrictions=permit_sasl_authenticated,reject',
+              'smtpd_sender_restrictions=reject_sender_login_mismatch',
+              'smtpd_relay_restrictions=permit_sasl_authenticated,reject',
+              'smtpd_recipient_restrictions=permit_sasl_authenticated,reject']
+    for name, extra in (('submission', ['smtpd_tls_security_level=encrypt']),
+                        ('submissions' if sh('postconf -M submissions/inet 2>/dev/null') or
+                         'submissions' in open('/etc/services').read() else 'smtps', ['smtpd_tls_wrappermode=yes'])):
+        rc, _, err = run(['postconf', '-M', f'{name}/inet={name} inet n - - - - smtpd'])
+        if rc != 0:
+            return f'postconf -M {name}: {err}'
+        for opt in [f'syslog_name=postfix/{name}'] + extra + common:
+            rc, _, err = run(['postconf', '-P', f'{name}/inet/{opt}'])
+            if rc != 0:
+                return f'postconf -P {name} {opt}: {err}'
+    log.append('mail apps: port 587 (STARTTLS) and 465 (TLS) with login, sending only as the signed-in mailbox')
+    return ''
+
+
 def _sync_dovecot_users():
     """Mirror the panel's user list into Dovecot's passwd-file.
 
@@ -178,6 +245,8 @@ def setup_mail():
     main_cf = '/etc/postfix/main.cf'
     dc_file = '/etc/dovecot/conf.d/99-vortexpanel.conf'
     main_cf_backup = open(main_cf).read() if os.path.exists(main_cf) else None
+    master_cf = '/etc/postfix/master.cf'
+    master_cf_backup = open(master_cf).read() if os.path.exists(master_cf) else None
     dc_backup = open(dc_file).read() if os.path.exists(dc_file) else None
 
     def rollback():
@@ -186,6 +255,8 @@ def setup_mail():
         try:
             if main_cf_backup is not None:
                 with open(main_cf, 'w') as f: f.write(main_cf_backup)
+            if master_cf_backup is not None:
+                with open(master_cf, 'w') as f: f.write(master_cf_backup)
             if dc_backup is not None:
                 with open(dc_file, 'w') as f: f.write(dc_backup)
             elif os.path.exists(dc_file):
@@ -233,7 +304,18 @@ def setup_mail():
         'smtpd_sasl_path = private/auth',
         'smtpd_sasl_auth_enable = yes',
         'smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination',
+        # passwords only over TLS; a signed-in mailbox sends only as itself
+        'smtpd_tls_security_level = may',
+        'smtpd_tls_auth_only = yes',
+        f'smtpd_sender_login_maps = {dbtype}:{SENDER_LOGINS}',
+        'smtpd_sender_restrictions = reject_authenticated_sender_login_mismatch',
     ]
+    _sync_sender_logins()
+    if not os.path.exists(SENDER_LOGINS + ('.lmdb' if dbtype == 'lmdb' else '.db')):
+        open(SENDER_LOGINS, 'a').close()
+        run(['postmap', f'{dbtype}:{SENDER_LOGINS}'])
+    cert, key = _mail_tls(log)
+    settings += [f'smtpd_tls_cert_file = {cert}', f'smtpd_tls_key_file = {key}']
     # RHEL/Fedora ship inet_interfaces = localhost: Postfix never accepted mail
     # from the internet, so no hosted domain could receive anything. With
     # IPv6 disabled in the kernel, inet_protocols = all makes Postfix fail.
@@ -253,6 +335,10 @@ def setup_mail():
     # treats it as a local domain and never consults the virtual maps at all.
     mydest = sh('postconf -h mydestination') or ''
     log.append('Postfix virtual delivery configured (via Dovecot LMTP)')
+    serr = _mail_submission(log)
+    if serr:
+        rollback()
+        return jsonify({'ok': False, 'error': f'{serr} - changes rolled back', 'log': log}), 500
 
     # 4. Dovecot: where mail lives, who the users are, and the two sockets
     #    Postfix needs (LMTP for delivery, auth for SASL submission).
@@ -263,6 +349,7 @@ def setup_mail():
     if not os.path.exists(DOVECOT_USERS_FILE):
         open(DOVECOT_USERS_FILE, 'a').close()
     _sync_dovecot_users()
+    _sync_sender_logins()
     log.append('Dovecot configured (LMTP delivery + SASL auth sockets)')
 
     # 5. Validate before restarting -- never leave a broken mail server.
@@ -292,8 +379,8 @@ def setup_mail():
     log.append('Services restarted')
 
     warn = None
-    if mydest and any(d.strip() and d.strip() not in ('localhost', '$myhostname', 'localhost.$mydomain')
-                      for d in mydest.split(',')):
+    hosted = {_first_token(l) for l in _read_lines('/etc/postfix/virtual_mailbox_domains')}
+    if mydest and hosted & {d.strip().lower() for d in re.split(r'[,\s]+', mydest) if d.strip()}:
         warn = (f'mydestination is currently "{mydest}". Any mail domain listed there is treated as '
                 'a local domain and will bypass virtual mailbox delivery entirely. Remove hosted mail '
                 'domains from mydestination if they appear in it.')
@@ -391,6 +478,7 @@ def create_account():
     # Dovecot reads its own file, not the panel's -- without this the
     # account exists on paper but cannot authenticate.
     _sync_dovecot_users()
+    _sync_sender_logins()
     sh('systemctl reload postfix dovecot 2>/dev/null')
     return jsonify({'ok':True,'email':email})
 
@@ -411,6 +499,7 @@ def delete_account(email):
                 run(['postmap', f])
     # Remove from Dovecot too -- otherwise the deleted account can still log in.
     _sync_dovecot_users()
+    _sync_sender_logins()
     sh('systemctl reload postfix dovecot 2>/dev/null')
     return jsonify({'ok':True})
 
@@ -436,6 +525,7 @@ def reset_mail_password(email):
     _write_private(MAIL_USERS_FILE, ''.join(out))
     # Push the new hash to Dovecot -- otherwise the old password keeps working.
     _sync_dovecot_users()
+    _sync_sender_logins()
     sh('systemctl reload dovecot 2>/dev/null')
     return jsonify({'ok':True})
 
@@ -530,6 +620,8 @@ def add_forwarding():
     if not src_ok or not dests or not all(_EMAIL_RE.match(x) for x in dests):
         return jsonify({'ok':False,'error':'Valid source and destination email addresses required'}),400
     dest = ','.join(dests)
+    if not os.path.isdir(os.path.dirname(VIRTUAL_ALIAS_FILE)):
+        return jsonify({'ok':False,'error':'The mail server (Postfix) is not installed'}),400
     lines = []
     if os.path.exists(VIRTUAL_ALIAS_FILE):
         with open(VIRTUAL_ALIAS_FILE) as f: lines = f.readlines()

@@ -1,0 +1,7 @@
+{
+  "_comment": "Hosting Module licence server and the Ed25519 public key(s) it signs with (flask --app wsgi licence public-key on the licence server). Shipped with the panel code; the data folder cannot change it.",
+  "server": "https://license.vortexpanel.dev",
+  "keys": [
+    "ati5zAzMelGX/3tAleTbAwPhl9HdxqPkDRfz9I1ybeg="
+  ]
+}

@@ -7,6 +7,9 @@ Evaluated every minute after the metrics sample (panel.tasks metrics):
   an SSL certificate expiring within N days (checked twice a day)
   a scheduled backup failed (sitebackup records failures)
   repeated failed panel sign-ins
+  SSH sign-ins to the server (each successful login; bursts of failures)
+  events reported by other parts of the panel through notify_event():
+  a failed Git deploy, malware found by a scan
 Each alert fires once, repeats at most every `repeat_minutes` while the
 problem lasts, and sends a "resolved" message when it clears.
 
@@ -45,6 +48,10 @@ DEFAULTS = {
         'ssl': {'enabled': True, 'days': 14},
         'backups': {'enabled': True},
         'logins': {'enabled': True, 'failures': 20, 'minutes': 10},
+        'ssh': {'enabled': False, 'success': True, 'failures': 30, 'minutes': 10},
+        'deploy': {'enabled': True},
+        'malware': {'enabled': True},
+        'botprot': {'enabled': True},
     },
     'repeat_minutes': 180,
 }
@@ -337,6 +344,54 @@ def history(limit=200):
     return out
 
 
+def notify_event(rule, title, detail, extra=None):
+    """Send a one-off event (no repeat/resolve cycle) when alerts and the
+    rule are on. Returns the send result or None."""
+    cfg = load()
+    if not cfg.get('enabled') or not (cfg.get('rules', {}).get(rule) or {}).get('enabled'):
+        return None
+    host = server_name()
+    subj = f'[{host}] {title}'
+    res = send(subj, detail, cfg, dict({'event': rule, 'server': host}, **(extra or {})))
+    _record({'time': int(time.time()), 'key': f'{rule}:{title}', 'title': subj, 'state': 'event', 'result': res})
+    return res
+
+
+def _ssh_events(cfg, st, now):
+    """New SSH sign-ins since the last run (and failure bursts)."""
+    r = cfg['rules'].get('ssh') or {}
+    if not r.get('enabled'):
+        return []
+    try:
+        from panel import sshlog
+    except Exception:
+        return []
+    since = st.get('ssh_since') or (now - 120)
+    evs = sshlog.events(since=since)
+    st['ssh_since'] = now
+    out = []
+    if r.get('success', True):
+        for e in evs:
+            if e['result'] == 'accepted':
+                out.append((f'SSH sign-in: {e["user"]} from {e["ip"]}',
+                            f'{e["user"]} signed in over SSH from {e["ip"]} ({e["method"]}) at '
+                            f'{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e["time"]))}. '
+                            f'If this was not you, change the password, check ~/.ssh/authorized_keys and block the address '
+                            f'(Security > SSH sign-ins).'))
+    fails = [e for e in evs if e['result'] != 'accepted']
+    st.setdefault('ssh_fail_window', [])
+    st['ssh_fail_window'] = [t for t in st['ssh_fail_window'] if t > now - int(r.get('minutes', 10)) * 60] + [e['time'] for e in fails]
+    if len(st['ssh_fail_window']) >= int(r.get('failures', 30)) and now - st.get('ssh_fail_alerted', 0) > 3600:
+        st['ssh_fail_alerted'] = now
+        ips = {}
+        for e in fails:
+            ips[e['ip']] = ips.get(e['ip'], 0) + 1
+        top = ', '.join(f'{ip} ({n})' for ip, n in sorted(ips.items(), key=lambda x: -x[1])[:5])
+        out.append(('Many failed SSH sign-ins', f'{len(st["ssh_fail_window"])} failed SSH sign-ins in the last '
+                    f'{r.get("minutes", 10)} minutes. Top addresses: {top or "-"}. Fail2ban (App Store) blocks these automatically.'))
+    return out
+
+
 def evaluate(now=None):
     """Run every rule once. Returns the list of messages sent."""
     cfg = load()
@@ -400,6 +455,12 @@ def evaluate(now=None):
     host = server_name()
     repeat = int(cfg.get('repeat_minutes', 180)) * 60
     active = st.get('active', {})
+
+    for title, detail in _ssh_events(cfg, st, now):
+        subj = f'[{host}] {title}'
+        res = send(subj, detail, cfg, {'event': 'ssh', 'server': host})
+        _record({'time': int(now), 'key': 'ssh', 'title': subj, 'state': 'event', 'result': res})
+        sent.append(subj)
 
     if rules['backups'].get('enabled'):
         seen = set(st.get('seen_backup_failures', []))

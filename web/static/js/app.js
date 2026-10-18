@@ -1,5 +1,47 @@
 // Line-icon set used instead of emoji across the UI (Feather-style paths).
 const VP_ICONS = {"grid": "<rect x=\"3\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\"/>", "globe": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>", "lock": "<rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/>", "key": "<circle cx=\"7.5\" cy=\"15.5\" r=\"5.5\"/><path d=\"M11.4 11.6L21 2m-5 5l3 3m-6-6l3 3\"/>", "shield": "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"/>", "alert": "<path d=\"M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z\"/><line x1=\"12\" y1=\"9\" x2=\"12\" y2=\"13\"/><line x1=\"12\" y1=\"17\" x2=\"12.01\" y2=\"17\"/>", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"12\" y1=\"16\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12.01\" y2=\"8\"/>", "zap": "<polygon points=\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\"/>", "check": "<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\"/><polyline points=\"22 4 12 14.01 9 11.01\"/>", "x-circle": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"15\" y1=\"9\" x2=\"9\" y2=\"15\"/><line x1=\"9\" y1=\"9\" x2=\"15\" y2=\"15\"/>", "ban": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"4.93\" y1=\"4.93\" x2=\"19.07\" y2=\"19.07\"/>", "search": "<circle cx=\"11\" cy=\"11\" r=\"8\"/><line x1=\"21\" y1=\"21\" x2=\"16.65\" y2=\"16.65\"/>", "folder": "<path d=\"M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z\"/>", "file": "<path d=\"M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z\"/><polyline points=\"13 2 13 9 20 9\"/>", "file-text": "<path d=\"M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z\"/><polyline points=\"13 2 13 9 20 9\"/><line x1=\"16\" y1=\"13\" x2=\"8\" y2=\"13\"/><line x1=\"16\" y1=\"17\" x2=\"8\" y2=\"17\"/>", "file-code": "<path d=\"M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z\"/><polyline points=\"13 2 13 9 20 9\"/><polyline points=\"10 12.5 8 15 10 17.5\"/><polyline points=\"14 12.5 16 15 14 17.5\"/>", "image": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/><circle cx=\"8.5\" cy=\"8.5\" r=\"1.5\"/><polyline points=\"21 15 16 10 5 21\"/>", "archive": "<polyline points=\"21 8 21 21 3 21 3 8\"/><rect x=\"1\" y=\"3\" width=\"22\" height=\"5\"/><line x1=\"10\" y1=\"12\" x2=\"14\" y2=\"12\"/>", "package": "<path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"/><polyline points=\"3.27 6.96 12 12.01 20.73 6.96\"/><line x1=\"12\" y1=\"22.08\" x2=\"12\" y2=\"12\"/>", "external": "<path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\"/><polyline points=\"15 3 21 3 21 9\"/><line x1=\"10\" y1=\"14\" x2=\"21\" y2=\"3\"/>", "hard-drive": "<line x1=\"22\" y1=\"12\" x2=\"2\" y2=\"12\"/><path d=\"M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\"/><line x1=\"6\" y1=\"16\" x2=\"6.01\" y2=\"16\"/><line x1=\"10\" y1=\"16\" x2=\"10.01\" y2=\"16\"/>", "settings": "<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z\"/>", "database": "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\"/><path d=\"M21 12c0 1.66-4 3-9 3s-9-1.34-9-3\"/><path d=\"M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5\"/>", "shuffle": "<polyline points=\"16 3 21 3 21 8\"/><line x1=\"4\" y1=\"20\" x2=\"21\" y2=\"3\"/><polyline points=\"21 16 21 21 16 21\"/><line x1=\"15\" y1=\"15\" x2=\"21\" y2=\"21\"/><line x1=\"4\" y1=\"4\" x2=\"9\" y2=\"9\"/>", "link": "<path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\"/>", "clipboard": "<path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\"/><rect x=\"8\" y=\"2\" width=\"8\" height=\"4\" rx=\"1\"/>", "trash": "<polyline points=\"3 6 5 6 21 6\"/><path d=\"M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><polyline points=\"12 6 12 12 16 14\"/>", "tool": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\"/>", "play": "<polygon points=\"6 3 20 12 6 21 6 3\"/>", "cloud": "<path d=\"M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z\"/>", "redirect": "<polyline points=\"15 10 20 15 15 20\"/><path d=\"M4 4v7a4 4 0 0 0 4 4h12\"/>", "book": "<path d=\"M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z\"/><path d=\"M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z\"/>", "monitor": "<rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\"/><line x1=\"8\" y1=\"21\" x2=\"16\" y2=\"21\"/><line x1=\"12\" y1=\"17\" x2=\"12\" y2=\"21\"/>", "cpu": "<rect x=\"4\" y=\"4\" width=\"16\" height=\"16\" rx=\"2\"/><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\"/><line x1=\"9\" y1=\"1\" x2=\"9\" y2=\"4\"/><line x1=\"15\" y1=\"1\" x2=\"15\" y2=\"4\"/><line x1=\"9\" y1=\"20\" x2=\"9\" y2=\"23\"/><line x1=\"15\" y1=\"20\" x2=\"15\" y2=\"23\"/><line x1=\"20\" y1=\"9\" x2=\"23\" y2=\"9\"/><line x1=\"20\" y1=\"14\" x2=\"23\" y2=\"14\"/><line x1=\"1\" y1=\"9\" x2=\"4\" y2=\"9\"/><line x1=\"1\" y1=\"14\" x2=\"4\" y2=\"14\"/>", "send": "<line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/>", "arrow-up": "<line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"5\"/><polyline points=\"5 12 12 5 19 12\"/>", "upload": "<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"17 8 12 3 7 8\"/><line x1=\"12\" y1=\"3\" x2=\"12\" y2=\"15\"/>", "download": "<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"7 10 12 15 17 10\"/><line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/>", "circle": "<circle cx=\"12\" cy=\"12\" r=\"9\"/>", "dot": "<circle cx=\"12\" cy=\"12\" r=\"5\" fill=\"currentColor\" stroke=\"none\"/>", "edit": "<path d=\"M12 20h9\"/><path d=\"M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z\"/>", "scissors": "<circle cx=\"6\" cy=\"6\" r=\"3\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><line x1=\"20\" y1=\"4\" x2=\"8.12\" y2=\"15.88\"/><line x1=\"14.47\" y1=\"14.48\" x2=\"20\" y2=\"20\"/><line x1=\"8.12\" y1=\"8.12\" x2=\"12\" y2=\"12\"/>", "pin": "<path d=\"M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z\"/><circle cx=\"12\" cy=\"10\" r=\"3\"/>", "mail": "<path d=\"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z\"/><polyline points=\"22,6 12,13 2,6\"/>", "activity": "<polyline points=\"22 12 18 12 15 21 9 3 6 12 2 12\"/>", "sliders": "<line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"/><line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"/><line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"/><line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"/><line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"/><line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"/><line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\"/>", "power": "<path d=\"M18.36 6.64a9 9 0 1 1-12.73 0\"/><line x1=\"12\" y1=\"2\" x2=\"12\" y2=\"12\"/>", "bar-chart": "<line x1=\"12\" y1=\"20\" x2=\"12\" y2=\"10\"/><line x1=\"18\" y1=\"20\" x2=\"18\" y2=\"4\"/><line x1=\"6\" y1=\"20\" x2=\"6\" y2=\"16\"/>", "trending-up": "<polyline points=\"23 6 13.5 15.5 8.5 10.5 1 18\"/><polyline points=\"17 6 23 6 23 12\"/>", "trending-down": "<polyline points=\"23 18 13.5 8.5 8.5 13.5 1 6\"/><polyline points=\"17 18 23 18 23 12\"/>", "droplet": "<path d=\"M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z\"/>", "code": "<polyline points=\"16 18 22 12 16 6\"/><polyline points=\"8 6 2 12 8 18\"/>", "terminal": "<polyline points=\"4 17 10 11 4 5\"/><line x1=\"12\" y1=\"19\" x2=\"20\" y2=\"19\"/>", "refresh": "<polyline points=\"23 4 23 10 17 10\"/><polyline points=\"1 20 1 14 7 14\"/><path d=\"M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15\"/>", "repeat": "<polyline points=\"17 1 21 5 17 9\"/><path d=\"M3 11V9a4 4 0 0 1 4-4h14\"/><polyline points=\"7 23 3 19 7 15\"/><path d=\"M21 13v2a4 4 0 0 1-4 4H3\"/>", "film": "<rect x=\"2\" y=\"2\" width=\"20\" height=\"20\" rx=\"2.18\"/><line x1=\"7\" y1=\"2\" x2=\"7\" y2=\"22\"/><line x1=\"17\" y1=\"2\" x2=\"17\" y2=\"22\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/>", "music": "<path d=\"M9 18V5l12-2v13\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><circle cx=\"18\" cy=\"16\" r=\"3\"/>", "wifi": "<path d=\"M5 12.55a11 11 0 0 1 14.08 0\"/><path d=\"M1.42 9a16 16 0 0 1 21.16 0\"/><path d=\"M8.53 16.11a6 6 0 0 1 6.95 0\"/><line x1=\"12\" y1=\"20\" x2=\"12.01\" y2=\"20\"/>", "cart": "<circle cx=\"9\" cy=\"21\" r=\"1\"/><circle cx=\"20\" cy=\"21\" r=\"1\"/><path d=\"M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6\"/>", "eye": "<path d=\"M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>", "tag": "<path d=\"M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z\"/><line x1=\"7\" y1=\"7\" x2=\"7.01\" y2=\"7\"/>", "heart": "<path d=\"M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z\"/>", "server": "<rect x=\"2\" y=\"2\" width=\"20\" height=\"8\" rx=\"2\"/><rect x=\"2\" y=\"14\" width=\"20\" height=\"8\" rx=\"2\"/><line x1=\"6\" y1=\"6\" x2=\"6.01\" y2=\"6\"/><line x1=\"6\" y1=\"18\" x2=\"6.01\" y2=\"18\"/>", "layers": "<polygon points=\"12 2 2 7 12 12 22 7 12 2\"/><polyline points=\"2 17 12 22 22 17\"/><polyline points=\"2 12 12 17 22 12\"/>", "square": "<rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"3\"/>", "wind": "<path d=\"M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2\"/>", "bug": "<circle cx=\"12\" cy=\"12\" r=\"5\"/><path d=\"M12 2v5M12 17v5M2 12h5M17 12h5M4.9 4.9l3.5 3.5M15.6 15.6l3.5 3.5M4.9 19.1l3.5-3.5M15.6 8.4l3.5-3.5\"/>", "home": "<path d=\"M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><polyline points=\"9 22 9 12 15 12 15 22\"/>", "users": "<path d=\"M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/><path d=\"M23 21v-2a4 4 0 0 0-3-3.87\"/><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"/>", "compass": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><polygon points=\"16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76\"/>", "puzzle": "<path d=\"M19.4 11H18V7a2 2 0 0 0-2-2h-4V3.6a2.6 2.6 0 0 0-5.2 0V5H3v5h1.4a2.6 2.6 0 0 1 0 5.2H3V21h5.8v-1.4a2.6 2.6 0 0 1 5.2 0V21H18v-4h1.4a2.6 2.6 0 0 0 0-5.2z\"/>", "bot": "<rect x=\"3\" y=\"8\" width=\"18\" height=\"12\" rx=\"2\"/><path d=\"M12 8V4\"/><circle cx=\"12\" cy=\"3\" r=\"1\"/><line x1=\"9\" y1=\"14\" x2=\"9.01\" y2=\"14\"/><line x1=\"15\" y1=\"14\" x2=\"15.01\" y2=\"14\"/>", "flame": "<path d=\"M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z\"/>", "bulb": "<path d=\"M9 18h6\"/><path d=\"M10 22h4\"/><path d=\"M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z\"/>", "disc": "<circle cx=\"12\" cy=\"12\" r=\"10\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>", "bucket": "<path d=\"M4 7h16l-2 14H6z\"/><ellipse cx=\"12\" cy=\"7\" rx=\"8\" ry=\"2\"/>", "feather": "<path d=\"M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z\"/><line x1=\"16\" y1=\"8\" x2=\"2\" y2=\"22\"/><line x1=\"17.5\" y1=\"15\" x2=\"9\" y2=\"15\"/>", "hole": "<ellipse cx=\"12\" cy=\"14\" rx=\"9\" ry=\"4\"/><path d=\"M3 14V8\"/><path d=\"M21 14V8\"/>", "coffee": "<path d=\"M18 8h1a4 4 0 0 1 0 8h-1\"/><path d=\"M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z\"/><line x1=\"6\" y1=\"1\" x2=\"6\" y2=\"4\"/><line x1=\"10\" y1=\"1\" x2=\"10\" y2=\"4\"/><line x1=\"14\" y1=\"1\" x2=\"14\" y2=\"4\"/>"};
+// Alpine 3.15 applies a STRING :style with setAttribute('style'), which wipes
+// the element's own style="..." and the display:none that x-show sets (hidden
+// boxes reappear as empty bars). An OBJECT :style is merged property by
+// property instead, so every :style in the templates goes through vpCss().
+function vpCss(v){
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  const o = {};
+  String(v).split(';').forEach(d => {
+    const i = d.indexOf(':');
+    if (i > 0) { const k = d.slice(0, i).trim(), val = d.slice(i + 1).trim(); if (k && val) o[k] = val; }
+  });
+  return o;
+}
+// Phone layout for tables: every cell gets data-label = its column's header,
+// so CSS can show each row as a card of "label: value" lines (no sideways
+// scrolling, action buttons always visible). Runs whenever rows are added.
+function vpLabelTables(root) {
+  (root || document).querySelectorAll('table.data-table').forEach(t => {
+    const heads = [...t.querySelectorAll(':scope > thead th')].map(th => (th.textContent || '').trim());
+    if (!heads.length) return;
+    t.querySelectorAll(':scope > tbody > tr').forEach(tr => {
+      let i = 0;
+      for (const td of tr.children) {
+        if (td.tagName !== 'TD') continue;
+        const lab = heads[i] || '';
+        if (td.getAttribute('data-label') !== lab) td.setAttribute('data-label', lab);
+        i += parseInt(td.getAttribute('colspan') || '1', 10);
+      }
+    });
+  });
+}
+(function () {
+  let pending = false;
+  const run = () => { pending = false; try { vpLabelTables(document); } catch (e) {} };
+  const start = () => {
+    run();
+    new MutationObserver(() => { if (!pending) { pending = true; requestAnimationFrame(run); } })
+      .observe(document.body, {childList: true, subtree: true});
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
 function vpEsc(t){ return String(t==null?'':t).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function vpIcon(n){
   if(!n) return '';
@@ -567,9 +609,11 @@ function rootApp() {
         { id:'websites',     icon:'globe', label:'Websites',        color:'#16a34a', colorBg:'#dcfce7' },
         { id:'wp',           icon:'layers', label:'WP Toolkit',      color:'#2563eb', colorBg:'#dbeafe' },
         { id:'node-projects',icon:'code', label:'Node.js Projects',color:'#16a34a', colorBg:'#dcfce7' },
-        { id:'go-projects',  icon:'dot', label:'Go Projects',     color:'#0369a1', colorBg:'#e0f2fe' },
+        { id:'go-projects',  icon:'wind', label:'Go Projects',     color:'#0369a1', colorBg:'#e0f2fe' },
+        { id:'python-projects', icon:'terminal', label:'Python Projects', color:'#ca8a04', colorBg:'#fef9c3' },
         { id:'databases',    icon:'database', label:'Databases',       color:'#d97706', colorBg:'#fef3c7' },
         { id:'files',        icon:'folder', label:'File Manager',    color:'#db2777', colorBg:'#fce7f3' },
+        { id:'hosting-module', icon:'users', label:'Hosting Module', color:'#0891b2', colorBg:'#cffafe' },
       ]},
       { group: 'Server', items: [
         { id:'services',  icon:'settings', label:'Services',    color:'#7c3aed', colorBg:'#ede9fe' },
@@ -578,6 +622,7 @@ function rootApp() {
         { id:'firewall',  icon:'shield', label:'Firewall',    color:'#dc2626', colorBg:'#fee2e2' },
         { id:'terminal',  icon:'terminal', label:'Terminal',    color:'#374151', colorBg:'#f3f4f6' },
         { id:'backups',   icon:'hard-drive', label:'Backups',     color:'#059669', colorBg:'#d1fae5' },
+        { id:'migration', icon:'repeat', label:'Migration',   color:'#0f766e', colorBg:'#ccfbf1' },
       ]},
       { group: 'Network', items: [
         { id:'mail',  icon:'mail', label:'Mail Server', color:'#c2410c', colorBg:'#ffedd5' },
@@ -613,6 +658,9 @@ function rootApp() {
 
     async init() {
       window.addEventListener('nav', e => this.go(e.detail.page));
+      window.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K') && _vpAuthed) { e.preventDefault(); this.openSearch(); }
+      });
       if (window.vpLanguages) vpLanguages().then(l => { this.languages = l; });
       // Connection indicator: the server answers /api/health or it does not.
       const ping = async () => {
@@ -707,8 +755,8 @@ function rootApp() {
       const validPages = ['dashboard','websites','databases','files','modules',
                           'services','firewall','terminal','backups','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy',
-                          'cdn','logs','settings','node-projects','go-projects','wp','waf','disk',
-                          'users','alerts'];
+                          'cdn','logs','settings','node-projects','go-projects','python-projects','wp','waf','disk',
+                          'users','alerts','migration'];
       try { const me = await get('/api/auth/check'); if (me.ok && me.logged_in) { this.role = me.role || 'admin'; this.userSites = me.sites || []; } } catch {}
       const allowed = this._rolePages[this.role];
       if (hash && validPages.includes(hash) && (!allowed || allowed.includes(hash))) {
@@ -730,6 +778,7 @@ function rootApp() {
         const uv = await get('/api/update/version');
         if (uv.ok) this.panelVersion = uv.version;
       } catch {}
+      await this.loadPluginPages();
       // Silent update check after 3s
       setTimeout(() => this.silentUpdateCheck(), 3000);
       document.dispatchEvent(new CustomEvent('vortex-logged-in'));
@@ -741,6 +790,76 @@ function rootApp() {
       this.themeMode = mode;
       try { localStorage.setItem('vp-theme', mode); } catch (e) {}
       vpApplyTheme(mode);
+    },
+
+    // --- Global search (Ctrl+K) ---------------------------------------------------
+    search: {show: false, q: '', items: [], sel: 0, loaded: 0},
+    async openSearch() {
+      this.search.show = true; this.search.q = ''; this.search.sel = 0;
+      this.$nextTick(() => setTimeout(() => { const el = document.getElementById('vp-search-input'); if (el) { el.focus(); el.select(); } }, 60));
+      if (Date.now() - this.search.loaded < 60000) return;
+      const items = [];
+      for (const g of this.visibleNav()) for (const i of g.items) items.push({kind: 'Page', label: i.label, sub: g.group, icon: i.icon, go: () => this.go(i.id)});
+      const extra = [['Settings', 'Panel port, domain, login path, SSL', 'settings'], ['Security', 'SSH, Fail2ban, ModSecurity, malware scan', 'security'],
+                     ['Alerts', 'Email, Telegram, webhook alerts', 'alerts'], ['Users & API', 'Accounts, roles, API keys', 'users']];
+      for (const [label, sub, id] of extra) items.push({kind: 'Page', label: label + ' - ' + sub, sub: '', icon: 'search', go: () => this.go(id)});
+      this.search.items = items; this.search.loaded = Date.now();
+      const add = (list) => { this.search.items = this.search.items.concat(list); };
+      const admin = this.role === 'admin';
+      get('/api/websites').then(w => { if (w.ok) add((w.sites || []).map(x => ({kind: 'Website', label: x.domain, sub: x.path || '', icon: 'globe',
+        go: () => { this.go('websites'); setTimeout(() => window.dispatchEvent(new CustomEvent('vp:open-site', {detail: x.domain})), 300); }}))); }).catch(() => {});
+      if (!admin) return;
+      get('/api/modules').then(m => { if (m.ok) add((m.modules || []).filter(x => x.installed).map(x => ({kind: 'App', label: x.name, sub: 'App Store - installed', icon: 'package',
+        go: () => { this.go('modules'); setTimeout(() => window.dispatchEvent(new CustomEvent('vp:open-app', {detail: x.id})), 600); }}))); }).catch(() => {});
+      get('/api/python/projects').then(r => { if (r.ok) add((r.projects || []).map(x => ({kind: 'Python', label: x.name, sub: x.path, icon: 'terminal', go: () => this.go('python-projects')}))); }).catch(() => {});
+      get('/api/nodejs/projects').then(r => { if (r.ok) add((r.projects || []).map(x => ({kind: 'Node.js', label: x.name || x.id, sub: x.path || '', icon: 'code', go: () => this.go('node-projects')}))); }).catch(() => {});
+      get('/api/go/projects').then(r => { if (r.ok) add((r.projects || []).map(x => ({kind: 'Go', label: x.name || x.id, sub: x.exec_file || '', icon: 'wind', go: () => this.go('go-projects')}))); }).catch(() => {});
+
+    },
+    searchResults() {
+      const q = this.search.q.trim().toLowerCase();
+      const list = q ? this.search.items.filter(i => (i.label + ' ' + i.sub + ' ' + i.kind).toLowerCase().includes(q)) : this.search.items.filter(i => i.kind === 'Page');
+      return list.slice(0, 30);
+    },
+    searchKey(e) {
+      const n = this.searchResults().length;
+      if (e.key === 'ArrowDown') { this.search.sel = Math.min(n - 1, this.search.sel + 1); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { this.search.sel = Math.max(0, this.search.sel - 1); e.preventDefault(); }
+      else if (e.key === 'Enter') { const r = this.searchResults()[this.search.sel]; if (r) this.searchPick(r); }
+    },
+    searchPick(r) { this.search.show = false; r.go(); },
+
+    // --- Plugin pages ------------------------------------------------------------
+    // Each loaded plugin can add admin pages: its styles and scripts load
+    // first (they define the Alpine components), then the page HTML is placed
+    // in the page area and a nav entry is added to the group it names.
+    pluginPages: [],
+    async loadPluginPages() {
+      const r = await get('/api/plugins').catch(() => null);
+      if (!r || !r.ok) return;
+      const core = new Set(this.nav.flatMap(g => g.items.map(i => i.id)));
+      for (const p of r.plugins.filter(x => x.status === 'loaded')) {
+        for (const href of p.styles) {
+          if (document.querySelector('link[href="' + href + '"]')) continue;
+          const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l);
+        }
+        for (const src of p.scripts) {
+          if (document.querySelector('script[src="' + src + '"]')) continue;
+          await new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+        }
+        for (const pg of p.pages) {
+          if (core.has(pg.id) || this.pluginPages.some(x => x.id === pg.id)) continue;
+          let html = '';
+          try { const fr = await fetch('/api/plugins/' + encodeURIComponent(p.id) + '/fragment/' + encodeURIComponent(pg.id), {cache: 'no-cache'}); if (fr.ok) html = await fr.text(); } catch (e) {}
+          if (!html) continue;
+          this.pluginPages.push({id: pg.id, html, plugin: p.id});
+          let grp = this.nav.find(g => g.group === (pg.group || 'Plugins'));
+          if (!grp) { grp = {group: pg.group || 'Plugins', items: []}; this.nav.push(grp); }
+          grp.items.push({id: pg.id, icon: pg.icon || 'puzzle', label: pg.label || pg.id, color: '#0e7490', colorBg: '#cffafe', plugin: p.id});
+        }
+      }
+      const hash = window.location.hash.replace('#', '');
+      if (hash && this.pluginPages.some(x => x.id === hash)) this.go(hash);
     },
 
     // --- Panel navigation -------------------------------------------------------
@@ -990,17 +1109,39 @@ function dashboardPage() {
 function websitesPage() {
   return {
     sites:[], phpVersions:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
-    backupCounts:{}, requestCounts:{},
+    backupCounts:{}, requestCounts:{}, bpBadges:{},
     form:{domain:'',path:'',php:'8.3',type:'PHP',createDb:false,createFtp:false,path_edited:false},
     batchDomains:'', batchLog:[], batchRunning:false, deployApps:[], deployApp:'', deployDomain:'',
+    maintAll:{show:false, saving:false, enabled:false, allow:[], not_covered:[], your_ip:'', form:{enabled:false, message:'', allow:''}},
+    async loadMaintAll() {
+      const r = await get('/api/websites/maintenance-all').catch(() => null);
+      if (r && r.ok) Object.assign(this.maintAll, {enabled: r.enabled, allow: r.allow || [], not_covered: r.not_covered || [], your_ip: r.your_ip || '', message: r.message || ''});
+    },
+    async openMaintAll() {
+      await this.loadMaintAll();
+      const m = this.maintAll;
+      m.form = {enabled: true, message: m.message || 'We are performing scheduled maintenance. Please check back soon.', allow: m.allow.join('\n')};
+      if (!m.enabled && m.your_ip && !m.allow.length) m.form.allow = m.your_ip;
+      m.show = true;
+    },
+    async saveMaintAll() {
+      const m = this.maintAll; m.saving = true;
+      const r = await post('/api/websites/maintenance-all', {enabled: m.form.enabled, message: m.form.message,
+        allow: m.form.allow.split(/[\s,]+/).map(x => x.trim()).filter(Boolean)});
+      m.saving = false;
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      toast(r.enabled ? 'Maintenance mode is on for all sites' : 'Maintenance mode is off - sites are live', r.enabled ? 'warning' : 'success');
+      m.show = false; this.loadMaintAll();
+    },
     drawer:{
       show:false,site:null,tab:'config',
       confContent:'',confPath:'',
-      sslTab:'le',sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',sslSummary:null,
+      sslTab:'le',sslEmail:'',dnsProviders:[],dnsLocalZone:false,dnsProvider:'',dnsCreds:{},dnsWildcard:false,dnsBusy:false,dnsOutput:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',sslSummary:null,
       http3Enabled:false, http3Capable:false, http3NginxVersion:'',
       http3Webserver:'nginx', http3Support:'manual', http3Message:'',
       http3UdpOpen:false, http3UpgradeNeeded:false, http3Upgrading:false,
       phpVer:'8.3',
+      clone:{new_domain:'',database:'',copy_db:true,info:{},job:null,running:false},stats:{days:7,totals:{},top:{},series:[]},git:{url:'',branch:'main',post_cmd:'',auto_deploy:false,secret:'',configured:false,public_key:'',webhook_url:'',last:{},job:{}},
       proxies:[],showAddProxy:false,
       proxyForm:{name:'',path:'/',target:'',sent_domain:'$host'},
       redirectForm:{target:'',mode:'301',keep_uri:'true'},
@@ -1034,20 +1175,34 @@ function websitesPage() {
       {id:'limit',label:'Limit Access'},
       {id:'hotlink',label:'Hotlink'},
       {id:'extras',label:'Security & Limits'},
+      {id:'botprot',label:'Bot Protection'},
       {id:'nodejs',label:'App Runner'},
       {id:'maintenance',label:'Maintenance'},
       {id:'composer',label:'Composer'},
+      {id:'stats',label:'Statistics'},
+      {id:'git',label:'Git Deploy'},
+      {id:'clone',label:'Clone Site'},
       {id:'logs',label:'Response Log'},
       {id:'integrity',label:'Tamper-proof'},
     ],
     // Tabs that edit nginx configs only; hidden for sites served by Apache,
     // OpenLiteSpeed or Caddy (their Config tab edits the real vhost instead).
     // Default Doc is also supported for Apache sites (backend _set_index).
-    _nginxOnlyTabs:['rewrite','proxy','redirect','limit','hotlink','nodejs','maintenance','extras'],
+    _nginxOnlyTabs:['rewrite','proxy','redirect','limit','hotlink','nodejs','maintenance','extras','botprot'],
+    drawerTabIcon(id) {
+      return ({domains:'globe', directory:'folder', config:'file-code', ssl:'lock', php:'code', rewrite:'shuffle',
+               proxy:'server', redirect:'redirect', defaultdoc:'file-text', limit:'ban', hotlink:'link', extras:'shield',
+               nodejs:'play', maintenance:'tool', composer:'package', logs:'activity', integrity:'eye',
+               clone:'layers', git:'repeat', stats:'bar-chart', scan:'bug', botprot:'shield'})[id] || 'settings';
+    },
     siteDrawerTabs() {
       const ws = this.drawer?.site?.webserver || 'nginx';
-      if (ws === 'nginx') return this.drawerTabs;
-      return this.drawerTabs.filter(t => !this._nginxOnlyTabs.includes(t.id)
+      // tabs a site manager cannot use (the server refuses them: panel/users.py)
+      const base = _vpRole === 'site'
+        ? this.drawerTabs.filter(t => !['config', 'directory', 'git', 'clone', 'composer', 'nodejs', 'proxy'].includes(t.id))
+        : this.drawerTabs;
+      if (ws === 'nginx') return base;
+      return base.filter(t => !this._nginxOnlyTabs.includes(t.id)
         && !(t.id==='defaultdoc' && ws!=='apache')
         && !(ws==='openlitespeed' && t.id==='php'));
     },
@@ -1056,8 +1211,13 @@ function websitesPage() {
       if(wr.ok) this.webroot=wr.path;
       await this.refreshPhpVersions();
       await this.load();
+      this.loadMaintAll();
       if (!vpOnce(this, 'init')) return;
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="websites") { this.load(); this.refreshPhpVersions(); } });
+      window.addEventListener('vp:open-site', async (e) => {
+        if (!this.sites.length) await this.load();
+        const s = this.sites.find(x => x.domain === e.detail); if (s) this.openDrawer(s);
+      });
     },
     async refreshPhpVersions() {
       const pv=await get('/api/websites/php-versions').catch(()=>({ok:false}));
@@ -1077,6 +1237,7 @@ function websitesPage() {
       // blocks the site list itself from rendering.
       this.loadBackupCounts();
       this.loadRequestCounts();
+      this.loadBpBadges();
     },
     async loadBackupCounts() {
       const r=await get('/api/backups').catch(()=>({ok:false}));
@@ -1162,12 +1323,14 @@ function websitesPage() {
     },
     openDrawer(s) {
       this.drawer={...this.drawer,show:true,site:s,tab:'config',loading:false,
-        phpVer:s.php||'8.3',proxies:[],showAddProxy:false,
+        phpVer:(s.php&&s.php!=='none')?s.php:'static',clone:{new_domain:'',database:'',copy_db:true,info:{},job:null,running:false},stats:{days:7,totals:{},top:{},series:[]},git:{url:'',branch:'main',post_cmd:'',auto_deploy:false,secret:'',configured:false,public_key:'',webhook_url:'',last:{},job:{}},proxies:[],showAddProxy:false,
         proxyForm:{name:'',path:'/',target:'',sent_domain:'$host'},
         redirectForm:{target:'',mode:'301',keep_uri:'true'},
         nodejsEnabled:false,nodejsForm:{app_path:s.path||'',startup:'index.js',port:'3000',runtime:'node'},
         maintEnabled:false,maintMessage:'We are performing scheduled maintenance.',
         sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',sslSummary:null,
+        dnsProviders:[],dnsLocalZone:false,dnsProvider:'',dnsCreds:{},dnsWildcard:false,dnsBusy:false,dnsOutput:'',
+        bp:null, bpForm:null, bpBusy:false, bpMsg:'', bpErr:'', bpNeedRealip:false, bpRules:null,
         directory: {path:'', antixss:false, accesslog:false},
         hotlink: {enabled:false, suffixes:'jpg,jpeg,gif,png,js,css', domains:'', response:'404'},
         limitRules: [], limitForm: {name:'', path:'/admin', user:'', pass:''},
@@ -1180,6 +1343,19 @@ function websitesPage() {
     },
     async loadDrawerTab() {
       const d=this.drawer; const domain=d.site?.domain; if(!domain) return;
+      if(d.tab==='stats'){ await this.loadStats(); return; }
+      if(d.tab==='botprot'){ await this.loadBotprot(); return; }
+      if(d.tab==='git'){
+        const r=await get('/api/websites/'+domain+'/git');
+        if(r.ok){ d.git={...r, secret:''}; if(r.job?.running) this._gitPoll(); }
+        return;
+      }
+      if(d.tab==='clone'){
+        d.clone={new_domain:'', database:'', copy_db:true, info:{}, job:null, running:false};
+        const r=await get('/api/websites/'+domain+'/clone/info');
+        if(r.ok){ d.clone.info=r; d.clone.database=r.wp_database||''; }
+        return;
+      }
       if(d.tab==='config'){
         const r=await get('/api/websites/'+domain+'/config');
         if(r.ok){ d.confContent=r.content; d.confPath=r.path; d.confWebserver=r.webserver||'nginx'; d.confError=''; }
@@ -1189,10 +1365,11 @@ function websitesPage() {
         const r=await get('/api/websites/'+domain+'/ssl/info');
         if(r.ok){
           d.sslInfo=r.info;
-          d.sslSummary={brand:r.brand,expiresOn:r.expires_on,daysLeft:r.days_left};
+          d.sslSummary={brand:r.brand,expiresOn:r.expires_on,daysLeft:r.days_left,acme:r.acme||null};
         } else {
           d.sslInfo=''; d.sslSummary=null;
         }
+        this.loadDnsProviders(domain);
         const r2=await get('/api/websites/'+domain+'/http3');
         if(r2.ok){
           d.http3Enabled        = r2.enabled;
@@ -1289,6 +1466,136 @@ function websitesPage() {
       toast(r.ok?'SSL issued!':(r.error||'SSL issuance failed - see the output below'),r.ok?'success':'error');
       if(r.ok){ this.loadDrawerTab(); this.load(); }
     },
+    async loadDnsProviders(domain){
+      const r=await get('/api/ssl/acme/providers?domain='+encodeURIComponent(domain));
+      if(!r.ok) return;
+      const d=this.drawer;
+      d.dnsProviders=r.providers||[]; d.dnsLocalZone=!!r.local_zone;
+      if(!d.dnsProvider) d.dnsProvider = r.local_zone ? 'vortexpanel' : ((d.dnsProviders.find(p=>p.configured && p.id!=='vortexpanel')||{}).id || 'cloudflare');
+      this.dnsPickProvider();
+    },
+    dnsCurrent(){ return (this.drawer.dnsProviders||[]).find(p=>p.id===this.drawer.dnsProvider) || null; },
+    dnsPickProvider(){
+      const p=this.dnsCurrent(); const c={};
+      (p?.fields||[]).forEach(f=>{ c[f.var]=f.secret?'':(f.value||''); });
+      this.drawer.dnsCreds=c;
+    },
+    async pollAcmeJob(jobId, outKey){
+      const d=this.drawer;
+      for(let i=0;i<400;i++){
+        await new Promise(r=>setTimeout(r,2000));
+        const r=await get('/api/ssl/acme/job/'+jobId);
+        if(!r.ok) { d[outKey]=r.error||'Lost the job status'; return false; }
+        d[outKey]=(r.log||[]).join('\n');
+        if(r.done) return !!r.ok;
+      }
+      return false;
+    },
+    async issueDnsSSL(){
+      const d=this.drawer, domain=d.site?.domain; if(!domain) return;
+      const p=this.dnsCurrent(); if(!p){ toast('Choose a DNS provider','error'); return; }
+      for(const f of p.fields){ if(f.required && !f.saved && !(d.dnsCreds[f.var]||'').trim()){ toast(f.label+' is required','error'); return; } }
+      d.dnsBusy=true; d.dnsOutput='Starting…';
+      const r=await post('/api/websites/'+domain+'/ssl/dns',{provider:p.id,creds:d.dnsCreds,wildcard:d.dnsWildcard,email:d.sslEmail});
+      if(!r.ok){ d.dnsBusy=false; d.dnsOutput=r.error||'Failed'; toast(r.error||'Failed','error'); return; }
+      const ok=await this.pollAcmeJob(r.job_id,'dnsOutput');
+      d.dnsBusy=false;
+      toast(ok?'Certificate installed':'The certificate was not issued - see the output',ok?'success':'error');
+      if(ok){ this.loadDrawerTab(); this.load(); }
+    },
+    async renewSSL(){
+      const d=this.drawer;
+      if(!d.sslSummary?.acme) return this.issueLetsEncrypt();
+      d.loading=true; d.dnsOutput='Renewing…';
+      const r=await post('/api/websites/'+d.site?.domain+'/ssl/acme-renew',{});
+      if(!r.ok){ d.loading=false; d.dnsOutput=r.error||'Failed'; toast(r.error||'Failed','error'); return; }
+      const ok=await this.pollAcmeJob(r.job_id,'dnsOutput');
+      d.loading=false;
+      toast(ok?'Certificate renewed':'Renewal failed - see the output',ok?'success':'error');
+      if(ok) this.loadDrawerTab();
+    },
+    async forgetDnsCreds(){
+      const p=this.dnsCurrent(); if(!p||p.id==='vortexpanel') return;
+      if(!confirm('Remove the saved '+p.name+' credentials from this server?\n\nCertificates that renew through '+p.name+' will fail to renew until you enter them again.')) return;
+      const r=await del('/api/ssl/acme/providers/'+p.id);
+      toast(r.ok?'Removed':(r.error||'Failed'),r.ok?'success':'error');
+      if(r.ok) this.loadDnsProviders(this.drawer.site?.domain);
+    },
+    // --- Bot protection (Anubis) ---------------------------------------------------
+    async loadBotprot(){
+      const d=this.drawer, domain=d.site?.domain; if(!domain) return;
+      d.bpErr=''; d.bpMsg=''; d.bpNeedRealip=false;
+      if(d.bp?.domain!==domain){ d.bp=null; d.bpRules=null; }
+      const r=await get('/api/botprot/site/'+domain);
+      if(!r.ok){ d.bp={error:r.error||'Could not load'}; return; }
+      d.bp=r;
+      d.bpForm={...r.cfg, open_paths_text:(r.cfg.open_paths||[]).join('\n'), engines:[...(r.cfg.engines||[])]};
+    },
+    bpPayload(extra){
+      const f=this.drawer.bpForm;
+      return {level:f.level, block_ai_training:!!f.block_ai_training, block_ai_search:!!f.block_ai_search, social:!!f.social,
+        seo_tools:!!f.seo_tools, engines:f.engines, check_media:!!f.check_media, open_paths:f.open_paths_text,
+        pass_days:+f.pass_days||7, tie_ip:!!f.tie_ip, attribution:!!f.attribution, email:f.email||'', language:f.language||'', ...(extra||{})};
+    },
+    async saveBotprot(enabled, extra){
+      const d=this.drawer, domain=d.site?.domain; if(!domain||d.bpBusy) return;
+      d.bpBusy=true; d.bpErr=''; d.bpMsg=enabled===false?'Turning off…':'Saving, starting the service and running the search engine test…';
+      const body=this.bpPayload({enabled: enabled===undefined ? !!d.bp?.cfg?.enabled : enabled, ...(extra||{})});
+      const r=await post('/api/botprot/site/'+domain, body);
+      d.bpBusy=false; d.bpMsg='';
+      if(r.need_realip){ d.bpNeedRealip=true; return; }
+      if(!r.ok){ d.bpErr=r.error||'Failed'; toast(r.error||'Failed','error'); if(r.test) d.bp.test=r.test; return; }
+      toast(r.message||'Saved','success');
+      await this.loadBotprot(); this.loadBpBadges();
+    },
+    async bpSetupRealip(){
+      const d=this.drawer; d.bpBusy=true;
+      const r=await post('/api/botprot/realip',{});
+      d.bpBusy=false;
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      d.bpNeedRealip=false; toast('Real visitor address set up','success');
+      await this.saveBotprot(true, {realip_ok:true});
+    },
+    async bpPause(minutes){
+      const d=this.drawer, domain=d.site?.domain;
+      const r=await post('/api/botprot/site/'+domain+'/pause',{minutes});
+      toast(r.ok?(minutes?'Paused for '+minutes+' minutes':'Protection resumed'):(r.error||'Failed'), r.ok?'success':'error');
+      if(r.ok){ await this.loadBotprot(); this.loadBpBadges(); }
+    },
+    async bpTest(){
+      const d=this.drawer, domain=d.site?.domain; d.bpBusy=true;
+      const r=await post('/api/botprot/site/'+domain+'/test',{});
+      d.bpBusy=false;
+      if(r.ok){ d.bp.test=r.test; toast(r.test.ok?'Search engine test passed':'Search engine test failed', r.test.ok?'success':'error'); }
+      else toast(r.error||'Failed','error');
+    },
+    async bpLock(locked){
+      const d=this.drawer, domain=d.site?.domain;
+      const r=await post('/api/botprot/site/'+domain+'/lock',{locked});
+      if(r.ok){ d.bp.cfg.locked=locked; d.bpForm.locked=locked; toast(locked?'Locked for the customer':'Unlocked','success'); }
+      else toast(r.error||'Failed','error');
+    },
+    async bpOpenRules(){
+      const r=await get('/api/botprot/site/'+this.drawer.site?.domain+'/rules');
+      if(r.ok) this.drawer.bpRules={text:r.rules, custom:r.custom, busy:false, err:''};
+      else toast(r.error||'Failed','error');
+    },
+    async bpSaveRules(reset){
+      const d=this.drawer, rr=d.bpRules; rr.busy=true; rr.err='';
+      const r=await post('/api/botprot/site/'+d.site?.domain+'/rules', reset?{reset:true}:{rules:rr.text});
+      rr.busy=false;
+      if(!r.ok){ rr.err=r.error||'Failed'; return; }
+      toast(reset?'Back to the generated rules':'Rules saved','success'); d.bpRules=null; this.loadBotprot();
+    },
+    bpAddPath(p){ const f=this.drawer.bpForm; const lines=(f.open_paths_text||'').split('\n').map(x=>x.trim()).filter(Boolean); if(!lines.includes(p)) lines.push(p); f.open_paths_text=lines.join('\n'); },
+    bpToggleEngine(k){ const f=this.drawer.bpForm; f.engines = f.engines.includes(k) ? f.engines.filter(x=>x!==k) : [...f.engines, k]; },
+    bpIsAdmin(){ return _vpRole==='admin'; },
+    bpRo(){ return _vpRole==='viewer' || (!this.bpIsAdmin() && !!this.drawer.bp?.cfg?.locked); },
+    async loadBpBadges(){
+      const r=await get('/api/botprot/badges').catch(()=>null);
+      this.bpBadges = (r && r.ok && r.installed) ? (r.sites||{}) : {};
+    },
+    bpFmtTime(t){ return t ? new Date(t*1000).toLocaleString() : ''; },
     async disableSSL(){
       const domain=this.drawer.site?.domain; if(!domain) return;
       if(!confirm('Disable SSL for '+domain+'?\n\nThe site will be served over plain HTTP only. The certificate files stay on the server, so you can turn SSL back on later.')) return;
@@ -1339,7 +1646,90 @@ function websitesPage() {
       toast(r.ok?'Saved':(r.error||'Failed'), r.ok?'success':'error', r.ok?undefined:8000);
       if(r.ok) await this.loadDrawerTab();
     },
-    async savePhpVer(){const r=await put('/api/websites/'+this.drawer.site?.domain+'/php',{version:this.drawer.phpVer});toast(r.ok?'PHP applied':(r.error||'Failed'),r.ok?'success':'error');if(r.ok)await this.load();},
+    async loadStats(refresh){
+      const d=this.drawer, domain=d.site?.domain; if(!domain) return;
+      const r=await get('/api/websites/'+domain+'/stats?days='+(d.stats.days||7)+(refresh?'&refresh=1':''));
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      d.stats={...d.stats, ...r, days:d.stats.days||7};
+      this.$nextTick(()=>{
+        const el=document.getElementById('vp-site-stats-chart'); if(!el || !window.Chart) return;
+        const css=getComputedStyle(document.documentElement);
+        const text=css.getPropertyValue('--text-muted').trim()||'#94a3b8', grid=css.getPropertyValue('--border').trim()||'#e2e8f0';
+        const labels=r.series.map(x=>x.day.slice(5)), pv=r.series.map(x=>x.pv), uv=r.series.map(x=>x.uv);
+        if(_vpHistCharts.siteStats) _vpHistCharts.siteStats.destroy();
+        _vpHistCharts.siteStats=new Chart(el,{type:'bar',data:{labels,datasets:[
+          {label:'Page views',data:pv,backgroundColor:'#0891b2',borderRadius:3,maxBarThickness:22},
+          {label:'Unique visitors',data:uv,backgroundColor:'#f59e0b',borderRadius:3,maxBarThickness:22}]},
+          options:{responsive:true,maintainAspectRatio:false,animation:false,
+            scales:{x:{grid:{display:false},ticks:{color:text,font:{size:10}}},y:{beginAtZero:true,grid:{color:grid},ticks:{color:text,font:{size:10},precision:0}}},
+            plugins:{legend:{labels:{color:text,boxWidth:10,font:{size:11}}}}}});
+      });
+    },
+    _gitPoll(){
+      const domain=this.drawer.site?.domain;
+      const tick=async()=>{
+        if(!this.drawer.show || this.drawer.tab!=='git' || this.drawer.site?.domain!==domain) return;
+        const r=await get('/api/websites/'+domain+'/git');
+        if(r.ok){ const sec=this.drawer.git.secret; this.drawer.git={...r, secret:sec}; }
+        if(r.job?.running) setTimeout(tick,2000);
+        else if(r.job?.done) toast(r.job.success?'Deployed '+(r.last?.commit||''):('Deploy failed: '+(r.job.error||'')), r.job.success?'success':'error');
+      };
+      setTimeout(tick,1500);
+    },
+    async gitSave(){
+      const g=this.drawer.git, domain=this.drawer.site?.domain;
+      const body={url:g.url, branch:g.branch, post_cmd:g.post_cmd, auto_deploy:g.auto_deploy};
+      if(g.secret) body.secret=g.secret;
+      const r=await put('/api/websites/'+domain+'/git', body);
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      this.drawer.git={...r, secret:''}; toast('Saved','success');
+    },
+    async gitDeploy(){
+      const r=await post('/api/websites/'+this.drawer.site?.domain+'/git/deploy',{});
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      this.drawer.git.job={running:true}; this._gitPoll();
+    },
+    async gitKey(){
+      if(this.drawer.git.public_key && !confirm('Replace the deploy key? Add the new key to the repository afterwards.')) return;
+      const r=await post('/api/websites/'+this.drawer.site?.domain+'/git/key',{});
+      if(r.ok){ this.drawer.git={...this.drawer.git, public_key:r.public_key, webhook_url:r.webhook_url}; toast('Deploy key created','success'); }
+      else toast(r.error||'Failed','error');
+    },
+    async gitNewToken(){
+      if(!confirm('Create a new webhook address? The old one stops working.')) return;
+      const r=await post('/api/websites/'+this.drawer.site?.domain+'/git/token',{});
+      if(r.ok) this.drawer.git.webhook_url=r.webhook_url; else toast(r.error||'Failed','error');
+    },
+    async gitRemove(){
+      if(!confirm('Stop deploying this site from Git? The website files are not changed.')) return;
+      const r=await del('/api/websites/'+this.drawer.site?.domain+'/git');
+      if(r.ok){ await this.loadDrawerTab(); toast('Git deploy removed','success'); }
+    },
+    async startClone(){
+      const d=this.drawer, c=d.clone, domain=d.site?.domain;
+      if(!c.new_domain.trim()){ toast('Enter the new domain','error'); return; }
+      c.running=true; c.job={running:true, step:'Starting'};
+      const r=await post('/api/websites/'+domain+'/clone',{new_domain:c.new_domain.trim(), database:c.copy_db?c.database:'', copy_db:c.copy_db});
+      if(!r.ok){ c.running=false; c.job=null; toast(r.error||'Failed','error'); return; }
+      const nd=c.new_domain.trim().toLowerCase();
+      const tick=async()=>{
+        const j=await get('/api/websites/clone-job/'+encodeURIComponent(nd));
+        if(j.ok) c.job=j;
+        if(j.running){ setTimeout(tick,2000); return; }
+        c.running=false;
+        toast(j.success?(domain+' cloned to '+nd):('Clone failed: '+(j.error||'')), j.success?'success':'error');
+        if(j.success) this.load();
+      };
+      setTimeout(tick,1500);
+    },
+    async savePhpVer(){
+      const ver=this.drawer.phpVer; if(!ver) return;
+      this.drawer.phpSaving=true;
+      const r=await put('/api/websites/'+this.drawer.site?.domain+'/php',{version:ver});
+      this.drawer.phpSaving=false;
+      toast(r.ok?(ver==='static'?'Site now serves static files only':'PHP '+ver+' applied'):(r.error||'Failed'),r.ok?'success':'error');
+      if(r.ok){ if(this.drawer.site) this.drawer.site.php=ver; await this.load(); }
+    },
     async addProxy(){
       const f={...this.drawer.proxyForm};
       // The proxy name is the marker the delete button uses; an empty name
@@ -1839,11 +2229,24 @@ function databasesPage() {
       else toast(r.error||'Failed','error');
     },
     async drop(db){
-      if(!confirm('Drop database "'+db+'"? This cannot be undone.')) return;
-      const r=await del('/api/databases/'+encodeURIComponent(db)+'?engine='+this.activeEngine);
-      if(r.ok){toast('Dropped','success');await this.load();}
+      const rec = this.activeEngine!=='mongodb';
+      if(!confirm('Drop database "'+db+'"?'+(rec?'\n\nA copy is kept in the recycle bin for 7 days.':'\n\nThis cannot be undone.'))) return;
+      let r=await del('/api/databases/'+encodeURIComponent(db)+'?engine='+this.activeEngine);
+      if(!r.ok && r.recycle_failed && confirm(r.error)) r=await del('/api/databases/'+encodeURIComponent(db)+'?engine='+this.activeEngine+'&force=1');
+      if(r.ok){toast(rec?'Dropped - a copy is in the recycle bin':'Dropped','success');await this.load();}
       else toast(r.error||'Drop failed','error');
     },
+    recycle:{show:false, items:[], days:7},
+    async openRecycle(){ const r=await get('/api/databases/recycle'); if(r.ok){ this.recycle={show:true, items:r.items, days:r.days}; } },
+    async restoreRecycled(it){
+      let name=it.name;
+      let r=await post('/api/databases/recycle/'+encodeURIComponent(it.id)+'/restore',{});
+      if(!r.ok && /exists/.test(r.error||'')){ name=prompt('A database named '+it.name+' exists. Restore under another name:', it.name+'_restored'); if(!name) return;
+        r=await post('/api/databases/recycle/'+encodeURIComponent(it.id)+'/restore',{name}); }
+      toast(r.ok?('Restored as '+r.name):(r.error||'Failed'), r.ok?'success':'error');
+      if(r.ok){ await this.openRecycle(); await this.load(); }
+    },
+    async deleteRecycled(it){ if(!confirm('Delete the saved copy of '+it.name+' for good?')) return; const r=await del('/api/databases/recycle/'+encodeURIComponent(it.id)); if(r.ok) this.openRecycle(); },
     exportDb(name){ window.open('/api/databases/'+name+'/export?engine='+this.activeEngine,'_blank'); },
     toolboxTitle() {
       return this.isMongo ? 'MongoDB Toolbox' : (this.isPg ? 'PostgreSQL Toolbox' : 'MySQL Toolbox');
@@ -3062,7 +3465,12 @@ function modulesPage() {
     f2bWebsiteJails: [], f2bServerJails: [], f2bServerPresets: [], websitesForF2b: [],
     f2bWebsiteForm: {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:30, findtime:300, bantime:600},
     f2bServerForm:  {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600},
-    async init() { await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
+    async init() {
+      window.addEventListener('vp:open-app', async (e) => {
+        if (!this.modules.length) await this.load();
+        const m = this.modules.find(x => x.id === e.detail);
+        if (m && m.installed) this.openSettings(m);
+      }); await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
 
     catalogRefreshing: false,
     async refreshCatalog() {
@@ -3346,7 +3754,7 @@ function modulesPage() {
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal
-      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status'}.hasOwnProperty(m.id) ? {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status'}[m.id] : 'service';
+      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status','anubis':'bp_overview'}[m.id] || 'service';
       this.settingsModal = {
         ...this.settingsModal,
         show: true, mod: m, tab: defaultTab, rcData: {},
@@ -3369,8 +3777,9 @@ function modulesPage() {
         this.settingsModal.currentPhp     = r.current_php  || '';
         this.settingsModal.pmaUrl         = r.url          || '';
         this.settingsModal.dockerInfo     = r.info         || '';
-        this.settingsModal.versions       = r.versions       || [];
-        this.settingsModal.switchVer      = r.versions?.[0]?.value || '';
+        { const vs = (r.versions && r.versions.length) ? r.versions : (this.settingsModal.mod?.versions || []);
+          this.settingsModal.versions  = vs;
+          this.settingsModal.switchVer = ((vs.find(v => v.recommended) || vs[0] || {}).value) || ''; }
         this.settingsModal.currentStatus  = r.current_status || {};
         this.settingsModal.slowLog        = r.slow_log       || '';
         this.settingsModal.persistence    = r.persistence    || {};
@@ -3413,6 +3822,7 @@ function modulesPage() {
       } else {
         toast(r.error || 'Failed to load settings', 'error');
       }
+      if (m.id === 'anubis') await this.bpAppLoad();
       if (m.id === 'ffmpeg') {
         this.settingsModal.ffmpegVersions = [];
         Alpine.store('vp').ffmpegDetail = {show:false, version:'', path:'', full_command:'', command:''};
@@ -3687,6 +4097,52 @@ function modulesPage() {
       });
     },
 
+    // --- Anubis app window ------------------------------------------------------------
+    bpApp:{st:null, log:[], busy:false, defaults:null, cust:true, mem:64, alertW:true, alertS:true, listsMsg:'', pick:''},
+    async bpAppLoad(){
+      const a=this.bpApp;
+      const r=await get('/api/botprot/status');
+      if(!r.ok){ toast(r.error||'Could not load bot protection','error'); return; }
+      a.st=r; a.defaults={...r.settings.defaults}; a.cust=!!r.settings.customers_allowed; a.mem=r.settings.memory_mb;
+      a.alertW=!!r.settings.alert_watchdog; a.alertS=!!r.settings.alert_selftest;
+      const l=await get('/api/botprot/log'); a.log=l.ok?l.log:[];
+    },
+    bpOn(){ return (this.bpApp.st?.sites||[]).filter(x=>x.enabled); },
+    bpSum(k){ return this.bpOn().reduce((n,x)=>n+((x.stats||{})[k]||0),0); },
+    bpMemMB(){ return Math.round(this.bpOn().reduce((n,x)=>n+(x.memory||0),0)/1048576); },
+    bpCandidates(){ return (this.bpApp.st?.sites||[]).filter(x=>!x.enabled && (x.webserver||'nginx')==='nginx'); },
+    bpOpenSite(d){
+      this.settingsModal.show=false;
+      Alpine.$data(document.querySelector('[x-data="rootApp()"]')).go('websites');
+      setTimeout(()=>{
+        const w=Alpine.$data(document.querySelector('[x-data="websitesPage()"]'));
+        const s=(w.sites||[]).find(x=>x.domain===d); if(!s) return;
+        w.openDrawer(s); w.drawer.tab='botprot'; w.loadDrawerTab();
+      },500);
+    },
+    async bpAppToggle(x){
+      const a=this.bpApp; if(a.busy) return; a.busy=true;
+      const r=await post('/api/botprot/site/'+x.domain,{enabled:!x.enabled});
+      a.busy=false;
+      if(r.need_realip){ toast('This website is behind Cloudflare: open it to set up the real visitor address first','warning'); this.bpOpenSite(x.domain); return; }
+      toast(r.ok?(r.message||'Done'):(r.error||'Failed'), r.ok?'success':'error');
+      this.bpAppLoad();
+    },
+    async bpAppSave(){
+      const a=this.bpApp; a.busy=true;
+      const r=await post('/api/botprot/settings',{customers_allowed:a.cust, memory_mb:+a.mem, alert_watchdog:a.alertW, alert_selftest:a.alertS, defaults:a.defaults});
+      a.busy=false;
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      toast('Saved'+((r.turned_off||[]).length?': protection turned off on '+r.turned_off.join(', '):''),'success');
+      this.bpAppLoad();
+    },
+    async bpAppRefreshLists(){
+      const a=this.bpApp; a.busy=true; a.listsMsg='Downloading the address lists...';
+      const r=await post('/api/botprot/lists/refresh',{});
+      a.busy=false; a.listsMsg=r.ok?((r.messages||[]).join(' ')||'Lists checked.'):(r.error||'Failed');
+      this.bpAppLoad();
+    },
+    bpListAge(t){ if(!t) return 'Bundled with the panel'; const h=Math.round((Date.now()/1000-t)/3600); return h<1?'Updated less than an hour ago':(h<48?'Updated '+h+' hours ago':'Updated '+Math.round(h/24)+' days ago'); },
     settingsTabs(modId) {
       const tabs = {
         nginx:      ['service','config','optimization','switch_version','logs'],
@@ -3712,6 +4168,7 @@ function modulesPage() {
         roundcube:  ['rc_overview','rc_config','rc_php','rc_logs'],
         docker:     ['service','info'],
         modsecurity:['modsec_status'],
+        anubis:     ['bp_overview','bp_sites','bp_lists','bp_defaults','bp_log'],
       };
       const labels = {
         service:'Service', config:'Config File', optimization:'Optimization',
@@ -3731,6 +4188,7 @@ function modulesPage() {
         website_protection:'Website Protection',
         server_protection:'Server Protection', black_ip:'Black IP', white_ip:'White IP',
         modsec_status:'Status',
+        bp_overview:'Overview', bp_sites:'Protected websites', bp_lists:'Search engine lists', bp_defaults:'Defaults', bp_log:'Activity log',
       };
       const icons = {
         service:'tool', config:'file-text', optimization:'zap', logs:'clipboard',
@@ -3744,7 +4202,7 @@ function modulesPage() {
         upload_limit:'upload', timeout_limit:'clock', disabled_functions:'ban',
         load_average:'trending-up', session_config:'key', users:'users', rc_overview:'globe', rc_config:'mail', rc_php:'database', rc_logs:'clipboard',
         website_protection:'shield', server_protection:'shield',
-        black_ip:'ban', white_ip:'check', modsec_status:'',
+        black_ip:'ban', white_ip:'check', modsec_status:'', bp_overview:'shield', bp_sites:'globe', bp_lists:'search', bp_defaults:'sliders', bp_log:'clipboard',
       };
       return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'settings'}));
     },
@@ -4440,6 +4898,17 @@ function ftpPage() {
 // --- SETTINGS -------------------------------------------------------------------
 function settingsPage() {
   return {
+    pluginInfo: {plugins: [], safe_mode: false, dir: ''},
+    async loadPlugins() {
+      const r = await get('/api/plugins').catch(() => null);
+      if (r && r.ok) this.pluginInfo = r;
+    },
+    async togglePlugin(pl, on) {
+      if (!on && !confirm('Disable ' + pl.name + '? Its pages disappear after the panel restarts; its data is kept.')) return;
+      const r = await post('/api/plugins/' + encodeURIComponent(pl.id) + '/' + (on ? 'enable' : 'disable'), {});
+      toast(r.ok ? r.message : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+      if (r.ok) { pl.status = on ? 'loaded' : 'disabled'; }
+    },
     panelVersion: 'v3.2.0',
     cfg: {panel_name:'VortexPanel', port:8888, ssl_enabled:false, auto_update:true, timezone:'UTC', panel_domain:'', security_path:''},
     system: {hostname:'', os:'', kernel:'', cpu:'', ip:'', uptime:'', timezone:'UTC', server_time:''},
@@ -4666,7 +5135,7 @@ function settingsPage() {
     },
 
     async issueLetsEncrypt() {
-      if (!this.sslDomain) { toast('Domain required for Let\'s Encrypt','error'); return; }
+      if (!this.sslDomain) { toast('Enter a domain or IP address for Let\'s Encrypt','error'); return; }
       this.ssl.loading=true; this.ssl.type_loading='le'; this.ssl.ok=true; this.ssl.msg='Issuing certificate and applying changes…';
       const r = await post('/api/settings/ssl/letsencrypt', {domain:this.sslDomain});
       if (!r.ok) { this.ssl.loading=false; this.ssl.ok=false; this.ssl.msg=r.error||'Failed'; toast('Failed: '+(r.error||''), 'error'); return; }
@@ -5074,6 +5543,54 @@ function bandwidthPage() {
 // --- SECURITY -------------------------------------------------------------------
 function securityPage() {
   return {
+    mw: {path: '', paths: [], clamav: {installed: false, daemon: false}, clamavOn: true, job: {}, schedule: {enabled: false, hour: 3, clamav: true}, quarantine: []},
+    async loadScan() {
+      const [r, p] = await Promise.all([get('/api/security/malware'), get('/api/settings/webshell-scan/paths')]);
+      if (p.ok) { this.mw.paths = p.paths; if (!this.mw.path && p.paths.length) this.mw.path = p.paths[0].path; }
+      if (r.ok) { this.mw.job = r.job || {}; this.mw.clamav = r.clamav; this.mw.schedule = r.schedule; this.mw.quarantine = r.quarantine || []; }
+      if (this.mw.job.running) setTimeout(() => { if (this.tab === 'scan') this.loadScan(); }, 2500);
+    },
+    async startScan() {
+      const r = await post('/api/security/malware/scan', {path: this.mw.path, clamav: this.mw.clamavOn});
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      this.mw.job = {running: true, scanned: 0}; setTimeout(() => this.loadScan(), 1500);
+    },
+    async mwQuarantine(f) {
+      if (!confirm('Move ' + f.file + ' to quarantine? The site stops using it; you can restore it later.')) return;
+      const r = await post('/api/security/malware/quarantine', {file: f.file});
+      if (r.ok) { this.mw.job.findings = this.mw.job.findings.filter(x => x.file !== f.file); toast('Quarantined', 'success'); this.loadScan(); }
+      else toast(r.error || 'Failed', 'error');
+    },
+    async mwIgnore(f) {
+      const r = await post('/api/security/malware/ignore', {file: f.file});
+      if (r.ok) { this.mw.job.findings = this.mw.job.findings.filter(x => x.file !== f.file); toast('Marked as not a threat (until the file changes)', 'success'); }
+      else toast(r.error || 'Failed', 'error');
+    },
+    async mwRestore(q) {
+      const r = await post('/api/security/malware/restore', {id: q.id});
+      toast(r.ok ? 'Restored to ' + r.path : (r.error || 'Failed'), r.ok ? 'success' : 'error'); this.loadScan();
+    },
+    async mwDelete(q) {
+      if (!confirm('Delete ' + q.path + ' for good?')) return;
+      const r = await post('/api/security/malware/delete', {id: q.id}); if (r.ok) this.loadScan();
+    },
+    async mwSaveSchedule() {
+      const r = await post('/api/security/malware/schedule', this.mw.schedule);
+      toast(r.ok ? 'Daily scan saved' : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+    },
+    sshLog: {days: 7, accepted: [], top_failed_ips: [], failed_total: 0, fail2ban: false, loading: false},
+    async loadSshLogins() {
+      this.sshLog.loading = true;
+      const r = await get('/api/security/ssh-logins?days=' + (this.sshLog.days || 7));
+      this.sshLog.loading = false;
+      if (r.ok) Object.assign(this.sshLog, {accepted: r.accepted, top_failed_ips: r.top_failed_ips, failed_total: r.failed_total, fail2ban: r.fail2ban});
+      else toast(r.error || 'Could not read the SSH log', 'error');
+    },
+    async blockSshIp(ip) {
+      if (!confirm('Block ' + ip + ' from this server?')) return;
+      const r = await post('/api/security/ssh-logins/block', {ip});
+      toast(r.ok ? (ip + ' blocked (' + r.via + ')' + (r.note ? ' - ' + r.note : '')) : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+    },
     tab: 'ssh', score: 0, checks: [],
     ssh: {port:'22', password_auth:'yes', root_login:'yes', pubkey_auth:'yes', max_auth_tries:'6', keys_exist:false, sudo_users:[], active_port:'22', saving:false},
     sshPubkey: '',
@@ -7532,6 +8049,113 @@ function onboardingWizard() {
 
 
 // --- Disk usage analyzer (v3.6.0) -------------------------------------------------
+function migrationPage() {
+  return {
+    recv: {enabled:false, url:'', token:'', expires:0, migrated:{sites:{}, databases:{}}, busy:false},
+    token: '', connecting: false, target: null, connectError: '',
+    sites: [], dbs: [], pickSites: {}, pickDbs: {}, loadingLocal: false,
+    opts: {ssl:true, vhost:true, cron:true, resync:false, limit_mb:0},
+    job: null, jobId: '', running: false, migratedRows: [],
+
+    async init() {
+      if (!vpOnce(this, 'init')) return;
+      document.addEventListener('vortex-logged-in', () => this.refresh());
+      window.addEventListener('vp:page', (e) => { if (e.detail === 'migration') this.refresh(); });
+      this.refresh();
+    },
+    async refresh() {
+      const r = await get('/api/migration/receive');
+      if (r.ok) {
+        Object.assign(this.recv, {enabled:r.enabled, url:r.url||r.suggested_url||this.recv.url, token:r.token||'',
+                                  expires:r.expires||0, migrated:r.migrated||{sites:{},databases:{}}});
+        this.migratedRows = this.migratedList('sites').map(x=>({...x, kind:'Website'}))
+          .concat(this.migratedList('databases').map(x=>({...x, kind:'Database'})));
+      }
+      if (!this.jobId) {
+        const l = await get('/api/migration/last');
+        if (l.ok && l.job_id) { this.jobId = l.job_id; this.poll(); }
+      }
+    },
+    async setReceive(on) {
+      if (!on && !confirm('Turn off receiving? The key stops working at once.')) return;
+      this.recv.busy = true;
+      const r = await post('/api/migration/receive', {enable:on, url:this.recv.url});
+      this.recv.busy = false;
+      if (!r.ok) { toast(r.error||'Failed','error'); return; }
+      toast(on ? 'Receiving is on - copy the key to the old server' : 'Receiving is off', 'success');
+      this.refresh();
+    },
+    expiresText() { return this.recv.expires ? new Date(this.recv.expires*1000).toLocaleString() : ''; },
+    migratedList(kind) { return Object.entries((this.recv.migrated||{})[kind]||{}).map(([n,v]) => ({id:kind+':'+n, name:n.replace(/^(mysql|postgresql):/,''), from:v.from, time:v.time})); },
+
+    async connect() {
+      this.connecting = true; this.connectError = ''; this.target = null;
+      const r = await post('/api/migration/connect', {token:this.token.trim()});
+      this.connecting = false;
+      if (!r.ok) { this.connectError = r.error||'Could not connect'; return; }
+      this.target = r.target;
+      this.loadingLocal = true;
+      const l = await get('/api/migration/local');
+      this.loadingLocal = false;
+      if (l.ok) { this.sites = l.sites; this.dbs = l.databases; }
+    },
+    siteState(s) {
+      if (!this.target) return '';
+      const copied = (this.target.migrated?.sites||{})[s.domain];
+      if (copied) return 'copied';
+      if ((this.target.sites||[]).includes(s.domain)) return 'exists';
+      return '';
+    },
+    dbState(d) {
+      if (!this.target) return '';
+      if ((this.target.migrated?.databases||{})[d.engine+':'+d.name]) return 'copied';
+      if (((this.target.databases||{})[d.engine]||[]).includes(d.name)) return 'exists';
+      const eng = this.target.engines||[];
+      if (d.engine==='mysql' && !eng.includes('mysql') && !eng.includes('mariadb')) return 'noengine';
+      if (d.engine==='postgresql' && !eng.includes('postgresql')) return 'noengine';
+      return '';
+    },
+    phpMissing(s) { return this.target && s.php && s.php!=='static' && !(this.target.php||[]).includes(s.php); },
+    toggleSite(s) {
+      const on = !this.pickSites[s.domain];
+      this.pickSites = {...this.pickSites, [s.domain]: on};
+      if (on) (s.dbs||[]).forEach(n => { if (this.dbs.find(d=>d.engine==='mysql'&&d.name===n)) this.pickDbs = {...this.pickDbs, ['mysql:'+n]: true}; });
+    },
+    selectedSites() { return this.sites.filter(s => this.pickSites[s.domain]); },
+    selectedDbs() { return this.dbs.filter(d => this.pickDbs[d.engine+':'+d.name]); },
+    totalSize() { return this.selectedSites().reduce((a,s)=>a+(s.size||0),0); },
+    async start() {
+      const sites = this.selectedSites().map(s=>s.domain);
+      const databases = this.selectedDbs().map(d=>({engine:d.engine, name:d.name}));
+      if (!sites.length && !databases.length) { toast('Choose at least one website or database','error'); return; }
+      const r = await post('/api/migration/start', {token:this.token.trim(), sites, databases, ssl:this.opts.ssl, vhost:this.opts.vhost,
+        cron:this.opts.cron, resync:this.opts.resync, limit_kbps: Math.round((+this.opts.limit_mb||0)*1024)});
+      if (!r.ok) { toast(r.error||'Failed','error'); return; }
+      this.jobId = r.job_id; this.job = null; this.poll();
+    },
+    async poll() {
+      if (this.running) return;
+      this.running = true;
+      while (this.jobId) {
+        const r = await get('/api/migration/job/'+this.jobId);
+        if (!r.ok) { this.running = false; return; }
+        this.job = r;
+        this.$nextTick(() => { const el = this.$refs.miglog; if (el) el.scrollTop = el.scrollHeight; });
+        if (r.done) break;
+        await new Promise(res => setTimeout(res, 2000));
+      }
+      this.running = false;
+      if (this.job?.done && this.target) this.connect();
+    },
+    async cancel() {
+      if (!confirm('Stop the transfer? What is already complete on the new server stays there.')) return;
+      await del('/api/migration/job/'+this.jobId);
+    },
+    statusClass(st) { return ({done:'badge-green', failed:'badge-red', skipped:'badge-gray', cancelled:'badge-gray', sending:'badge-blue', installing:'badge-blue'})[st] || 'badge-gray'; },
+    statusText(st) { return ({waiting:'Waiting', sending:'Sending', installing:'Setting up', done:'Done', failed:'Failed', skipped:'Skipped', cancelled:'Cancelled'})[st] || st; },
+  };
+}
+
 function diskPage() {
   return {
     mounts: [], root: '/', path: '/', tree: null, scanning: false, scanState: null, largest: [],
@@ -7686,7 +8310,7 @@ function usersPage() {
 // --- Alerts (v3.7.0) ---------------------------------------------------------------
 function alertsPage() {
   return {
-    cfg: {enabled:false, channels:{email:{}, telegram:{}, webhook:{}}, rules:{cpu:{},mem:{},disk:{},services:{},sites:{},ssl:{},backups:{},logins:{}}, repeat_minutes:180},
+    cfg: {enabled:false, channels:{email:{}, telegram:{}, webhook:{}}, rules:{cpu:{},mem:{},disk:{},services:{},sites:{},ssl:{},backups:{},logins:{},ssh:{},deploy:{},malware:{}}, repeat_minutes:180},
     history: [], busy: false, isAdmin: true,
     init() {
       if (!vpOnce(this, 'init')) return;
@@ -7718,6 +8342,253 @@ function alertsPage() {
       const e = Object.entries(res);
       if (!e.length) return 'No channel enabled';
       return e.map(([k, v]) => k + ': ' + (v ? 'failed (' + v + ')' : 'sent')).join(', ');
+    },
+  };
+}
+
+
+// --- Python Projects ----------------------------------------------------------
+function pythonProjectsPage() {
+  const blank = () => ({show:false, id:'', name:'', python:'', path:'', git_url:'', git_branch:'', mode:'gunicorn', app:'',
+                        command:'', port:'', workers:2, user:'', domain:'', env_vars:'', mem_limit:'', cpu_quota:'', saving:false});
+  return {
+    tab:'projects', loading:true, projects:[], runtimes:[], installable:[], installVer:'3.13', installJob:{},
+    webUser:'www-data', form:blank(), logs:{show:false, name:'', text:'', p:null}, job:{show:false, name:'', id:'', data:{}},
+    _poll:null,
+    async init() {
+      window.addEventListener('vp:page', e => { if (e.detail === 'python-projects') { this.load(); this.loadRuntimes(); } });
+      if (vpOnce(this, 'init')) document.addEventListener('vortex-logged-in', () => {});
+    },
+    async load() {
+      const r = await get('/api/python/projects'); this.loading = false;
+      if (r.ok) { this.projects = r.projects; this.webUser = r.web_user || 'www-data'; }
+      if (this.projects.some(p => p.job?.running)) this._schedule();
+    },
+    _schedule() { clearTimeout(this._poll); this._poll = setTimeout(() => { if (Alpine.store('vp') && document.querySelector('[x-data="pythonProjectsPage()"]')?.offsetParent) this.load(); }, 3000); },
+    async loadRuntimes() {
+      const r = await get('/api/python/runtimes');
+      if (r.ok) { this.runtimes = r.runtimes; this.installable = r.installable; this.installJob = r.install_job || {};
+        if (this.installJob.running) setTimeout(() => this.loadRuntimes(), 4000); }
+    },
+    async installRuntime() {
+      const r = await post('/api/python/runtimes/install', {version: this.installVer});
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      toast('Installing Python ' + this.installVer + ' in the background', 'success');
+      this.installJob = {running: true}; setTimeout(() => this.loadRuntimes(), 3000);
+    },
+    async openForm(p) {
+      if (!this.runtimes.length) await this.loadRuntimes();
+      this.form = blank();
+      if (p) Object.assign(this.form, p, {env_vars: p.env_vars || '', workers: p.workers || 1});
+      else { this.form.python = (this.runtimes[0] || {}).version || ''; this.form.path = '/www/wwwroot/'; }
+      this.form.show = true;
+    },
+    async save() {
+      const f = {...this.form}; delete f.show; delete f.saving;
+      this.form.saving = true;
+      const r = f.id ? await put('/api/python/projects/' + encodeURIComponent(f.id), f) : await post('/api/python/projects', f);
+      this.form.saving = false;
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      this.form.show = false;
+      toast('Deploying ' + f.name + '...', 'success');
+      await this.load();
+      const p = this.projects.find(x => x.id === (r.id || f.id)); if (p) this.showJob(p);
+    },
+    async showJob(p) {
+      this.job = {show: true, name: p.name, id: p.id, data: p.job || {}};
+      const tick = async () => {
+        if (!this.job.show || this.job.id !== p.id) return;
+        const r = await get('/api/python/projects/' + encodeURIComponent(p.id) + '/job');
+        if (r.ok) this.job.data = r;
+        if (r.running) setTimeout(tick, 2000); else this.load();
+      };
+      tick();
+    },
+    async control(p, action) {
+      const r = await post('/api/python/projects/' + encodeURIComponent(p.id) + '/control', {action});
+      toast(r.ok ? (p.name + ': ' + r.status) : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+      if (r.ok) p.status = r.status;
+    },
+    async showLogs(p) {
+      this.logs = {show: true, name: p.name, text: 'Loading...', p};
+      const r = await get('/api/python/projects/' + encodeURIComponent(p.id) + '/logs?lines=300');
+      this.logs.text = r.ok ? r.logs : (r.error || 'Failed');
+    },
+    async gitPull(p) {
+      const r = await post('/api/python/projects/' + encodeURIComponent(p.id) + '/git-pull', {});
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      this.showJob(p);
+    },
+    async remove(p) {
+      if (!confirm('Delete ' + p.name + '? The service and its reverse proxy are removed.')) return;
+      const files = confirm('Also delete the project folder ' + p.path + ' and all its files?\n\nCancel keeps the files.');
+      const r = await del('/api/python/projects/' + encodeURIComponent(p.id), {delete_files: files});
+      toast(r.ok ? 'Deleted' : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+      this.load();
+    },
+  };
+}
+
+// --- Hosting Module (licence, buying, installing) ------------------------------
+function hostingModulePage() {
+  return {
+    st: null, loading: false, err: '',
+    email: '', plan: '', buying: false, keyInput: '', move: false, activating: false, actErr: '', actCode: '',
+    sideMode: 'buy', showCoupon: false, tracking: false, lastCheckoutUrl: '',
+    buyKind: 'vps', buyPeriod: 'yearly', buySeats: 1, buyPlan: '', coupon: '',
+    checking: false, pollTimer: null, claimMsg: '',
+    async init() {
+      if (!vpOnce(this, 'init')) return;
+      window.addEventListener('vp:page', (e) => { if (e.detail === 'hosting-module') this.load(); });
+      if (location.hash === '#hosting-module') this.load();
+    },
+    async load() {
+      this.loading = true;
+      const r = await get('/api/licence/status').catch(() => null);
+      this.loading = false;
+      if (!r || !r.ok) {
+        // the panel restarts during a module install: keep polling until it answers again
+        if (this.st && (this.st.install_running || this.st.install?.state === 'running')) {
+          clearTimeout(this.pollTimer); this.pollTimer = setTimeout(() => this.load(), 3000); return;
+        }
+        this.err = (r && r.error) || 'Could not load the licence status'; return;
+      }
+      this.err = ''; this.st = r;
+      if (this.tracking && r.licence?.licensed && r.installed_version && !(r.install_running || r.install?.state === 'running') && r.install?.state !== 'failed') {
+        this.tracking = false; toast('The Hosting Module is ready. Open Hosting Accounts to add your first customer.', 'success');
+      }
+      if (!this.buyPlan && r.plans && r.plans.length) this.pickDefault();
+      this.schedule();
+    },
+    lic() { return this.st?.licence || {}; },
+    pending() { return !!this.lic().checkout && !this.lic().licensed; },
+    schedule() {
+      clearTimeout(this.pollTimer);
+      if (!this.st) return;
+      if (this.pending()) this.pollTimer = setTimeout(() => this.claim(), 5000);
+      else if (this.st.install_running || this.st.install?.state === 'running') this.pollTimer = setTimeout(() => this.load(), 3000);
+    },
+    async buy() {
+      if (this.buying) return;
+      this.buying = true; this.err = '';
+      const w = window.open('', '_blank');
+      const r = await post('/api/licence/checkout', {plan: this.buyPlan, email: this.email.trim(), coupon: this.coupon.trim()});
+      this.buying = false;
+      if (!r.ok) { if (w) w.close(); toast(r.error || 'Could not start the checkout', 'error'); return; }
+      this.lastCheckoutUrl = r.checkout_url; this.tracking = true;
+      if (w) w.location = r.checkout_url; else window.location.href = r.checkout_url;
+      await this.load();
+    },
+    async claim() {
+      const r = await post('/api/licence/claim', {}).catch(() => null);
+      if (r && r.ok && r.paid) {
+        if (r.bound) toast('Payment confirmed. The licence is active' + (r.install_started ? ' and the Hosting Module is being installed.' : '.'), 'success');
+        else { this.tracking = false; this.claimMsg = 'Payment confirmed. This server already has a licence, so the new key was kept: ' + r.key; }
+        await this.load(); return;
+      }
+      this.schedule();
+    },
+    async cancelCheckout() { await post('/api/licence/checkout/cancel', {}); this.tracking = false; this.lastCheckoutUrl = ''; await this.load(); },
+    async activate() {
+      if (this.activating) return;
+      this.activating = true; this.actErr = ''; this.actCode = '';
+      const r = await post('/api/licence/activate', {key: this.keyInput.trim(), move: this.move});
+      this.activating = false;
+      if (!r.ok) { this.actErr = r.error || 'Activation failed'; this.actCode = r.code || ''; return; }
+      toast('Licence activated' + (r.install_started ? '. Installing the Hosting Module...' : ''), 'success');
+      this.keyInput = ''; this.move = false;
+      await this.load();
+    },
+    async checkNow() {
+      this.checking = true;
+      const r = await post('/api/licence/check', {});
+      this.checking = false;
+      if (!r.ok) toast(r.error || 'Check failed', 'error'); else { this.st = r; toast('Licence checked', 'success'); }
+      this.schedule();
+    },
+    async install() {
+      const r = await post('/api/licence/install', {});
+      if (!r.ok) { toast(r.error || 'Could not start the install', 'error'); return; }
+      toast('Installing the Hosting Module...', 'success');
+      await this.load();
+    },
+    async deactivate() {
+      if (!confirm('Free this licence so it can be activated on another server?\n\nThe Hosting Module stays installed here, but adding accounts and changing packages is locked until a licence is active again. Customer websites, mail and the portal keep running.')) return;
+      const r = await post('/api/licence/deactivate', {});
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      toast('The licence is free. Activate it on the new server.', 'success');
+      await this.load();
+    },
+    plansList() { return this.st?.plans || []; },
+    kindsOnSale() { return ['vps', 'dedicated'].filter(k => this.plansList().some(p => p.kind === k)); },
+    periodChoices() { return ['yearly', 'monthly'].filter(per => this.plansList().some(p => p.kind === this.buyKind && p.period === per)); },
+    seatChoices() {
+      const n = [...new Set(this.plansList().filter(p => p.kind === this.buyKind && p.period === this.buyPeriod).map(p => p.seats))];
+      return n.sort((a, b) => a - b);
+    },
+    findPlan(kind, period, seats) { return this.plansList().find(p => p.kind === kind && p.period === period && p.seats === seats); },
+    pickDefault() {
+      const kinds = this.kindsOnSale();
+      if (!kinds.length) return;
+      if (!kinds.includes(this.buyKind) || (this.st?.virt === 'none' && kinds.includes('dedicated') && !this.buyPlan)) {
+        this.buyKind = (this.st?.virt === 'none' && kinds.includes('dedicated')) ? 'dedicated' : kinds[0];
+      }
+      this.syncPlan();
+    },
+    syncPlan() {
+      const pers = this.periodChoices();
+      if (!pers.includes(this.buyPeriod)) this.buyPeriod = pers[0] || 'yearly';
+      const seats = this.seatChoices();
+      if (!seats.includes(this.buySeats)) this.buySeats = seats.includes(1) ? 1 : (seats[0] || 1);
+      this.buyPlan = (this.findPlan(this.buyKind, this.buyPeriod, this.buySeats) || {}).id || '';
+    },
+    validEmail() { return /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(this.email.trim()); },
+    listPrice() {
+      const p = this.planObj(); if (!p) return 0;
+      const one = this.findPlan(p.kind, p.period, 1);
+      if (p.seats === 1) return p.compare_at || p.amount;
+      return one ? one.amount * p.seats : p.amount;
+    },
+    packSaving() { const p = this.planObj(); return p && p.seats > 1 ? Math.max(0, this.listPrice() - p.amount) : 0; },
+    perServerMonth() { const p = this.planObj(); return p ? p.amount / p.seats / (p.period === 'yearly' ? 12 : 1) : 0; },
+    savingsText() {
+      const p = this.planObj(); if (!p) return '';
+      const other = this.findPlan(p.kind, p.period === 'yearly' ? 'monthly' : 'yearly', p.seats);
+      if (!other) return '';
+      if (p.period === 'yearly') {
+        const diff = other.amount * 12 - p.amount;
+        return diff > 0.5 ? this.money(diff) + ' a year less than paying monthly' : '';
+      }
+      const diff = p.amount * 12 - other.amount;
+      return diff > 0.5 ? 'yearly billing would save ' + this.money(diff) : '';
+    },
+    installBusy() { return !!(this.st?.install_running || this.st?.install?.state === 'running'); },
+    trackSteps() {
+      const paid = !this.pending(), lic = !!this.lic().licensed, inst = this.st?.install || {};
+      const busy = this.installBusy(), failed = inst.state === 'failed', done = !!this.st?.installed_version && !busy && !failed;
+      return [
+        {title: 'Payment page opened', note: 'Pay in the other tab.', state: 'done'},
+        {title: 'Payment confirmed', note: paid ? 'Thank you.' : 'This updates by itself, usually within a minute.', state: paid ? 'done' : 'now'},
+        {title: 'Licence active on this server', note: lic ? 'The key is also in your email.' : '', state: lic ? 'done' : (paid ? 'now' : 'next')},
+        {title: 'Hosting Module installed', note: failed ? (inst.message || 'The install failed; try again in the Module card.') : (busy ? 'Installing. The panel restarts once, this page reconnects.' : (done ? 'Ready to use.' : '')),
+         state: failed ? 'fail' : (done && lic ? 'done' : (lic ? 'now' : 'next'))},
+      ];
+    },
+    planObj() { return this.plansList().find(p => p.id === this.buyPlan); },
+    money(v) {
+      const cur = this.st?.currency || 'USD';
+      try { return new Intl.NumberFormat(undefined, {style: 'currency', currency: cur}).format(v || 0); } catch (e) { return cur + ' ' + (v || 0).toFixed(2); }
+    },
+    fmtDate(t) { return t ? new Date(t * 1000).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}) : ''; },
+    fmtTime(t) { return t ? new Date(t * 1000).toLocaleString() : ''; },
+    accountUrl() { return (this.st?.server || '') + '/account'; },
+    updateAvailable() {
+      const a = this.st?.installed_version, b = this.st?.module_latest;
+      if (!a || !b) return false;
+      const p = v => v.split(/[.-]/).slice(0, 3).map(x => parseInt(x) || 0);
+      const x = p(a), y = p(b);
+      for (let i = 0; i < 3; i++) { if (y[i] > x[i]) return true; if (y[i] < x[i]) return false; }
+      return false;
     },
   };
 }

@@ -622,6 +622,8 @@ def get_version(mod_id, ver=None):
         'bind9':        "named -v 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'supervisor':   "supervisord --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+'",
         'phpmyadmin':   "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /usr/share/phpmyadmin/composer.json 2>/dev/null | head -1",
+        'anubis':       "cat /usr/local/lib/vortexpanel-anubis/VERSION 2>/dev/null",
+        'adminer':      "grep -oP '@version \\K[0-9]+[.][0-9]+[.][0-9]+' /usr/share/adminer/adminer.php 2>/dev/null | head -1",
         'roundcube':    "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /var/www/roundcube/composer.json 2>/dev/null | head -1",
         'modsecurity':  "{ modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1; dpkg-query -W -f='${Version}\\n' libmodsecurity3t64 libmodsecurity3 2>/dev/null; rpm -q --qf '%{VERSION}\\n' libmodsecurity mod_security 2>/dev/null | grep -v 'not installed'; } | grep -m1 .",
     }
@@ -830,8 +832,8 @@ fi''',
         'desc':'Apache HTTP Server — widely-used web server',
         'check':'which apache2 2>/dev/null || which httpd 2>/dev/null',
         'versions':[
-            {'label':'2.4 (current stable)', 'value':'2.4.68', 'recommended':True},
-            {'label':'2.4 (previous patch)', 'value':'2.4.67'},
+            {'label':'2.4 (current stable)', 'value':'2.4.69', 'recommended':True},
+            {'label':'2.4 (previous patch)', 'value':'2.4.68'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -861,9 +863,8 @@ fi''',
         'desc':'LiteSpeed open source web server',
         'check':'test -f /usr/local/lsws/bin/lshttpd && echo found',
         'versions':[
-            {'label':'1.8 (current stable)', 'value':'1.8.5', 'recommended':True},
-            {'label':'1.9 (newest)', 'value':'1.9'},
-            {'label':'1.8.4', 'value':'1.8.4'},
+            {'label':'1.9 (current stable)', 'value':'1.9', 'recommended':True},
+            {'label':'1.8 (previous, no longer updated)', 'value':'1.8.5'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -1347,6 +1348,12 @@ systemctl enable --now mariadb''',
             'if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then '
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  apt-get install -y gnupg2 curl lsb-release && '
+            # PGDG unreachable (firewalled server, mirror outage) but the distribution
+            # ships this major version (Ubuntu 24.04: 16, Debian 12: 15): use that.
+            '  if apt-cache policy postgresql-{ver} 2>/dev/null | grep -q "Candidate: [0-9]" && '
+            '     ! curl -fsS --max-time 20 -o /dev/null https://www.postgresql.org/media/keys/ACCC4CF8.asc; then '
+            '    echo "[VortexPanel] The PostgreSQL apt repository is not reachable -- installing PostgreSQL {ver} from the distribution"; '
+            '  else { '
             '  rm -f /usr/share/keyrings/postgresql.gpg /etc/apt/sources.list.d/pgdg.list && '
             '  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /opt/vortexpanel/data/tmp/pg.asc && '
             '  gpg --batch --no-tty --dearmor -o /usr/share/keyrings/postgresql.gpg /opt/vortexpanel/data/tmp/pg.asc && '
@@ -1365,7 +1372,7 @@ systemctl enable --now mariadb''',
             '    rm -f /etc/apt/sources.list.d/pgdg.list; '
             '    apt-get update -qq; '
             '    exit 1; '
-            '  fi && '
+            '  fi; } || exit 1; fi && '
             '  apt-get install -y postgresql-{ver} postgresql-contrib && '
             '  systemctl enable postgresql && systemctl start postgresql; '
             'elif echo "$OS_FAMILY" | grep -qiE "rhel|fedora|centos|almalinux|rocky"; then '
@@ -1645,7 +1652,186 @@ fi
 true''',
         'manage':False,
     },
+    {
+        'id':'adminer', 'name':'Adminer', 'icon':'/static/icons/adminer.svg', 'category':'Admin Tools',
+        'desc':'One-file database admin for MySQL/MariaDB, PostgreSQL, SQLite and MongoDB - at port 8084',
+        'check':'test -f /usr/share/adminer/adminer.php && echo found',
+        'versions':[
+            {'label':'5.5.1 (Latest)', 'value':'5.5.1'},
+        ],
+        'install':r'''ADM_VER=5.5.1
+ADM_SHA=f2c70c6403a042d554be1dd8d69b6f6270a97e5b40d2fb7626f46aad821e9a18
+MONGO_SHA=a669d8bee57ce5df06d7faa3afc9bd8d50d68597f5e0cfd8313b0f16883a5670
+PHP_PREF="8.4 8.3 8.2 8.1 8.5 8.0"
+__VP_PHP_SOCK__
+if [ -z "$SOCK" ]; then
+  echo "[VortexPanel] No PHP-FPM is installed on this server -- install PHP from the App Store first, then install Adminer again."
+  exit 1
+fi
+echo "[VortexPanel] Using the PHP-FPM socket $SOCK (pool user $PUSER)"
+command -v curl >/dev/null 2>&1 || apt-get install -y curl || dnf install -y curl || exit 1
+T=/opt/vortexpanel/data/tmp; mkdir -p $T /usr/share/adminer/adminer-plugins
+curl -fsSL --max-time 120 -o $T/adminer.php "https://github.com/vrana/adminer/releases/download/v$ADM_VER/adminer-$ADM_VER.php" \
+  || { echo "[VortexPanel] Download of Adminer $ADM_VER failed."; exit 1; }
+echo "$ADM_SHA  $T/adminer.php" | sha256sum -c --quiet - || { echo "[VortexPanel] Adminer download does not match the expected checksum - not installed."; rm -f $T/adminer.php; exit 1; }
+install -m 644 $T/adminer.php /usr/share/adminer/adminer.php; rm -f $T/adminer.php
+# index.php loads Adminer; plugins in adminer-plugins/ are loaded by Adminer itself
+printf '<?php\n// VortexPanel: Adminer for MySQL/MariaDB, PostgreSQL and (with the PHP mongodb extension) MongoDB\ninclude __DIR__ . "/adminer.php";\n' > /usr/share/adminer/index.php
+# MongoDB driver (needs the PHP mongodb extension of the PHP-FPM that serves Adminer)
+PHPV=$(echo "$SOCK" | grep -oE '[0-9]\.[0-9]' | head -1)
+# Database drivers of the PHP-FPM that serves Adminer: MySQL/MariaDB, PostgreSQL
+if [ -n "$PHPV" ] && command -v apt-get >/dev/null 2>&1; then
+  NEED=""
+  php$PHPV -m 2>/dev/null | grep -qi '^pdo_pgsql$\|^pgsql$' || NEED="$NEED php$PHPV-pgsql"
+  php$PHPV -m 2>/dev/null | grep -qi '^mysqli$' || NEED="$NEED php$PHPV-mysql"
+  php$PHPV -m 2>/dev/null | grep -qi '^pdo_sqlite$\|^sqlite3$' || NEED="$NEED php$PHPV-sqlite3"
+  if [ -n "$NEED" ]; then
+    echo "[VortexPanel] Adding PHP database drivers:$NEED"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y $NEED >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y $NEED >/dev/null 2>&1; } \
+      || echo "[VortexPanel] Could not install$NEED - add them in PHP > Extensions."
+    systemctl restart php$PHPV-fpm 2>/dev/null
+  fi
+fi
+if [ -n "$PHPV" ] && ! php$PHPV -m 2>/dev/null | grep -qi '^mongodb$'; then
+  if command -v apt-get >/dev/null 2>&1; then { DEBIAN_FRONTEND=noninteractive apt-get install -y php$PHPV-mongodb >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y php$PHPV-mongodb >/dev/null 2>&1; }; } && systemctl restart php$PHPV-fpm; fi
+fi
+if curl -fsSL --max-time 60 -o $T/mongo.php "https://raw.githubusercontent.com/vrana/adminer/v$ADM_VER/plugins/drivers/mongo.php" \
+   && echo "$MONGO_SHA  $T/mongo.php" | sha256sum -c --quiet -; then
+  install -m 644 $T/mongo.php /usr/share/adminer/adminer-plugins/mongo.php
+  if [ -n "$PHPV" ] && php$PHPV -m 2>/dev/null | grep -qi '^mongodb$'; then echo "[VortexPanel] MongoDB support is on."
+  else echo "[VortexPanel] MongoDB needs the PHP mongodb extension for PHP $PHPV (PHP > Extensions) - MySQL and PostgreSQL work now."; fi
+else
+  echo "[VortexPanel] MongoDB driver download failed - MySQL and PostgreSQL work."
+fi
+rm -f $T/mongo.php
+chown -R root:root /usr/share/adminer; chmod 755 /usr/share/adminer /usr/share/adminer/adminer-plugins
+__VP_SEL_ADM__
+CONFIGURED=""
+if systemctl is-active --quiet nginx; then
+  mkdir -p /etc/nginx/conf.d
+  rm -f /opt/vortexpanel/data/tmp/vp-adminer-nginx.bak
+  [ -f /etc/nginx/conf.d/adminer.conf ] && cp -f /etc/nginx/conf.d/adminer.conf /opt/vortexpanel/data/tmp/vp-adminer-nginx.bak
+  cat > /etc/nginx/conf.d/adminer.conf <<ADMEOF
+server {
+    listen 8084;
+    server_name _;
+    root /usr/share/adminer;
+    index index.php;
+    location ^~ /adminer-plugins/ { deny all; }
+    location ~ \.php\$ {
+        fastcgi_split_path_info ^(.+\.php)(/.+)\$;
+        fastcgi_pass unix:$SOCK;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+ADMEOF
+  __VP_NGINX_POOL__
+  __VP_SEL_PORT_8084__
+  if nginx -t 2>&1; then
+    systemctl reload nginx && CONFIGURED=nginx
+  else
+    echo "[VortexPanel] nginx rejected the Adminer site (shown above) -- reverted, nginx is unchanged."
+    if [ -f /opt/vortexpanel/data/tmp/vp-adminer-nginx.bak ]; then mv -f /opt/vortexpanel/data/tmp/vp-adminer-nginx.bak /etc/nginx/conf.d/adminer.conf; else rm -f /etc/nginx/conf.d/adminer.conf; fi
+  fi
+elif systemctl is-active --quiet caddy && [ -f /etc/caddy/Caddyfile ]; then
+  if grep -q "root \* /usr/share/adminer" /etc/caddy/Caddyfile; then
+    CONFIGURED=caddy
+  else
+    cp -f /etc/caddy/Caddyfile /opt/vortexpanel/data/tmp/vp-adminer-caddy.bak
+    printf '\n:8084 {\n  root * /usr/share/adminer\n  php_fastcgi unix/%s\n  file_server\n}\n' "$SOCK" >> /etc/caddy/Caddyfile
+    # Caddy runs as 'caddy': it needs the socket's group to connect.
+    G=$(stat -c %G "$SOCK" 2>/dev/null)
+    if [ -n "$G" ] && id caddy >/dev/null 2>&1 && ! id -nG caddy | grep -qw "$G"; then usermod -aG "$G" caddy; fi
+    __VP_SEL_PORT_8084__
+    if caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 && systemctl restart caddy; then
+      CONFIGURED=caddy
+    else
+      echo "[VortexPanel] Caddy rejected the Adminer site (shown above) -- reverted."
+      cp -f /opt/vortexpanel/data/tmp/vp-adminer-caddy.bak /etc/caddy/Caddyfile; systemctl restart caddy
+    fi
+    rm -f /opt/vortexpanel/data/tmp/vp-adminer-caddy.bak
+  fi
+elif [ -d /etc/httpd/conf.d ] && systemctl is-active --quiet httpd; then
+  cat > /etc/httpd/conf.d/adminer.conf <<APACHEEOF
+Listen 8084
+<VirtualHost *:8084>
+  DocumentRoot /usr/share/adminer
+  <Directory /usr/share/adminer>
+    Options FollowSymLinks
+    DirectoryIndex index.php
+    Require all granted
+  </Directory>
+  <FilesMatch \.php\$>
+    SetHandler "proxy:unix:$SOCK|fcgi://localhost"
+  </FilesMatch>
+</VirtualHost>
+APACHEEOF
+  __VP_SEL_PORT_8084__
+  if apachectl configtest 2>&1; then
+    systemctl reload httpd && CONFIGURED=httpd
+  else
+    echo "[VortexPanel] Apache rejected the Adminer site (shown above) -- reverted."
+    rm -f /etc/httpd/conf.d/adminer.conf
+  fi
+elif systemctl is-active --quiet apache2; then
+  a2enmod proxy_fcgi setenvif >/dev/null 2>&1
+  cat > /etc/apache2/conf-available/adminer.conf <<APACHEEOF
+Listen 8084
+<VirtualHost *:8084>
+  DocumentRoot /usr/share/adminer
+  <Directory /usr/share/adminer>
+    Options FollowSymLinks
+    DirectoryIndex index.php
+    Require all granted
+  </Directory>
+  <FilesMatch \.php\$>
+    SetHandler "proxy:unix:$SOCK|fcgi://localhost"
+  </FilesMatch>
+</VirtualHost>
+APACHEEOF
+  a2enconf adminer >/dev/null 2>&1
+  if apache2ctl configtest 2>&1; then
+    systemctl reload apache2 && CONFIGURED=apache2
+  else
+    echo "[VortexPanel] Apache rejected the Adminer site (shown above) -- reverted."
+    a2disconf adminer >/dev/null 2>&1; rm -f /etc/apache2/conf-available/adminer.conf
+  fi
+fi
+if [ -n "$CONFIGURED" ]; then
+  (command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active" && ufw allow 8084/tcp comment "Adminer") >/dev/null 2>&1
+  (command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --add-port=8084/tcp && firewall-cmd --reload) >/dev/null 2>&1
+  echo "[VortexPanel] Adminer is served by $CONFIGURED at http://YOUR-SERVER-IP:8084"
+else
+  echo "[VortexPanel] Adminer files are in /usr/share/adminer, but no running nginx, Caddy or Apache accepted a site for it -- point your web server at that directory (PHP-FPM socket: $SOCK)."
+fi
+true''',
+        'uninstall':r'''rm -rf /usr/share/adminer
+if [ -f /etc/nginx/conf.d/adminer.conf ]; then rm -f /etc/nginx/conf.d/adminer.conf; nginx -t >/dev/null 2>&1 && systemctl reload nginx; fi
+if [ -f /etc/caddy/Caddyfile ] && grep -q "root \* /usr/share/adminer" /etc/caddy/Caddyfile; then
+  sed -i "/:8084/,/^}/d" /etc/caddy/Caddyfile; systemctl reload caddy 2>/dev/null
+fi
+if [ -f /etc/httpd/conf.d/adminer.conf ]; then rm -f /etc/httpd/conf.d/adminer.conf; apachectl configtest >/dev/null 2>&1 && systemctl reload httpd; fi
+if [ -f /etc/apache2/conf-available/adminer.conf ]; then
+  a2disconf adminer >/dev/null 2>&1; rm -f /etc/apache2/conf-available/adminer.conf
+  apache2ctl configtest >/dev/null 2>&1 && systemctl reload apache2
+fi
+(command -v ufw >/dev/null 2>&1 && ufw delete allow 8084/tcp) >/dev/null 2>&1
+(command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && firewall-cmd --permanent --remove-port=8084/tcp && firewall-cmd --reload) >/dev/null 2>&1
+true''',
+        'manage':False,
+    },
     # --- Security --------------------------------------------------------------
+    {
+        'id':'anubis', 'name':'Anubis Bot Protection', 'icon':'/static/icons/anubis.svg', 'category':'Security',
+        'desc':'Stops AI scrapers and bad bots with a short browser check, turned on per website. Search engines, sitemaps and feeds are never checked. Needs Nginx.',
+        'check':'test -x /usr/local/lib/vortexpanel-anubis/bin/anubis && test -f /usr/local/lib/vortexpanel-anubis/VERSION && echo found',
+        'versions':[{'label':'1.28.1 (Latest)', 'value':'1.28.1', 'recommended':True}],
+        'install':'cd /opt/vortexpanel && ./venv/bin/python -m panel.botprot install',
+        'uninstall':'cd /opt/vortexpanel && ./venv/bin/python -m panel.botprot uninstall',
+        'manage':False,
+    },
     {
         'id':'fail2ban', 'name':'Fail2ban', 'icon':'/static/icons/fail2ban.svg', 'category':'Security',
         'desc':'Intrusion prevention & brute-force protection',
@@ -2462,8 +2648,10 @@ _VP_SNIPPETS = {
     '__VP_SEL_FTP__': selinux_web_booleans_cmd(proxy=False, db=False, ftp=True),
     '__VP_SEL_PORT_8082__': selinux_port_cmd(8082),
     '__VP_SEL_PORT_8083__': selinux_port_cmd(8083),
+    '__VP_SEL_PORT_8084__': selinux_port_cmd(8084),
     '__VP_SEL_PMA__': selinux_label_cmd('/usr/share/phpmyadmin', writable=False) + '; ' +
                       selinux_label_cmd('/usr/share/phpmyadmin/tmp', writable=True),
+    '__VP_SEL_ADM__': selinux_label_cmd('/usr/share/adminer', writable=False),
     '__VP_SEL_RC__': selinux_label_cmd('/var/www/roundcube/temp', writable=True) + '; ' +
                      selinux_label_cmd('/var/www/roundcube/logs', writable=True),
     '__VP_PHP_SOCK__': _PHP_SOCK_SH,
@@ -2542,9 +2730,11 @@ def _get_mod(mod_id):
 
 
 # --- Conflict groups — only one from each group can be installed ---------------
+# MySQL and MariaDB share port 3306, the data folder and the packages' files;
+# PostgreSQL (5432) and MongoDB (27017) run next to either of them.
 CONFLICT_GROUPS = {
     'webserver': ['nginx', 'apache2', 'openlitespeed', 'caddy'],
-    'database':  ['mysql', 'mariadb', 'mongodb', 'postgresql'],
+    'database':  ['mysql', 'mariadb'],
 }
 
 def get_conflict(mod_id):
@@ -2696,16 +2886,31 @@ def list_modules():
             'manage': m.get('manage', False),
             'builtin': m.get('builtin', False),
             'conflict_group': next((g for g,ms in CONFLICT_GROUPS.items() if m['id'] in ms), None),
+            'blocked': '' if installed else _install_blocked(m['id']),
         })
     response = {'ok':True, 'modules':result}
     panel_cache.set('modules_list', response, ttl=30)
     return jsonify(response)
+
+def _install_blocked(mod_id):
+    """Reason an app cannot be installed on this server yet, or ''."""
+    if mod_id == 'anubis':
+        try:
+            from panel import botprot
+            if not botprot.nginx_present():
+                return 'Install Nginx first. Bot protection works with Nginx websites.'
+        except Exception:
+            return ''
+    return ''
 
 @modules_bp.route('/api/modules/<mod_id>/install', methods=['POST'])
 def install_module(mod_id):
     if not req(): return jsonify({'ok':False}), 401
     mod = _get_mod(mod_id)
     if not mod: return jsonify({'ok':False, 'error':'Module not found'}), 404
+    _blk = _install_blocked(mod_id)
+    if _blk:
+        return jsonify({'ok': False, 'error': _blk}), 400
 
     # FFmpeg is a multi-version manager — it has no single install command.
     # Tell the frontend to open the Settings/Versions modal instead.

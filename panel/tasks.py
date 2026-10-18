@@ -3,7 +3,8 @@ workers (gunicorn runs several processes, and none of them should own a
 schedule):
 
     vortexpanel-bandwidth.timer  every 5 minutes  per-site traffic history
-    vortexpanel-backups.timer    every 5 minutes  scheduled website and panel backups
+    vortexpanel-backups.timer    every 5 minutes  scheduled website and panel backups,
+                                                  Hosting Module licence check-in (when due)
     vortexpanel-metrics.timer    every minute     monitoring history, alerts,
                                                   App Store version data (daily)
 
@@ -126,7 +127,30 @@ def main(argv):
                 print(r)
         except Exception as e:
             print(f'panel backup: {e}')
+        try:
+            from panel.routes.databases import recycle_purge
+            recycle_purge()
+        except Exception as e:
+            print(f'database recycle bin: {e}')
+        try:
+            from panel import malware
+            malware.run_due()
+        except Exception as e:
+            print(f'malware scan: {e}')
+        try:
+            from panel import licence
+            r = licence.refresh_if_due()
+            if r not in ('no licence', 'not due'):
+                print(f'hosting module licence: {r}')
+        except Exception as e:
+            print(f'hosting module licence: {e}')
         return 0
+    if cmd == 'malware-scan':
+        from panel import malware
+        path = sys.argv[2] if len(sys.argv) > 2 else '/www/wwwroot'
+        ok, err = malware.start(path, (sys.argv[3] if len(sys.argv) > 3 else '1') == '1', trigger='schedule', wait=True)
+        print('scan done' if ok else f'scan not started: {err}')
+        return 0 if ok else 1
     if cmd == 'metrics':
         from panel import metrics, alerts
         s = metrics.collect()

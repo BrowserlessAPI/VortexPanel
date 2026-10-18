@@ -22,12 +22,12 @@
       "versions": [
         {
           "label": "2.4 (current stable)",
-          "value": "2.4.68",
+          "value": "2.4.69",
           "recommended": true
         },
         {
           "label": "2.4 (previous patch)",
-          "value": "2.4.67"
+          "value": "2.4.68"
         }
       ]
     },
@@ -36,17 +36,13 @@
       "desc": "LiteSpeed open source web server",
       "versions": [
         {
-          "label": "1.8 (current stable)",
-          "value": "1.8.5",
+          "label": "1.9 (current stable)",
+          "value": "1.9",
           "recommended": true
         },
         {
-          "label": "1.9 (newest)",
-          "value": "1.9"
-        },
-        {
-          "label": "1.8.4",
-          "value": "1.8.4"
+          "label": "1.8 (previous, no longer updated)",
+          "value": "1.8.5"
         }
       ]
     },
@@ -209,6 +205,16 @@
         {
           "label": "5.2.3 (Latest)",
           "value": "5.2.3"
+        }
+      ]
+    },
+    "adminer": {
+      "name": "Adminer",
+      "desc": "One-file database admin for MySQL/MariaDB, PostgreSQL, SQLite and MongoDB - at port 8084",
+      "versions": [
+        {
+          "label": "5.5.1 (Latest)",
+          "value": "5.5.1"
         }
       ]
     },
@@ -450,6 +456,16 @@
         {
           "label": "Built-in",
           "value": "builtin"
+        }
+      ]
+    },
+    "anubis": {
+      "name": "Anubis Bot Protection",
+      "desc": "Stops AI scrapers and bad bots with a short browser check, turned on per website. Search engines, sitemaps and feeds are never checked. Needs Nginx.",
+      "versions": [
+        {
+          "label": "1.28.1 (Latest)",
+          "value": "1.28.1"
         }
       ]
     }

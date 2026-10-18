@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request, session
 from panel.utils.authctx import authed as _vp_authed
-import subprocess, re, os, time, ipaddress
+import subprocess, re, os, time, ipaddress, json
 
 dns_bp = Blueprint('dns', __name__)
 def req(): return _vp_authed()
@@ -259,6 +259,53 @@ def list_zones():
             zones.append({'domain':d,'file':f'db.{d}'})
     return jsonify({'ok':True,'zones':zones})
 
+PRIVATE_NS_FILE = '/opt/vortexpanel/private_nameservers.json'
+_NS_HOST_RE = re.compile(r'^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$')
+
+
+def private_nameservers():
+    """Server-wide nameservers for new zones (Hosting Module > Private
+    nameservers, or set by hand). {} when not configured."""
+    try:
+        cfg = json.load(open(PRIVATE_NS_FILE))
+    except Exception:
+        return {}
+    if not cfg.get('enabled') or not _NS_HOST_RE.match(str(cfg.get('ns1_host') or '')):
+        return {}
+    out = {'ns1_host': cfg['ns1_host']}
+    for k in ('ns2_host',):
+        if _NS_HOST_RE.match(str(cfg.get(k) or '')):
+            out[k] = cfg[k]
+    for k in ('ns1_ip', 'ns2_ip'):
+        try:
+            out[k] = str(ipaddress.IPv4Address(str(cfg.get(k) or '').strip()))
+        except ValueError:
+            pass
+    em = str(cfg.get('soa_email') or '')
+    if re.fullmatch(r'[A-Za-z0-9._-]+@[A-Za-z0-9.-]+', em):
+        out['soa_email'] = em
+    return out
+
+
+def _zone_nameservers(domain, ip):
+    """(SOA ns, SOA mail, NS lines, in-zone A records for the nameservers)."""
+    ns = private_nameservers()
+    if not ns:
+        return f'ns1.{domain}.', f'admin.{domain}.', f'@   IN NS   ns1.{domain}.\n', f'ns1 IN A    {ip}\n'
+    soa_mail = ns.get('soa_email', f'admin@{domain}').replace('@', '.', 1) + '.'
+    lines = f'@   IN NS   {ns["ns1_host"]}.\n'
+    if ns.get('ns2_host'):
+        lines += f'@   IN NS   {ns["ns2_host"]}.\n'
+    glue = ''
+    for k in ('ns1', 'ns2'):
+        host = ns.get(f'{k}_host')
+        # the nameservers' own A records live only in the zone that owns them
+        if host and (host == domain or host.endswith('.' + domain)):
+            label = host[:-len(domain) - 1] if host != domain else '@'
+            glue += f'{label} IN A    {ns.get(k + "_ip") or ip}\n'
+    return ns['ns1_host'] + '.', soa_mail, lines, glue
+
+
 @dns_bp.route('/api/dns/zones', methods=['POST'])
 def create_zone():
     if not req(): return jsonify({'ok':False}),401
@@ -279,19 +326,18 @@ def create_zone():
     if os.path.exists(zone_file):
         return jsonify({'ok':False,'error':'A zone for this domain already exists'}),400
     serial = time.strftime('%Y%m%d') + '01'
+    soa_ns, soa_mail, ns_lines, glue = _zone_nameservers(domain, ip)
     template = f"""$ORIGIN {domain}.
 $TTL 3600
-@   IN SOA  ns1.{domain}. admin.{domain}. (
+@   IN SOA  {soa_ns} {soa_mail} (
         {serial} ; Serial
         3600       ; Refresh
         900        ; Retry
         604800     ; Expire
         300 )      ; Minimum
 
-@   IN NS   ns1.{domain}.
-@   IN A    {ip}
-ns1 IN A    {ip}
-www IN A    {ip}
+{ns_lines}@   IN A    {ip}
+{glue}www IN A    {ip}
 mail IN A   {ip}
 @   IN MX 10 mail.{domain}.
 """
@@ -385,28 +431,24 @@ def delete_zone(domain):
     except Exception as e:
         return jsonify({'ok':False,'error':str(e)})
 
-@dns_bp.route('/api/dns/zones/<domain>/records', methods=['POST'])
-def add_record(domain):
-    if not req(): return jsonify({'ok':False}), 401
-    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
-    d = request.get_json() or {}
-    # The DNS page sends the owner as 'name'; it was ignored, so every
-    # record landed on '@'.
+def _record_line(d):
+    """(zone file line, '') for a record in a request body, or (None, error)."""
     host  = (d.get('host') or d.get('name') or '@').strip() or '@'
     rtype = (d.get('type') or 'A').strip().upper()
     value = (d.get('value') or '').strip()
     ttl   = str(d.get('ttl') or '3600').strip()
-    if not value: return jsonify({'ok':False,'error':'Value required'})
+    if not value: return None, 'Value required'
     if any(c in host + value + ttl for c in '\r\n'):
-        return jsonify({'ok':False,'error':'Values must be a single line'})
-    if rtype not in _RTYPES: return jsonify({'ok':False,'error':'Unsupported record type'})
-    if not _HOST_RE.match(host): return jsonify({'ok':False,'error':'Invalid host name'})
-    if not ttl.isdigit(): return jsonify({'ok':False,'error':'TTL must be a number'})
+        return None, 'Values must be a single line'
+    if rtype not in _RTYPES: return None, 'Unsupported record type'
+    if rtype == 'SOA': return None, 'The SOA record is managed by the panel'
+    if not _HOST_RE.match(host): return None, 'Invalid host name'
+    if not ttl.isdigit(): return None, 'TTL must be a number'
     try:
         if rtype == 'A': ipaddress.IPv4Address(value)
         elif rtype == 'AAAA': ipaddress.IPv6Address(value)
     except ValueError:
-        return jsonify({'ok':False,'error':f'Invalid {rtype} address'})
+        return None, f'Invalid {rtype} address'
     if rtype == 'MX' and not re.match(r'^\d+\s', value):
         value = '10 ' + value
     if rtype in ('CNAME', 'NS', 'MX', 'PTR', 'SRV'):
@@ -418,18 +460,59 @@ def add_record(domain):
         value = ' '.join(parts)
     if rtype == 'TXT' and not value.startswith('"'):
         value = '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    if ttl and ttl != '3600':
+        return f'{host}\t{ttl}\tIN\t{rtype}\t{value}', ''
+    return f'{host}\tIN\t{rtype}\t{value}', ''
+
+
+@dns_bp.route('/api/dns/zones/<domain>/records', methods=['POST'])
+def add_record(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
+    line, err = _record_line(request.get_json() or {})
+    if err: return jsonify({'ok':False,'error':err})
     zone_file = _zone_file(domain)
     if not os.path.exists(zone_file):
         return jsonify({'ok':False,'error':'Zone not found'})
     with open(zone_file) as f: content = f.read()
+    new = _parse_records(line + '\n')
+    if new:
+        n = new[0]
+        def norm(v): return ' '.join(str(v).split()).strip('"').rstrip('.').lower()
+        if any(r['host'] == n['host'] and r['type'] == n['type'] and norm(r['value']) == norm(n['value'])
+               for r in _parse_records(content)):
+            return jsonify({'ok':False,'error':'This record already exists'})
     content = _bump_serial(content)
     if not content.endswith('\n'): content += '\n'
-    record_line = f'{host}\tIN\t{rtype}\t{value}\n'
-    if ttl and ttl != '3600':
-        record_line = f'{host}\t{ttl}\tIN\t{rtype}\t{value}\n'
-    content += record_line
+    content += line + '\n'
     err = _write_zone_checked(domain, zone_file, content)
     if err: return jsonify({'ok':False,'error':f'Record rejected by named-checkzone: {err}'})
+    return jsonify({'ok':True})
+
+
+@dns_bp.route('/api/dns/zones/<domain>/records/update', methods=['POST'])
+def update_record(domain):
+    """Edit one record in place (index as listed by GET .../records). The
+    whole zone is checked with named-checkzone before it is saved."""
+    if not req(): return jsonify({'ok':False}), 401
+    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
+    d = request.get_json() or {}
+    try: idx = int(d.get('index', -1))
+    except (TypeError, ValueError): idx = -1
+    line, err = _record_line(d)
+    if err: return jsonify({'ok':False,'error':err})
+    zone_file = _zone_file(domain)
+    if not os.path.exists(zone_file):
+        return jsonify({'ok':False,'error':'Zone not found'})
+    with open(zone_file) as f: content = f.read()
+    recs = _parse_records(content)
+    rec = recs[idx] if 0 <= idx < len(recs) else None
+    if not rec: return jsonify({'ok':False,'error':'Record not found - reload the zone'})
+    if rec['type'] == 'SOA': return jsonify({'ok':False,'error':'The SOA record is managed by the panel'})
+    lines = content.split('\n')
+    lines[rec['line']] = line
+    err = _write_zone_checked(domain, zone_file, _bump_serial('\n'.join(lines)))
+    if err: return jsonify({'ok':False,'error':f'Record rejected by named-checkzone, not saved: {err}'})
     return jsonify({'ok':True})
 
 @dns_bp.route('/api/dns/zones/<domain>/records/delete', methods=['POST'])

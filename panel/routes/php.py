@@ -378,6 +378,15 @@ def get_php_versions():
         })
     return versions
 
+def get_installed_extensions(version):
+    """Names of the extensions PHP <version> loads (lower-case), [] when that
+    PHP is not installed. Public helper for plugins."""
+    lay = php_layout(version)
+    if not lay:
+        return []
+    return sorted(m.lower() for m in php_loaded_modules(lay))
+
+
 def _lay_or_404(version):
     lay = php_layout(version)
     if not lay:

@@ -623,8 +623,13 @@ def ssl_info(domain):
                 except Exception:
                     pass
             days_left = (not_after - datetime.utcnow()).days if not_after else None
+            try:
+                from panel.routes.acme import acme_info
+                acme = acme_info(domain)
+            except Exception:
+                acme = None
             return jsonify({
-                'ok': True, 'info': info, 'expiry': expiry, 'path': p,
+                'ok': True, 'info': info, 'expiry': expiry, 'path': p, 'acme': acme,
                 'brand': brand, 'domain': domain,
                 'expires_on': not_after.strftime('%Y-%m-%d') if not_after else '',
                 'days_left': days_left,
@@ -640,6 +645,11 @@ def disable_ssl(domain):
     if not req(): return jsonify({'ok':False}), 401
     if not is_valid_domain(domain):
         return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    try:
+        from panel.routes.acme import remove_site_cert
+        remove_site_cert(domain)   # stop DNS-API renewals of a certificate that is no longer used
+    except Exception:
+        pass
     fp, ws = _find_site_config(domain)
     if ws == 'apache':
         with open(fp) as f: content = f.read()

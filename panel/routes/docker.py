@@ -180,6 +180,11 @@ def _write_docker_proxy(cname, domain, port):
 """
         conf_path = f'/etc/nginx/conf.d/{tag}.conf'
         os.makedirs('/etc/nginx/conf.d', exist_ok=True)
+        try:
+            from panel.routes.websites_security import maint_wrap
+            conf = maint_wrap(conf)
+        except Exception:
+            pass
         with open(conf_path, 'w') as f: f.write(conf)
         out, err, rc = sh('nginx -t 2>&1')
         err = err or out

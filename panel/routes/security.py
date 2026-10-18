@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request, session
 from panel.utils.authctx import authed as _vp_authed
-import subprocess, re, os, json
+import subprocess, re, os, json, shutil
 from datetime import datetime, timedelta
 from panel.routes.os_utils import get_os
 
@@ -4253,3 +4253,91 @@ def waf_caddy_disable_site():
         return jsonify({'ok': False, 'error': f'Caddy validation failed, reverted: {out}'}), 400
     sh('systemctl reload caddy 2>/dev/null')
     return jsonify({'ok': True, 'domain': domain})
+
+# --- SSH sign-ins ----------------------------------------------------------------
+@security_bp.route('/api/security/ssh-logins')
+def ssh_logins():
+    """Successful SSH sign-ins and the addresses with the most failures."""
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import sshlog
+    try:
+        days = max(1, min(30, int(request.args.get('days', 7))))
+    except ValueError:
+        days = 7
+    data = sshlog.summary(days)
+    f2b = bool(shutil.which('fail2ban-client'))
+    return jsonify({'ok': True, 'fail2ban': f2b, **data})
+
+
+@security_bp.route('/api/security/ssh-logins/block', methods=['POST'])
+def ssh_block_ip():
+    """Block an address: Fail2ban's sshd jail when Fail2ban runs, else a
+    firewall deny rule."""
+    if not req(): return jsonify({'ok': False}), 401
+    ip = str((request.get_json() or {}).get('ip') or '').strip()
+    if not _valid_ip_or_cidr(ip):
+        return jsonify({'ok': False, 'error': 'Invalid IP address'}), 400
+    from panel.routes.auth import _client_ip
+    if ip == _client_ip():
+        return jsonify({'ok': False, 'error': 'That is your own address'}), 400
+    if shutil.which('fail2ban-client'):
+        out, err, rc = sh(f'fail2ban-client set sshd banip {ip} 2>&1')
+        if rc == 0:
+            return jsonify({'ok': True, 'via': 'fail2ban'})
+    fam = 'ipv6' if ':' in ip else 'ipv4'
+    if shutil.which('ufw'):
+        out, err, rc = sh(f'ufw insert 1 deny from {ip} 2>&1')
+        active = 'Status: active' in (sh('ufw status 2>&1')[0] or '')
+        if rc == 0:
+            return jsonify({'ok': True, 'via': 'ufw', 'note': '' if active else 'Rule added, but the firewall is off (Firewall page)'})
+        return jsonify({'ok': False, 'error': (out or err)[-300:]}), 400
+    if shutil.which('firewall-cmd'):
+        rule = f"rule family={fam} source address={ip} drop"
+        out, err, rc = sh(f"firewall-cmd --permanent --add-rich-rule='{rule}' 2>&1 && firewall-cmd --reload 2>&1")
+        if rc == 0:
+            return jsonify({'ok': True, 'via': 'firewalld'})
+        return jsonify({'ok': False, 'error': (out or err)[-300:]}), 400
+    return jsonify({'ok': False, 'error': 'Install Fail2ban (App Store) or a firewall (Firewall page) to block addresses'}), 400
+
+
+# --- Malware scan -----------------------------------------------------------------
+@security_bp.route('/api/security/malware')
+def malware_status():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import malware
+    return jsonify({'ok': True, 'job': malware.status(), 'clamav': malware.clamav_info(),
+                    'schedule': malware.schedule_get(), 'quarantine': malware.quarantine_list()})
+
+
+@security_bp.route('/api/security/malware/scan', methods=['POST'])
+def malware_scan():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import malware
+    d = request.get_json() or {}
+    ok, err = malware.start(str(d.get('path') or '/www/wwwroot'), bool(d.get('clamav', True)))
+    return jsonify({'ok': ok, 'error': err}), (200 if ok else 400)
+
+
+@security_bp.route('/api/security/malware/<action>', methods=['POST'])
+def malware_action(action):
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import malware
+    d = request.get_json() or {}
+    if action == 'quarantine':
+        ok, res = malware.quarantine(str(d.get('file') or ''))
+        return jsonify({'ok': ok, 'id' if ok else 'error': res}), (200 if ok else 400)
+    if action == 'restore':
+        ok, res = malware.restore(str(d.get('id') or ''))
+        return jsonify({'ok': ok, 'path' if ok else 'error': res}), (200 if ok else 400)
+    if action == 'delete':
+        return jsonify({'ok': malware.delete_quarantined(str(d.get('id') or ''))})
+    if action == 'ignore':
+        ok = malware.ignore(str(d.get('file') or ''))
+        return jsonify({'ok': ok, 'error': '' if ok else 'Not a file inside a website folder'}), (200 if ok else 400)
+    if action == 'schedule':
+        try:
+            malware.schedule_set(d.get('enabled'), int(d.get('hour', 3)), d.get('clamav', True), str(d.get('path') or ''))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'Invalid hour'}), 400
+        return jsonify({'ok': True, 'schedule': malware.schedule_get()})
+    return jsonify({'ok': False, 'error': 'Unknown action'}), 400

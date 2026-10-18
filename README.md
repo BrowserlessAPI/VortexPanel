@@ -57,17 +57,23 @@ Built with Python/Flask + Alpine.js. No Node.js build step. No bloat. 2-minute i
 ### 🌐 Website Management
 - **Nginx, Apache2, OpenLiteSpeed, Caddy** — install and manage from the same panel
 - **One-click SSL** via Let's Encrypt — auto-detects Cloudflare DNS-01 vs HTTP-01
+- **SSL through DNS-provider APIs** (DNS-01) for 17 providers and this server's own DNS, including **wildcard** certificates
+- **Maintenance mode for all websites** with one switch and an IP allow list
 - Reverse proxy, custom directives, PHP version per site, Composer integration
 - One-click WordPress/Laravel/Symfony deploy
 - PHP webshell scanner integrated with the File Manager
 - **Per-site disk usage** (lazy-loaded, won't slow down servers with many/large sites)
+- **Site statistics** — page views, unique visitors, bots, top pages, referrers, browsers and status codes per site, from the access logs
+- **Git deploy** per site — deploy key, branch, signed GitHub/GitLab webhook, post-deploy command run as the site owner; the repository is kept outside the web root
+- **Site clone** — copy a site (files, database, WordPress URLs) to a new domain in one step
 - **Global SSL expiry alerts** on the Dashboard, aggregated across every site
 
-### 🔵 Go Projects & 💚 Node.js Projects
+### 🔵 Go, Node.js and Python Projects
 Deploy compiled Go binaries and Node.js apps with the same one-click simplicity as WordPress — a capability none of cPanel, Plesk, aaPanel, or HestiaCP offer out of the box:
 - **Go**: binary-only deployment, Go SDK manager (multiple versions side by side), GOPROXY config, systemd auto-restart, resource limits (`MemoryMax`/`CPUQuota`), on-demand TCP health checks, binary version history with one-click rollback
 - **Node.js**: PM2 or systemd per project, nvm-based version switching, current LTS reality (v24 Active, v22 Maintenance, v18/v20 correctly blocked as EOL)
-- Both: reverse proxy on all 4 webservers with **WebSocket support**, Let's Encrypt SSL per domain, firewall integration, all 9 supported distros
+- **Python**: virtualenv per project, Gunicorn / Uvicorn / custom command, runs as a normal user under systemd, Git clone and pull, Python versions from the App Store
+- All: reverse proxy on all 4 webservers with **WebSocket support**, Let's Encrypt SSL per domain, firewall integration, all 9 supported distros
 
 ### 📥 Website Import Wizard
 Migrate a site off cPanel, aaPanel, HestiaCP or CyberPanel by uploading its backup archive — no SSH pull required:
@@ -76,6 +82,10 @@ Migrate a site off cPanel, aaPanel, HestiaCP or CyberPanel by uploading its back
 - Fresh random database password generated on import (originals are never in a backup dump)
 - **Files, databases, SSL certificate, cron jobs and mailboxes** — the certificate is installed only when its key matches and it has not expired, cron jobs run as the web user with old account paths pointed at the new site, and mailboxes keep their passwords where the backup has the hash
 - HestiaCP `.tar.zst` backups are supported when `zstd` is installed
+
+### Server-to-Server Migration
+- Move websites, MySQL/MariaDB and PostgreSQL databases (users and passwords included), SSL certificates and cron jobs to another VortexPanel server with a one-time migration key
+- The old server keeps serving during the copy; "Sync again" refreshes the copy right before the DNS change; encrypted end to end, also over plain HTTP
 
 ### 🔷 WP Toolkit
 Full WordPress lifecycle management — install, manage, secure, stage, back up — no separate plugin or paid add-on:
@@ -92,6 +102,9 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - **Fail2ban** — intrusion prevention, brute-force protection
 - **ModSecurity WAF** — OWASP CRS v4, 3-state engine (Blocking/Detection/Off), paranoia level 1–4, custom rule editor, audit log viewer, per-site override, weekly auto-update cron
 - **SSH Hardening** — create sudo users, add SSH keys, disable root login, disable password auth, change port — all with built-in safety checks that block you from locking yourself out
+- **Malware scan** — webshell signatures, PHP in upload folders and ClamAV; quarantine with restore, "not a threat" list, daily or weekly schedule
+- **SSH sign-ins** — accepted and failed logins, top attacking addresses with one-click block, alert on a new sign-in
+- **Bot protection (Anubis)** — per-website browser check against AI scrapers and bad bots; search engines (verified by their published addresses), sitemaps, feeds and ads.txt are never checked; separate switches for AI training and AI search crawlers; nightly search engine test and a watchdog that fails open; available to hosting customers per package
 - **Security Score** dashboard — SSH config, firewall (UFW or firewalld), Fail2ban, auto-updates, panel password strength, 2FA status, secret key — all in one glance
 
 ### 🛡 Panel Security *(hardened to OWASP standards)*
@@ -101,12 +114,13 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - **Brute-force lockout** per address and per account, persists across panel restarts
 - **Accounts with roles** (Administrator, Site manager limited to assigned websites, Viewer) and **API keys** with role, IP allowlist and expiry
 - **Signed updates**: releases are verified with `git verify-tag` before they are installed; code and Python packages are snapshotted and restored automatically if the new version does not start
-- **Panel HTTPS** — self-signed or Let's Encrypt on your **custom port**; correct Secure cookie and HSTS behind a TLS reverse proxy
+- **Panel HTTPS** — self-signed or Let's Encrypt (domain or **IP address**) on your **custom port**; correct Secure cookie and HSTS behind a TLS reverse proxy
 - **IP allowlist**, panel domain binding, session timeout, login audit log, security headers (CSP, HSTS, X-Frame-Options) on every response
 - **`vortexpanel` command** for recovery: reset password, disable 2FA, change port or login path, clear the IP allowlist, unlock, update, rollback
 
 ### 🗄 Databases
 - MySQL, MariaDB, PostgreSQL, MongoDB — multi-engine
+- **Recycle bin** — a deleted database is kept as a dump for 7 days and can be restored
 - phpMyAdmin integration (auto-configured on its own port, separate PHP version)
 
 ### 📦 App Store
@@ -147,6 +161,9 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - **Setup guide** — first-run wizard for the web stack, security basics and the first website
 - **Cron Jobs** — visual scheduler, 10 task types, run-now, logs
 - **AI Assistant** — configurable OpenAI-compatible API (NeonCodex, OpenAI, etc.)
+- **Global search** (Ctrl+K) — pages, websites, apps and projects
+- **Hosting Module** (paid add-on) — cPanel-style shared hosting: customer accounts with packages and limits, a separate customer portal, per-account PHP-FPM pools and private nameservers. Buy it on the panel's Hosting Module page; the licence is activated and the module installed by itself
+- **Plugins** — add-ons such as the Hosting Module live in `/opt/vortexpanel/plugins`, never replace panel files and are skipped (not fatal) when they fail to load; `vortexpanel plugins` and a safe mode for recovery
 
 ---
 
@@ -264,7 +281,7 @@ python3 app.py   # development server on :8888
 
 **v3.6.0:** bandwidth monitor, website backups with schedules and cloud upload, dark mode, setup guide, mobile layout, disk usage analyzer, import of SSL/cron/email, Mail Server in the App Store.
 
-**v3.7.0 (current):**
+**v3.7.0:**
 - [x] Secure install defaults (random port, login path, username; HTTPS) and the `vortexpanel` command
 - [x] Signed release updates with package snapshots and automatic rollback
 - [x] 2FA backup codes, single-use codes, per-account lockout
@@ -275,6 +292,12 @@ python3 app.py   # development server on :8888
 - [x] File manager recycle bin, edit history, owner change, download from URL; FTP disable, quota, log
 - [x] Live App Store version data and distribution-package fallbacks
 - [x] Language packs
+
+**v3.8.0 (current):**
+- [x] Python projects, Git deploy per site, site clone, site statistics
+- [x] Malware scan with quarantine, SSH sign-in log and alerts, database recycle bin, global search
+- [x] Plugin system (Hosting Module 3 is a plugin), private nameservers for new DNS zones
+- [x] Layout fixes across the panel (Alpine 3.15 bindings, phone tables, settings windows)
 
 **Next:**
 - [ ] Coraza WAF installer for Caddy
