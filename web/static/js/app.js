@@ -8454,6 +8454,7 @@ function hostingModulePage() {
         this.err = (r && r.error) || 'Could not load the licence status'; return;
       }
       this.err = ''; this.st = r;
+      if (r.installed_version && r.plugin_status === 'loaded' && !(r.install_running || r.install?.state === 'running')) this.ensureModulePages();
       if (this.tracking && r.licence?.licensed && r.installed_version && !(r.install_running || r.install?.state === 'running') && r.install?.state !== 'failed') {
         this.tracking = false; toast('The Hosting Module is ready. Open Hosting Accounts to add your first customer.', 'success');
       }
@@ -8461,6 +8462,19 @@ function hostingModulePage() {
       this.schedule();
     },
     lic() { return this.st?.licence || {}; },
+    rootApp() { const el = document.querySelector('[x-data="rootApp()"]'); return el ? Alpine.$data(el) : null; },
+    // the module's pages are added to the menu when the panel loads; after an install in this
+    // browser session they are loaded here, so the menu entry appears without a page reload
+    async ensureModulePages() {
+      const root = this.rootApp();
+      if (root && !root.pluginPages.some(p => p.id === 'hosting-accounts')) await root.loadPluginPages();
+      return root;
+    },
+    async openAccounts() {
+      const root = await this.ensureModulePages();
+      if (root && root.pluginPages.some(p => p.id === 'hosting-accounts')) { this.tracking = false; root.go('hosting-accounts'); }
+      else toast('The Hosting Module is installed but its page did not load. Reload the panel (Ctrl+F5); if it stays missing, check Settings > Plugins.', 'error');
+    },
     pending() { return !!this.lic().checkout && !this.lic().licensed; },
     schedule() {
       clearTimeout(this.pollTimer);

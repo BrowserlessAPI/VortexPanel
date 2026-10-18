@@ -9068,7 +9068,7 @@
                 <div style="display:flex;gap:8px;align-items:center">
                   <span class="bp-note" x-show="updateAvailable()" x-text="'Version '+st.module_latest+' is available'"></span>
                   <button class="btn btn-primary btn-sm" x-show="lic().licensed && (!st.installed_version || updateAvailable())" :disabled="!!(st.install_running || st.install?.state==='running')" @click="install()" x-text="st.installed_version?'Update':'Install'"></button>
-                  <a class="btn btn-ghost btn-sm" x-show="st.installed_version" @click="go('hosting-accounts')">Open Hosting Accounts</a>
+                  <a class="btn btn-ghost btn-sm" x-show="st.installed_version" @click="openAccounts()">Open Hosting Accounts</a>
                 </div>
               </div>
               <template x-if="st.install && st.install.lines && st.install.lines.length">
@@ -9143,7 +9143,7 @@
                   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
                     <a class="btn btn-ghost btn-sm" x-show="pending() && lastCheckoutUrl" :href="lastCheckoutUrl" target="_blank" rel="noopener">Open the payment page again</a>
                     <button class="btn btn-ghost btn-sm" x-show="pending()" @click="cancelCheckout()">Cancel order</button>
-                    <button class="btn btn-primary btn-sm" x-show="tracking && st.installed_version && !installBusy()" @click="tracking=false; go('hosting-accounts')">Open Hosting Accounts</button>
+                    <button class="btn btn-primary btn-sm" x-show="tracking && st.installed_version && !installBusy()" @click="openAccounts()">Open Hosting Accounts</button>
                   </div>
                 </div>
 
