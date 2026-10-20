@@ -1,4 +1,14 @@
-# VortexPanel v3.8.0
+# VortexPanel v3.8.1
+
+A small fix release on top of 3.8.0.
+
+- **Updating from 3.6.0 or older no longer stops with "untracked working tree files would be overwritten by checkout: web/static/js/i18n.js".** Panels that had a language pack applied by hand kept a copy of that file outside git, and the update of those versions refused to replace it. The language script is now called `vp-lang.js`, so the update goes through. Nothing has to be done on the server.
+- **Hosting Module:** after buying or activating a licence, the Hosting Accounts page and its menu entry appear right away; reloading the panel is no longer needed.
+- Compiled Python files are no longer part of the repository.
+
+Everything below is from 3.8.0.
+
+## VortexPanel v3.8.0
 
 New tools from the aaPanel feature list (Python projects, Git deploy, site clone, malware scan, SSH sign-in alerts, site statistics, database recycle bin, global search), a plugin system, and a layout pass over the whole panel.
 

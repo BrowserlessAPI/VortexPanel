@@ -293,7 +293,9 @@ python3 app.py   # development server on :8888
 - [x] Live App Store version data and distribution-package fallbacks
 - [x] Language packs
 
-**v3.8.0 (current):**
+**v3.8.1 (current):** update fix for panels on 3.6.0 and older; Hosting Module pages appear right after buying
+
+**v3.8.0:**
 - [x] Python projects, Git deploy per site, site clone, site statistics
 - [x] Malware scan with quarantine, SSH sign-in log and alerts, database recycle bin, global search
 - [x] Plugin system (Hosting Module 3 is a plugin), private nameservers for new DNS zones

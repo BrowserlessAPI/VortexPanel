@@ -1,5 +1,5 @@
 .refactor_backup_*/
-_pycache__
+__pycache__/
 *.pyc
 venv/
 .env
