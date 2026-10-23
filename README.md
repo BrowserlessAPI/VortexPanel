@@ -51,6 +51,7 @@ Built with Python/Flask + Alpine.js. No Node.js build step. No bloat. 2-minute i
 | **Open source** | ❌ | ❌ | Partial | ❌ | ✅ | **✅ MIT** |
 
 ---
+https://www.youtube.com/watch?v=U2KpCEN9qw0
 
 ## ✨ Features
 
