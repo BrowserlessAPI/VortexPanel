@@ -6,6 +6,7 @@ import os, re, json, uuid, shutil, subprocess, secrets, string, threading, shlex
 from panel.utils.authctx import authed as _vp_authed
 from datetime import datetime
 from flask import Blueprint, jsonify, request, session
+from panel.utils.sqlident import grant_db
 
 try:
     from panel.routes.os_utils import get_os, get_webserver_user, panel_cache
@@ -1404,7 +1405,7 @@ def install_wp():
                 return fail(f'DB creation failed: {db_err}')
             _, db_err, db_rc = _mysql_cmd(f"CREATE USER IF NOT EXISTS '{db_user}'@'localhost' IDENTIFIED BY '{db_pass}';", engine=db_engine)
             if db_rc == 0:
-                _, db_err, db_rc = _mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db_name}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;", engine=db_engine)
+                _, db_err, db_rc = _mysql_cmd(f"GRANT ALL PRIVILEGES ON `{grant_db(db_name)}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;", engine=db_engine)
             if db_rc != 0:
                 return fail(f'DB user creation failed: {db_err}')
 
@@ -2104,7 +2105,7 @@ def clone_site(domain):
         made_db[:] = [f'DROP DATABASE IF EXISTS `{new_db}`;', f"DROP USER IF EXISTS '{new_user}'@'localhost';"]
         for q in (f'CREATE DATABASE `{new_db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;',
                   f"CREATE USER '{new_user}'@'localhost' IDENTIFIED BY '{new_pass}';",
-                  f"GRANT ALL PRIVILEGES ON `{new_db}`.* TO '{new_user}'@'localhost'; FLUSH PRIVILEGES;"):
+                  f"GRANT ALL PRIVILEGES ON `{grant_db(new_db)}`.* TO '{new_user}'@'localhost'; FLUSH PRIVILEGES;"):
             _o, qerr, qrc = _mysql_cmd(q)
             if qrc != 0:
                 return undo(f'Database setup failed: {qerr}')

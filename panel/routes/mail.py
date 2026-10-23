@@ -57,6 +57,9 @@ MAIL_USERS_FILE = '/opt/vortexpanel/mail_users.txt'
 # Dovecot never reads, so no virtual user could ever authenticate.
 DOVECOT_USERS_FILE = '/etc/dovecot/users'
 VMAIL_BASE = '/var/mail/vhosts'
+# Dovecot's home of each mailbox (Sieve state, vacation memory). Kept apart from the
+# maildir: files there such as .dovecot.lda-dupes otherwise show up as mail folders.
+VMAIL_HOME = '/var/mail/vp-home'
 
 
 def _mail_configured():
@@ -98,7 +101,7 @@ def _dovecot_conf(ver):
             "# Managed by VortexPanel -- virtual mailbox delivery (Dovecot 2.4 syntax). Do not edit by hand.\n"
             "mail_driver = maildir\n"
             f"mail_path = {VMAIL_BASE}/%{{user | domain}}/%{{user | username}}\n"
-            f"mail_home = {VMAIL_BASE}/%{{user | domain}}/%{{user | username}}\n"
+            f"mail_home = {VMAIL_HOME}/%{{user | domain}}/%{{user | username}}\n"
             # Debian 13's 10-mail.conf points INBOX at /var/mail/%{user} (mbox)
             "mail_inbox_path =\n"
             "mail_privileged_group = vmail\n"
@@ -111,7 +114,7 @@ def _dovecot_conf(ver):
             "  fields {\n"
             "    uid = vmail\n"
             "    gid = vmail\n"
-            f"    home = {VMAIL_BASE}/%{{user | domain}}/%{{user | username}}\n"
+            f"    home = {VMAIL_HOME}/%{{user | domain}}/%{{user | username}}\n"
             "  }\n"
             "}\n\n" + listeners)
     return (
@@ -126,7 +129,7 @@ def _dovecot_conf(ver):
         "}\n"
         "userdb {\n"
         "  driver = static\n"
-        f"  args = uid=vmail gid=vmail home={VMAIL_BASE}/%d/%n\n"
+        f"  args = uid=vmail gid=vmail home={VMAIL_HOME}/%d/%n\n"
         "}\n\n" + listeners)
 
 
@@ -270,6 +273,8 @@ def setup_mail():
        f'-d {VMAIL_BASE} -m -s /usr/sbin/nologin')
     os.makedirs(VMAIL_BASE, exist_ok=True)
     sh(f'chown -R vmail:vmail {VMAIL_BASE}; chmod 770 {VMAIL_BASE}')
+    os.makedirs(VMAIL_HOME, exist_ok=True)
+    sh(f'chown vmail:vmail {VMAIL_HOME}; chmod 770 {VMAIL_HOME}')
     vuid = sh('id -u vmail') or '5000'
     vgid = sh("getent group vmail | cut -d: -f3") or '5000'
     log.append(f'vmail user ready (uid={vuid} gid={vgid})')
@@ -377,6 +382,12 @@ def setup_mail():
             return jsonify({'ok': False, 'error': f'{svc} failed to restart with the new configuration, '
                                                   f'the previous configuration was restored: {err}', 'log': log}), 500
     log.append('Services restarted')
+    from panel import mailx
+    if not os.path.exists(mailx.SETTINGS):
+        mailx._write_json(mailx.SETTINGS, mailx.settings())     # new mail server: default limits
+    xerr = mailx.apply_all(log)
+    if xerr:
+        log.append('Note: ' + xerr)
 
     warn = None
     hosted = {_first_token(l) for l in _read_lines('/etc/postfix/virtual_mailbox_domains')}
@@ -425,7 +436,13 @@ def add_domain():
     rc, _, err = run(['postmap', path])
     if rc != 0: return jsonify({'ok':False,'error':f'postmap failed: {err}'}),500
     run(['systemctl', 'reload', 'postfix'])
-    return jsonify({'ok':True})
+    # DKIM key and the SPF / DKIM / DMARC / MX records (added to the zone when
+    # this server hosts the domain's DNS)
+    from panel import mailx
+    log = [f'Mail domain {domain} added'] + mailx.on_domain_added(domain)
+    if mailx.components()['rspamd_active']:
+        run(['systemctl', 'reload', 'rspamd'])
+    return jsonify({'ok':True, 'log': log})
 
 @mail_bp.route('/api/mail/accounts')
 def mail_accounts():
@@ -444,6 +461,15 @@ def mail_accounts():
                         if domain_filter and not email.endswith('@'+domain_filter): continue
                         seen.add(email)
                         accounts.append({'email':email})
+    from panel import mailx
+    sent = mailx.sent_today()
+    lim, st = mailx.limits(), mailx.settings()
+    for a in accounts:
+        e = a['email'].lower()
+        ar = mailx.get_autoresponder(e)
+        a.update({'sent_today': sent.get(f'mbx:{e}', 0), 'limit': mailx.effective_mailbox_limit(e, lim, st),
+                  'own_limit': lim['mailbox'].get(e), 'autoresponder': mailx.autoresponder_status(e, ar),
+                  'autoresponder_end': ar.get('end', '')})
     return jsonify({'ok':True,'accounts':accounts})
 
 @mail_bp.route('/api/mail/accounts', methods=['POST'])
@@ -501,6 +527,9 @@ def delete_account(email):
     _sync_dovecot_users()
     _sync_sender_logins()
     sh('systemctl reload postfix dovecot 2>/dev/null')
+    from panel import mailx
+    mailx.delete_autoresponder(email)
+    mailx.set_mailbox_limit(email, None)
     return jsonify({'ok':True})
 
 @mail_bp.route('/api/mail/accounts/<path:email>/password', methods=['PUT'])
@@ -670,3 +699,133 @@ def mail_logs():
     elif which == 'dovecot': grep = " | grep -i dovecot"
     out = sh(f'tail -n {lines} {path}{grep} 2>/dev/null')
     return jsonify({'ok':True, 'lines': out or 'No log entries found', 'source': path})
+
+
+# ------------------------------------------------------------------ spam filter, limits, autoresponders, records
+def _mx():
+    from panel import mailx
+    return mailx
+
+
+@mail_bp.route('/api/mail/extras')
+def mail_extras():
+    if not req(): return jsonify({'ok':False}),401
+    mx = _mx()
+    return jsonify({'ok': True, 'components': mx.components(), 'settings': mx.settings(),
+                    'install': mx.install_state(), 'stats': mx.stats_24h(),
+                    'learn_supported': mx.learn_supported()})
+
+
+@mail_bp.route('/api/mail/extras/install', methods=['POST'])
+def mail_extras_install():
+    if not req(): return jsonify({'ok':False}),401
+    if not os.path.isdir('/etc/postfix') or not os.path.isdir('/etc/dovecot'):
+        return jsonify({'ok': False, 'error': 'Install the Mail Server from the App Store first'}), 400
+    try:
+        st = _mx().start_install()
+    except RuntimeError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 409
+    return jsonify({'ok': True, 'install': st})
+
+
+@mail_bp.route('/api/mail/extras/settings', methods=['POST'])
+def mail_extras_settings():
+    if not req(): return jsonify({'ok':False}),401
+    mx = _mx()
+    d = request.get_json() or {}
+    try:
+        mx.save_settings(d)
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    log = []
+    part = d.get('apply')
+    err = mx.apply_all(log, only={'spam': None, 'limits': 'postfix'}.get(part)) if _mail_configured() else ''
+    if not _mail_configured():
+        mx.export_limits()
+    if err:
+        return jsonify({'ok': False, 'error': err, 'log': log}), 500
+    return jsonify({'ok': True, 'log': log, 'settings': mx.settings()})
+
+
+@mail_bp.route('/api/mail/accounts/<path:email>/autoresponder')
+def mail_get_autoresponder(email):
+    if not req(): return jsonify({'ok':False}),401
+    return jsonify({'ok': True, 'autoresponder': _mx().get_autoresponder(email.strip().lower())})
+
+
+@mail_bp.route('/api/mail/accounts/<path:email>/autoresponder', methods=['POST'])
+def mail_save_autoresponder(email):
+    if not req(): return jsonify({'ok':False}),401
+    email = email.strip().lower()
+    if not any(_first_token(l) == email for l in _read_lines(MAIL_USERS_FILE)):
+        return jsonify({'ok': False, 'error': 'Mailbox not found'}), 404
+    try:
+        ar = _mx().save_autoresponder(email, request.get_json() or {})
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    return jsonify({'ok': True, 'autoresponder': ar})
+
+
+@mail_bp.route('/api/mail/accounts/<path:email>/limit', methods=['POST'])
+def mail_set_limit(email):
+    if not req(): return jsonify({'ok':False}),401
+    email = email.strip().lower()
+    if not any(_first_token(l) == email for l in _read_lines(MAIL_USERS_FILE)):
+        return jsonify({'ok': False, 'error': 'Mailbox not found'}), 404
+    v = (request.get_json() or {}).get('limit')
+    if v not in (None, ''):
+        try:
+            v = int(v)
+            if v < 0: raise ValueError
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'The limit must be a whole number (0 = unlimited)'}), 400
+    _mx().set_mailbox_limit(email, v)
+    return jsonify({'ok': True})
+
+
+@mail_bp.route('/api/mail/records/<domain>')
+def mail_records(domain):
+    if not req(): return jsonify({'ok':False}),401
+    domain = domain.strip().lower()
+    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
+    try:
+        st = _mx().records_status(domain)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'ok': False, 'error': str(e)}), 500
+    return jsonify(dict(st, ok=True, dmarc_policy=_mx().settings()['dmarc_policy']))
+
+
+@mail_bp.route('/api/mail/records/<domain>', methods=['POST'])
+def mail_records_action(domain):
+    if not req(): return jsonify({'ok':False}),401
+    domain = domain.strip().lower()
+    if not _valid_domain(domain): return jsonify({'ok':False,'error':'Invalid domain'}),400
+    mx = _mx()
+    d = request.get_json() or {}
+    action = d.get('action')
+    log = []
+    try:
+        if action == 'add':
+            mx.add_records_to_zone(domain, log)
+        elif action == 'dkim':
+            mx.ensure_dkim_key(domain, renew=True)
+            log.append('New DKIM key created: update the DKIM record in DNS (done automatically when this server hosts the zone)')
+            if mx.components()['rspamd_active']:
+                run(['systemctl', 'reload', 'rspamd'])
+            # replace the old DKIM record in the local zone
+            dnsmod, zf = mx._local_zone(domain)
+            if zf:
+                content = open(zf).read()
+                keep = [l for l in content.split('\n') if not re.match(r'^\s*' + re.escape(mx.SELECTOR) + r'\._domainkey(\s|\.)', l)]
+                if len(keep) != len(content.split('\n')):
+                    err = dnsmod._write_zone_checked(domain, zf, dnsmod._bump_serial('\n'.join(keep)))
+                    if err: log.append(f'DNS zone not changed: {err}')
+                mx.add_records_to_zone(domain, log)
+        elif action == 'dmarc':
+            mx.save_settings({'dmarc_policy': d.get('policy')})
+            log.append('DMARC policy saved; existing DMARC records are not changed (edit them in DNS)')
+        else:
+            return jsonify({'ok': False, 'error': 'Unknown action'}), 400
+    except Exception as e:  # noqa: BLE001
+        return jsonify({'ok': False, 'error': str(e), 'log': log}), 500
+    return jsonify(dict(mx.records_status(domain), ok=True, log=log))

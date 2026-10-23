@@ -10,6 +10,7 @@ Evaluated every minute after the metrics sample (panel.tasks metrics):
   SSH sign-ins to the server (each successful login; bursts of failures)
   events reported by other parts of the panel through notify_event():
   a failed Git deploy, malware found by a scan
+  a mailbox or hosting account reaching its daily sending limit
 Each alert fires once, repeats at most every `repeat_minutes` while the
 problem lasts, and sends a "resolved" message when it clears.
 
@@ -52,6 +53,7 @@ DEFAULTS = {
         'deploy': {'enabled': True},
         'malware': {'enabled': True},
         'botprot': {'enabled': True},
+        'maillimit': {'enabled': True},
     },
     'repeat_minutes': 180,
 }
@@ -455,6 +457,22 @@ def evaluate(now=None):
     host = server_name()
     repeat = int(cfg.get('repeat_minutes', 180)) * 60
     active = st.get('active', {})
+
+    if (rules.get('maillimit') or {}).get('enabled', True):
+        try:
+            from panel import mailx
+            first = 'mail_events_off' not in st
+            evs, st['mail_events_off'] = mailx.new_events(st.get('mail_events_off', 0))
+            for e in ([] if first else evs[:20]):
+                subj = f'[{host}] Daily sending limit reached: {e.get("label")}'
+                body = (f'{e.get("label")} reached its limit of {e.get("limit")} emails today; further mail is refused '
+                        f'until tomorrow. A mailbox or website that suddenly sends this much is often hacked: check '
+                        f'Mail Server > Logs, change the mailbox password, or raise the limit (Mail Server > Mailboxes > Limit).')
+                res = send(subj, body, cfg, {'event': 'maillimit', 'server': host})
+                _record({'time': int(now), 'key': 'maillimit', 'title': subj, 'state': 'event', 'result': res})
+                sent.append(subj)
+        except Exception:
+            pass
 
     for title, detail in _ssh_events(cfg, st, now):
         subj = f'[{host}] {title}'

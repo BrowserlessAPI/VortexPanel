@@ -998,3 +998,14 @@ textarea.form-input { min-height: 0; }
 @media (prefers-reduced-motion:reduce){.hm-steps li.now .hm-step-dot{animation:none}}
 .hm-order.busy .hm-sub{display:none}
 @media (max-width:860px){.hm-order.busy .hm-order-side{order:-1}.hm-order{grid-template-columns:1fr}.hm-order-side{position:static}.hm-sentence{font-size:18px}.hm-lead{font-size:21px}}
+
+/* Mail Server: spam filter, limits, autoresponders */
+.mx-row{display:flex;align-items:flex-start;gap:12px;padding:6px 0}
+.mx-row>div{flex:1;min-width:0}
+.mx-row b{display:block;font-size:13px;color:var(--text-primary)}
+.mx-row span{display:block;font-size:11.5px;line-height:1.5;color:var(--text-muted)}
+.mx-hint{font-size:11.5px;line-height:1.5;color:var(--text-muted)}
+.mx-kv{display:flex;justify-content:space-between;gap:10px;padding:6px 0;font-size:12.5px;border-bottom:1px solid var(--border-light)}
+.mx-kv span{color:var(--text-muted)}
+.mx-bar{flex:0 0 120px;height:4px;border-radius:3px;background:var(--bg-hover);overflow:hidden}
+.mx-bar>div{height:100%}

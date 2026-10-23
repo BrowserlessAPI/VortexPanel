@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.8.1-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.8.1">
+<img src="https://img.shields.io/badge/VortexPanel-v3.7.0-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.7.0">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
 <img src="https://img.shields.io/badge/Alpine.js-3.15-8bc0d0?style=for-the-badge">
@@ -293,7 +293,12 @@ python3 app.py   # development server on :8888
 - [x] Live App Store version data and distribution-package fallbacks
 - [x] Language packs
 
-**v3.8.1 (current):** update fix for panels on 3.6.0 and older; Hosting Module pages appear right after buying
+**v3.9.0 (current):**
+- [x] Mail: Rspamd spam filter with Junk folder, autoresponders, daily sending limits, SPF/DKIM/DMARC records for new mail domains
+- [x] One-click Deploy installs WordPress, Drupal, Joomla, OpenCart and Laravel completely
+- [x] ionCube Loader; API key role for WHMCS provisioning (Hosting Module 3.2)
+
+**v3.8.1:** update fix for panels on 3.6.0 and older; Hosting Module pages appear right after buying
 
 **v3.8.0:**
 - [x] Python projects, Git deploy per site, site clone, site statistics

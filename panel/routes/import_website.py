@@ -19,6 +19,7 @@ mailboxes found in the backup -- see panel/import_extras.py.
 from flask import Blueprint, jsonify, request, session
 from panel.utils.authctx import authed as _vp_authed
 import os, re, subprocess, threading, time, json, uuid, shutil, shlex
+from panel.utils.sqlident import grant_db
 
 import_bp = Blueprint('import_website', __name__)
 
@@ -687,7 +688,7 @@ def execute_import(import_id):
                 new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
                 db_user = target_name[:27] + '_' + ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(4))
                 _, err = mysql_cmd(f"CREATE USER '{db_user}'@'localhost' IDENTIFIED BY '{new_password}'; "
-                                   f"GRANT ALL PRIVILEGES ON `{target_name}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;")
+                                   f"GRANT ALL PRIVILEGES ON `{grant_db(target_name)}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;")
                 if err:
                     _job_append(job_id, f'[ERROR] Failed to create database user for {target_name}: {err[:300]}')
                     continue

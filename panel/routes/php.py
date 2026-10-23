@@ -41,6 +41,7 @@ PHP_EXTENSIONS = [
     {'name':'zip',        'type':'Universal',  'desc':'ZIP file handling'},
     {'name':'bcmath',     'type':'Universal',  'desc':'Arbitrary precision math'},
     {'name':'exif',       'type':'General',    'desc':'Read picture EXIF information'},
+    {'name':'ioncube',    'type':'Loader',     'desc':'ionCube Loader: runs encoded PHP (WHMCS, licensed scripts); loaded before OPcache'},
     {'name':'opcache',    'type':'Buffer',     'desc':'Opcode caching for performance'},
     {'name':'apcu',       'type':'Buffer',     'desc':'Script buffer / user cache'},
     {'name':'redis',      'type':'Cache',      'desc':'Key-value database / cache'},
@@ -149,6 +150,8 @@ def php_loaded_modules(lay):
     mods = set(e.lower().strip() for e in raw.splitlines() if e.strip() and not e.startswith('['))
     if 'zend opcache' in mods:
         mods.add('opcache')
+    if any('ioncube' in m for m in mods):          # "the ionCube PHP Loader + ionCube24"
+        mods.add('ioncube')
     return mods
 
 def php_svc_status(lay):
@@ -176,8 +179,16 @@ def php_ini_test(lay, ini_path):
         return False, out
     return True, out
 
+def _reload_account_services(lay):
+    """Hosting accounts run their PHP in their own FPM services (Hosting Module 3.2,
+    vph-php83-<user>.service): extensions and php.ini changes reach them too."""
+    pattern = f'vph-php{lay["ver"].replace(".", "")}-*.service'
+    _run(['systemctl', 'try-reload-or-restart', pattern], t=120)
+
+
 def php_reload(lay):
     """Reload this version's FPM if it runs. Returns (ok, message)."""
+    _reload_account_services(lay)
     st = php_svc_status(lay)
     if st != 'active':
         return True, f'{lay["svc"]} is not running -- the change applies when it starts.'
@@ -301,6 +312,100 @@ def _pkg_env():
     env['NEEDRESTART_MODE'] = 'a'
     return env
 
+# ---- ionCube Loader: not packaged by the distributions (except Remi), so the
+# official loader archive is used; one .so per PHP version, loaded first.
+IONCUBE_URL = 'https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_{arch}.tar.gz'
+IONCUBE_DIR = '/usr/local/lib/ioncube'
+
+
+def _ioncube_ini_paths(lay):
+    if lay['flavor'] == 'debian':
+        return [f'/etc/php/{lay["ver"]}/mods-available/ioncube.ini']
+    if lay['flavor'] == 'remi':
+        vn = lay['ver'].replace('.', '')
+        return [f'/etc/opt/remi/php{vn}/php.d/01-ioncube.ini']
+    return ['/etc/php.d/01-ioncube.ini']
+
+
+def _install_ioncube(lay):
+    import platform, tarfile, tempfile, urllib.request, shutil
+    ver = lay['ver']
+    if lay['flavor'] == 'remi':
+        vn = ver.replace('.', '')
+        mgr = 'dnf' if shutil_which('dnf') else 'yum'
+        rc, out = _run([mgr, 'install', '-y', f'php{vn}-php-ioncube-loader'], t=600)
+        if rc == 0:
+            php_reload(lay)
+            if 'ioncube' in php_loaded_modules(lay):
+                return True, f'ionCube Loader installed for PHP {ver}.'
+    arch = {'x86_64': 'x86-64', 'amd64': 'x86-64', 'aarch64': 'aarch64', 'arm64': 'aarch64'}.get(platform.machine().lower())
+    if not arch:
+        return False, f'ionCube has no loader for this processor ({platform.machine()}).'
+    tmp = tempfile.mkdtemp(prefix='vp-ioncube-')
+    try:
+        try:
+            req_ = urllib.request.Request(IONCUBE_URL.format(arch=arch), headers={'User-Agent': 'VortexPanel'})
+            with urllib.request.urlopen(req_, timeout=120) as r, open(os.path.join(tmp, 'ic.tgz'), 'wb') as f:
+                shutil.copyfileobj(r, f)
+        except Exception as e:
+            return False, f'Could not download the ionCube Loader from downloads.ioncube.com: {e}'
+        name = f'ioncube_loader_lin_{ver}.so'
+        try:
+            with tarfile.open(os.path.join(tmp, 'ic.tgz')) as t:
+                member = next((m for m in t.getmembers() if m.isfile() and os.path.basename(m.name) == name), None)
+                if member is None:
+                    return False, f'ionCube does not provide a loader for PHP {ver} yet (supported: PHP 8.1 to 8.4 and older).'
+                data = t.extractfile(member).read()
+        except (tarfile.TarError, OSError) as e:
+            return False, f'The ionCube archive could not be read: {e}'
+        os.makedirs(IONCUBE_DIR, exist_ok=True)
+        so = os.path.join(IONCUBE_DIR, name)
+        with open(so + '.tmp', 'wb') as f:
+            f.write(data)
+        os.chmod(so + '.tmp', 0o644)
+        os.replace(so + '.tmp', so)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ini = f'; priority=00\n; Managed by VortexPanel\nzend_extension={so}\n'
+    for p in _ioncube_ini_paths(lay):
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, 'w') as f:
+            f.write(ini)
+    if lay['flavor'] == 'debian' and shutil_which('phpenmod'):
+        _run(['phpenmod', '-v', ver, 'ioncube'], t=30)
+    # check before reloading FPM: a loader that does not start must not take PHP down
+    rc, out = _run([lay['bin'], '-v'], t=20)
+    if rc != 0 or 'with the ioncube php loader' not in out.lower():
+        _remove_ioncube_ini(lay)
+        return False, f'PHP {ver} did not load the ionCube Loader, it was not enabled: ' + out[-300:]
+    php_reload(lay)
+    if 'ioncube' in php_loaded_modules(lay):
+        return True, f'ionCube Loader installed for PHP {ver}.'
+    return False, f'The ionCube Loader is installed but PHP-FPM {ver} does not load it yet; restart PHP {ver}.'
+
+
+def _remove_ioncube_ini(lay):
+    if lay['flavor'] == 'debian' and shutil_which('phpdismod'):
+        _run(['phpdismod', '-v', lay['ver'], 'ioncube'], t=30)
+    for p in _ioncube_ini_paths(lay):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+
+
+def _uninstall_ioncube(lay):
+    if lay['flavor'] == 'remi':
+        vn = lay['ver'].replace('.', '')
+        mgr = 'dnf' if shutil_which('dnf') else 'yum'
+        _run([mgr, 'remove', '-y', f'php{vn}-php-ioncube-loader'], t=300)
+    _remove_ioncube_ini(lay)
+    php_reload(lay)
+    if 'ioncube' in php_loaded_modules(lay):
+        return False, f'PHP {lay["ver"]} still loads the ionCube Loader (it was added outside the panel).'
+    return True, f'ionCube Loader removed from PHP {lay["ver"]}.'
+
+
 def php_install_ext(ver, ext):
     """Install/enable one extension for one PHP version. Returns (ok, message)."""
     lay = php_layout(ver)
@@ -311,6 +416,8 @@ def php_install_ext(ver, ext):
         return False, 'Invalid extension name.'
     if ext in php_loaded_modules(lay):
         return True, f'{ext} is already enabled for PHP {ver}.'
+    if ext == 'ioncube':
+        return _install_ioncube(lay)
     pkg, suf = _ext_pkg(lay, ext)
     if not pkg:
         return False, f'{ext} is built into the PHP CLI binary and cannot be added to PHP-FPM as a package.'
@@ -337,6 +444,8 @@ def php_uninstall_ext(ver, ext):
         return False, 'Invalid extension name.'
     if ext not in php_loaded_modules(lay):
         return True, f'{ext} is not enabled for PHP {ver}.'
+    if ext == 'ioncube':
+        return _uninstall_ioncube(lay)
     pkg, suf = _ext_pkg(lay, ext)
     if not pkg or suf in _SHARED_PKGS:
         if lay['flavor'] == 'debian' and pkg and shutil_which('phpdismod'):

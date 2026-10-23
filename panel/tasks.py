@@ -138,6 +138,13 @@ def main(argv):
         except Exception as e:
             print(f'malware scan: {e}')
         try:
+            from panel import mailx
+            r = mailx.maintenance()
+            if r:
+                print(f'mail: {r}')
+        except Exception as e:
+            print(f'mail: {e}')
+        try:
             from panel import licence
             r = licence.refresh_if_due()
             if r not in ('no licence', 'not due'):

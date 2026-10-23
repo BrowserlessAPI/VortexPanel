@@ -25,6 +25,7 @@ from flask import jsonify, request, current_app
 from panel.routes.websites_core import (websites_bp, req, is_valid_domain, create_site_core,
                                         _get_site_path, _find_site_config, _site_php, get_webroot)
 from panel.routes.job_state import load_job, save_job
+from panel.utils.sqlident import grant_db
 
 Q = shlex.quote
 
@@ -147,7 +148,7 @@ def _clone_job(app, jid, domain, new, src, dst, php, copy_db, src_db, new_db, sr
             pw = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(20))
             _, err = D.mysql_cmd(f'CREATE DATABASE `{new_db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n'
                                  f"CREATE USER IF NOT EXISTS '{new_db}'@'localhost' IDENTIFIED BY '{pw}';\n"
-                                 f"GRANT ALL PRIVILEGES ON `{new_db}`.* TO '{new_db}'@'localhost'; FLUSH PRIVILEGES;")
+                                 f"GRANT ALL PRIVILEGES ON `{grant_db(new_db)}`.* TO '{new_db}'@'localhost'; FLUSH PRIVILEGES;")
             if err:
                 return fail('creating the database failed: ' + err)
             dump = D._mk_tmp('.sql')

@@ -154,8 +154,8 @@ def keys_create():
     role = d.get('role') or 'viewer'
     if not name:
         return _err('Give the key a name')
-    if role not in ('admin', 'viewer'):
-        return _err('API keys can have the admin or viewer role')
+    if role not in ('admin', 'viewer', 'provisioning'):
+        return _err('API keys can have the admin, viewer or hosting provisioning role')
     ips = d.get('allowed_ips') or []
     if isinstance(ips, str):
         ips = re.split(r'[\s,]+', ips)

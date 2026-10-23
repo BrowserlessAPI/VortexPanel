@@ -504,8 +504,8 @@
                   <template x-for="app in deployApps" :key="app.id">
                     <div style="border:2px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:.12s;display:flex;gap:12px;align-items:center"
                          :style="vpCss(deployApp===app.id?'border-color:var(--accent);background:var(--bg-hover)':'')"
-                         @click="deployApp=app.id">
-                      <div style="width:40px;height:40px;background:var(--bg-raised);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:20px" x-html="vpIcon(app.emoji)"></div>
+                         @click="pickDeployApp(app.id)">
+                      <div style="width:40px;height:40px;background:var(--bg-raised);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--accent)" x-html="vpIcon(app.icon)"></div>
                       <div>
                         <div style="font-weight:700;font-size:13px" x-text="app.name"></div>
                         <div style="font-size:10px;color:var(--accent);font-family:var(--font-mono)" x-text="'v'+app.version"></div>
@@ -514,6 +514,42 @@
                     </div>
                   </template>
                 </div>
+                <template x-if="deployAppInfo()">
+                  <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+                    <div style="font-weight:700;font-size:13px;margin-bottom:10px" x-text="deployAppInfo().name+' settings'"></div>
+                    <div class="form-row form-row-2">
+                      <div class="form-group">
+                        <label class="form-label">PHP version</label>
+                        <select class="form-input" x-model="deployForm.php">
+                          <template x-for="v in deployAppInfo().php_versions" :key="v">
+                            <option :value="v" x-text="'PHP '+v+(v===deployAppInfo().php_recommended?' (recommended)':'')" :selected="v===deployForm.php"></option>
+                          </template>
+                        </select>
+                        <div x-show="!deployAppInfo().php_versions.length" style="font-size:11px;color:var(--danger);margin-top:4px" x-text="'Needs PHP '+deployAppInfo().php_min+' or newer. Install it from the App Store first.'"></div>
+                      </div>
+                      <div class="form-group" x-show="deployAppInfo().fields.includes('title')||deployAppInfo().id==='laravel'">
+                        <label class="form-label" x-text="deployAppInfo().id==='laravel'?'App name':'Site title'"></label>
+                        <input class="form-input" x-model="deployForm.title" :placeholder="deployAppInfo().name+' site'">
+                      </div>
+                    </div>
+                    <div class="form-row form-row-2" x-show="deployAppInfo().fields.includes('admin_user')">
+                      <div class="form-group">
+                        <label class="form-label">Admin user name</label>
+                        <input class="form-input" x-model="deployForm.admin_user">
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label">Admin email</label>
+                        <input class="form-input" x-model="deployForm.admin_email" placeholder="you@example.com">
+                      </div>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);line-height:1.5">
+                      <span x-show="!deployDb" style="color:var(--danger)">No MySQL or MariaDB server is installed: install one from the App Store first. </span>
+                      <span x-text="deployAppInfo().id==='laravel'
+                        ? 'The project is created with Composer, the site serves its public folder, and a database is created and migrated. An SSL certificate is requested when the domain points to this server.'
+                        : 'A database, user and strong password are created for the site, and an SSL certificate is requested when the domain points to this server. The admin password is shown once when the install is done.'"></span>
+                    </div>
+                  </div>
+                </template>
               </div>
             </template>
 
@@ -538,6 +574,38 @@
             <div class="modal-ft">
               <button class="btn btn-ghost" @click="showAdd=false">Cancel</button>
               <button class="btn btn-primary" :disabled="!!(batchRunning)" @click="addTab==='deploy'?deployNow():(addTab==='batch'?createBatch():create())" x-text="addTab==='batch'?(batchRunning?'Creating...':'Create all'):'Confirm'"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- One-click Deploy progress and result -->
+        <div class="modal-overlay" x-show="deployRun.show">
+          <div class="modal">
+            <div class="modal-hd"><div class="modal-title" x-text="(deployRun.done?(deployRun.success?'Installed ':'Install failed: '):'Installing ')+(deployRun.app?deployRun.app.name:'')+' on '+deployRun.domain"></div>
+              <button class="modal-close" x-show="deployRun.done" @click="closeDeploy(false)">×</button></div>
+            <div class="terminal-out" style="max-height:220px;min-height:120px">
+              <template x-for="(l,i) in deployRun.lines" :key="i"><div x-text="l" :style="vpCss(l.startsWith('FAILED')?'color:var(--danger)':'')"></div></template>
+              <div x-show="!deployRun.done" style="color:var(--text-muted)">Working...</div>
+            </div>
+            <template x-if="deployRun.done&&deployRun.success">
+              <div style="border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-top:12px;font-size:13px">
+                <div class="mx-kv"><span>Site</span><a :href="deployRun.result.url" target="_blank" rel="noopener" x-text="deployRun.result.url"></a></div>
+                <div class="mx-kv" x-show="deployRun.result.admin_url"><span>Admin</span><a :href="deployRun.result.admin_url" target="_blank" rel="noopener" x-text="deployRun.result.admin_url"></a></div>
+                <div class="mx-kv" x-show="deployRun.result.admin_user"><span>User name</span><code x-text="deployRun.result.admin_user"></code></div>
+                <div class="mx-kv" x-show="deployRun.result.admin_pass"><span>Password</span><div><code x-text="deployRun.result.admin_pass"></code>
+                  <button class="btn btn-ghost btn-sm" @click="copyText(deployRun.result.admin_pass)">Copy</button></div></div>
+                <div class="mx-kv"><span>Database</span><code x-text="deployRun.result.db_name+' / '+deployRun.result.db_user"></code></div>
+                <div class="mx-kv"><span>DB password</span><div><code x-text="deployRun.result.db_pass"></code>
+                  <button class="btn btn-ghost btn-sm" @click="copyText(deployRun.result.db_pass)">Copy</button></div></div>
+                <div class="mx-kv" x-show="deployRun.result.path"><span>Folder</span><code x-text="deployRun.result.path"></code></div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Shown once. Save the passwords now.</div>
+                <div x-show="deployRun.result.ssl_note" style="font-size:11px;color:var(--warning);margin-top:4px" x-text="deployRun.result.ssl_note"></div>
+              </div>
+            </template>
+            <div x-show="deployRun.done&&!deployRun.success" style="font-size:12px;color:var(--danger);margin-top:10px" x-text="deployRun.error"></div>
+            <div class="modal-ft" x-show="deployRun.done">
+              <button class="btn btn-ghost" x-show="deployRun.success&&deployRun.app&&deployRun.app.id==='wordpress'" @click="closeDeploy(true)">Open in WP Toolkit</button>
+              <button class="btn btn-primary" @click="closeDeploy(false)">Done</button>
             </div>
           </div>
         </div>
@@ -3994,7 +4062,7 @@
       <!-- MODULES -->
       <div x-show="page==='modules'" x-data="modulesPage()">
         <div class="page-header">
-          <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software</div></div>
+          <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software<span x-show="tested && tested.in_use" x-text="' - versions tested by VortexPanel (list #'+(tested&&tested.serial)+', '+((tested&&tested.issued)||'').slice(0,10)+')'"></span></div></div>
           <button class="btn btn-ghost btn-sm" @click="refreshCatalog()" :disabled="!!(catalogRefreshing)">
             <span x-show="!catalogRefreshing">Update App List</span>
             <span x-show="catalogRefreshing">Updating…</span>
@@ -4036,7 +4104,8 @@
                   </td>
 
                   <!-- Description -->
-                  <td class="vp-hide-sm" style="font-size:12px;color:var(--text-secondary);padding-right:8px" x-text="m.desc"></td>
+                  <td class="vp-hide-sm" style="font-size:12px;color:var(--text-secondary);padding-right:8px"><span x-text="m.desc"></span>
+                    <div x-show="m.notice" style="margin-top:4px;font-size:11.5px;color:#d97706;font-weight:600" x-text="m.notice"></div></td>
 
                   <!-- Status / Version -->
                   <td>
@@ -6365,7 +6434,8 @@
         </div>
         <div class="tabs" style="margin-bottom:14px">
           <div class="tab" :class="{active:tab==='mailboxes'}" @click="tab='mailboxes'">Mailboxes</div>
-          <div class="tab" :class="{active:tab==='dkim'}" @click="tab='dkim'">DKIM / SPF</div>
+          <div class="tab" :class="{active:tab==='dkim'}" @click="tab='dkim'; if(!dkimDomain && domains.length){dkimDomain=domains[0]}; loadRecords()">DKIM / SPF / DMARC</div>
+          <div class="tab" :class="{active:tab==='spam'}" @click="tab='spam';loadExtras()">Spam &amp; limits</div>
           <div class="tab" :class="{active:tab==='queue'}" @click="tab='queue';loadQueue()">Queue</div>
           <div class="tab" :class="{active:tab==='forwarding'}" @click="tab='forwarding';loadForwarding()">Forwarding</div>
           <div class="tab" :class="{active:tab==='logs'}" @click="tab='logs';loadMailLogs()">Logs</div>
@@ -6375,34 +6445,105 @@
             <template x-for="d in domains" :key="d"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:13px" x-text="d"></span><button class="btn btn-ghost btn-xs" @click="loadAccounts(d)">Accounts</button></div></template>
           </div>
           <div class="card"><div class="card-hd"><div class="card-title" x-text="selDomain?'Accounts: '+selDomain:'Select a domain'"></div><button class="btn btn-primary btn-xs" x-show="selDomain" @click="showAddAccount=true">+</button></div>
-            <template x-for="a in accounts" :key="a.email"><div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:12px;font-family:var(--font-mono)" x-text="a.email"></span><button class="btn btn-ghost btn-xs" @click="resetPassTarget=a.email;showResetPass=true">Reset Pass</button><button class="btn btn-danger btn-xs" @click="delAccount(a.email)">Delete</button></div></template>
+            <template x-for="a in accounts" :key="a.email"><div style="padding:8px 0;border-bottom:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap"><span style="flex:1;min-width:160px;font-size:12px;font-family:var(--font-mono)" x-text="a.email"></span>
+                <button class="btn btn-ghost btn-xs" @click="openAutoresponder(a)">Autoresponder</button>
+                <button class="btn btn-ghost btn-xs" @click="openLimit(a)">Limit</button>
+                <button class="btn btn-ghost btn-xs" @click="resetPassTarget=a.email;showResetPass=true">Password</button>
+                <button class="btn btn-danger btn-xs" @click="delAccount(a.email)">Delete</button></div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:5px;font-size:11px;color:var(--text-muted)">
+                <span style="min-width:120px" x-text="'Sent today '+(a.sent_today||0)+(a.limit?' / '+a.limit:' (no limit)')"></span>
+                <div class="mx-bar" x-show="a.limit"><div :style="vpCss('width:'+Math.min(100,(a.sent_today||0)/(a.limit||1)*100)+'%;background:'+((a.sent_today||0)/(a.limit||1)>=0.9?'var(--red)':'var(--accent)'))"></div></div>
+                <span class="badge badge-green" x-show="a.autoresponder==='on'" x-text="'Autoresponder on'+(a.autoresponder_end?' until '+a.autoresponder_end:'')"></span>
+                <span class="badge badge-gray" x-show="a.autoresponder==='scheduled'">Autoresponder scheduled</span>
+              </div></div></template>
+            <div x-show="selDomain && !accounts.length" style="font-size:12px;color:var(--text-muted);padding:10px 0">No mailboxes yet.</div>
           </div>
         </div>
         <div class="modal-overlay" x-show="showResetPass" @click.self="showResetPass=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title" x-text="'Reset Password: '+resetPassTarget"></div><button class="modal-close" @click="showResetPass=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="resetPassValue" placeholder="Password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showResetPass=false">Cancel</button><button class="btn btn-primary" @click="resetPassword()">Update Password</button></div></div></div>
         <div class="modal-overlay" x-show="showAddForward" @click.self="showAddForward=false"><div class="modal" style="max-width:420px"><div class="modal-hd"><div class="modal-title">Add Forwarding Rule</div><button class="modal-close" @click="showAddForward=false">×</button></div><div class="form-group"><label class="form-label">From (this domain's address)</label><input class="form-input" x-model="forwardForm.source" :placeholder="'name@'+selDomain"></div><div class="form-group"><label class="form-label">Forward To</label><input class="form-input" x-model="forwardForm.destination" placeholder="destination@example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddForward=false">Cancel</button><button class="btn btn-primary" @click="addForwarding()">Add Rule</button></div></div></div>
         <div x-show="tab==='dkim'" class="card">
-          <div class="card-hd"><div class="card-title">DKIM / SPF Records</div></div>
-          <div class="form-group"><label class="form-label">Domain</label>
-            <select class="form-input" x-model="dkimDomain" @change="loadDkim()">
+          <div class="card-hd"><div class="card-title">Mail DNS records</div>
+            <select class="form-input" style="width:auto;padding:4px 8px;font-size:12px" x-model="dkimDomain" @change="loadRecords()">
               <option value="">Select domain...</option>
-              <template x-for="d in domains" :key="d"><option :value="d" x-text="d"></option></template>
-            </select>
-          </div>
+              <template x-for="d in domains" :key="d"><option :value="d" x-text="d" :selected="d===dkimDomain"></option></template>
+            </select></div>
+          <div x-show="!dkimDomain" style="font-size:12px;color:var(--text-muted)">Add a mail domain first.</div>
           <div x-show="dkimDomain">
-            <button class="btn btn-primary btn-sm" @click="genDkim()" :disabled="!!(dkimLoading)" style="margin-bottom:10px">Generate / Regenerate DKIM Key</button>
-            <div x-show="dkimRecord">
-              <label class="form-label">DKIM TXT Record (add to your DNS)</label>
-              <pre class="code-block" x-text="dkimRecord" style="white-space:pre-wrap;word-break:break-all"></pre>
+            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;line-height:1.6" x-text="recs.local_zone
+              ? 'This server hosts the DNS zone of '+dkimDomain+': missing records are added to it automatically when the mail domain is created, or with Add missing records. Existing SPF, DMARC and MX records are never replaced.'
+              : 'The DNS of '+dkimDomain+' is not hosted on this server. Copy the records marked Missing to your DNS provider; the status is checked against public DNS.'"></div>
+            <div x-show="recsLoading" style="font-size:12px;color:var(--text-muted)">Checking...</div>
+            <div class="vp-tscroll" x-show="!recsLoading"><table class="data-table">
+              <thead><tr><th>Record</th><th>Type</th><th>Name</th><th>Value</th><th>Status</th><th></th></tr></thead>
+              <tbody><template x-for="r in (recs.records||[])" :key="r.name">
+                <tr><td><b x-text="r.name"></b></td><td><span class="badge badge-gray" x-text="r.type"></span></td>
+                  <td style="font-family:var(--font-mono);font-size:12px" x-text="r.host"></td>
+                  <td style="font-family:var(--font-mono);font-size:11.5px;max-width:460px;word-break:break-all"><span x-text="r.value || r.error"></span>
+                    <div x-show="r.status==='different'" style="color:var(--text-muted);margin-top:3px" x-text="'Found: '+(r.found||'')"></div></td>
+                  <td><span class="badge" :class="{'badge-green':r.status==='ok','badge-yellow':r.status==='missing','badge-gray':r.status==='different','badge-red':r.status==='error'}"
+                        x-text="({ok:'In DNS',missing:(recs.local_zone?'Missing':'Add at your DNS provider'),different:'Different value',error:'Error'})[r.status]"></span></td>
+                  <td><button class="btn btn-ghost btn-xs" x-show="r.value" @click="copyText(r.value)">Copy</button></td></tr>
+              </template></tbody></table></div>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center">
+              <button class="btn btn-ghost btn-sm" @click="loadRecords()">Check again</button>
+              <button class="btn btn-primary btn-sm" x-show="recs.local_zone && (recs.records||[]).some(r=>r.status==='missing')" @click="recordsAction('add')">Add missing records</button>
+              <button class="btn btn-ghost btn-sm" @click="if(confirm('Create a new DKIM key for '+dkimDomain+'? Mail is signed with the new key right away; update the DKIM record at your DNS provider if this server does not host the zone.')) recordsAction('dkim')">New DKIM key</button>
+              <span style="flex:1"></span>
+              <span style="font-size:11.5px;color:var(--text-muted)">DMARC policy for new records:
+                <select class="form-input" style="width:auto;display:inline-block;padding:2px 6px;font-size:12px" :value="recs.dmarc_policy" @change="recordsAction('dmarc', $event.target.value)">
+                  <option value="none">none (report only)</option><option value="quarantine">quarantine</option><option value="reject">reject</option></select></span>
             </div>
-            <div x-show="!dkimRecord && !dkimLoading" style="font-size:12px;color:var(--text-muted);margin-top:8px">No DKIM key generated yet for this domain.</div>
-            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
-              <label class="form-label">Recommended SPF Record (TXT for @)</label>
-              <pre class="code-block" x-text="'v=spf1 mx a ip4:' + (dkimDomain ? '' : '') + ' ~all'" style="white-space:pre-wrap"></pre>
-              <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Add this as a TXT record on your domain's root (@), including your server's mail-sending IP.</div>
+            <div x-show="!extras.components?.rspamd" style="margin-top:12px;font-size:12px;color:var(--text-muted)">DKIM signing needs the spam filter (Rspamd): install it on the Spam &amp; limits tab.</div>
+          </div>
+        </div>
+        <div x-show="tab==='spam'">
+          <div class="card" x-show="extras.loaded && (!extras.components?.rspamd || !extras.components?.sieve)" style="margin-bottom:14px">
+            <div class="card-hd"><div class="card-title">Install the spam filter</div></div>
+            <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px">Rspamd checks incoming mail for spam and signs outgoing mail with DKIM; the Dovecot Sieve plugin files spam into Junk and runs autoresponders. Both come from your distribution's packages (Rspamd's own repository on AlmaLinux, Rocky and RHEL).
+              <span x-show="!status.configured"> Set up the mail server first (Mailboxes tab).</span></div>
+            <button class="btn btn-primary btn-sm" :disabled="!!(extras.install?.running || !status.configured)" @click="installExtras()" x-text="extras.install?.running?'Installing...':'Install'"></button>
+            <pre class="code-block" x-show="(extras.install?.lines||[]).length" style="margin-top:10px;max-height:220px;overflow:auto" x-text="(extras.install?.lines||[]).join('\n')"></pre>
+          </div>
+          <div class="grid-2" x-show="extras.loaded">
+            <div class="card">
+              <div class="card-hd"><div class="card-title">Spam filter (Rspamd)</div>
+                <span class="badge" :class="extras.components?.rspamd_active?'badge-green':'badge-gray'" x-text="extras.components?.rspamd ? (extras.components?.rspamd_active?'Running':'Stopped') : 'Not installed'"></span></div>
+              <div class="mx-row"><div><b>Check incoming mail for spam</b><span>Every message is scored. Spam goes to the Junk folder of the mailbox; clear spam is refused before it is delivered.</span></div>
+                <label class="bp-sw"><input type="checkbox" x-model="xs.spam.enabled"><span></span></label></div>
+              <div class="form-row form-row-2" style="margin-top:8px">
+                <div class="form-group"><label class="form-label">Move to Junk at score</label><input class="form-input" type="number" step="0.5" min="1" max="50" x-model.number="xs.spam.junk_score"><div class="mx-hint">Lower = stricter</div></div>
+                <div class="form-group"><label class="form-label">Refuse at score</label><input class="form-input" type="number" step="0.5" min="2" max="100" x-model.number="xs.spam.reject_score"></div>
+              </div>
+              <div class="mx-row"><div><b>Greylisting</b><span>Unknown senders are asked to try again a few minutes later. Stops most spam bots; first mail from a new sender can take up to 5 minutes.</span></div>
+                <label class="bp-sw"><input type="checkbox" x-model="xs.spam.greylist"><span></span></label></div>
+              <div class="mx-row"><div><b>Learn from the Junk folder</b><span x-text="extras.learn_supported ? 'Moving a message into or out of Junk teaches the filter.' : 'Not available with Dovecot 2.4 yet.'"></span></div>
+                <label class="bp-sw"><input type="checkbox" x-model="xs.spam.learn" :disabled="!extras.learn_supported"><span></span></label></div>
+              <div class="form-group" style="margin-top:8px"><label class="form-label">Always allow (addresses or domains, one per line)</label><textarea class="form-input" rows="2" x-model="xs.allowText"></textarea></div>
+              <div class="form-group"><label class="form-label">Always block</label><textarea class="form-input" rows="2" x-model="xs.blockText" placeholder="spammer@example.com&#10;spam-domain.example"></textarea></div>
+              <button class="btn btn-primary btn-sm" :disabled="!!(xsBusy || !extras.components?.rspamd)" @click="saveExtras('spam')" x-text="xsBusy==='spam'?'Saving...':'Save'"></button>
             </div>
-            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
-              <label class="form-label">Recommended DMARC Record (TXT for _dmarc)</label>
-              <pre class="code-block" x-text="'v=DMARC1; p=quarantine; rua=mailto:postmaster@' + dkimDomain" style="white-space:pre-wrap"></pre>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="card">
+                <div class="card-hd"><div class="card-title">Sending limits</div></div>
+                <div class="form-row form-row-2">
+                  <div class="form-group"><label class="form-label">Emails per mailbox per day</label><input class="form-input" type="number" min="0" x-model.number="xs.limits.mailbox"></div>
+                  <div class="form-group"><label class="form-label">Emails per domain per day</label><input class="form-input" type="number" min="0" x-model.number="xs.limits.domain"></div>
+                </div>
+                <div class="mx-hint" style="margin-bottom:10px">0 = unlimited. Each recipient counts as one email. Default for every mailbox that signs in to send; a mailbox can have its own limit (Mailboxes &gt; Limit) and hosting packages set their own.</div>
+                <div class="mx-row"><div><b>Alert when a mailbox reaches its limit</b><span>Sent through the Alerts page (email, Telegram or webhook). A hacked mailbox usually shows up here first.</span></div>
+                  <label class="bp-sw"><input type="checkbox" x-model="xs.limits.alert"><span></span></label></div>
+                <button class="btn btn-primary btn-sm" style="margin-top:6px" :disabled="!!xsBusy" @click="saveExtras('limits')" x-text="xsBusy==='limits'?'Saving...':'Save'"></button>
+              </div>
+              <div class="card">
+                <div class="card-hd"><div class="card-title">Last 24 hours</div><button class="btn btn-ghost btn-xs" @click="loadExtras()">Refresh</button></div>
+                <div class="mx-kv"><span>Checked by the spam filter</span><b x-text="(extras.stats?.checked||0).toLocaleString()"></b></div>
+                <div class="mx-kv"><span>Moved to Junk</span><b x-text="(extras.stats?.junk||0).toLocaleString()"></b></div>
+                <div class="mx-kv"><span>Refused as spam</span><b x-text="(extras.stats?.rejected||0).toLocaleString()"></b></div>
+                <div class="mx-kv" x-show="extras.stats?.greylisted"><span>Greylisted</span><b x-text="(extras.stats?.greylisted||0).toLocaleString()"></b></div>
+                <div class="mx-kv"><span>Sent by mailboxes today</span><b x-text="(extras.stats?.sent||0).toLocaleString()"></b></div>
+                <div class="mx-kv"><span>Refused today, over the sending limit</span><b :style="vpCss(extras.stats?.refused_limit?'color:var(--red)':'')" x-text="(extras.stats?.refused_limit||0)+(extras.stats?.refused_top?' ('+extras.stats.refused_top+')':'')"></b></div>
+              </div>
             </div>
           </div>
         </div>
@@ -6467,6 +6608,26 @@
         </div>
         <div class="modal-overlay" x-show="showAddDomain" @click.self="showAddDomain=false"><div class="modal" style="max-width:360px"><div class="modal-hd"><div class="modal-title">Add Mail Domain</div><button class="modal-close" @click="showAddDomain=false">×</button></div><div class="form-group"><label class="form-label">Domain</label><input class="form-input" x-model="domainForm.domain" placeholder="example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddDomain=false">Cancel</button><button class="btn btn-primary" @click="addDomain()">Add</button></div></div></div>
         <div class="modal-overlay" x-show="showAddAccount" @click.self="showAddAccount=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title">Add Mail Account</div><button class="modal-close" @click="showAddAccount=false">×</button></div><div class="form-group"><label class="form-label">Email Address</label><input class="form-input" x-model="accountForm.user" :placeholder="'name@'+selDomain"></div><div style="font-size:11px;color:var(--text-muted);margin:-6px 0 10px">Must end with @<span x-text="selDomain"></span></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="accountForm.pass" placeholder="Password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddAccount=false">Cancel</button><button class="btn btn-primary" @click="addAccount()">Create</button></div></div></div>
+        <div class="modal-overlay" x-show="ar.show" x-cloak @click.self="ar.show=false"><div class="modal" style="max-width:480px">
+          <div class="modal-hd"><div class="modal-title" x-text="'Autoresponder: '+ar.email"></div><button class="modal-close" @click="ar.show=false">&times;</button></div>
+          <div class="mx-row"><div><b>Reply automatically</b><span>Senders get this reply once, then again after the number of days below.</span></div>
+            <label class="bp-sw"><input type="checkbox" x-model="ar.enabled"><span></span></label></div>
+          <div class="form-group" style="margin-top:8px"><label class="form-label">Subject</label><input class="form-input" x-model="ar.subject" maxlength="200" placeholder="Out of office"></div>
+          <div class="form-group"><label class="form-label">Message</label><textarea class="form-input" rows="5" x-model="ar.body" maxlength="8000"></textarea></div>
+          <div class="form-row form-row-2">
+            <div class="form-group"><label class="form-label">From (empty = now)</label><input class="form-input" type="date" x-model="ar.start"></div>
+            <div class="form-group"><label class="form-label">Until (empty = no end)</label><input class="form-input" type="date" x-model="ar.end"></div></div>
+          <div class="form-group"><label class="form-label">Reply to the same sender again after (days)</label><input class="form-input" type="number" min="1" max="30" x-model.number="ar.days"></div>
+          <div class="mx-hint">No replies to mailing lists, no-reply addresses, bounces or spam.</div>
+          <div class="modal-ft"><button class="btn btn-ghost" @click="ar.show=false">Cancel</button><button class="btn btn-primary" :disabled="!!ar.busy" @click="saveAutoresponder()">Save</button></div>
+        </div></div>
+        <div class="modal-overlay" x-show="lim.show" x-cloak @click.self="lim.show=false"><div class="modal" style="max-width:400px">
+          <div class="modal-hd"><div class="modal-title" x-text="'Sending limit: '+lim.email"></div><button class="modal-close" @click="lim.show=false">&times;</button></div>
+          <label class="form-check" style="margin-bottom:8px"><input type="checkbox" x-model="lim.own"><span>Own limit for this mailbox</span></label>
+          <div class="form-group" x-show="lim.own"><label class="form-label">Emails per day (0 = unlimited)</label><input class="form-input" type="number" min="0" x-model.number="lim.value"></div>
+          <div class="mx-hint" x-show="!lim.own" x-text="'Uses the default: '+(lim.def ? lim.def+' per day' : 'unlimited')+'.'"></div>
+          <div class="modal-ft"><button class="btn btn-ghost" @click="lim.show=false">Cancel</button><button class="btn btn-primary" @click="saveLimit()">Save</button></div>
+        </div></div>
       </div>
 
       <!-- FTP -->
@@ -9153,7 +9314,7 @@
                   <dl class="hm-lines" x-show="planObj()">
                     <div><dt x-text="(planObj()?.kind==='dedicated'?'Dedicated hardware':'VPS')+' licence'+(buySeats>1?' x '+buySeats:'')"></dt><dd x-text="money(listPrice())"></dd></div>
                     <div x-show="packSaving()>0.004" class="save"><dt x-text="buySeats+'-server pack'"></dt><dd x-text="'- '+money(packSaving())"></dd></div>
-                    <div x-show="planObj()?.compare_at && buySeats===1" class="save"><dt>Introductory price</dt><dd x-text="'- '+money(planObj().compare_at-planObj().amount)"></dd></div>
+                    <div x-show="planObj()?.compare_at && buySeats===1" class="save"><dt>Introductory price</dt><dd x-text="'- '+money((planObj()?.compare_at||0)-(planObj()?.amount||0))"></dd></div>
                     <div class="total"><dt x-text="buyPeriod==='yearly'?'Due today, then yearly':'Due today, then monthly'"></dt><dd x-text="money(planObj()?.amount||0)"></dd></div>
                   </dl>
                   <p class="hm-fine">Tax is added on the payment page if it applies to you.</p>
@@ -9311,9 +9472,22 @@
             <div class="modal-hd"><div class="modal-title">Create API key</div><button class="modal-close" @click="keyForm.show=false">&times;</button></div>
             <div class="form-group"><label class="form-label">Name</label><input class="form-input" x-model="keyForm.name" placeholder="e.g. uptime monitor"></div>
             <div class="form-group"><label class="form-label">Role</label>
-              <select class="form-input" x-model="keyForm.role"><option value="viewer">Viewer (read-only)</option><option value="admin">Administrator (full access)</option></select></div>
+              <select class="form-input" x-model="keyForm.role" @change="keyRoleChanged()"><option value="viewer">Viewer (read-only)</option><option value="admin">Administrator (full access)</option><option value="provisioning">Hosting provisioning (WHMCS): hosting accounts only</option></select></div>
             <div class="form-group"><label class="form-label">Allowed addresses (IP or CIDR, comma separated - empty for any)</label><input class="form-input" x-model="keyForm.allowed_ips" placeholder="203.0.113.10, 198.51.100.0/24"></div>
             <div class="form-group"><label class="form-label">Expires after (days, 0 = never)</label><input class="form-input" type="number" min="0" max="3650" x-model.number="keyForm.expires_days"></div>
+            <div x-show="keyForm.role==='provisioning'" style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:12.5px;margin-bottom:6px">
+              <div style="display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:6px"><span style="color:var(--accent);display:inline-flex;width:15px;height:15px" x-html="vpIcon('package')"></span>Connect WHMCS</div>
+              <template x-if="keyForm.whmcs && keyForm.whmcs.missing"><div style="color:var(--text-muted)">Needs the Hosting Module: install it first (Hosting Module in the menu).</div></template>
+              <template x-if="keyForm.whmcs && !keyForm.whmcs.missing"><div>
+                <div style="color:var(--text-muted);margin-bottom:6px">This key can only create, suspend, unsuspend, terminate and change the package of hosting accounts, and sign customers in to the portal.</div>
+                <ol style="margin:0 0 8px 18px;padding:0;color:var(--text-muted);line-height:1.6">
+                  <li>Download the module and upload its folder to <code>modules/servers/</code> in WHMCS.</li>
+                  <li>WHMCS: System Settings &gt; Servers &gt; Add: type VortexPanel, hostname <code x-text="keyForm.whmcs.host"></code>, port <code x-text="keyForm.whmcs.port"></code>, password = this API key<span x-show="keyForm.whmcs.https">, Secure ticked</span>.</li>
+                  <li>Products: module VortexPanel, then pick the hosting package.</li>
+                </ol>
+                <a class="btn btn-ghost btn-sm" href="/api/hosting/whmcs/module.zip" download><span x-html="vpIcon('download')"></span> Download WHMCS module</a>
+              </div></template>
+            </div>
             <div class="modal-ft"><button class="btn btn-ghost" @click="keyForm.show=false">Cancel</button><button class="btn btn-primary" :disabled="!!(busy)" @click="createKey()">Create</button></div>
           </div>
         </div>
@@ -9380,6 +9554,7 @@
             <div class="alert-rule"><label class="form-check"><input type="checkbox" x-model="cfg.rules.deploy.enabled"><span>A Git deploy of a website fails</span></label></div>
             <div class="alert-rule"><label class="form-check"><input type="checkbox" x-model="cfg.rules.malware.enabled"><span>The daily malware scan finds something new</span></label></div>
             <template x-if="cfg.rules?.botprot"><div class="alert-rule"><label class="form-check"><input type="checkbox" x-model="cfg.rules.botprot.enabled"><span>Bot protection was turned off on a website (service stopped or search engine test failed)</span></label></div></template>
+            <template x-if="cfg.rules?.maillimit"><div class="alert-rule"><label class="form-check"><input type="checkbox" x-model="cfg.rules.maillimit.enabled"><span>A mailbox or hosting account reaches its daily sending limit</span></label></div></template>
             <div class="alert-rule" style="border-top:1px solid var(--border-light);padding-top:10px;margin-top:4px"><span>Repeat while a problem lasts every</span><input class="form-input" type="number" min="10" max="10080" x-model.number="cfg.repeat_minutes"><span>min</span></div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:6px">A "resolved" message is sent when a problem clears.</div>
           </div>

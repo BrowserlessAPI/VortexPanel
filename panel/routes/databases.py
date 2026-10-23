@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request, session, send_file
 from panel.utils.authctx import authed as _vp_authed
 import subprocess, re, os, tempfile, shlex, shutil, json, time
+from panel.utils.sqlident import grant_db
 
 databases_bp = Blueprint('databases', __name__)
 def req(): return _vp_authed()
@@ -360,7 +361,7 @@ def create_db():
         if err: return jsonify({'ok':False,'error':err})
         if user and pwd:
             _, err = mysql_cmd(f"CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{_sql_escape(pwd)}';\n"
-                               f"GRANT ALL PRIVILEGES ON `{name}`.* TO '{user}'@'localhost'; FLUSH PRIVILEGES;")
+                               f"GRANT ALL PRIVILEGES ON `{grant_db(name)}`.* TO '{user}'@'localhost'; FLUSH PRIVILEGES;")
             if err: return jsonify({'ok':False,'error':'Database created, but the user could not be set up: '+err})
         return jsonify({'ok':True,'name':name})
 
@@ -704,7 +705,7 @@ def create_user():
     if engine in ('mysql','mariadb'):
         if not _valid_host(host): return jsonify({'ok':False,'error':'Invalid host'})
         q = f"CREATE USER '{user}'@'{_sql_escape(host)}' IDENTIFIED BY '{_sql_escape(pwd)}';\n"
-        if db: q += f"GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'{_sql_escape(host)}';\n"
+        if db: q += f"GRANT ALL PRIVILEGES ON `{grant_db(db)}`.* TO '{user}'@'{_sql_escape(host)}';\n"
         _, err = mysql_cmd(q + "FLUSH PRIVILEGES;")
     elif engine == 'postgresql':
         _, err = pg_cmd("CREATE ROLE \"%s\" LOGIN PASSWORD '%s';" % (user, _pg_escape(pwd)))
@@ -773,7 +774,7 @@ def grant_db(user):
     if bad: return jsonify({'ok':False,'error':bad})
     if engine in ('mysql','mariadb'):
         if not _valid_host(host): return jsonify({'ok':False,'error':'Invalid host'})
-        _, err = mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'{_sql_escape(host)}'; FLUSH PRIVILEGES;")
+        _, err = mysql_cmd(f"GRANT ALL PRIVILEGES ON `{grant_db(db)}`.* TO '{user}'@'{_sql_escape(host)}'; FLUSH PRIVILEGES;")
     elif engine == 'postgresql':
         err = _pg_grant(db, user)
     elif engine == 'mongodb':

@@ -477,6 +477,22 @@ def cmd_plugins(a):
         os.system('systemctl restart vortexpanel')
 
 
+def cmd_app_versions(a):
+    from panel import appversions
+    st = appversions.refresh(force=True) if a.action == 'refresh' else appversions.status()
+    if st.get('in_use'):
+        print(f"Tested versions list #{st['serial']} ({st.get('issued', '')[:10]}) from {st.get('server')}")
+    else:
+        print('Using the built-in App Store versions (no tested list yet).')
+    if st.get('error'):
+        print('Last check: ' + st['error'])
+
+
+def cmd_app_test(a):
+    from panel import apptest
+    sys.exit(apptest.main(a.rest or ['status']))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog='vortexpanel', description='Manage VortexPanel from the shell.')
     sp = p.add_subparsers(dest='command')
@@ -526,6 +542,12 @@ def main(argv=None):
     x.add_argument('action', nargs='?', choices=['list', 'enable', 'disable', 'safe-mode'], default='list')
     x.add_argument('id', nargs='?')
     x.set_defaults(fn=cmd_plugins)
+    x = sp.add_parser('app-versions', help='tested App Store versions from the licence server: status or refresh')
+    x.add_argument('action', nargs='?', choices=['status', 'refresh'], default='status')
+    x.set_defaults(fn=cmd_app_versions)
+    x = sp.add_parser('app-test', help='App Store test runner (test servers only): setup | run | status')
+    x.add_argument('rest', nargs=argparse.REMAINDER)
+    x.set_defaults(fn=cmd_app_test)
     a = p.parse_args(argv)
     if not getattr(a, 'fn', None):
         a = p.parse_args(['info'])

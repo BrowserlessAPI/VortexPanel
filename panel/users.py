@@ -243,10 +243,20 @@ def _within(path, roots):
     return any(rp == r or rp.startswith(r.rstrip('/') + '/') for r in roots)
 
 
+# API keys with the provisioning role (WHMCS and other billing systems) reach only
+# the Hosting Module's provisioning API: create, suspend, unsuspend, terminate,
+# change package or password, sign a customer in to the portal, usage.
+PROVISIONING_PREFIX = '/api/hosting/whmcs/'
+
+
 def is_allowed(role, sites, method, path, args=None, body=None):
     """Role check for one request. Returns (allowed, reason)."""
     if role == 'admin':
         return True, ''
+    if role == 'provisioning':
+        if path.startswith(PROVISIONING_PREFIX) and not path.endswith('/module.zip'):
+            return True, ''
+        return False, 'This API key can only provision hosting accounts.'
     if path.startswith('/api/auth/'):
         return True, ''
     if role == 'viewer':

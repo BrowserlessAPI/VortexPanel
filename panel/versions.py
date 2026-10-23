@@ -42,6 +42,7 @@ PRODUCTS = {
     'redis':      ('redis', None, False, False),
     'apache2':    ('apache-http-server', None, False, False),
     'docker':     ('docker-engine', None, False, False),
+    'nginx':      ('nginx', None, False, False),       # branches: see _nginx_labels()
 }
 # Oldest cycle worth offering per app when new cycles are added.
 _MIN_NEW = {'python': (3, 10), 'php': (8, 1), 'postgresql': (13,), 'nodejs': (20,), 'mariadb': (10, 11)}
@@ -156,12 +157,32 @@ def _status(c):
     return ''
 
 
+def _nginx_labels(versions, cycles):
+    """nginx installs by branch ('stable' / 'mainline' from nginx.org), not by
+    version: the newest even minor is the stable branch, the newest odd minor
+    the mainline branch."""
+    rel = [c for c in cycles if len(_vt(c['name'])) >= 2 and not c['eol']]
+    even = [c for c in rel if _vt(c['name'])[1] % 2 == 0]
+    odd = [c for c in rel if _vt(c['name'])[1] % 2 == 1]
+    pick = {'stable': max(even, key=lambda c: _vt(c['name']), default=None),
+            'mainline': max(odd, key=lambda c: _vt(c['name']), default=None)}
+    for v in versions:
+        c = pick.get(v['value'])
+        if c and c.get('latest'):
+            # the version first: the App Store compares it with the installed one
+            v['label'] = (f"{c['latest']} Stable (nginx.org stable branch)" if v['value'] == 'stable'
+                          else f"{c['latest']} Mainline (nginx.org newest features)")
+    return versions
+
+
 def apply(mod, live=None):
     """Return a copy of the catalog entry's version list with live labels,
     new tracks and a 'recommended' flag."""
     versions = [dict(v) for v in (mod.get('versions') or [])]
     spec = PRODUCTS.get(mod.get('id'))
     live = live if live is not None else load()
+    if mod.get('id') == 'nginx':
+        return _nginx_labels(versions, (live.get('products') or {}).get('nginx') or [])
     cycles = ((live.get('products') or {}).get(mod.get('id')) or []) if spec else []
     today = time.strftime('%Y-%m-%d')
     cycles = [c for c in cycles

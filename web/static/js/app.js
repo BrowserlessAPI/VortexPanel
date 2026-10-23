@@ -1111,7 +1111,9 @@ function websitesPage() {
     sites:[], phpVersions:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
     backupCounts:{}, requestCounts:{}, bpBadges:{},
     form:{domain:'',path:'',php:'8.3',type:'PHP',createDb:false,createFtp:false,path_edited:false},
-    batchDomains:'', batchLog:[], batchRunning:false, deployApps:[], deployApp:'', deployDomain:'',
+    batchDomains:'', batchLog:[], batchRunning:false, deployApps:[], deployApp:'', deployDomain:'', deployDb:true,
+    deployForm:{php:'',title:'',admin_user:'',admin_email:''},
+    deployRun:{show:false,app:null,domain:'',lines:[],done:false,success:false,result:{},error:''},
     maintAll:{show:false, saving:false, enabled:false, allow:[], not_covered:[], your_ip:'', form:{enabled:false, message:'', allow:''}},
     async loadMaintAll() {
       const r = await get('/api/websites/maintenance-all').catch(() => null);
@@ -1308,18 +1310,65 @@ function websitesPage() {
     async loadDeployApps() {
       const r=await get('/api/websites/deploy-apps');
       if(r.ok){
-        const emojis={wordpress:'edit',drupal:'dot',joomla:'dot',laravel:'square',opencart:'cart'};
-        this.deployApps=r.apps.map(a=>({...a,emoji:emojis[a.id]||'package'}));
+        this.deployApps=r.apps;
+        this.deployDb=r.database;
         if(!this.deployApp&&this.deployApps.length) this.deployApp=this.deployApps[0].id;
-      }
+        this.pickDeployApp(this.deployApp);
+      } else toast(r.error||'Could not load the app list','error');
     },
+    pickDeployApp(id) {
+      this.deployApp=id;
+      const a=this.deployApps.find(x=>x.id===id); if(!a) return;
+      const f=this.deployForm;
+      if(!a.php_versions.includes(f.php)) f.php=a.php_recommended;
+      if(!f.admin_user) f.admin_user='admin_'+Math.random().toString(36).slice(2,6);
+    },
+    deployAppInfo() { return this.deployApps.find(x=>x.id===this.deployApp)||null; },
     async deployNow() {
-      if(!this.deployDomain){toast('Enter a domain first','error');return;}
-      if(!this.deployApp){toast('Select an app','error');return;}
-      toast('Deploying '+this.deployApp+'…','info');
-      const r=await post('/api/websites/'+this.deployDomain+'/deploy',{app:this.deployApp});
-      if(r.ok){toast('Deployed!','success');this.showAdd=false;await this.load();}
-      else toast(r.error||'Failed','error');
+      const a=this.deployAppInfo(), f=this.deployForm;
+      const domain=(this.deployDomain||'').trim().toLowerCase();
+      if(!domain){toast('Enter a domain first','error');return;}
+      if(!a){toast('Select an app','error');return;}
+      if(!this.deployDb){toast('Install MySQL or MariaDB from the App Store first','error');return;}
+      if(!a.php_versions.length){toast(a.name+' needs PHP '+a.php_min+' or newer. Install it from the App Store first.','error');return;}
+      if(a.fields.includes('admin_email')&&f.admin_email&&!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(f.admin_email)){toast('Enter a valid admin email','error');return;}
+      const body={domain,app:a.id,php:f.php,title:f.title,admin_user:f.admin_user,admin_email:f.admin_email};
+      let r;
+      if(a.id==='wordpress'){
+        r=await post('/api/wp/install',{domain,php_version:f.php,site_title:f.title||undefined,admin_user:f.admin_user||undefined,
+          admin_email:f.admin_email||undefined,db_engine:undefined,auto_ssl:true});
+        if(r.ok===false&&!r.error) r.error='Install failed';
+      } else r=await post('/api/websites/deploy',body);
+      if(!r.ok){toast(r.error||'Install failed','error');return;}
+      this.deployRun={show:true,app:a,domain,lines:[],done:false,success:false,result:{},error:''};
+      this.showAdd=false;
+      this.pollDeploy();
+    },
+    async pollDeploy() {
+      const d=this.deployRun; if(!d.show||d.done) return;
+      const wp=d.app.id==='wordpress';
+      const r=await get((wp?'/api/wp/install/status':'/api/websites/deploy/status')+'?domain='+encodeURIComponent(d.domain));
+      if(r.ok){
+        if(wp){ if(r.step&&d.lines[d.lines.length-1]!==r.step) d.lines.push(r.step); }
+        else if(r.lines) d.lines=r.lines;
+        if(r.done){
+          d.done=true; d.success=!!r.success; d.error=r.error||'';
+          if(wp&&r.success){
+            r.url=r.site_url; r.admin_url=(r.site_url||'').replace(/\/$/,'')+'/wp-admin/';
+            d.lines.push('WordPress is ready.');
+          }
+          if(wp&&!r.success) d.lines.push('FAILED: '+(r.error||'unknown error'));
+          d.result=r;
+          await this.load();
+          return;
+        }
+      }
+      setTimeout(()=>this.pollDeploy(),1500);
+    },
+    closeDeploy(openWp) {
+      this.deployRun={...this.deployRun,show:false,result:{}};
+      this.deployForm={php:'',title:'',admin_user:'',admin_email:''};
+      if(openWp) window.dispatchEvent(new CustomEvent('nav',{detail:{page:'wp'}}));
     },
     openDrawer(s) {
       this.drawer={...this.drawer,show:true,site:s,tab:'config',loading:false,
@@ -3472,13 +3521,14 @@ function modulesPage() {
         if (m && m.installed) this.openSettings(m);
       }); await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
 
-    catalogRefreshing: false,
+    catalogRefreshing: false, tested: null,
     async refreshCatalog() {
       this.catalogRefreshing = true;
       const r = await post('/api/modules/catalog/refresh', {});
       this.catalogRefreshing = false;
       if (r.ok) {
-        toast(`App list updated (${r.updated_apps} app${r.updated_apps===1?'':'s'})`, 'success');
+        toast(r.tested && r.tested.in_use ? `App versions updated (tested list #${r.tested.serial})`
+              : `App list updated (${r.updated_apps} app${r.updated_apps===1?'':'s'})`, 'success');
         await this.load();
       } else {
         toast(r.error || 'Failed to update app list', 'error');
@@ -3487,6 +3537,7 @@ function modulesPage() {
 
     async load() {
       const r = await get('/api/modules');
+      if (r.ok) this.tested = r.tested || null;
       if (r.ok) this.modules = r.modules.map(m=>({
         ...m,
         loading:   false,
@@ -4748,7 +4799,7 @@ function mailPage() {
 
     async addDomain() {
       const r = await post('/api/mail/domains', this.domainForm);
-      if (r.ok) { toast('Domain added','success'); this.showAddDomain=false; await this.loadDomains(); }
+      if (r.ok) { toast((r.log || ['Domain added']).join('. '),'success'); this.showAddDomain=false; this.domainForm={domain:''}; await this.loadDomains(); }
       else toast(r.error||'Failed','error');
     },
 
@@ -4808,6 +4859,79 @@ function mailPage() {
     },
     async loadDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await get('/api/mail/dkim/'+this.dkimDomain); this.dkimLoading=false; this.dkimRecord=r.ok?r.record:''; if(!r.ok) toast(r.error||'No DKIM key for this domain yet','error'); },
     async genDkim() { if(!this.dkimDomain){toast('Select a domain','error');return;} this.dkimLoading=true; const r=await post('/api/mail/dkim/'+this.dkimDomain,{}); this.dkimLoading=false; if(r.ok){this.dkimRecord=r.record;toast('DKIM generated','success');}else toast(r.error||'Failed','error'); },
+    // ---- spam filter, limits, autoresponders, DNS records
+    extras: {loaded:false}, xs: {spam:{}, limits:{}, allowText:'', blockText:''}, xsBusy:'', xsTimer:null,
+    recs: {records:[]}, recsLoading:false,
+    ar: {show:false, email:'', enabled:false, subject:'', body:'', start:'', end:'', days:3, busy:false},
+    lim: {show:false, email:'', own:false, value:0, def:0},
+    copyText(t) { copyText(t); },
+    async loadExtras() {
+      const r = await get('/api/mail/extras');
+      if (!r.ok) return;
+      this.extras = Object.assign(r, {loaded:true});
+      if (!this.xsBusy) {
+        const s = r.settings || {};
+        this.xs = {spam: Object.assign({}, s.spam), limits: Object.assign({}, s.limits),
+                   allowText: (s.spam?.allow||[]).join('\n'), blockText: (s.spam?.block||[]).join('\n')};
+      }
+      clearTimeout(this.xsTimer);
+      if (r.install?.running) this.xsTimer = setTimeout(() => this.loadExtras(), 3000);
+    },
+    async installExtras() {
+      const r = await post('/api/mail/extras/install', {});
+      if (!r.ok) { toast(r.error || 'Could not start the install', 'error'); return; }
+      await this.loadExtras();
+    },
+    async saveExtras(part) {
+      this.xsBusy = part;
+      const body = {apply: part};
+      if (part === 'spam') body.spam = Object.assign({}, this.xs.spam, {allow: this.xs.allowText, block: this.xs.blockText});
+      else body.limits = this.xs.limits;
+      const r = await post('/api/mail/extras/settings', body);
+      this.xsBusy = '';
+      if (r.ok) toast('Saved', 'success'); else toast(r.error || 'Save failed', 'error');
+      await this.loadExtras();
+      if (this.selDomain) await this.loadAccounts(this.selDomain);
+    },
+    async loadRecords() {
+      if (!this.extras.loaded) this.loadExtras();
+      if (!this.dkimDomain) { this.recs = {records:[]}; return; }
+      this.recsLoading = true;
+      const r = await get('/api/mail/records/' + encodeURIComponent(this.dkimDomain));
+      this.recsLoading = false;
+      if (r.ok) this.recs = r; else toast(r.error || 'Could not read the records', 'error');
+    },
+    async recordsAction(action, policy) {
+      this.recsLoading = true;
+      const r = await post('/api/mail/records/' + encodeURIComponent(this.dkimDomain), {action, policy});
+      this.recsLoading = false;
+      if (r.ok) { this.recs = Object.assign(r, {dmarc_policy: action === 'dmarc' ? policy : this.recs.dmarc_policy}); toast((r.log || ['Done']).join('. '), 'success'); }
+      else toast(r.error || 'Failed', 'error');
+      if (action === 'dmarc') await this.loadRecords();
+    },
+    async openAutoresponder(a) {
+      const r = await get('/api/mail/accounts/' + encodeURIComponent(a.email) + '/autoresponder');
+      const x = (r.ok && r.autoresponder) || {};
+      this.ar = {show:true, email:a.email, enabled:!!x.enabled, subject:x.subject||'', body:x.body||'', start:x.start||'', end:x.end||'', days:x.days||3, busy:false};
+    },
+    async saveAutoresponder() {
+      this.ar.busy = true;
+      const {email, enabled, subject, body, start, end, days} = this.ar;
+      const r = await post('/api/mail/accounts/' + encodeURIComponent(email) + '/autoresponder', {enabled, subject, body, start, end, days});
+      this.ar.busy = false;
+      if (r.ok) { toast(enabled ? 'Autoresponder on' : 'Autoresponder off', 'success'); this.ar.show = false; await this.loadAccounts(this.selDomain); }
+      else toast(r.error || 'Save failed', 'error');
+    },
+    openLimit(a) {
+      const own = a.own_limit !== undefined && a.own_limit !== null;
+      this.lim = {show:true, email:a.email, own, value: own ? a.own_limit : (a.limit||0), def: (this.extras.settings?.limits?.mailbox ?? a.limit)};
+      if (!this.extras.loaded) this.loadExtras().then(() => { this.lim.def = this.extras.settings?.limits?.mailbox ?? this.lim.def; });
+    },
+    async saveLimit() {
+      const r = await post('/api/mail/accounts/' + encodeURIComponent(this.lim.email) + '/limit', {limit: this.lim.own ? this.lim.value : null});
+      if (r.ok) { toast('Limit saved', 'success'); this.lim.show = false; await this.loadAccounts(this.selDomain); }
+      else toast(r.error || 'Save failed', 'error');
+    },
     async control(svc, action) {
       const r = await post('/api/mail/control', {service:svc, action});
       if (r.ok) { toast(`${action} ${svc}`,'success'); await this.loadStatus(); }
@@ -8256,7 +8380,12 @@ function usersPage() {
       window.addEventListener('vp:page', e => { if (e.detail === 'users') this.load(); });
       if (vpActivePage() === 'users') this.load();
     },
-    roleName(r) { return {admin:'Administrator', site:'Site manager', viewer:'Viewer'}[r] || r; },
+    roleName(r) { return {admin:'Administrator', site:'Site manager', viewer:'Viewer', provisioning:'Hosting provisioning (WHMCS)'}[r] || r; },
+    async keyRoleChanged() {
+      if (this.keyForm.role !== 'provisioning' || this.keyForm.whmcs) return;
+      const r = await get('/api/hosting/whmcs/info').catch(() => null);
+      this.keyForm = {...this.keyForm, whmcs: r && r.ok ? r : {missing: true}};
+    },
     async load() {
       const r = await get('/api/users');
       if (r.ok) { this.users = r.users; this.roles = r.roles; }

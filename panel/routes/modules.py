@@ -798,8 +798,8 @@ MODULES = [
         'desc':'High-performance HTTP & reverse proxy server',
         'check':'which nginx 2>/dev/null',
         'versions':[
-            {'label':'Stable (nginx.org stable branch)', 'value':'stable', 'recommended':True},
-            {'label':'Mainline (nginx.org newest features)', 'value':'mainline'},
+            {'label':'1.30.6 Stable (nginx.org stable branch)', 'value':'stable', 'recommended':True},
+            {'label':'1.31.8 Mainline (nginx.org newest features)', 'value':'mainline'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -832,8 +832,8 @@ fi''',
         'desc':'Apache HTTP Server — widely-used web server',
         'check':'which apache2 2>/dev/null || which httpd 2>/dev/null',
         'versions':[
-            {'label':'2.4 (current stable)', 'value':'2.4.69', 'recommended':True},
-            {'label':'2.4 (previous patch)', 'value':'2.4.68'},
+            {'label':'2.4.69 (current stable)', 'value':'2.4.69', 'recommended':True},
+            {'label':'2.4.68 (previous patch)', 'value':'2.4.68'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -863,8 +863,8 @@ fi''',
         'desc':'LiteSpeed open source web server',
         'check':'test -f /usr/local/lsws/bin/lshttpd && echo found',
         'versions':[
-            {'label':'1.9 (current stable)', 'value':'1.9', 'recommended':True},
-            {'label':'1.8 (previous, no longer updated)', 'value':'1.8.5'},
+            {'label':'1.9.3 (current stable)', 'value':'1.9', 'recommended':True},
+            {'label':'1.8.5 (previous, no longer updated)', 'value':'1.8.5'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && \
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -937,8 +937,8 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
         'desc':'Auto-HTTPS web server — HTTP/3, zero-config TLS via Lets Encrypt',
         'check':'which caddy 2>/dev/null',
         'versions':[
-            {'label':'2.11 (latest)', 'value':'2.11.4', 'recommended':True},
-            {'label':'2.11 (previous patch)', 'value':'2.11.3'},
+            {'label':'2.11.7 (latest)', 'value':'2.11.7', 'recommended':True},
+            {'label':'2.11.6 (previous patch)', 'value':'2.11.6'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -991,10 +991,10 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
         'desc':'The world\'s most popular open source database',
         'check':'systemctl is-active mysql 2>/dev/null | grep -qx active && ! systemctl is-active mariadb 2>/dev/null | grep -qx active && echo found || (mysqld --version 2>/dev/null | grep -i mysql | grep -iv mariadb | grep -c mysql)',
         'versions':[
-            {'label':'8.4 LTS', 'value':'8.4', 'recommended':True},
-            {'label':'9.7 LTS', 'value':'9.7'},
-            {'label':'Innovation (rolling quarterly releases, short support)', 'value':'innovation'},
-            {'label':'8.0 (end of life - no security fixes)', 'value':'8.0'},
+            {'label':'8.4.13 LTS', 'value':'8.4', 'recommended':True},
+            {'label':'9.7.4 LTS', 'value':'9.7'},
+            {'label':'Innovation 26.7 (rolling quarterly releases, short support)', 'value':'innovation'},
+            {'label':'8.0.46 (end of life - no security fixes)', 'value':'8.0'},
         ],
         'install_tpl':(
             # Hard guard, independent of the higher-level conflict check:
@@ -1270,11 +1270,11 @@ mkdir -p /var/log/openlitespeed && chown nobody:$(getent group nogroup >/dev/nul
         'desc':'Community-developed MySQL fork by MariaDB Foundation',
         'check':'systemctl is-active mariadb 2>/dev/null | grep -q "^active" && echo found || (which mariadbd 2>/dev/null && mariadbd --version 2>/dev/null | grep -c MariaDB)',
         'versions':[
-            {'label':'11.8 LTS', 'value':'11.8', 'recommended':True},
-            {'label':'13.0 (rolling stable, short support)', 'value':'13.0'},
-            {'label':'12.3 (rolling stable, short support)', 'value':'12.3'},
-            {'label':'11.4 LTS', 'value':'11.4'},
-            {'label':'10.11 LTS', 'value':'10.11'},
+            {'label':'11.8.9 LTS', 'value':'11.8', 'recommended':True},
+            {'label':'13.0.2 (rolling stable, support until 31 Dec 2026)', 'value':'13.0'},
+            {'label':'12.3.3 LTS', 'value':'12.3'},
+            {'label':'11.4.13 LTS', 'value':'11.4'},
+            {'label':'10.11.19 LTS', 'value':'10.11'},
         ],
         'install_tpl':'''curl -fLsS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup -o /opt/vortexpanel/data/tmp/mariadb_repo.sh && \
 bash /opt/vortexpanel/data/tmp/mariadb_repo.sh --mariadb-server-version="mariadb-{ver}" --skip-maxscale; \
@@ -1291,9 +1291,9 @@ systemctl enable --now mariadb''',
         'desc':'Document-oriented NoSQL database',
         'check':'which mongod 2>/dev/null',
         'versions':[
-            {'label':'8.0 (long-term)', 'value':'8.0', 'recommended':True},
-            {'label':'8.2 (minor release)', 'value':'8.2'},
-            {'label':'7.0 (long-term)', 'value':'7.0'},
+            {'label':'9.0.4 (latest)', 'value':'9.0'},
+            {'label':'8.0.34 (long-term)', 'value':'8.0', 'recommended':True},
+            {'label':'7.0.45 (long-term, until Aug 2027)', 'value':'7.0'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -1337,11 +1337,11 @@ systemctl enable --now mariadb''',
         'desc':'Advanced open source relational database',
         'check':'which psql 2>/dev/null',
         'versions':[
-            {'label':'19 (latest)', 'value':'19'},
-            {'label':'18', 'value':'18', 'recommended':True},
-            {'label':'17', 'value':'17'},
-            {'label':'16', 'value':'16'},
-            {'label':'15', 'value':'15'},
+            # 19 is a release candidate (RC1, 15 Oct 2026): the live version data adds it when it is released
+            {'label':'18.6 (latest)', 'value':'18', 'recommended':True},
+            {'label':'17.11', 'value':'17'},
+            {'label':'16.15', 'value':'16'},
+            {'label':'15.19', 'value':'15'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); '
@@ -1409,11 +1409,11 @@ systemctl enable --now mariadb''',
                       '(test -x /opt/remi/php$(echo {ver} | tr -d .)/root/usr/bin/php && echo found) || '
                       '(php -r "echo PHP_MAJOR_VERSION.chr(46).PHP_MINOR_VERSION;" 2>/dev/null | grep -x "{ver}")'),
         'versions':[
-            {'label':'8.5 (latest)', 'value':'8.5'},
-            {'label':'8.4 (active support)', 'value':'8.4', 'recommended':True},
-            {'label':'8.3 (security fixes only)', 'value':'8.3'},
-            {'label':'8.2 (security fixes only)', 'value':'8.2'},
-            {'label':'8.1 (end of life)', 'value':'8.1'},
+            {'label':'8.5.12 (latest)', 'value':'8.5'},
+            {'label':'8.4.27 (active support)', 'value':'8.4', 'recommended':True},
+            {'label':'8.3.36 (security fixes only)', 'value':'8.3'},
+            {'label':'8.2.35 (security fixes only, end of life 31 Dec 2026)', 'value':'8.2'},
+            {'label':'8.1.34 (end of life)', 'value':'8.1'},
             {'label':'7.4 (end of life)', 'value':'7.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then \
@@ -1506,14 +1506,19 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'Web-based MySQL/MariaDB admin — auto-configured at port 8082',
         'check':'test -f /usr/share/phpmyadmin/config.inc.php && echo found',
         'versions':[
-            {'label':'5.2.3 (Latest)', 'value':'5.2.3'},
+            # sha256 '' = no checksum known for the built-in entry; versions from the
+            # signed tested-versions list always carry one
+            {'label':'5.2.3 (Latest)', 'value':'5.2.3', 'files':{'tarball':{
+                'url':'https://files.phpmyadmin.net/phpMyAdmin/5.2.3/phpMyAdmin-5.2.3-all-languages.tar.gz', 'sha256':''}}},
         ],
         # phpMyAdmin 5.2 supports PHP 7.2-8.4 -- prefer those over 8.5.
         # Serves the PHP-FPM socket that really exists (Debian, Remi SCL or
         # RHEL system PHP), on nginx, Caddy, Apache (Debian conf-available,
         # RHEL /etc/httpd/conf.d) -- each config tested and reverted if the
         # web server rejects it; port 8082 is allowed in SELinux.
-        'install':r'''PMA_VER=5.2.3
+        'install':r'''PMA_VER={ver}
+PMA_URL="{dl_tarball_url}"
+PMA_SHA="{dl_tarball_sha256}"
 PHP_PREF="8.4 8.3 8.2 8.1 8.0 7.4 8.5"
 __VP_PHP_SOCK__
 if [ -z "$SOCK" ]; then
@@ -1522,8 +1527,12 @@ if [ -z "$SOCK" ]; then
 fi
 echo "[VortexPanel] Using the PHP-FPM socket $SOCK (pool user $PUSER)"
 command -v wget >/dev/null 2>&1 || apt-get install -y wget || exit 1
-wget -q --timeout=60 https://files.phpmyadmin.net/phpMyAdmin/$PMA_VER/phpMyAdmin-$PMA_VER-all-languages.tar.gz -O /opt/vortexpanel/data/tmp/pma.tar.gz \
+wget -q --timeout=60 "$PMA_URL" -O /opt/vortexpanel/data/tmp/pma.tar.gz \
   || { echo "[VortexPanel] Download of phpMyAdmin $PMA_VER failed."; rm -f /opt/vortexpanel/data/tmp/pma.tar.gz; exit 1; }
+if [ -n "$PMA_SHA" ]; then
+  echo "$PMA_SHA  /opt/vortexpanel/data/tmp/pma.tar.gz" | sha256sum -c --quiet - \
+    || { echo "[VortexPanel] phpMyAdmin download does not match the expected checksum - not installed."; rm -f /opt/vortexpanel/data/tmp/pma.tar.gz; exit 1; }
+fi
 mkdir -p /usr/share/phpmyadmin
 tar -xzf /opt/vortexpanel/data/tmp/pma.tar.gz -C /usr/share/phpmyadmin --strip-components=1 --no-same-owner \
   || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /opt/vortexpanel/data/tmp/pma.tar.gz; exit 1; }
@@ -1657,11 +1666,18 @@ true''',
         'desc':'One-file database admin for MySQL/MariaDB, PostgreSQL, SQLite and MongoDB - at port 8084',
         'check':'test -f /usr/share/adminer/adminer.php && echo found',
         'versions':[
-            {'label':'5.5.1 (Latest)', 'value':'5.5.1'},
+            {'label':'6.1.2 (Latest)', 'value':'6.1.2', 'files':{
+                'adminer':{'url':'https://github.com/vrana/adminer/releases/download/v6.1.2/adminer-6.1.2.php',
+                           'sha256':'b32316156bd18ffa99c1a27617142c2e5ad72260e37f15da4e9937a3dbb15f57'},
+                'mongo':{'url':'https://raw.githubusercontent.com/vrana/adminer/v6.1.2/plugins/drivers/mongo.php',
+                         'sha256':'1275dde0a91f825b91d889cf41c992eec8d3ea3ac661ab3c1c1a86a5c10ec5ee'}}},
         ],
-        'install':r'''ADM_VER=5.5.1
-ADM_SHA=f2c70c6403a042d554be1dd8d69b6f6270a97e5b40d2fb7626f46aad821e9a18
-MONGO_SHA=a669d8bee57ce5df06d7faa3afc9bd8d50d68597f5e0cfd8313b0f16883a5670
+        # {dl_*} come from the chosen version (built in, or the signed tested-versions list)
+        'install':r'''ADM_VER={ver}
+ADM_URL="{dl_adminer_url}"
+ADM_SHA={dl_adminer_sha256}
+MONGO_URL="{dl_mongo_url}"
+MONGO_SHA={dl_mongo_sha256}
 PHP_PREF="8.4 8.3 8.2 8.1 8.5 8.0"
 __VP_PHP_SOCK__
 if [ -z "$SOCK" ]; then
@@ -1671,7 +1687,7 @@ fi
 echo "[VortexPanel] Using the PHP-FPM socket $SOCK (pool user $PUSER)"
 command -v curl >/dev/null 2>&1 || apt-get install -y curl || dnf install -y curl || exit 1
 T=/opt/vortexpanel/data/tmp; mkdir -p $T /usr/share/adminer/adminer-plugins
-curl -fsSL --max-time 120 -o $T/adminer.php "https://github.com/vrana/adminer/releases/download/v$ADM_VER/adminer-$ADM_VER.php" \
+curl -fsSL --max-time 120 -o $T/adminer.php "$ADM_URL" \
   || { echo "[VortexPanel] Download of Adminer $ADM_VER failed."; exit 1; }
 echo "$ADM_SHA  $T/adminer.php" | sha256sum -c --quiet - || { echo "[VortexPanel] Adminer download does not match the expected checksum - not installed."; rm -f $T/adminer.php; exit 1; }
 install -m 644 $T/adminer.php /usr/share/adminer/adminer.php; rm -f $T/adminer.php
@@ -1695,7 +1711,7 @@ fi
 if [ -n "$PHPV" ] && ! php$PHPV -m 2>/dev/null | grep -qi '^mongodb$'; then
   if command -v apt-get >/dev/null 2>&1; then { DEBIAN_FRONTEND=noninteractive apt-get install -y php$PHPV-mongodb >/dev/null 2>&1 || { apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y php$PHPV-mongodb >/dev/null 2>&1; }; } && systemctl restart php$PHPV-fpm; fi
 fi
-if curl -fsSL --max-time 60 -o $T/mongo.php "https://raw.githubusercontent.com/vrana/adminer/v$ADM_VER/plugins/drivers/mongo.php" \
+if curl -fsSL --max-time 60 -o $T/mongo.php "$MONGO_URL" \
    && echo "$MONGO_SHA  $T/mongo.php" | sha256sum -c --quiet -; then
   install -m 644 $T/mongo.php /usr/share/adminer/adminer-plugins/mongo.php
   if [ -n "$PHPV" ] && php$PHPV -m 2>/dev/null | grep -qi '^mongodb$'; then echo "[VortexPanel] MongoDB support is on."
@@ -1827,8 +1843,14 @@ true''',
         'id':'anubis', 'name':'Anubis Bot Protection', 'icon':'/static/icons/anubis.svg', 'category':'Security',
         'desc':'Stops AI scrapers and bad bots with a short browser check, turned on per website. Search engines, sitemaps and feeds are never checked. Needs Nginx.',
         'check':'test -x /usr/local/lib/vortexpanel-anubis/bin/anubis && test -f /usr/local/lib/vortexpanel-anubis/VERSION && echo found',
-        'versions':[{'label':'1.28.1 (Latest)', 'value':'1.28.1', 'recommended':True}],
-        'install':'cd /opt/vortexpanel && ./venv/bin/python -m panel.botprot install',
+        'versions':[{'label':'1.28.1 (Latest)', 'value':'1.28.1', 'recommended':True, 'files':{
+            'amd64':{'url':'https://github.com/TecharoHQ/anubis/releases/download/v1.28.1/anubis-1.28.1-linux-amd64.tar.gz',
+                     'sha256':'adcb3c2fdfd0fb91cbf7e8376dbcc479f654c85dd3795db3e9a06004786bbdc9'},
+            'arm64':{'url':'https://github.com/TecharoHQ/anubis/releases/download/v1.28.1/anubis-1.28.1-linux-arm64.tar.gz',
+                     'sha256':'2eed4f6e40de35554aad6a66dfd017cdc76769c7141af3b0627824c910703060'}}}],
+        'install':('cd /opt/vortexpanel && VP_ANUBIS_VER={ver} VP_ANUBIS_AMD64_URL={dl_amd64_url} '
+                   'VP_ANUBIS_AMD64_SHA={dl_amd64_sha256} VP_ANUBIS_ARM64_URL={dl_arm64_url} '
+                   'VP_ANUBIS_ARM64_SHA={dl_arm64_sha256} ./venv/bin/python -m panel.botprot install'),
         'uninstall':'cd /opt/vortexpanel && ./venv/bin/python -m panel.botprot uninstall',
         'manage':False,
     },
@@ -1886,7 +1908,9 @@ fi''',
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  echo "postfix postfix/main_mailer_type select Internet Site" | debconf-set-selections && '
             '  echo "postfix postfix/mailname string $(hostname -f 2>/dev/null || hostname)" | debconf-set-selections && '
-            '  apt-get install -y postfix dovecot-imapd dovecot-lmtpd && '
+            '  apt-get install -y postfix dovecot-imapd dovecot-lmtpd dovecot-sieve && '
+            # spam filter and DKIM signing (the Mail Server page connects it during setup)
+            '  { apt-get install -y rspamd || echo "[VortexPanel] Rspamd could not be installed now: install it later under Mail Server > Spam & limits."; } && '
             '  systemctl enable postfix dovecot && systemctl restart postfix dovecot; '
             'else '
             '  (dnf install -y postfix dovecot || yum install -y postfix dovecot) && '
@@ -1894,10 +1918,10 @@ fi''',
             'fi'
         ),
         'uninstall':(
-            'systemctl stop dovecot postfix 2>/dev/null; '
-            'apt-get remove -y postfix dovecot-core dovecot-imapd dovecot-lmtpd 2>/dev/null; '
-            'dnf remove -y postfix dovecot 2>/dev/null; yum remove -y postfix dovecot 2>/dev/null; '
-            'rm -f /etc/dovecot/conf.d/98-vortexpanel-listen.conf; '
+            'systemctl stop dovecot postfix rspamd 2>/dev/null; '
+            'apt-get remove -y postfix dovecot-core dovecot-imapd dovecot-lmtpd dovecot-sieve rspamd 2>/dev/null; '
+            'dnf remove -y postfix dovecot dovecot-pigeonhole rspamd 2>/dev/null; yum remove -y postfix dovecot 2>/dev/null; '
+            'rm -f /etc/dovecot/conf.d/98-vortexpanel-listen.conf /etc/dovecot/conf.d/98-vortexpanel-sieve.conf; '
             'echo "[VortexPanel] Mailboxes in /var/mail/vhosts were kept."; true'
         ),
         'service':'postfix', 'manage':False,
@@ -1953,9 +1977,9 @@ fi''',
         'desc':'Industry standard authoritative DNS server',
         'check':'which named 2>/dev/null',
         'versions':[
-            {'label':'9.22 (Stable - ISC PPA isc/bind)', 'value':'9.22'},
-            {'label':'9.20 (Extended support - ISC PPA isc/bind-esv)', 'value':'9.20', 'recommended':True},
-            {'label':'9.18 (Ubuntu/Debian package - end of upstream support)', 'value':'9.18'},
+            {'label':'Current stable (ISC PPA isc/bind)', 'value':'9.22'},
+            {'label':'9.20.30 (Extended support - ISC PPA isc/bind-esv)', 'value':'9.20', 'recommended':True},
+            {'label':'9.18 (Ubuntu/Debian package - upstream support ended Jun 2026)', 'value':'9.18'},
         ],
         'install_tpl':(
             'OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian) && '
@@ -2016,9 +2040,9 @@ fi''',
         'desc':'JavaScript runtime built on Chrome V8 engine',
         'check':'which node 2>/dev/null || which nodejs 2>/dev/null',
         'versions':[
-            {'label':'24 LTS (active)', 'value':'24', 'recommended':True},
-            {'label':'22 LTS (maintenance)', 'value':'22'},
-            {'label':'26 (current, LTS from Oct 2026)', 'value':'26'},
+            {'label':'24.22.1 LTS (maintenance)', 'value':'24', 'recommended':True},
+            {'label':'22.23.4 LTS (maintenance, security fixes until Apr 2027)', 'value':'22'},
+            {'label':'26.12.1 (current, becomes LTS on 27 Oct 2026)', 'value':'26'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then mkdir -p /etc/apt/keyrings && \\
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\
@@ -2045,12 +2069,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; else curl -fsSL https:
                  'python3 -m pip --version >/dev/null 2>&1 && python3 -c "import ensurepip" >/dev/null 2>&1 && echo found'),
         'verify_tpl':'command -v python{ver} 2>/dev/null',
         'versions':[
-            {'label':'3.15 (latest)', 'value':'3.15'},
-            {'label':'3.14', 'value':'3.14', 'recommended':True},
-            {'label':'3.13', 'value':'3.13'},
-            {'label':'3.12 (security fixes only)', 'value':'3.12'},
-            {'label':'3.11 (security fixes only)', 'value':'3.11'},
-            {'label':'3.10 (end of life Oct 2026)', 'value':'3.10'},
+            {'label':'3.15.1 (latest)', 'value':'3.15'},
+            {'label':'3.14.9', 'value':'3.14', 'recommended':True},
+            {'label':'3.13.17 (security fixes only)', 'value':'3.13'},
+            {'label':'3.12.15 (security fixes only)', 'value':'3.12'},
+            {'label':'3.11.17 (security fixes only)', 'value':'3.11'},
+            {'label':'3.10.22 (end of life since Oct 2026)', 'value':'3.10'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian)
 SYS_PY=$(/usr/bin/python3 -c 'import sys;print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
@@ -2118,7 +2142,7 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'Container platform — build, ship, run anywhere',
         'check':'which docker 2>/dev/null',
         'versions':[
-            {'label':'Latest stable (Docker CE)', 'value':'29', 'recommended':True},
+            {'label':'29.9.2 (Docker CE latest stable)', 'value':'29', 'recommended':True},
         ],
         'install':'curl -fsSL https://get.docker.com | sh && systemctl enable docker && systemctl start docker',
         'uninstall':'systemctl stop docker 2>/dev/null; systemctl disable docker 2>/dev/null; apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; dnf remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null; yum remove -y docker-ce docker-ce-cli containerd.io 2>/dev/null; apt-get autoremove -y 2>/dev/null; true && rm -f /usr/share/keyrings/docker-archive-keyring.gpg /etc/apt/sources.list.d/docker.list 2>/dev/null; apt-get update -qq 2>/dev/null; true',
@@ -2130,8 +2154,8 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'PHP dependency & package manager',
         'check':'which composer 2>/dev/null',
         'versions':[
-            {'label':'2.x (Latest)', 'value':'2', 'recommended':True},
-            {'label':'2.2 LTS (for PHP 5.3 - 7.1 projects)', 'value':'2.2'},
+            {'label':'2.10.3 (Latest 2.x)', 'value':'2', 'recommended':True},
+            {'label':'2.2.30 LTS (for PHP 5.3 - 7.1 projects, security fixes until Dec 2026)', 'value':'2.2'},
         ],
         # The installer's SHA-384 is checked against getcomposer.org's
         # published signature before it runs.
@@ -2155,9 +2179,9 @@ apt-get autoremove -y 2>/dev/null || true''',
         'desc':'In-memory data store, cache & message broker',
         'check':'which redis-server 2>/dev/null',
         'versions':[
-            {'label':'8.10 (latest)', 'value':'8.10'},
-            {'label':'8.8', 'value':'8.8', 'recommended':True},
-            {'label':'7.4 (legacy)', 'value':'7.4'},
+            {'label':'8.10.2 (latest)', 'value':'8.10'},
+            {'label':'8.8.3', 'value':'8.8', 'recommended':True},
+            {'label':'7.4.11 (legacy)', 'value':'7.4'},
         ],
         'install_tpl':'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian); if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then rm -f /usr/share/keyrings/redis-archive-keyring.gpg && curl -fsSL https://packages.redis.io/gpg | gpg --batch --no-tty --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
 echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list && \
@@ -2256,8 +2280,12 @@ apt-get install -y redis-server && systemctl enable redis-server && systemctl st
         'desc':'Modern web-based IMAP email client',
         'check':'test -d /var/www/roundcube && echo found',
         'versions':[
-            {'label':'1.7 (latest)', 'value':'1.7.4', 'recommended':True},
-            {'label':'1.6 LTS', 'value':'1.6.19'},
+            {'label':'1.7.5 (latest)', 'value':'1.7.5', 'files':{'tarball':{
+                'url':'https://github.com/roundcube/roundcubemail/releases/download/1.7.5/roundcubemail-1.7.5-complete.tar.gz',
+                'sha256':'93a66c94e3efff7db93187c1c9d7f35546647a3e1e7b9327cc87911564edf9d1'}}, 'recommended':True},
+            {'label':'1.6.20 LTS (security fixes only)', 'value':'1.6.20', 'files':{'tarball':{
+                'url':'https://github.com/roundcube/roundcubemail/releases/download/1.6.20/roundcubemail-1.6.20-complete.tar.gz',
+                'sha256':'46919c70c85609b57038903c4ecc4e1d7fa4e14c535fe5b14192d778dcd4a1ee'}}},
         ],
         'install_tpl':r'''OS_FAMILY=$(. /etc/os-release 2>/dev/null && echo "$ID $ID_LIKE" || echo debian)
 if echo "$OS_FAMILY" | grep -qiE "debian|ubuntu"; then
@@ -2293,8 +2321,10 @@ else
   systemctl enable --now "$U"
 fi
 echo "[VortexPanel] Downloading Roundcube {ver}..."
-wget -q --timeout=60 https://github.com/roundcube/roundcubemail/releases/download/{ver}/roundcubemail-{ver}-complete.tar.gz -O /opt/vortexpanel/data/tmp/roundcube.tar.gz \
+wget -q --timeout=60 "{dl_tarball_url}" -O /opt/vortexpanel/data/tmp/roundcube.tar.gz \
   || { echo "[VortexPanel] Download of Roundcube {ver} from github.com failed."; rm -f /opt/vortexpanel/data/tmp/roundcube.tar.gz; exit 1; }
+echo "{dl_tarball_sha256}  /opt/vortexpanel/data/tmp/roundcube.tar.gz" | sha256sum -c --quiet - \
+  || { echo "[VortexPanel] Roundcube download does not match the expected checksum - not installed."; rm -f /opt/vortexpanel/data/tmp/roundcube.tar.gz; exit 1; }
 mkdir -p /var/www/roundcube
 tar -xzf /opt/vortexpanel/data/tmp/roundcube.tar.gz -C /var/www/roundcube --strip-components=1 || { echo "[VortexPanel] The downloaded archive could not be extracted."; rm -f /opt/vortexpanel/data/tmp/roundcube.tar.gz; exit 1; }
 rm -f /opt/vortexpanel/data/tmp/roundcube.tar.gz
@@ -2729,6 +2759,53 @@ def _get_mod(mod_id):
     return merged
 
 
+def module_versions(m, live=None, signed=None):
+    """(versions, source) for an app: the signed tested-versions list from the
+    licence server when it covers the app, else the built-in list with the live
+    labels from endoflife.date. source: 'tested' | 'live' | 'builtin'."""
+    try:
+        from panel import appversions
+        vs = appversions.entries(m['id'], m.get('versions'), signed)
+        if vs:
+            return vs, 'tested'
+    except Exception:
+        pass
+    vs = [dict(v) for v in (m.get('versions') or [])]
+    if live is not None:
+        try:
+            from panel import versions as _live
+            return _live.apply(m, live), 'live'
+        except Exception:
+            pass
+    return vs, 'builtin'
+
+
+def _fill_downloads(cmd, entry):
+    """Put the chosen release's download addresses and checksums into a template
+    ({dl_<file>_url}, {dl_<file>_sha256}). Values are checked again here: https on
+    the allowed hosts, hex checksums; anything else stops the install."""
+    if '{dl_' not in cmd:
+        return cmd, ''
+    files = (entry or {}).get('files') or {}
+    for name, f in files.items():
+        url, sha = str(f.get('url') or ''), str(f.get('sha256') or '').lower()
+        if not re.fullmatch(r'https://(github\.com|raw\.githubusercontent\.com|files\.phpmyadmin\.net)/[A-Za-z0-9._~/%+-]+', url) \
+                or '..' in url or (sha and not re.fullmatch(r'[0-9a-f]{64}', sha)):
+            return '', f'The download address for {name} is not allowed'
+        cmd = cmd.replace('{dl_%s_url}' % name, url).replace('{dl_%s_sha256}' % name, sha)
+    if re.search(r'\{dl_[a-z0-9]+_(url|sha256)\}', cmd):
+        return '', 'This version has no download address'
+    return cmd, ''
+
+
+def _live_data():
+    try:
+        from panel import versions as _live
+        return _live.load()
+    except Exception:
+        return None
+
+
 # --- Conflict groups — only one from each group can be installed ---------------
 # MySQL and MariaDB share port 3306, the data folder and the packages' files;
 # PostgreSQL (5432) and MongoDB (27017) run next to either of them.
@@ -2791,6 +2868,11 @@ def refresh_catalog():
         live_note = f'{len(d.get("products") or {})} apps have live version data'
     except Exception as e:
         live_note = f'live version data unavailable: {e}'
+    try:
+        from panel import appversions
+        tested = appversions.refresh(force=True)
+    except Exception as e:
+        tested = {'in_use': False, 'error': str(e)}
     panel_cache.invalidate('modules_list')
     import urllib.request
     url = 'https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/app_catalog.json'
@@ -2800,7 +2882,9 @@ def refresh_catalog():
         with urllib.request.urlopen(req_obj, timeout=10) as resp:
             raw = resp.read().decode()
     except Exception as e:
-        return jsonify({'ok': False, 'error': f'Could not reach GitHub: {e} ({live_note})'}), 502
+        if tested.get('in_use'):
+            return jsonify({'ok': True, 'tested': tested, 'live': live_note, 'updated_apps': 0})
+        return jsonify({'ok': False, 'tested': tested, 'error': f'Could not reach GitHub: {e} ({live_note})'}), 502
 
     try:
         data = json.loads(raw)
@@ -2839,7 +2923,8 @@ def refresh_catalog():
         json.dump({'catalog_version': data.get('catalog_version', 1), 'apps': clean_apps}, f)
 
     panel_cache.invalidate('modules_list')
-    return jsonify({'ok': True, 'updated_apps': len(clean_apps), 'skipped_unknown': skipped, 'live': live_note})
+    return jsonify({'ok': True, 'updated_apps': len(clean_apps), 'skipped_unknown': skipped, 'live': live_note,
+                    'tested': tested})
 
 
 @modules_bp.route('/api/modules')
@@ -2853,14 +2938,17 @@ def list_modules():
         _live.refresh_async()          # at most once a day, in the background
         live = _live.load()
     except Exception:
-        _live, live = None, {}
+        live = None
+    try:
+        from panel import appversions
+        appversions.refresh_async()    # tested versions from the licence server, once a day, free
+        signed = appversions.load()
+    except Exception:
+        appversions, signed = None, None
     for base_m in MODULES:
         m = _get_mod(base_m['id'])  # merged with any catalog override
-        if _live:
-            try:
-                m = dict(m, versions=_live.apply(m, live))
-            except Exception:
-                pass
+        vs, source = module_versions(m, live, signed)
+        m = dict(m, versions=vs)
         installed   = is_installed(m['check'])
         svc_status  = ''
         installed_ver = ''
@@ -2882,13 +2970,19 @@ def list_modules():
             'installed': installed, 'svcStatus': svc_status,
             'installedVer': installed_ver,
             'hasUpdate': has_update, 'latestSameTrack': latest_same_track,
-            'versions': m.get('versions', []),
+            'versions': [{k: v for k, v in x.items() if k != 'files'} for x in m.get('versions', [])],
+            'versionsSource': source,
+            'notice': (appversions.notice(m['id'], signed) if appversions and source == 'tested' else ''),
             'manage': m.get('manage', False),
             'builtin': m.get('builtin', False),
             'conflict_group': next((g for g,ms in CONFLICT_GROUPS.items() if m['id'] in ms), None),
             'blocked': '' if installed else _install_blocked(m['id']),
         })
     response = {'ok':True, 'modules':result}
+    try:
+        response['tested'] = appversions.status() if appversions else {}
+    except Exception:
+        response['tested'] = {}
     panel_cache.set('modules_list', response, ttl=30)
     return jsonify(response)
 
@@ -2902,6 +2996,34 @@ def _install_blocked(mod_id):
         except Exception:
             return ''
     return ''
+
+def build_install_cmd(mod, ver, entry=None):
+    """The shell command that installs `mod` at version `ver` (also used by the
+    App Store test runner, panel/apptest.py). -> (cmd, error)"""
+    # OS-aware install command selection
+    _os = get_os()
+    _os_key = 'install_' + _os['family']  # e.g. install_rhel, install_fedora
+    # Priority: OS-specific > install_tpl > install
+    if _os['family'] != 'debian' and mod.get(_os_key):
+        tpl = mod[_os_key]
+    elif _os['family'] != 'debian' and mod.get('install_rhel') and _os['family'] == 'rhel':
+        tpl = mod['install_rhel']
+    else:
+        tpl = mod.get('install_tpl', mod.get('install',''))
+    cmd = tpl.replace('{ver}', ver).replace('{codename}', _os.get('codename','noble')) if tpl else ''
+    if not cmd: cmd = mod.get('install','')
+    cmd, dl_err = _fill_downloads(cmd, entry)
+    if dl_err: return '', dl_err
+    if mod['id'] == 'nginx': cmd = nginx_install_script(ver or 'stable')
+    elif mod['id'] == 'mariadb': cmd = mariadb_install_script(ver or '11.7')
+    elif mod['id'] == 'postgresql': cmd = postgresql_install_script(ver or '17')
+    elif mod['id'] == 'redis': cmd = redis_install_script(ver if re.fullmatch(r'\d+\.\d+', ver or '') else '')
+    elif mod['id'] == 'mongodb': cmd = mongodb_install_script(ver or '8.0')
+    elif mod['id'] == 'docker': cmd = docker_install_script()
+    elif mod['id'] == 'nodejs': cmd = nodejs_install_script(ver or '22')
+    elif mod['id'] == 'php': cmd = php_install_script(ver or '8.3')
+    return cmd, ''
+
 
 @modules_bp.route('/api/modules/<mod_id>/install', methods=['POST'])
 def install_module(mod_id):
@@ -2919,36 +3041,22 @@ def install_module(mod_id):
                         'error': 'ffmpeg manager uses per-version installation — open Settings to choose a version.'}), 400
 
     d   = request.get_json() or {}
-    ver = d.get('version','')
+    ver = str(d.get('version') or '')
 
-    if mod.get('versions') and not ver:
+    versions, _src = module_versions(mod, _live_data())
+    if versions and not ver:
         return jsonify({'ok':False, 'error':'Version required'}), 400
+    entry = next((v for v in versions if str(v.get('value')) == ver), None) if versions else None
+    if versions and entry is None:
+        return jsonify({'ok':False, 'error':f'Version {ver} is not offered for {mod["name"]}. Reload the App Store and pick a version from the list.'}), 400
     # Check for conflicts
     conflict_group, conflict_mod = get_conflict(mod_id)
     if conflict_group and conflict_mod:
         conflict_name = next((m['name'] for m in MODULES if m['id']==conflict_mod), conflict_mod)
         return jsonify({'ok':False, 'error':'Cannot install: '+conflict_name+' is already installed. Please uninstall it first before installing a different '+conflict_group+'.', 'conflict':conflict_mod, 'conflict_group':conflict_group}), 409
 
-    # OS-aware install command selection
-    _os = get_os()
-    _os_key = 'install_' + _os['family']  # e.g. install_rhel, install_fedora
-    # Priority: OS-specific > install_tpl > install
-    if _os['family'] != 'debian' and mod.get(_os_key):
-        tpl = mod[_os_key]
-    elif _os['family'] != 'debian' and mod.get('install_rhel') and _os['family'] == 'rhel':
-        tpl = mod['install_rhel']
-    else:
-        tpl = mod.get('install_tpl', mod.get('install',''))
-    cmd = tpl.replace('{ver}', ver).replace('{codename}', _os.get('codename','noble')) if tpl else ''
-    if not cmd: cmd = mod.get('install','')
-    if mod_id == 'nginx': cmd = nginx_install_script(ver or 'stable')
-    elif mod_id == 'mariadb': cmd = mariadb_install_script(ver or '11.7')
-    elif mod_id == 'postgresql': cmd = postgresql_install_script(ver or '17')
-    elif mod_id == 'redis': cmd = redis_install_script(ver if re.fullmatch(r'\d+\.\d+', ver or '') else '')
-    elif mod_id == 'mongodb': cmd = mongodb_install_script(ver or '8.0')
-    elif mod_id == 'docker': cmd = docker_install_script()
-    elif mod_id == 'nodejs': cmd = nodejs_install_script(ver or '22')
-    elif mod_id == 'php': cmd = php_install_script(ver or '8.3')
+    cmd, dl_err = build_install_cmd(mod, ver, entry)
+    if dl_err: return jsonify({'ok':False, 'error':dl_err}), 400
     if not cmd: return jsonify({'ok':False, 'error':'No install command defined'}), 400
 
     job_id = str(uuid.uuid4())[:8]
@@ -3372,8 +3480,10 @@ FFMPEG_BASE_URL = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/lates
 # Version map — "display" is what the user sees, "branch" is the BtbN branch name
 # "ver_suffix" is the version number appended at the end of the filename for stable releases
 FFMPEG_VERSIONS = [
-    {'version': '8.1',    'label': 'ffmpeg-8.1 (Latest Stable)', 'branch': 'n8.1',   'suffix': '8.1',  'alias': 'ffmpeg8'},
-    {'version': '7.1',    'label': 'ffmpeg-7.1 (Previous Stable)','branch': 'n7.1',   'suffix': '7.1',  'alias': 'ffmpeg7'},
+    {'version': '9.0',    'label': 'ffmpeg-9.0 (Latest Stable)', 'branch': 'n9.0',   'suffix': '9.0',  'alias': 'ffmpeg9'},
+    {'version': '8.1',    'label': 'ffmpeg-8.1 (Previous Stable)','branch': 'n8.1',   'suffix': '8.1',  'alias': 'ffmpeg8'},
+    # BtbN no longer builds 7.1: kept so an installed copy can still be removed
+    {'version': '7.1',    'label': 'ffmpeg-7.1 (no longer built - remove only)','branch': 'n7.1', 'suffix': '7.1', 'alias': 'ffmpeg7'},
     {'version': 'master', 'label': 'ffmpeg-master (Nightly)',       'branch': 'master', 'suffix': None,   'alias': 'ffmpegmaster'},
 ]
 
@@ -3987,7 +4097,9 @@ def get_module_settings(mod_id):
             data = resp.get_json()
             mod = _get_mod(mod_id)
             if isinstance(data, dict) and data.get('ok') and 'versions' in data and mod and mod.get('versions'):
-                data['versions'] = mod['versions']
+                # the same list the App Store and switch_version use (tested list first)
+                vs, _src = module_versions(mod, _live_data())
+                data['versions'] = [{k: v for k, v in x.items() if k != 'files'} for x in vs]
                 return jsonify(data)
     except Exception:
         pass
@@ -4884,7 +4996,7 @@ def _save_module_settings_impl(mod_id):
     elif action == 'switch_version':
         if not ver:
             return jsonify({'ok': False, 'error': 'No version specified'}), 400
-        allowed_vers = [str(v.get('value')) for v in ((mod or {}).get('versions') or [])]
+        allowed_vers = [str(v.get('value')) for v in (module_versions(mod, _live_data())[0] if mod else [])]
         if mod_id in ('memcached', 'pure-ftpd'):
             allowed_vers = ['latest']
         if ver not in allowed_vers:

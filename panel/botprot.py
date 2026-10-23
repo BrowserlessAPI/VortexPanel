@@ -1061,36 +1061,58 @@ def install(log=print):
         log('[VortexPanel] Bot protection needs Nginx. Install Nginx from the App Store first.')
         return False
     a = arch()
-    if a not in SHA:
+    ver, sha, url = VER, dict(SHA), {k: URL.format(v=VER, a=k) for k in SHA}
+    # the App Store passes the chosen release (built in, or from the signed
+    # tested-versions list, already checked there): version, address, checksum
+    ev = os.environ.get('VP_ANUBIS_VER', '')
+    if re.fullmatch(r'[1-9]\.[0-9]{1,2}\.[0-9]{1,2}', ev):
+        got = {}
+        for k in ('amd64', 'arm64'):
+            u = os.environ.get(f'VP_ANUBIS_{k.upper()}_URL', '')
+            h = os.environ.get(f'VP_ANUBIS_{k.upper()}_SHA', '').lower()
+            if re.fullmatch(r'https://github\.com/[A-Za-z0-9._/-]+\.tar\.gz', u) and re.fullmatch(r'[0-9a-f]{64}', h):
+                got[k] = (u, h)
+        if len(got) != 2:
+            log(f'[VortexPanel] The download addresses for Anubis {ev} are not valid - not installed.')
+            return False
+        ver = ev
+        url = {k: v[0] for k, v in got.items()}
+        sha = {k: v[1] for k, v in got.items()}
+    elif ev:
+        log(f'[VortexPanel] "{ev[:20]}" is not a valid Anubis version - not installed.')
+        return False
+    if a not in sha:
         log(f'[VortexPanel] Anubis is not available for this processor ({platform.machine()}).')
         return False
     tmp = '/opt/vortexpanel/data/tmp/anubis-install'
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp, mode=0o700)
     try:
-        if version() != VER:
-            log(f'[VortexPanel] Downloading Anubis {VER} ({a})...')
-            rc, out = sh(['curl', '-fsSL', '--max-time', '300', '-o', f'{tmp}/a.tgz', URL.format(v=VER, a=a)], 320)
+        if version() != ver:
+            log(f'[VortexPanel] Downloading Anubis {ver} ({a})...')
+            rc, out = sh(['curl', '-fsSL', '--max-time', '300', '-o', f'{tmp}/a.tgz', url[a]], 320)
             if rc:
                 log('[VortexPanel] Download failed: ' + out[-300:])
                 return False
-            rc, out = sh(f'echo "{SHA[a]}  {tmp}/a.tgz" | sha256sum -c --quiet -')
+            rc, out = sh(f'echo "{sha[a]}  {tmp}/a.tgz" | sha256sum -c --quiet -')
             if rc:
                 log('[VortexPanel] The download does not match the expected checksum - not installed.')
                 return False
             rc, out = sh(['tar', '-xzf', f'{tmp}/a.tgz', '-C', tmp])
-            src = f'{tmp}/anubis-{VER}-linux-{a}/bin/anubis'
-            if rc or not os.path.isfile(src):
+            import glob
+            found = glob.glob(f'{tmp}/*/bin/anubis')
+            src = found[0] if found else ''
+            if rc or not src or not os.path.isfile(src):
                 log('[VortexPanel] Could not unpack Anubis: ' + out[-300:])
                 return False
             os.makedirs(BASE + '/bin', exist_ok=True)
             shutil.copy2(src, BIN + '.new')
             os.chmod(BIN + '.new', 0o755)
             os.replace(BIN + '.new', BIN)
-            lic = f'{tmp}/anubis-{VER}-linux-{a}/doc/LICENSE'
+            lic = os.path.join(os.path.dirname(os.path.dirname(src)), 'doc', 'LICENSE')
             if os.path.exists(lic):
                 shutil.copy2(lic, BASE + '/LICENSE')
-            _write(BASE + '/VERSION', VER + '\n')
+            _write(BASE + '/VERSION', ver + '\n')
         rc, out = sh([BIN, '--version'])
         log('[VortexPanel] ' + (out.splitlines()[0] if out else 'Anubis installed'))
         if sh(['id', USER])[0] != 0:

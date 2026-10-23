@@ -3,6 +3,7 @@ from panel.utils.authctx import authed as _vp_authed
 import os, re, subprocess, shlex, shutil
 from datetime import datetime
 import json, time
+from panel.utils.sqlident import grant_db
 
 try:
     from panel.routes.os_utils import get_os, pkg_install, pkg_update, pkg_remove
@@ -967,7 +968,7 @@ def create_site():
                 if not err:
                     _, err = mysql_cmd(f"CREATE USER '{db_user}'@'localhost' IDENTIFIED BY '{_sql_escape(db_pass)}';")
                 if not err:
-                    _, err = mysql_cmd(f"GRANT ALL PRIVILEGES ON `{db_name}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;")
+                    _, err = mysql_cmd(f"GRANT ALL PRIVILEGES ON `{grant_db(db_name)}`.* TO '{db_user}'@'localhost'; FLUSH PRIVILEGES;")
                 if err:
                     warnings.append(f'Database not created: {err}')
                 else:
@@ -1019,9 +1020,19 @@ def delete_site(domain):
     if not req(): return jsonify({'ok':False}), 401
     if not is_valid_domain(domain):
         return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    ok, res = delete_site_core(domain)
+    if not ok:
+        return jsonify({'ok':False,'error':res}), 404
+    return jsonify(dict(res, ok=True))
+
+
+def delete_site_core(domain):
+    """Remove the vhost and runtime pieces of a site (files kept). Returns
+    (True, {'removed', 'kept'}) or (False, error). Also used by One-click
+    Deploy to undo a site it created when the install fails."""
     fp, ws = _find_site_config(domain)
     if not fp:
-        return jsonify({'ok':False,'error':f'No config found for {domain}'}), 404
+        return False, f'No config found for {domain}'
     site_path = _get_site_path(domain)
     if ws and ws != 'nginx':
         from panel.routes.wp_toolkit import _delete_vhost
@@ -1047,7 +1058,7 @@ def delete_site(domain):
             kept.append(f'SSL certificate in {cdir}' + (' (still auto-renewed; remove with: certbot delete --cert-name '
                                                        f'{domain})' if 'letsencrypt' in cdir else ''))
     kept.append('any databases / FTP accounts created for the site (Databases / FTP pages)')
-    return jsonify({'ok':True, 'removed':removed, 'kept':kept})
+    return True, {'removed':removed, 'kept':kept}
 
 
 def _cleanup_site_runtime(domain):
