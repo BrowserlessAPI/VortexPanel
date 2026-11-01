@@ -102,6 +102,33 @@ def _sh(argv, timeout=120):
         return 1, str(e)
 
 
+def _harden_gate(plugin_dir, p):
+    """Compile the module's licence gate to a native .so on this panel, so it cannot be
+    read or edited to bypass the licence. Best-effort: the gate works as source too, so a
+    panel without a build toolchain (or offline) is never blocked from installing.
+
+    Runs with the panel's own venv Python so the .so matches the Python that loads it.
+    Set VP_NO_GATE_COMPILE=1 to skip. Never raises."""
+    if os.environ.get('VP_NO_GATE_COMPILE') == '1':
+        return
+    script = os.path.join(plugin_dir, 'compile_gate.py')
+    if not os.path.isfile(script):
+        return   # package without the compile tool: nothing to do
+    py = os.path.join(PANEL_DIR, 'venv', 'bin', 'python')
+    if not os.path.exists(py):
+        py = sys.executable
+    try:
+        rc, _ = _sh([py, '-c', 'import Cython'], timeout=30)
+        if rc != 0:
+            # not installed: try once, quietly; if it fails (no network/compiler) we fall back
+            _sh([py, '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check', 'Cython'], timeout=300)
+        rc, out = _sh([py, script, plugin_dir], timeout=300)
+        line = (out.strip().splitlines() or [''])[-1].strip()
+        p.say(line or ('licence gate compiled' if rc == 0 else 'licence gate left as source'))
+    except Exception as e:  # noqa: BLE001
+        p.say(f'licence gate left as source ({e}).')
+
+
 def _panel_url():
     try:
         unit = open('/etc/systemd/system/vortexpanel.service').read()
@@ -210,6 +237,7 @@ def run(version=None):
             p.done(False, f'The package could not be unpacked: {e}')
             return 1
         _sh(['chown', '-R', 'root:root', new])
+        _harden_gate(new, p)
 
         ts = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
         bdir = os.path.join(DATA_DIR, 'install-backups', ts)
