@@ -36,6 +36,9 @@ LOCK = os.path.join(STATE_DIR, '.lock')
 TRUST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trust', 'licence.json')
 TIMEOUT = 20
 MODULE = 'hosting'
+CHECK_EVERY = 3600       # the panel checks in at least hourly, so a revoked or ended licence shows soon
+STALE_VIEW = 120         # opening the Hosting Module page checks in when the last answer is older than this
+STALE_USE = 600          # a Hosting Module admin action checks in when the last answer is older than this
 
 
 class LicenceError(Exception):
@@ -167,6 +170,12 @@ def current(now=None):
     if not payload:
         if st.get('token'):
             out.update(status='invalid', status_text='The stored licence is not signed by the licence server')
+        elif st.get('key') and st.get('lost'):
+            # the licence server took the licence back from this server (revoked and released,
+            # moved, deleted): say so instead of a bare "No licence"
+            lost = st['lost']
+            out.update(status='lost', status_text=lost.get('text') or 'The licence server no longer lists this licence for this server',
+                       lost_code=lost.get('code') or '', lost_at=lost.get('at') or 0)
         return out
     if payload.get('server_id') != ident.get('server_id'):
         out.update(status='other_server', status_text='The stored licence belongs to another server')
@@ -178,8 +187,13 @@ def current(now=None):
                module_latest=payload.get('module_latest') or '', linked_ip=payload.get('linked_ip') or '',
                months=payload.get('months') or 0, source=payload.get('source') or '')
     in_time = now < (payload.get('valid_until') or 0)
+    end = payload.get('period_end') or 0
     out['licensed'] = bool(payload.get('valid')) and in_time and MODULE in (payload.get('features') or [])
-    if payload.get('valid') and not in_time:
+    if payload.get('valid') and end and now >= end and payload.get('source') != 'dodo':
+        # a prepaid licence ends at its period end even when the last answer still said "Active"
+        out['licensed'] = False
+        out.update(status='expired', status_text='Expired: the paid period has ended')
+    elif payload.get('valid') and not in_time:
         out.update(status='offline_expired',
                    status_text='The licence server has not been reached for too long; check-in needed')
     out['offline'] = bool(payload.get('valid')) and now > (payload.get('refresh_after') or 0) + 3600
@@ -188,6 +202,10 @@ def current(now=None):
 
 def hosting_licensed():
     """For the Hosting Module: may the admin side create accounts and change packages?"""
+    try:
+        refresh_stale(STALE_USE)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         return current()['licensed']
     except Exception:  # noqa: BLE001
@@ -239,14 +257,14 @@ def _ipv4_first():
         _V4.on = False
 
 
-def _call(method, path, body=None):
+def _call(method, path, body=None, timeout=TIMEOUT):
     import requests
     server = trust()['server']
     _ipv4_first()
     if not server.startswith(('https://', 'http://127.0.0.1', 'http://localhost')):
         raise LicenceError('The licence server address is not set in this panel version.', 'no_server', 503)
     try:
-        r = requests.request(method, server + path, json=body, timeout=TIMEOUT,
+        r = requests.request(method, server + path, json=body, timeout=timeout,
                              headers={'User-Agent': 'VortexPanel-Licence/1'})
     except requests.RequestException as e:
         raise LicenceError('The licence server could not be reached. Try again in a few minutes.',
@@ -267,7 +285,8 @@ def _store_token(data, key=None):
         raise LicenceError('The licence server\'s answer is not signed with a trusted key.', 'signature', 502)
     if payload.get('server_id') != identity()['server_id']:
         raise LicenceError('The licence server answered for another server.', 'identity', 502)
-    changes = {'token': data['token'], 'last_ok': int(time.time()), 'last_error': None, 'last_error_at': None}
+    changes = {'token': data['token'], 'last_ok': int(time.time()), 'last_error': None, 'last_error_at': None,
+               'lost': None}
     if key:
         changes['key'] = key
     _save_state(**changes)
@@ -356,21 +375,45 @@ def activate(key, move=False):
     return _store_token(data, key)
 
 
-def check():
+def check(timeout=TIMEOUT):
     st = load_state()
     if not st.get('key'):
         return None
+    _save_state(last_try=int(time.time()))
     try:
-        data = _call('POST', '/api/v1/check', dict(_server_info(), key=st['key']))
+        data = _call('POST', '/api/v1/check', dict(_server_info(), key=st['key']), timeout=timeout)
     except LicenceError as e:
-        _save_state(last_error=str(e), last_error_at=int(time.time()))
+        now = int(time.time())
+        _save_state(last_error=str(e), last_error_at=now)
         if e.code in ('not_found', 'bound_elsewhere', 'identity', 'not_bound'):
             # the licence server says this server no longer holds the licence: drop the token
             # ('wrong_ip' keeps it: it runs out within 3 days by itself, so a short change of the
             # outgoing address does not lock the module at once)
-            _save_state(token=None)
+            text = {'not_bound': 'Released from this server on the licence server',
+                    'bound_elsewhere': 'The licence is now active on another server',
+                    'not_found': 'The licence key no longer exists on the licence server',
+                    'identity': "This server's identity no longer matches the licence"}.get(e.code, str(e))
+            _save_state(token=None, lost={'code': e.code, 'text': text, 'at': now})
         raise
     return _store_token(data)
+
+
+def refresh_stale(max_age=STALE_VIEW, timeout=8):
+    """Check in now when the last answer is older than max_age seconds (a revoked, refunded or
+    ended licence then shows when the page is opened or the module is used, not hours later).
+    At most one try per max_age, and none within 2 minutes of a failed one. Never raises."""
+    st = load_state()
+    if not st.get('key'):
+        return None
+    now = time.time()
+    last = max(int(st.get('last_ok') or 0), int(st.get('last_try') or 0))
+    if now - last < max_age or now - int(st.get('last_error_at') or 0) < 120:
+        return None
+    try:
+        check(timeout=timeout)
+        return 'checked'
+    except LicenceError as e:
+        return f'check failed: {e}'
 
 
 def refresh_if_due():
@@ -389,7 +432,13 @@ def refresh_if_due():
         return 'no licence'
     cur = current()
     now = time.time()
-    if cur['refresh_after'] and now < cur['refresh_after']:
+    due_at = int(st.get('last_ok') or 0) + CHECK_EVERY
+    if cur['refresh_after']:
+        due_at = min(due_at, cur['refresh_after'])
+    end = cur.get('period_end') or 0
+    if end and now >= end and int(st.get('last_ok') or 0) < end:
+        due_at = 0          # the paid period ended since the last answer: ask (a renewal may have come in)
+    if now < due_at:
         return 'not due'
     last_err = st.get('last_error_at') or 0
     if last_err and now - last_err < 15 * 60:
@@ -407,7 +456,7 @@ def deactivate():
         raise LicenceError('This server has no licence.', 'no_licence')
     info = _server_info()
     _call('POST', '/api/v1/deactivate', dict(info, key=st['key']))
-    _save_state(token=None, key=None)
+    _save_state(token=None, key=None, lost=None)
 
 
 # ---------------------------------------------------------------- module package

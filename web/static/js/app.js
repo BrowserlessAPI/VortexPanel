@@ -8600,6 +8600,19 @@ function hostingModulePage() {
       this.schedule();
     },
     lic() { return this.st?.licence || {}; },
+    licTitle() {
+      return {revoked: 'Licence revoked', refunded: 'Licence refunded', expired: 'Licence expired',
+              lost: 'Licence no longer on this server', on_hold: 'Licence on hold', past_due: 'Licence payment overdue',
+              offline_expired: 'Licence check-in needed'}[this.lic().status] || 'Licence not active';
+    },
+    lockedHint() {
+      const s = this.lic().status;
+      if (s === 'revoked') return 'The licence was revoked on the licence server. Contact support if you think this is a mistake.';
+      if (s === 'refunded') return 'The licence was refunded. Buy a new licence to unlock it.';
+      if (s === 'lost') return 'Activate a licence key below, or open your licence account to see where the licence is now.';
+      if (s === 'offline_expired') return 'Allow the panel to reach the licence server, then press Check licence now.';
+      return this.canRenew() ? 'Renew below to unlock it.' : 'Renew in your licence account, then press Check licence now.';
+    },
     offer() { return this.st?.offer || {}; },
     periods() { return (this.offer().periods || []).map(p => ({months: +p.months, label: p.label, price: +p.price})); },
     period(m) { return this.periods().find(p => p.months === m); },
@@ -8631,7 +8644,7 @@ function hostingModulePage() {
     canRenew() {
       const l = this.lic();
       return this.available() && !!l.has_key && ['paypal', 'manual'].includes(l.source) && !!l.period_end
-        && !['revoked', 'refunded', 'other_server', 'invalid'].includes(l.status) && this.daysLeft() <= 30;
+        && !['revoked', 'refunded', 'other_server', 'invalid', 'lost'].includes(l.status) && this.daysLeft() <= 30;
     },
     showOrder() {
       if (this.pending() || this.tracking) return true;

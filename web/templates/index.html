@@ -9197,7 +9197,7 @@
             <div class="bp-head" :class="lic().licensed?'':'warn'">
               <div class="bp-ic" :class="lic().licensed?'':'warn'" x-html="vpIcon('shield')"></div>
               <div style="flex:1;min-width:240px">
-                <div style="font-size:15px;font-weight:700;color:var(--text-primary)" x-text="lic().licensed ? 'Licence active on this server' : 'Licence not active'"></div>
+                <div style="font-size:15px;font-weight:700;color:var(--text-primary)" x-text="lic().licensed ? 'Licence active on this server' : licTitle()"></div>
                 <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
                   <span x-text="lic().status_text"></span>
                   <span x-show="lic().linked_ip"> &middot; linked to <span style="font-family:var(--font-mono)" x-text="lic().linked_ip"></span></span>
@@ -9215,12 +9215,12 @@
               <button class="btn btn-ghost btn-sm" x-show="lic().has_key && !lic().linked_ip" @click="deactivate()">Move to another server</button>
             </div>
           </template>
-          <div x-show="lic().last_error && lic().has_key" class="card-sm bp-card" style="font-size:12px;border-color:rgba(245,158,11,.35)">
+          <div x-show="lic().last_error && lic().has_key && lic().status !== 'lost'" class="card-sm bp-card" style="font-size:12px;border-color:rgba(245,158,11,.35)">
             <b class="bp-warn">Last check-in failed:</b> <span x-text="lic().last_error"></span>
             <span class="bp-note" x-show="lic().licensed" x-text="' The licence keeps working until '+fmtTime(lic().valid_until)+' without a check-in.'"></span>
           </div>
           <div x-show="lic().has_key && !lic().licensed && st.installed_version" class="card-sm bp-card" style="font-size:12px;color:var(--text-secondary)">
-            The Hosting Module is locked: new accounts and package changes are not possible. Customer websites, mail and the customer portal keep running. <span x-text="canRenew() ? 'Renew below to unlock it.' : 'Renew in your licence account, then press Check licence now.'"></span>
+            The Hosting Module is locked: new accounts and package changes are not possible. Customer websites, mail and the customer portal keep running. <span x-text="lockedHint()"></span>
           </div>
           <div x-show="claimMsg" class="card-sm bp-card" style="font-size:12px" x-text="claimMsg"></div>
 

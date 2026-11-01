@@ -296,7 +296,9 @@ python3 app.py   # development server on :8888
 - [x] Live App Store version data and distribution-package fallbacks
 - [x] Language packs
 
-**v3.9.1 (current):**
+**v3.9.2 (current):** a revoked, refunded or ended Hosting Module licence shows in the panel at once (check-in when the page opens, hourly in the background)
+
+**v3.9.1:**
 - [x] Hosting Module: buy and renew with PayPal from the panel, licences for several servers in one order, each linked to a server IP and activated by itself
 - [x] Licence account with email confirmation and password: change a licence's server IP (once every 30 days), renew, receipts
 

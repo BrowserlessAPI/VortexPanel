@@ -50,6 +50,10 @@ def _auto_link():
 
 
 def _status(with_plans=True):
+    if with_plans:
+        # opening the page checks in when the last answer is a few minutes old, so a licence that
+        # was revoked, refunded, renewed or ended on the licence server shows its real state
+        licence.refresh_stale(licence.STALE_VIEW)
     linked = _auto_link() if with_plans else None
     cur = licence.current()
     out = {'ok': True, 'licence': cur, 'installed_version': licence.installed_module_version(), 'linked_now': bool(linked),
