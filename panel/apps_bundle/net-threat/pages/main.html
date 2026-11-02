@@ -1,0 +1,167 @@
+<div x-data="vpaNetThreat()" x-init="init()" class="vpa vpnt" style="--vpa-c:#ea580c">
+  <div class="vpa-head">
+    <div class="vpa-logo" x-html="vpIcon('activity')"></div>
+    <div>
+      <div class="vpa-title">Network Threat Detection</div>
+      <div class="vpa-sub">Traffic from known attackers, botnets and compromised hosts, checked in the kernel against live threat-intelligence lists</div>
+    </div>
+    <div class="vpa-head-r">
+      <span class="vpa-pill" :class="svc==='active'?'ok':'bad'"><i></i><span x-text="svc==='active'?'Sensor running':'Sensor '+(svc||'unknown')"></span></span>
+      <label class="vpa-switch"><input type="checkbox" :checked="s.enabled" @change="toggle($event.target.checked)"><span class="t"></span><span x-text="s.enabled?'Detection on':'Detection off'"></span></label>
+    </div>
+  </div>
+
+  <div class="vpa-note bad" x-show="loaded && svc!=='active'">The sensor service is not running: new threats are not recorded.
+    <button class="btn btn-ghost btn-xs" style="margin-left:6px" @click="service('restart')">Start sensor</button></div>
+  <div class="vpa-note bad vpnt-out" x-show="(ov.outbound||[]).length">
+    <b x-text="'This server contacted '+(ov.outbound||[]).length+' botnet command server(s) today.'"></b>
+    That usually means a website or account on this server is infected. The connections were blocked. Open the threats below, then run the malware scan and System Hardening's process guard.
+  </div>
+
+  <div class="vpnt-risk">
+    <template x-for="r in risks" :key="r.k">
+      <div class="vpnt-rk" :class="r.k" @click="tab='overview'; riskF=(riskF===r.k?'':r.k)" :style="riskF===r.k?'outline:2px solid currentColor':''">
+        <div class="n" x-text="(ov.by_risk||{})[r.k]||0"></div><div class="l" x-text="r.l"></div></div>
+    </template>
+    <div class="vpnt-rk total"><div class="n" x-text="vpaNum((ov.today||{}).hits)"></div><div class="l">Hits today</div></div>
+    <div class="vpnt-rk total"><div class="n" x-text="vpaNum(ov.protected_entries)"></div><div class="l">Networks watched</div></div>
+  </div>
+
+  <div class="vpa-body">
+    <nav class="vpa-nav">
+      <template x-for="t in tabs" :key="t.id">
+        <a :class="{on:tab===t.id}" @click="setTab(t.id)"><span x-html="vpIcon(t.icon)"></span><span x-text="t.label"></span>
+          <span class="n" x-show="t.id==='overview' && (ov.threats||[]).length" x-text="(ov.threats||[]).length"></span></a>
+      </template>
+    </nav>
+    <div>
+      <!-- OVERVIEW -->
+      <div x-show="tab==='overview'">
+        <div class="vpa-grid2">
+          <div class="vpa-card"><div class="vpa-card-h"><div><div class="vpa-card-t">Threat hits today, by hour</div><div class="vpa-card-s">Packets from (or to) listed addresses</div></div></div>
+            <div class="vpa-chart"><canvas x-ref="hourly"></canvas></div></div>
+          <div class="vpa-card"><div class="vpa-card-h"><div><div class="vpa-card-t">By list today</div></div></div>
+            <div class="vpa-chart"><canvas x-ref="bylist"></canvas></div></div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Threat sources today</div><div class="vpa-card-s" x-text="riskF?'Showing '+riskF+' risk only':'Highest risk first'"></div></div>
+            <div class="r"><input class="form-input" style="width:200px" placeholder="Filter by IP" x-model="q"></div></div>
+          <div class="vpa-tw">
+            <table class="vpa-table">
+              <thead><tr><th>Risk</th><th>Address</th><th>Direction</th><th>Threat</th><th class="num">Packets</th><th>Ports</th><th>Last seen</th><th class="act"></th></tr></thead>
+              <tbody>
+                <template x-for="t in threatsView()" :key="t.ip">
+                  <tr><td><span class="vpa-tag" :class="riskTone(t.risk)" x-text="t.risk"></span></td>
+                    <td class="mono"><a href="#" @click.prevent="lookup(t.ip)" x-text="t.ip"></a></td>
+                    <td><span class="vpa-tag" :class="t.direction==='out'?'red':''" x-text="t.direction==='out'?'Outbound':'Inbound'"></span></td>
+                    <td><div style="font-weight:600;color:var(--text-primary);font-size:12.5px" x-text="t.category"></div><div class="vpa-card-s" x-text="t.name"></div></td>
+                    <td class="num" x-text="vpaNum(t.packets)"></td>
+                    <td><template x-for="p in (t.ports||[]).slice(0,5)" :key="p"><span class="vpa-tag" x-text="p"></span></template></td>
+                    <td x-text="vpaAgo(t.last)"></td>
+                    <td class="act"><button class="btn btn-ghost btn-xs" x-show="ov.scan_detect && t.direction==='in'" @click="blockIp(t.ip)">Block</button>
+                      <button class="btn btn-ghost btn-xs" @click="wl.ip=t.ip; wl.note=t.name; wlAdd()">Whitelist</button></td></tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="vpa-empty" x-show="!threatsView().length"><span x-html="vpIcon('shield')"></span>No traffic from listed addresses today.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- EVENTS -->
+      <div x-show="tab==='events'">
+        <div class="vpa-toolbar">
+          <select class="form-input" style="max-width:150px" x-model="evf.risk" @change="loadEvents(1)"><option value="">All risks</option><template x-for="r in risks" :key="r.k"><option :value="r.k" x-text="r.l"></option></template></select>
+          <select class="form-input" style="max-width:150px" x-model="evf.direction" @change="loadEvents(1)"><option value="">Both directions</option><option value="in">Inbound</option><option value="out">Outbound</option></select>
+          <input class="form-input" placeholder="IP address" x-model="evf.q" @input.debounce.400ms="loadEvents(1)">
+          <div class="grow"></div><span class="vpa-card-s" x-text="ev.total+' event(s)'"></span>
+        </div>
+        <div class="vpa-tw"><table class="vpa-table"><thead><tr><th>Time</th><th>Risk</th><th>Address</th><th>Direction</th><th>Threat</th><th>Action</th><th>Ports</th></tr></thead>
+          <tbody><template x-for="(e,i) in ev.items" :key="i"><tr><td x-text="vpaTime(e.t)"></td><td><span class="vpa-tag" :class="riskTone(e.risk)" x-text="e.risk"></span></td>
+            <td class="mono"><a href="#" @click.prevent="lookup(e.ip)" x-text="e.ip"></a></td><td x-text="e.direction==='out'?'Outbound':'Inbound'"></td><td x-text="e.category"></td>
+            <td><span class="vpa-tag" :class="e.action==='blocked'?'red':'amber'" x-text="e.action"></span></td>
+            <td><template x-for="p in (e.ports||[]).slice(0,5)" :key="p"><span class="vpa-tag" x-text="p"></span></template></td></tr></template></tbody></table>
+          <div class="vpa-empty" x-show="!ev.items.length">No events.</div>
+          <div class="vpa-pager" x-show="ev.total>ev.size"><button class="btn btn-ghost btn-xs" :disabled="ev.page<=1" @click="loadEvents(ev.page-1)">Previous</button><span x-text="'Page '+ev.page+' of '+Math.ceil(ev.total/ev.size)"></span><button class="btn btn-ghost btn-xs" :disabled="ev.page*ev.size>=ev.total" @click="loadEvents(ev.page+1)">Next</button></div></div>
+      </div>
+
+      <!-- LISTS -->
+      <div x-show="tab==='lists'">
+        <div class="vpa-card"><div class="vpa-card-h"><div><div class="vpa-card-t">Threat-intelligence lists</div>
+          <div class="vpa-card-s" x-text="'Refreshed every '+s.update_hours+' hours'+((ov.update||{}).t?'; last update '+vpaAgo(ov.update.t):'')"></div></div>
+          <div class="r"><button class="btn btn-primary btn-sm" @click="updateNow()" :disabled="busy==='update'" x-text="busy==='update'?'Downloading...':'Update now'"></button></div></div>
+          <div class="vpa-note" style="margin:0">Monitor counts traffic from a list and reports it; Block also drops it. Private and reserved networks and this server's own addresses are always removed from the lists.</div>
+        </div>
+        <template x-for="l in lists" :key="l.id">
+          <div class="vpa-card vpnt-list">
+            <div class="vpa-card-h">
+              <div style="min-width:0"><div class="vpa-card-t"><span x-text="l.name"></span> <span class="vpa-tag" :class="riskTone(l.risk)" x-text="l.risk"></span> <span class="vpa-tag" x-text="l.direction==='out'?'outbound':'inbound'"></span></div>
+                <div class="vpa-card-s" x-text="l.category+' - '+l.desc"></div>
+                <div class="vpa-card-s" style="margin-top:4px" x-text="l.entries?vpaNum(l.entries)+' networks, updated '+vpaAgo(l.updated):'not downloaded yet'"></div></div>
+              <div class="r"><div class="vpnt-seg">
+                <button :class="{on:l.mode==='off'}" @click="setList(l,'off')">Off</button>
+                <button :class="{on:l.mode==='monitor'}" @click="setList(l,'monitor')">Monitor</button>
+                <button :class="{on:l.mode==='block'}" @click="setList(l,'block')">Block</button></div></div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- LOOKUP -->
+      <div x-show="tab==='lookup'">
+        <div class="vpa-card"><div class="vpa-card-h"><div><div class="vpa-card-t">Check an address</div><div class="vpa-card-s">Is it on a threat list, and has it been seen here?</div></div></div>
+          <div class="vpa-toolbar"><input class="form-input mono" style="max-width:280px" placeholder="203.0.113.7" x-model="lk.ip" @keydown.enter="lookup(lk.ip)"><button class="btn btn-primary btn-sm" @click="lookup(lk.ip)">Check</button></div>
+          <div x-show="lk.done">
+            <div class="vpa-note" :class="lk.lists.length?'bad':'ok'" x-text="lk.lists.length?(lk.res+' is on '+lk.lists.length+' list(s)'):(lk.res+' is on none of the enabled lists')"></div>
+            <template x-for="(m,i) in lk.lists" :key="i"><div class="vpnt-ev"><span class="vpa-tag" :class="riskTone(m.risk)" x-text="m.risk"></span><b x-text="m.list"></b><span class="vpa-card-s" x-text="m.category+' - listed network '+m.network"></span></div></template>
+            <div class="vpa-card-t" style="font-size:13px;margin:12px 0 6px" x-show="lk.events.length">Seen on this server</div>
+            <template x-for="(e,i) in lk.events" :key="i"><div class="vpnt-ev"><span x-text="vpaTime(e.t)"></span><span class="vpa-tag" x-text="e.action"></span><span class="vpa-card-s" x-text="e.category+' - ports '+(e.ports||[]).join(', ')"></span></div></template>
+          </div>
+        </div>
+      </div>
+
+      <!-- DEEP INSPECTION -->
+      <div x-show="tab==='ids'">
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Deep packet inspection (Suricata)</div><div class="vpa-card-s">Reads every packet against about 40 000 Emerging Threats signatures: exploits, malware traffic, scans, attacks on web apps. Detection only: it never drops traffic.</div></div></div>
+          <div class="vpnt-kvs">
+            <div class="vpnt-kv"><span>Status</span><b x-text="ids.installed?(ids.service||'?'):'not installed'"></b></div>
+            <div class="vpnt-kv"><span>Version</span><b x-text="ids.version||'-'"></b></div>
+            <div class="vpnt-kv"><span>Signatures</span><b x-text="ids.rules?vpaNum(ids.rules):'-'"></b></div>
+            <div class="vpnt-kv"><span>Free memory</span><b x-text="ids.mem_available_mb+' MB'"></b></div>
+          </div>
+          <div class="vpa-note warn" style="margin:12px 0 0" x-show="!ids.installed && ids.mem_available_mb<1000">Suricata needs about 1 GB of free memory; this server has <span x-text="ids.mem_available_mb"></span> MB available. The threat lists above work without it.</div>
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" x-show="!ids.installed" :disabled="ids.job_running" @click="idsAction('install')" x-text="ids.job_running?'Installing...':'Install Suricata'"></button>
+            <button class="btn btn-ghost btn-sm" x-show="ids.installed" @click="idsAction('update-rules')">Update signatures</button>
+            <button class="btn btn-ghost btn-sm" x-show="ids.installed && ids.service!=='active'" @click="idsAction('start')">Start</button>
+            <button class="btn btn-ghost btn-sm" x-show="ids.installed && ids.service==='active'" @click="idsAction('stop')">Stop</button>
+          </div>
+          <div class="vpa-job" style="margin-top:12px" x-show="ids.job && ids.job.lines && (ids.job_running || ids.job.state==='failed')" x-text="((ids.job||{}).lines||[]).join('\n')"></div>
+        </div>
+        <div class="vpa-card" x-show="ids.installed">
+          <div class="vpa-card-h"><div class="vpa-card-t">Alerts</div><div class="r"><input class="form-input" style="width:220px" placeholder="Signature or IP" x-model="idsQ" @input.debounce.400ms="loadAlerts()"></div></div>
+          <div class="vpa-tw"><table class="vpa-table"><thead><tr><th>Time</th><th>Severity</th><th>Signature</th><th>Source</th><th>Destination</th></tr></thead>
+            <tbody><template x-for="(a,i) in alerts" :key="i"><tr><td x-text="a.t"></td><td><span class="vpa-tag" :class="a.severity==1?'red':(a.severity==2?'amber':'blue')" x-text="['','high','medium','low'][a.severity]||a.severity"></span></td>
+              <td><div style="font-size:12.5px;font-weight:600;color:var(--text-primary)" x-text="a.signature"></div><div class="vpa-card-s" x-text="a.category"></div></td>
+              <td class="mono" x-text="a.src+':'+a.sport"></td><td class="mono" x-text="a.dest+':'+a.dport"></td></tr></template></tbody></table>
+            <div class="vpa-empty" x-show="!alerts.length">No alerts.</div></div>
+        </div>
+      </div>
+
+      <!-- WHITELIST + SETTINGS -->
+      <div x-show="tab==='settings'">
+        <div class="vpa-card"><div class="vpa-card-h"><div><div class="vpa-card-t">Whitelist</div><div class="vpa-card-s">Never counted or blocked, in either direction</div></div></div>
+          <div class="vpa-toolbar"><input class="form-input mono" style="max-width:300px" placeholder="IP or network" x-model="wl.ip"><input class="form-input" style="max-width:220px" placeholder="Note" x-model="wl.note"><button class="btn btn-primary btn-sm" @click="wlAdd()" :disabled="!wl.ip">Add</button></div>
+          <template x-for="w in wlItems" :key="w.ip"><div class="vpnt-ev"><span class="mono" style="flex:1" x-text="w.ip"></span><span class="vpa-card-s" x-text="w.note"></span><button class="btn btn-ghost btn-xs" @click="wlDel(w.ip)">Remove</button></div></template>
+          <div class="vpa-empty" style="padding:12px" x-show="!wlItems.length">Empty</div></div>
+        <div class="vpa-card"><div class="vpa-form">
+          <label>Update lists every</label><div class="row"><input type="number" min="1" max="168" class="form-input" x-model.number="sf.update_hours"><span class="vpa-unit">hours</span></div>
+          <label>Keep history</label><div class="row"><input type="number" min="1" max="365" class="form-input" x-model.number="sf.retention_days"><span class="vpa-unit">days</span></div>
+          <label>Alerts</label><div><label class="vpa-switch sm"><input type="checkbox" x-model="sf.notify"><span class="t"></span>Alert on outbound botnet contact and critical threats</label></div>
+          <div class="vpa-form-actions"><button class="btn btn-primary btn-sm" @click="saveSettings()">Save settings</button><button class="btn btn-ghost btn-sm" @click="service('restart')">Restart sensor</button></div>
+        </div></div>
+      </div>
+    </div>
+  </div>
+</div>

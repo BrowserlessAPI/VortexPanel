@@ -132,6 +132,14 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - Automatic conflict detection, RHEL-family package manager support — **all 5 previously-broken RHEL install paths (nginx, MySQL, Caddy, MongoDB, PostgreSQL) fixed**, tested on both x86_64 and arm64
 - **Safe database version policy** — databases (MariaDB/MySQL/PostgreSQL/MongoDB) require uninstall-first to prevent data corruption; version switching kept for non-data modules
 
+### 🧩 Panel Apps *(new in 3.10)*
+Optional modules installed from the App Store, each with its own page. Every App runs separately from the panel core (own data folder, own firewall table, own service), so installing, updating or removing one never touches your websites or other Apps.
+- **Website Statistics** — page views, unique visitors, IPs, traffic, spiders and AI crawlers, regions, pages, referrers, status codes, browsers and devices per site, with hourly trends, comparison and a live requests-per-minute view, read from the server's own access logs (no tracking script)
+- **Network Scan Detection** — counts probes to closed ports in the kernel (nftables) and blocks port scanners automatically, with block records, real-time probe log and whitelist
+- **Network Threat Detection** — live threat-intelligence lists (FireHOL/Spamhaus, blocklist.de, Emerging Threats, GreenSnow, abuse.ch Feodo) in monitor or block mode, plus outbound botnet detection and optional Suricata IDS
+- **System Hardening** — monitor or lock users, SSH keys, cron, services, start-up files and your own folders; process guard for miners and reverse shells; compliance check with one-click fixes; sign-in and sudo audit
+- **PHP Security** — Snuffleupagus runtime protection per PHP version: blocks webshells in upload folders, command injection, PHP uploads and remote inclusion, with log-only testing and trusted folders
+
 ### ⚙ Settings — redesigned card-based control center
 - **Network & Access** — panel port (auto-updates firewall), custom domain, webroot
 - **Panel SSL** — one-click self-signed or Let's Encrypt, validity countdown, automatic safe cutover (no downtime race conditions)

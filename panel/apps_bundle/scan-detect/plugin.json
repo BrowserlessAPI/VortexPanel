@@ -1,0 +1,21 @@
+{
+  "id": "scan-detect",
+  "kind": "app",
+  "name": "Network Scan Detection",
+  "version": "1.0.0",
+  "order": 20,
+  "category": "Security",
+  "icon": "search",
+  "color": "#dc2626",
+  "summary": "Detects port scanners in real time and blocks them at the firewall.",
+  "description": "Counts every probe to a closed port in the kernel (nftables, no log parsing), and blocks an address that probes too many ports in a short window. Live scanner list, block records, real-time probe log, whitelist and adjustable thresholds.",
+  "features": ["Kernel-level detection (nftables)", "Sliding window + distinct-port thresholds", "Auto-block with expiry or permanent", "Real-time probe log", "Whitelist (IP / CIDR, IPv4 + IPv6)", "Never blocks signed-in admins"],
+  "engines": ["nftables"],
+  "requires_core": ">=3.10.0,<4.0.0",
+  "entry": "plugin.py",
+  "hooks": "vpapp_scan_detect.hooks",
+  "conflicts": [],
+  "pages": [{"id": "app-scan-detect", "label": "Scan Detection", "icon": "search", "group": "Security", "fragment": "pages/main.html"}],
+  "scripts": ["static/app.js"],
+  "styles": ["static/app.css"]
+}

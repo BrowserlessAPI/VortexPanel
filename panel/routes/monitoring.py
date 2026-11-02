@@ -40,6 +40,11 @@ def processes():
 @monitoring_bp.route('/api/monitoring/logs')
 def logs():
     if not req(): return jsonify({'ok':False}),401
+    # Server logs hold sign-in names, addresses and mail traffic: administrators only
+    # (the read-only viewer role is otherwise allowed everything under /api/monitoring).
+    from panel.utils.authctx import is_admin
+    if not is_admin():
+        return jsonify({'ok': False, 'error': 'Administrator only'}), 403
     log = request.args.get('log','nginx_error')
     # Each logical log maps to candidate paths (Debian first, RHEL second) —
     # pick the first that exists. On RHEL: messages/secure/maillog/mysqld.log.

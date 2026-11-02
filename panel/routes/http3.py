@@ -97,7 +97,7 @@ def _open_udp_443():
         results.append(f'ufw: {out}')
     if sh('firewall-cmd --state 2>/dev/null') == 'running':
         sh('firewall-cmd --add-port=443/udp --permanent 2>/dev/null')
-        sh('firewall-cmd --reload 2>/dev/null')
+        sh('firewall-cmd --add-port=443/udp 2>/dev/null')
         results.append('firewalld: UDP 443 added')
     return results
 
@@ -107,7 +107,7 @@ def _close_udp_443():
         sh('ufw delete allow 443/udp 2>/dev/null')
     if shutil.which('firewall-cmd'):
         sh('firewall-cmd --remove-port=443/udp --permanent 2>/dev/null')
-        sh('firewall-cmd --reload 2>/dev/null')
+        sh('firewall-cmd --remove-port=443/udp 2>/dev/null')
 
 def _udp_443_open():
     """Check if UDP 443 is currently open in the firewall."""

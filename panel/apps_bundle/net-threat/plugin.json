@@ -1,0 +1,21 @@
+{
+  "id": "net-threat",
+  "kind": "app",
+  "name": "Network Threat Detection",
+  "version": "1.0.0",
+  "order": 25,
+  "category": "Security",
+  "icon": "activity",
+  "color": "#ea580c",
+  "summary": "Spots traffic from known attackers, botnets and compromised hosts using live threat-intelligence lists, and catches this server calling out to a botnet.",
+  "description": "Loads public IP reputation lists (FireHOL level 1 with Spamhaus DROP, blocklist.de, Emerging Threats compromised hosts, GreenSnow scanners, abuse.ch Feodo botnet servers and optional Tor exits) into the kernel firewall and counts every connection from them. Each list can monitor or block. Outbound connections to botnet command servers are flagged as critical, the strongest sign that this server itself is infected. Optional deep packet inspection with Suricata and the free Emerging Threats rules.",
+  "features": ["Live threat-intelligence lists, updated every 6 hours", "Monitor or block per list", "Outbound botnet (C&C) detection", "Threat events with risk level and ports", "Whitelist (IP / CIDR)", "Optional Suricata IDS (Emerging Threats Open rules)"],
+  "engines": ["nftables", "FireHOL / Spamhaus / blocklist.de / ET / abuse.ch lists", "Suricata (optional)"],
+  "requires_core": ">=3.10.0,<4.0.0",
+  "entry": "plugin.py",
+  "hooks": "vpapp_net_threat.hooks",
+  "conflicts": [],
+  "pages": [{"id": "app-net-threat", "label": "Threat Detection", "icon": "activity", "group": "Security", "fragment": "pages/main.html"}],
+  "scripts": ["static/app.js"],
+  "styles": ["static/app.css"]
+}

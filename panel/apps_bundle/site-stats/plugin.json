@@ -1,0 +1,21 @@
+{
+  "id": "site-stats",
+  "kind": "app",
+  "name": "Website Statistics",
+  "version": "1.0.0",
+  "order": 10,
+  "category": "Analytics",
+  "icon": "bar-chart",
+  "color": "#2563eb",
+  "summary": "Real-time visitor analytics for every website, read from the server's own access logs.",
+  "description": "Page views, unique visitors, IPs, traffic, search-engine spiders, regions, pages, referrers, status codes, browsers and devices for each website, with hourly trends, comparison with the previous period and a live requests-per-second view. Works from the access logs the server already writes: no tracking script, no cookies, nothing added to your pages.",
+  "features": ["PV / UV / IP / traffic per site", "Hourly + daily trends with comparison", "Live requests per minute", "Search spiders and AI crawlers", "Countries (free DB-IP database)", "Pages, referrers, status codes, 404s", "Browsers, systems, devices", "Error log viewer"],
+  "engines": ["access logs", "SQLite", "DB-IP Lite (optional)"],
+  "requires_core": ">=3.10.0,<4.0.0",
+  "entry": "plugin.py",
+  "hooks": "vpapp_site_stats.hooks",
+  "conflicts": [],
+  "pages": [{"id": "app-site-stats", "label": "Website Statistics", "icon": "bar-chart", "group": "Overview", "fragment": "pages/main.html"}],
+  "scripts": ["static/app.js"],
+  "styles": ["static/app.css"]
+}

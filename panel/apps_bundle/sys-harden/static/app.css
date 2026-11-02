@@ -1,0 +1,33 @@
+/* System Hardening - page-specific pieces (shared look lives in the core apps.css) */
+.vpsh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.vpsh-area { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; justify-content: space-between; }
+.vpsh-area.m-lock { border-color: color-mix(in srgb, var(--vpa-c) 45%, var(--border)); }
+.vpsh-area-h { display: flex; gap: 10px; align-items: center; }
+.vpsh-area-t { font-weight: 700; font-size: 13.5px; color: var(--text-primary); }
+.vpsh-ic { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0;
+  background: color-mix(in srgb, var(--vpa-c) 12%, transparent); color: var(--vpa-c); }
+.m-off .vpsh-ic { background: var(--bg-raised); color: var(--text-dim); }
+.vpsh-ic .vp-ic { width: 17px; height: 17px; }
+.vpsh-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-raised); }
+.vpsh-area .vpsh-seg { display: grid; grid-template-columns: repeat(3, 1fr); }
+.vpsh-seg button { border: 0; background: transparent; padding: 6px 12px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: inherit; }
+.vpsh-seg button + button { border-left: 1px solid var(--border); }
+.vpsh-seg button.on { background: var(--vpa-c); color: #fff; }
+.vpsh-seg button:disabled { opacity: .4; cursor: not-allowed; }
+.vpsh-row.m-lock { border-color: color-mix(in srgb, var(--vpa-c) 45%, var(--border)); }
+.vpsh-paths { display: flex; flex-wrap: wrap; gap: 2px; }
+.vpsh-ev { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.vpsh-ev:last-child { border-bottom: 0; }
+.vpsh-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.vpsh-more { font-size: 12px; color: var(--vpa-c); text-decoration: none; font-weight: 600; }
+.vpsh-score { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.vpsh-check { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.vpsh-check:last-child { border-bottom: 0; }
+.vpsh-check-t { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+.vpsh-st { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; }
+.vpsh-st .vp-ic { width: 15px; height: 15px; }
+.vpsh-st.pass { background: var(--tint-green); color: var(--green); }
+.vpsh-st.warn { background: var(--tint-amber); color: var(--yellow); }
+.vpsh-st.fail { background: var(--tint-red); color: var(--red); }
+.vpsh-st.na { background: var(--bg-raised); color: var(--text-dim); }
+.vpsh-new td:first-child { box-shadow: inset 3px 0 0 var(--vpa-c); }

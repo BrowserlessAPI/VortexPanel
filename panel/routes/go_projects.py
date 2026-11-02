@@ -189,7 +189,7 @@ def open_port(port):
     fw_out, _, _ = sh('firewall-cmd --state 2>/dev/null')
     if 'running' in fw_out:
         sh(f'firewall-cmd --permanent --add-port={port}/tcp 2>/dev/null')
-        sh('firewall-cmd --reload 2>/dev/null')
+        sh(f'firewall-cmd --add-port={port}/tcp 2>/dev/null')   # runtime too; a reload would drop fail2ban bans
 
 def close_port(port):
     """Close a port in the active firewall."""
@@ -201,7 +201,7 @@ def close_port(port):
     fw_out, _, _ = sh('firewall-cmd --state 2>/dev/null')
     if 'running' in fw_out:
         sh(f'firewall-cmd --permanent --remove-port={port}/tcp 2>/dev/null')
-        sh('firewall-cmd --reload 2>/dev/null')
+        sh(f'firewall-cmd --remove-port={port}/tcp 2>/dev/null')
 
 # ─── Webserver proxy ──────────────────────────────────────────────────────────
 

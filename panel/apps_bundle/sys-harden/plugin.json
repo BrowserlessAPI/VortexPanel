@@ -1,0 +1,21 @@
+{
+  "id": "sys-harden",
+  "kind": "app",
+  "name": "System Hardening",
+  "version": "1.0.0",
+  "order": 30,
+  "category": "Security",
+  "icon": "lock",
+  "color": "#7c3aed",
+  "summary": "Tamper protection for users, SSH, cron, services and system files, a malware process guard, and a security compliance check.",
+  "description": "Watches the places attackers use to keep access to a server: user accounts, SSH keys, cron jobs, systemd services, shell start-up files, the dynamic linker and system binaries. Each area can be monitored (alert on any change) or locked against changes. A process guard finds miners and programs running from temporary folders, a compliance check scores the server against hardening best practice with one-click fixes, and the log audit lists sign-ins, sudo use and account changes.",
+  "features": ["User, SSH, cron, service and start-up file protection", "Monitor or lock mode per area", "Pause a lock for maintenance", "Process guard (miners, temp-folder binaries, reverse shells)", "Compliance check with one-click fixes", "Sign-in, sudo and account audit", "Alerts through the panel's alert channels"],
+  "engines": ["chattr", "/proc", "auth log"],
+  "requires_core": ">=3.10.0,<4.0.0",
+  "entry": "plugin.py",
+  "hooks": "vpapp_sys_harden.hooks",
+  "conflicts": [],
+  "pages": [{"id": "app-sys-harden", "label": "System Hardening", "icon": "lock", "group": "Security", "fragment": "pages/main.html"}],
+  "scripts": ["static/app.js"],
+  "styles": ["static/app.css"]
+}

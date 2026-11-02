@@ -1,0 +1,338 @@
+<div x-data="vpaScanDetect()" x-init="init()" class="vpa" style="--vpa-c:#dc2626">
+  <div class="vpa-head">
+    <div class="vpa-logo" x-html="vpIcon('search')"></div>
+    <div>
+      <div class="vpa-title">Network Scan Detection</div>
+      <div class="vpa-sub">Spots port scanners in the kernel and blocks them at the firewall before they find a way in</div>
+    </div>
+    <div class="vpa-head-r">
+      <span class="vpa-pill" :class="svc==='active'?'ok':'bad'"><i></i><span x-text="svc==='active'?'Service running':'Service '+(svc||'unknown')"></span></span>
+      <label class="vpa-switch" :aria-disabled="busy==='toggle'">
+        <input type="checkbox" :checked="s.enabled" @change="toggle($event.target.checked)"><span class="t"></span>
+        <span x-text="s.enabled?'Protection on':'Protection off'"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="vpa-note bad" x-show="loaded && svc!=='active'">
+    The detection service is not running, so new scanners are not being counted (blocked addresses stay blocked).
+    <button class="btn btn-ghost btn-xs" style="margin-left:6px" @click="service('restart')">Start service</button>
+  </div>
+  <div class="vpa-note warn" x-show="loaded && s.enabled && s.detect_only">Detect-only mode: scanners are recorded but not blocked. Turn it off under Settings to block them.</div>
+  <div class="vpa-note warn" x-show="loaded && !s.enabled">Protection is off: probes are not counted. Addresses already blocked stay blocked until they expire or you unblock them.</div>
+
+  <div class="vpa-stats">
+    <div class="vpa-stat red"><div class="l">Probes today</div><div class="v" x-text="vpaNum(today.probes)"></div><div class="h">connection attempts to closed ports</div></div>
+    <div class="vpa-stat amber click" @click="setTab('scanners')"><div class="l">Scanning IPs today</div><div class="v" x-text="vpaNum(today.ips)"></div><div class="h" x-text="live.length+' active in the last '+s.window_min+' min'"></div></div>
+    <div class="vpa-stat blue click" @click="setTab('blocks')"><div class="l">Blocked now</div><div class="v" x-text="vpaNum(blockedNow)"></div><div class="h" x-text="today.blocks+' blocked today'"></div></div>
+    <div class="vpa-stat green click" @click="setTab('whitelist')"><div class="l">Whitelist</div><div class="v" x-text="whitelistN"></div><div class="h" x-text="adminIps.length+' admin address(es) always allowed'"></div></div>
+  </div>
+
+  <div class="vpa-body">
+    <nav class="vpa-nav">
+      <template x-for="t in tabs" :key="t.id">
+        <a :class="{on:tab===t.id}" @click="setTab(t.id)"><span x-html="vpIcon(t.icon)"></span><span x-text="t.label"></span>
+          <span class="n" x-show="t.id==='scanners' && scanners.length" x-text="scanners.length"></span>
+          <span class="n" x-show="t.id==='blocks' && blockedNow" x-text="blockedNow"></span></a>
+      </template>
+    </nav>
+
+    <div>
+      <!-- OVERVIEW -->
+      <div x-show="tab==='overview'">
+        <div class="vpa-grid2">
+          <div class="vpa-card">
+            <div class="vpa-card-h"><div><div class="vpa-card-t">Probes today, by hour</div><div class="vpa-card-s">Packets to ports nothing listens on</div></div></div>
+            <div class="vpa-chart"><canvas x-ref="hourly"></canvas></div>
+          </div>
+          <div class="vpa-card">
+            <div class="vpa-card-h"><div><div class="vpa-card-t">Last 7 days</div><div class="vpa-card-s">Scanning IPs and blocks per day</div></div></div>
+            <div class="vpa-chart"><canvas x-ref="trend"></canvas></div>
+          </div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h">
+            <div><div class="vpa-card-t">Active scanners</div><div class="vpa-card-s" x-text="'Seen in the last '+s.window_min+' min; updated '+vpaAgo(liveAt)"></div></div>
+            <div class="r"><span class="vpa-card-s" x-text="'Blocks at '+s.scan_count+' probes'+(s.port_count?' or '+s.port_count+' ports':'')+' in '+s.window_min+' min'"></span></div>
+          </div>
+          <div class="vpa-tw">
+            <table class="vpa-table">
+              <thead><tr><th>Source IP</th><th class="num">Probes</th><th style="width:160px">Threshold</th><th class="num">Ports</th><th>Ports probed</th><th>Last seen</th><th>Status</th><th class="act"></th></tr></thead>
+              <tbody>
+                <template x-for="r in live.slice(0,15)" :key="r.ip">
+                  <tr>
+                    <td class="mono"><a href="#" @click.prevent="details(r.ip)" x-text="r.ip"></a></td>
+                    <td class="num" x-text="vpaNum(r.probes)"></td>
+                    <td><div class="vpa-bar" :title="Math.round(pct(r))+'% of the block threshold'"><i :style="'width:'+Math.min(100,pct(r))+'%'"></i></div></td>
+                    <td class="num" x-text="r.ports"></td>
+                    <td><template x-for="p in r.sample.slice(0,8)" :key="p"><span class="vpa-tag" x-text="p"></span></template><span x-show="r.sample.length>8" class="vpa-card-s" x-text="'+'+(r.ports-8)"></span></td>
+                    <td x-text="vpaAgo(r.last)"></td>
+                    <td><span class="vpa-tag" :class="r.blocked?'red':(r.over?'amber':'')" x-text="r.blocked?'Blocked':(r.over?'Over threshold':'Watching')"></span></td>
+                    <td class="act">
+                      <button class="btn btn-ghost btn-xs" x-show="!r.blocked" @click="quickBlock(r.ip)">Block</button>
+                      <button class="btn btn-ghost btn-xs" x-show="r.blocked" @click="unblock([r.ip])">Unblock</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="vpa-empty" x-show="!live.length"><span x-html="vpIcon('shield')"></span>No address is probing closed ports right now.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SCANNERS (today) -->
+      <div x-show="tab==='scanners'">
+        <div class="vpa-toolbar">
+          <input class="form-input" placeholder="Filter by IP" x-model="q">
+          <select class="form-input" style="max-width:150px" x-model="scanFilter">
+            <option value="">All</option><option value="blocked">Blocked</option><option value="open">Not blocked</option>
+          </select>
+          <div class="grow"></div>
+          <span class="vpa-card-s" x-show="sel.length" x-text="sel.length+' selected'"></span>
+          <select class="form-input" style="max-width:130px" x-model.number="batchMin" x-show="sel.length">
+            <template x-for="d in durations" :key="d.v"><option :value="d.v" x-text="d.l"></option></template>
+          </select>
+          <button class="btn btn-danger btn-sm" x-show="sel.length" @click="block(sel, batchMin)">Block selected</button>
+          <button class="btn btn-ghost btn-sm" @click="load()"><span x-html="vpIcon('refresh')"></span> Refresh</button>
+        </div>
+        <div class="vpa-tw">
+          <table class="vpa-table">
+            <thead><tr><th style="width:28px"><input type="checkbox" @change="selAll($event.target.checked)"></th><th>Source IP</th><th class="num">Probes today</th><th class="num">Ports</th><th>Ports probed</th><th>First seen</th><th>Last seen</th><th>Status</th><th class="act"></th></tr></thead>
+            <tbody>
+              <template x-for="r in scannersView()" :key="r.ip">
+                <tr>
+                  <td><input type="checkbox" :value="r.ip" x-model="sel"></td>
+                  <td class="mono"><a href="#" @click.prevent="details(r.ip)" x-text="r.ip"></a></td>
+                  <td class="num" x-text="vpaNum(r.probes)"></td>
+                  <td class="num" x-text="r.ports_n"></td>
+                  <td><template x-for="p in r.ports.slice(0,6)" :key="p"><span class="vpa-tag" x-text="p"></span></template><span x-show="r.ports_n>6" class="vpa-card-s" x-text="'+'+(r.ports_n-6)"></span></td>
+                  <td x-text="vpaClock(r.first)"></td>
+                  <td x-text="vpaAgo(r.last)"></td>
+                  <td><span class="vpa-tag" :class="isBlocked(r.ip)?'red':''" x-text="isBlocked(r.ip)?'Blocked':'Not blocked'"></span></td>
+                  <td class="act">
+                    <button class="btn btn-ghost btn-xs" @click="details(r.ip)">Details</button>
+                    <button class="btn btn-ghost btn-xs" x-show="!isBlocked(r.ip)" @click="quickBlock(r.ip)">Block</button>
+                    <button class="btn btn-ghost btn-xs" x-show="isBlocked(r.ip)" @click="unblock([r.ip])">Unblock</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="vpa-empty" x-show="!scannersView().length"><span x-html="vpIcon('search')"></span>No scanning addresses recorded today.</div>
+        </div>
+      </div>
+
+      <!-- BLOCK RECORDS -->
+      <div x-show="tab==='blocks'">
+        <div class="vpa-card">
+          <div class="vpa-card-h">
+            <div><div class="vpa-card-t">Currently blocked</div><div class="vpa-card-s">Dropped by the kernel before any service sees them</div></div>
+            <div class="r">
+              <input class="form-input" style="width:180px" placeholder="IP address" x-model="manual.ip" @keydown.enter="block([manual.ip], manual.min)">
+              <select class="form-input" style="width:120px" x-model.number="manual.min">
+                <template x-for="d in durations" :key="d.v"><option :value="d.v" x-text="d.l"></option></template>
+              </select>
+              <button class="btn btn-danger btn-sm" @click="block([manual.ip], manual.min)" :disabled="!manual.ip">Block IP</button>
+              <button class="btn btn-ghost btn-sm" x-show="active.length" @click="unblockAll()">Unblock all</button>
+            </div>
+          </div>
+          <div class="vpa-tw">
+            <table class="vpa-table">
+              <thead><tr><th>IP address</th><th>Expires</th><th>Firewall</th><th class="act"></th></tr></thead>
+              <tbody>
+                <template x-for="a in active" :key="a.ip">
+                  <tr>
+                    <td class="mono"><a href="#" @click.prevent="details(a.ip)" x-text="a.ip"></a></td>
+                    <td x-text="a.until ? 'in '+vpaDur(a.left)+' ('+vpaTime(a.until)+')' : 'Permanent'"></td>
+                    <td><span class="vpa-tag" :class="a.in_kernel?'green':'amber'" x-text="a.in_kernel?'Enforced':'Restoring...'"></span></td>
+                    <td class="act"><button class="btn btn-ghost btn-xs" @click="unblock([a.ip])">Unblock</button></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="vpa-empty" x-show="!active.length">No address is blocked.</div>
+          </div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h">
+            <div><div class="vpa-card-t">Block history</div><div class="vpa-card-s" x-text="blk.total+' record(s)'"></div></div>
+            <div class="r">
+              <input class="form-input" style="width:170px" placeholder="Filter by IP" x-model="blk.q" @input.debounce.400ms="loadBlocks(1)">
+              <select class="form-input" style="width:140px" x-model="blk.mode" @change="loadBlocks(1)">
+                <option value="">All actions</option><option value="auto">Automatic</option><option value="manual">Manual</option><option value="unblock">Unblocked</option>
+              </select>
+            </div>
+          </div>
+          <div class="vpa-tw">
+            <table class="vpa-table">
+              <thead><tr><th>Time</th><th>IP address</th><th>Action</th><th>Reason</th><th>Duration</th><th>Ports</th></tr></thead>
+              <tbody>
+                <template x-for="(r,i) in blk.items" :key="i+'-'+r.t+r.ip">
+                  <tr>
+                    <td x-text="vpaTime(r.t)"></td>
+                    <td class="mono" x-text="r.ip"></td>
+                    <td><span class="vpa-tag" :class="r.mode==='unblock'?'green':(r.mode==='auto'?'red':'amber')" x-text="{auto:'Auto block',manual:'Manual block',unblock:'Unblocked'}[r.mode]||r.mode"></span></td>
+                    <td x-text="r.reason"></td>
+                    <td x-text="r.mode==='unblock'?'-':vpaMinutes(r.minutes)"></td>
+                    <td><template x-for="p in (r.ports||[]).slice(0,6)" :key="p"><span class="vpa-tag" x-text="p"></span></template></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="vpa-empty" x-show="!blk.items.length">No records yet.</div>
+            <div class="vpa-pager" x-show="blk.total>blk.size">
+              <button class="btn btn-ghost btn-xs" :disabled="blk.page<=1" @click="loadBlocks(blk.page-1)">Previous</button>
+              <span x-text="'Page '+blk.page+' of '+Math.ceil(blk.total/blk.size)"></span>
+              <button class="btn btn-ghost btn-xs" :disabled="blk.page*blk.size>=blk.total" @click="loadBlocks(blk.page+1)">Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- REAL-TIME LOG -->
+      <div x-show="tab==='realtime'">
+        <div class="vpa-toolbar">
+          <input class="form-input" placeholder="Filter by IP or port" x-model="rtQ">
+          <div class="grow"></div>
+          <span class="vpa-pill" :class="rtPaused?'warn':'ok'"><i></i><span x-text="rtPaused?'Paused':'Live'"></span></span>
+          <button class="btn btn-ghost btn-sm" @click="rtPaused=!rtPaused" x-text="rtPaused?'Resume':'Pause'"></button>
+          <button class="btn btn-ghost btn-sm" @click="rt=[]">Clear view</button>
+        </div>
+        <div class="vpa-log">
+          <template x-for="(e,i) in rtView()" :key="e.t+e.ip+e.port+'-'+i">
+            <div :class="{new: e._new}"><span class="t" x-text="vpaTime(e.t)"></span><span class="ip" x-text="e.ip"></span><span x-text="'probed port '+e.port"></span>
+              <span style="margin-left:auto" x-show="isBlocked(e.ip)" class="vpa-tag red">blocked</span></div>
+          </template>
+          <div class="vpa-empty" x-show="!rtView().length">Waiting for probes. New ports touched by any address appear here within a few seconds.</div>
+        </div>
+      </div>
+
+      <!-- WHITELIST -->
+      <div x-show="tab==='whitelist'">
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Add to whitelist</div><div class="vpa-card-s">Addresses and networks that are never counted or blocked (IPv4, IPv6, CIDR)</div></div></div>
+          <div class="vpa-toolbar">
+            <textarea class="form-input" rows="2" style="max-width:420px;font-family:var(--font-mono);font-size:12px" placeholder="203.0.113.10&#10;198.51.100.0/24" x-model="wl.ip"></textarea>
+            <input class="form-input" style="max-width:220px" placeholder="Note (optional)" x-model="wl.note">
+            <button class="btn btn-primary btn-sm" @click="wlAdd()" :disabled="!wl.ip.trim()">Add</button>
+          </div>
+          <div class="vpa-card-s" x-show="adminIps.length">Always allowed automatically (you signed in from these in the last 7 days):
+            <template x-for="ip in adminIps" :key="ip"><span class="vpa-tag green" x-text="ip"></span></template></div>
+        </div>
+        <div class="vpa-tw" style="margin-top:14px">
+          <table class="vpa-table">
+            <thead><tr><th>Address / network</th><th>Note</th><th>Added</th><th class="act"></th></tr></thead>
+            <tbody>
+              <template x-for="w in wlItems" :key="w.ip">
+                <tr><td class="mono" x-text="w.ip"></td><td x-text="w.note||'-'"></td><td x-text="vpaTime(w.t)"></td>
+                  <td class="act"><button class="btn btn-ghost btn-xs" @click="wlDel(w.ip)">Remove</button></td></tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="vpa-empty" x-show="!wlItems.length">The whitelist is empty.</div>
+        </div>
+      </div>
+
+      <!-- OPERATION LOGS -->
+      <div x-show="tab==='oplog'">
+        <div class="vpa-tw">
+          <table class="vpa-table">
+            <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+            <tbody>
+              <template x-for="(o,i) in ops" :key="i">
+                <tr><td x-text="vpaTime(o.t)"></td><td x-text="o.user"></td><td><span class="vpa-tag" x-text="o.action"></span></td><td x-text="o.detail"></td></tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="vpa-empty" x-show="!ops.length">No operations recorded yet.</div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div x-show="tab==='settings'">
+        <div class="vpa-card">
+          <div class="vpa-form">
+            <div class="vpa-sec">Blocking rule</div>
+            <label>Scan window</label>
+            <div><div class="row"><input type="number" min="1" max="60" class="form-input" x-model.number="f.window_min"><span class="vpa-unit">minutes</span></div>
+              <div class="hint">Probes are counted over a sliding window of this length.</div></div>
+            <label>Scan count</label>
+            <div><div class="row"><input type="number" min="5" max="100000" class="form-input" x-model.number="f.scan_count"><span class="vpa-unit">probes in the window</span></div>
+              <div class="hint">An address that sends this many packets to closed ports within the window is blocked.</div></div>
+            <label>Distinct ports</label>
+            <div><div class="row"><input type="number" min="0" max="65535" class="form-input" x-model.number="f.port_count"><span class="vpa-unit">different closed ports in the window (0 = off)</span></div>
+              <div class="hint">Catches slow scanners that try many ports a few times each.</div></div>
+            <label>Block for</label>
+            <div><div class="row">
+                <select class="form-input" x-model.number="f.block_minutes"><template x-for="d in durations" :key="d.v"><option :value="d.v" x-text="d.l"></option></template></select>
+              </div><div class="hint">Permanent blocks stay until you unblock them (also across reboots).</div></div>
+            <label>Protocols</label>
+            <div class="row">
+              <label class="vpa-switch sm"><input type="checkbox" x-model="f.tcp"><span class="t"></span>TCP (SYN, FIN, NULL, XMAS scans)</label>
+              <label class="vpa-switch sm"><input type="checkbox" x-model="f.udp"><span class="t"></span>UDP</label>
+            </div>
+            <div class="vpa-sec">Behaviour</div>
+            <label>Detect only</label>
+            <div><label class="vpa-switch sm"><input type="checkbox" x-model="f.detect_only"><span class="t"></span>Record scanners, never block</label>
+              <div class="hint">Useful for a few days after installing, to check the thresholds against your traffic.</div></div>
+            <label>Private networks</label>
+            <div><label class="vpa-switch sm"><input type="checkbox" x-model="f.ignore_private"><span class="t"></span>Ignore LAN / private addresses</label>
+              <div class="hint">10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7 are never counted.</div></div>
+            <label>Notifications</label>
+            <div><label class="vpa-switch sm"><input type="checkbox" x-model="f.notify"><span class="t"></span>Send an alert when a scanner is blocked</label>
+              <div class="hint">Uses the channels under <a href="#" @click.prevent="go('alerts')">Alerts</a>; at most one message per 10 minutes.</div></div>
+            <label>Keep history</label>
+            <div class="row"><input type="number" min="1" max="365" class="form-input" x-model.number="f.retention_days"><span class="vpa-unit">days</span></div>
+            <div class="vpa-form-actions">
+              <button class="btn btn-primary btn-sm" @click="saveSettings()" :disabled="busy==='settings'" x-text="busy==='settings'?'Saving...':'Save settings'"></button>
+              <button class="btn btn-ghost btn-sm" @click="f=Object.assign({}, defaults)">Restore defaults</button>
+            </div>
+          </div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Data cleanup</div><div class="vpa-card-s">Statistics, block history and the real-time log</div></div></div>
+          <div class="vpa-toolbar">
+            <select class="form-input" style="max-width:200px" x-model="clean.what">
+              <option value="history">Daily statistics</option><option value="records">Block history</option><option value="realtime">Real-time log</option><option value="all">Everything</option>
+            </select>
+            <select class="form-input" style="max-width:200px" x-model.number="clean.days">
+              <option :value="0">All (except today)</option><option :value="7">Older than 7 days</option><option :value="30">Older than 30 days</option><option :value="90">Older than 90 days</option>
+            </select>
+            <button class="btn btn-danger btn-sm" @click="cleanup()">Clean up</button>
+          </div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Service</div><div class="vpa-card-s" x-text="'vortexpanel-app-scan-detect: '+svc"></div></div>
+            <div class="r"><button class="btn btn-ghost btn-sm" @click="service('restart')">Restart service</button></div></div>
+          <div class="vpa-card-s">Rules live in their own nftables table <span class="vpa-tag">inet vp_scan_detect</span>; your firewall (ufw, firewalld or the panel's Firewall page) is not changed.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- details modal -->
+  <div class="modal-overlay" x-show="det.show" @click.self="det.show=false" x-cloak>
+    <div class="modal" style="max-width:560px">
+      <div class="modal-hd"><div><div class="modal-title mono" x-text="det.ip"></div><div class="vpa-card-s" x-text="isBlocked(det.ip)?'Blocked':'Not blocked'"></div></div><button class="modal-close" @click="det.show=false">&times;</button></div>
+      <div class="vpa-stats" style="grid-template-columns:repeat(3,1fr)">
+        <div class="vpa-stat red"><div class="l">Probes today</div><div class="v" x-text="vpaNum(det.rec.probes||0)"></div></div>
+        <div class="vpa-stat amber"><div class="l">Ports</div><div class="v" x-text="(det.rec.ports||[]).length"></div></div>
+        <div class="vpa-stat blue"><div class="l">Blocks</div><div class="v" x-text="det.hist.filter(h=>h.mode!=='unblock').length"></div></div>
+      </div>
+      <div class="vpa-card-s" style="margin-bottom:6px" x-text="'First seen '+vpaTime(det.rec.first)+', last seen '+vpaAgo(det.rec.last)" x-show="det.rec.first"></div>
+      <div style="max-height:120px;overflow:auto;margin-bottom:12px"><template x-for="p in (det.rec.ports||[])" :key="p"><span class="vpa-tag" x-text="p"></span></template></div>
+      <div class="vpa-card-t" style="font-size:13px;margin-bottom:6px" x-show="det.hist.length">History</div>
+      <div style="max-height:160px;overflow:auto;font-size:12px" x-show="det.hist.length">
+        <template x-for="(h,i) in det.hist" :key="i"><div style="padding:3px 0;border-bottom:1px solid var(--border)"><span x-text="vpaTime(h.t)"></span> &middot; <span x-text="h.mode"></span> &middot; <span x-text="h.reason"></span></div></template>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <select class="form-input" style="max-width:140px" x-model.number="det.min" x-show="!isBlocked(det.ip)"><template x-for="d in durations" :key="d.v"><option :value="d.v" x-text="d.l"></option></template></select>
+        <button class="btn btn-danger btn-sm" x-show="!isBlocked(det.ip)" @click="block([det.ip], det.min); det.show=false">Block</button>
+        <button class="btn btn-ghost btn-sm" x-show="isBlocked(det.ip)" @click="unblock([det.ip]); det.show=false">Unblock</button>
+        <button class="btn btn-ghost btn-sm" @click="wl.ip=det.ip; wl.note='from details'; wlAdd(); det.show=false">Whitelist</button>
+        <button class="btn btn-ghost btn-sm" @click="copyText(det.ip)">Copy IP</button>
+      </div>
+    </div>
+  </div>
+</div>

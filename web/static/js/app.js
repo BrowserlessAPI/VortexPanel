@@ -3505,14 +3505,15 @@ function servicesPage() {
 
 // --- MODULES --------------------------------------------------------------------
 function modulesPage() {
-  return {
+  return Object.assign({
     modules: [], cat: '',
     verModal:  {show:false, mod:null, selVer:'', action:'install'},
+    updModal:  {show:false, mod:null},
     phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
     installingStream: false,
     f2bWebsiteJails: [], f2bServerJails: [], f2bServerPresets: [], websitesForF2b: [],
-    f2bWebsiteForm: {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:30, findtime:300, bantime:600},
+    f2bWebsiteForm: {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:120, findtime:60, bantime:600},
     f2bServerForm:  {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600},
     async init() {
       window.addEventListener('vp:open-app', async (e) => {
@@ -3536,18 +3537,21 @@ function modulesPage() {
     },
 
     async load() {
+      this.loadApps();
       const r = await get('/api/modules');
       if (r.ok) this.tested = r.tested || null;
       if (r.ok) this.modules = r.modules.map(m=>({
         ...m,
         loading:   false,
         svcStatus: m.svcStatus ? (m.svcStatus.startsWith('active') ? 'active' : m.svcStatus) : m.svcStatus,
-        selVer:    m.versions?.length ? (m.versions.find(v=>v.recommended) || m.versions[0]).value : '',
+        selVer:    (() => { const vs = (m.versions||[]).filter(v => !(m.installedTracks||[]).includes(String(v.value)));
+                            return vs.length ? (vs.find(v=>v.recommended) || vs[0]).value : ''; })(),
       }));
     },
 
-    categories() { return [...new Set(this.modules.map(m=>m.category))].sort(); },
-    filtered()   { return this.cat ? this.modules.filter(m=>m.category===this.cat) : this.modules; },
+    categories() { return [...new Set(this.modules.map(m=>m.category).concat(this.apps.map(a=>a.category)))].sort(); },
+    // Server software and VortexPanel Apps in one list (Apps first within a category filter)
+    filtered()   { const all = this.appRows().concat(this.modules); return this.cat ? all.filter(m=>m.category===this.cat) : all; },
 
     async uninstall(m) {
       if (m.id==='php') {
@@ -3575,16 +3579,19 @@ function modulesPage() {
     },
 
     getConflict(m) {
-      const groups = {
-        webserver: ['nginx','apache2','openlitespeed','caddy'],
-        database:  ['mysql','mariadb','mongodb','postgresql'],
-      };
-      for (const [group, members] of Object.entries(groups)) {
-        if (!members.includes(m.id)) continue;
-        const conflict = this.modules.find(x => x.id !== m.id && members.includes(x.id) && x.installed);
-        if (conflict) return {group, name: conflict.name, id: conflict.id};
-      }
-      return null;
+      // One source of truth: the server's CONFLICT_GROUPS (sent as conflict_group).
+      // The old copy here also put PostgreSQL and MongoDB in the MySQL group, so
+      // MySQL showed "PostgreSQL is installed" although they run side by side.
+      if (!m.conflict_group || m.installed) return null;
+      const conflict = this.modules.find(x => x.id !== m.id && x.conflict_group === m.conflict_group && x.installed);
+      return conflict ? {group: m.conflict_group, name: conflict.name, id: conflict.id} : null;
+    },
+    // PHP versions that can still be added (an installed track is updated with its badge instead)
+    phpAddable(m) { const have = m.installedTracks || []; return (m.versions || []).filter(v => !have.includes(String(v.value))); },
+    askUpdate(m) { this.updModal = {show: true, mod: m}; },
+    async runUpdate() {
+      const m = this.updModal.mod; this.updModal.show = false;
+      if (m) await this._startJob(m, 'update', '');
     },
     async install(m) {
       const conflict = this.getConflict(m);
@@ -3632,7 +3639,8 @@ function modulesPage() {
       }
       const isChannel = ver && ['stable','mainline','latest','builtin'].includes(ver.toLowerCase());
       const verLabel  = ver ? (isChannel ? ' ('+ver+')' : ' v'+ver) : '';
-      const label = `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel}`;
+      const label = action==='update' ? `Updating: ${m.name} v${m.installedVer||''}`
+                  : `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel}`;
       this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:'', message:''};
       this._followJob(r.job_id, (d) => {
         m.loading=false; m.installed=d.installed;
@@ -4257,7 +4265,7 @@ function modulesPage() {
       };
       return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'settings'}));
     },
-  };
+  }, vpAppsMixin());
 }
 
 // --- FIREWALL -------------------------------------------------------------------
@@ -5983,6 +5991,10 @@ function securityPage() {
         this.lb.configured=true;
         this.lb.servers=r.servers?.length?r.servers:this.lb.servers;
         this.lb.method=r.method||'roundrobin';
+        // keep the saved listener: re-saving used to reset these to _ / 80 / PHPSESSID
+        if (r.domain) this.lb.domain = r.domain === '_' ? '' : r.domain;
+        if (r.port) this.lb.port = r.port;
+        if (r.cookie_name) this.lb.cookie_name = r.cookie_name;
       }
     },
 

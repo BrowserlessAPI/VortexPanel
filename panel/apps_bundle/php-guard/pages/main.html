@@ -1,0 +1,161 @@
+<div x-data="vpaPhpGuard()" x-init="init()" class="vpa vppg" style="--vpa-c:#4f46e5">
+  <div class="vpa-head">
+    <div class="vpa-logo" x-html="vpIcon('code')"></div>
+    <div>
+      <div class="vpa-title">PHP Security</div>
+      <div class="vpa-sub">Runtime protection inside PHP: stops webshells, command injection and malicious uploads even when a request gets past the WAF</div>
+    </div>
+    <div class="vpa-head-r">
+      <span class="vpa-pill" :class="protectedN()?'ok':'warn'"><i></i><span x-text="protectedN()+' of '+versions.length+' PHP version(s) protected'"></span></span>
+    </div>
+  </div>
+
+  <div class="vpa-note warn" x-show="loaded && versions.length && !protectedN()" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <span>No PHP version is protected yet. Turn protection on for the versions your websites use.</span>
+    <button class="btn btn-primary btn-xs" @click="setTab('versions')">Choose PHP versions</button></div>
+  <div class="vpa-note" x-show="loaded && !versions.length">No PHP version is installed. Install PHP from the App Store first.</div>
+  <div class="vpa-note" x-show="build.state==='running'" style="display:flex;gap:10px;align-items:center">
+    <span class="loading-spinner" style="width:12px;height:12px"></span><span x-text="'Building the module for PHP '+build.ver+': '+(build.lines||[]).slice(-1)[0]"></span>
+    <button class="btn btn-ghost btn-xs" @click="buildLog=true">Show log</button></div>
+
+  <div class="vpa-stats">
+    <div class="vpa-stat red click" @click="setTab('events'); evf.action='drop'; loadEvents(1)"><div class="l">Blocked (24h)</div><div class="v" x-text="ov.blocked_24h||0"></div><div class="h">calls stopped</div></div>
+    <div class="vpa-stat amber click" @click="setTab('events'); evf.action='log'; loadEvents(1)"><div class="l">Logged (24h)</div><div class="v" x-text="ov.logged_24h||0"></div><div class="h">rules in log-only mode</div></div>
+    <div class="vpa-stat green click" @click="setTab('versions')"><div class="l">PHP versions</div><div class="v" x-text="protectedN()+'/'+versions.length"></div><div class="h">protected</div></div>
+    <div class="vpa-stat blue click" @click="setTab('rules')"><div class="l">Rules</div><div class="v" x-text="rules.filter(r=>r.mode==='block').length+' / '+rules.filter(r=>r.mode==='log').length"></div><div class="h">blocking / log only</div></div>
+  </div>
+
+  <div class="vpa-body">
+    <nav class="vpa-nav">
+      <template x-for="t in tabs" :key="t.id">
+        <a :class="{on:tab===t.id}" @click="setTab(t.id)"><span x-html="vpIcon(t.icon)"></span><span x-text="t.label"></span></a>
+      </template>
+    </nav>
+    <div>
+      <!-- OVERVIEW -->
+      <div x-show="tab==='overview'">
+        <div class="vpa-grid2">
+          <div class="vpa-card"><div class="vpa-card-h"><div><div class="vpa-card-t">Events, last 24 hours</div><div class="vpa-card-s">Blocked and logged calls per hour</div></div></div>
+            <div class="vpa-chart"><canvas x-ref="hours"></canvas></div></div>
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Most triggered</div></div>
+            <template x-for="(r,i) in (ov.top_reasons||[])" :key="i"><div class="vppg-row"><span class="k" :title="r.k" x-text="r.k"></span><span class="vpa-tag" x-text="r.n"></span></div></template>
+            <div class="vpa-empty" style="padding:14px" x-show="!(ov.top_reasons||[]).length">Nothing triggered in the last 24 hours.</div></div>
+        </div>
+        <div class="vpa-grid2" style="grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)">
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Latest events</div><div class="r"><a href="#" class="vppg-more" @click.prevent="setTab('events')">All events</a></div></div>
+            <template x-for="(e,i) in (ov.recent||[])" :key="i">
+              <div class="vppg-ev"><span class="vpa-tag" :class="e.action==='drop'?'red':'amber'" x-text="e.action==='drop'?'Blocked':'Logged'"></span>
+                <div style="min-width:0;flex:1"><div class="vppg-msg" :title="e.msg" x-text="(e.rule||e.feature)+(e.function?' - '+e.function+'()':'')"></div><div class="vpa-card-s mono vppg-path" x-text="(e.file||'')+(e.line?':'+e.line:'')+(e.ip?'  -  '+e.ip:'')"></div></div>
+                <span class="vpa-card-s" style="white-space:nowrap" x-text="vpaAgo(e.t)"></span></div>
+            </template>
+            <div class="vpa-empty" x-show="!(ov.recent||[]).length"><span x-html="vpIcon('shield')"></span>No blocked or logged calls yet.</div></div>
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Scripts that triggered rules</div></div>
+            <template x-for="(r,i) in (ov.top_files||[])" :key="i"><div class="vppg-row"><span class="k mono" :title="r.k" x-text="r.k"></span><span class="vpa-tag red" x-text="r.n"></span></div></template>
+            <div class="vpa-empty" style="padding:14px" x-show="!(ov.top_files||[]).length">None</div>
+            <div class="vpa-card-s" style="margin-top:10px">A script you do not recognise here is worth checking with the malware scan (<a href="#" @click.prevent="go('security')">Security</a>).</div></div>
+        </div>
+      </div>
+
+      <!-- RULES -->
+      <div x-show="tab==='rules'">
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Presets</div><div class="vpa-card-s">Start with "Test everything" for a few days, check the events, then switch to Recommended or Strict.</div></div>
+            <div class="r">
+              <button class="btn btn-ghost btn-sm" @click="preset('test')">Test everything (log only)</button>
+              <button class="btn btn-primary btn-sm" @click="preset('recommended')">Recommended</button>
+              <button class="btn btn-ghost btn-sm" @click="preset('strict')">Strict</button>
+              <button class="btn btn-ghost btn-sm" @click="showRules()">View rules file</button>
+            </div></div>
+        </div>
+        <template x-for="g in groups()" :key="g">
+          <div class="vpa-card">
+            <div class="vpa-card-h"><div class="vpa-card-t" x-text="g"></div></div>
+            <template x-for="r in rules.filter(x=>x.group===g)" :key="r.id">
+              <div class="vppg-rule">
+                <div style="flex:1;min-width:0">
+                  <div class="vppg-rule-t"><span x-text="r.title"></span> <span class="vpa-tag" x-show="r.mode!==r.default" x-text="'default: '+r.default"></span></div>
+                  <div class="vpa-card-s" x-text="r.desc"></div>
+                  <div class="vppg-note" x-text="r.note"></div>
+                </div>
+                <div class="vppg-seg">
+                  <button :class="{on:r.mode==='off'}" @click="setRule(r,'off')">Off</button>
+                  <button :class="{on:r.mode==='log'}" :disabled="!r.can_log" :title="r.can_log?'Only log, never block':'This feature has no log-only mode'" @click="setRule(r,'log')">Log</button>
+                  <button :class="{on:r.mode==='block'}" @click="setRule(r,'block')" x-text="r.can_log?'Block':'On'"></button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- VERSIONS -->
+      <div x-show="tab==='versions'">
+        <div class="vppg-vers">
+          <template x-for="v in versions" :key="v.ver">
+            <div class="vppg-ver" :class="{on:v.enabled&&v.loaded}">
+              <div class="vppg-ver-h"><div class="vppg-ver-n" x-text="'PHP '+v.ver"></div>
+                <span class="vpa-pill" :class="v.enabled&&v.loaded?'ok':(v.enabled?'bad':'')"><i></i><span x-text="v.enabled&&v.loaded?'Protected':(v.enabled?'Not loaded':'Off')"></span></span></div>
+              <div class="vppg-kv"><span>Module</span><b x-text="v.built?'built':'not built yet'"></b></div>
+              <div class="vppg-kv"><span>Service</span><b x-text="v.svc+' ('+v.svc_state+')'"></b></div>
+              <div class="vppg-kv"><span>Applies to</span><b x-text="v.flavor==='debian'?'websites (PHP-FPM)':'websites and command line'"></b></div>
+              <div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap">
+                <button class="btn btn-primary btn-xs" x-show="!v.built" :disabled="build.state==='running'" @click="buildVer(v)">Install and turn on</button>
+                <button class="btn btn-primary btn-xs" x-show="v.built && !v.enabled" @click="verAction(v,'enable')">Turn on</button>
+                <button class="btn btn-ghost btn-xs" x-show="v.enabled" @click="verAction(v,'disable')">Turn off</button>
+                <button class="btn btn-ghost btn-xs" x-show="v.built" :disabled="build.state==='running'" @click="buildVer(v)">Rebuild</button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="vpa-note" style="margin-top:14px">Building compiles Snuffleupagus <span x-text="(ov.engine||{}).version"></span> for that PHP version (needs the PHP development package and a compiler, installed automatically; one to two minutes). The download is checked against the release's exact commit before it is built.</div>
+      </div>
+
+      <!-- EVENTS -->
+      <div x-show="tab==='events'">
+        <div class="vpa-toolbar">
+          <select class="form-input" style="max-width:150px" x-model="evf.action" @change="loadEvents(1)"><option value="">All</option><option value="drop">Blocked</option><option value="log">Logged</option></select>
+          <input class="form-input" placeholder="Script, function or IP" x-model="evf.q" @input.debounce.400ms="loadEvents(1)">
+          <div class="grow"></div><span class="vpa-card-s" x-text="ev.total+' event(s)'"></span>
+        </div>
+        <div class="vpa-tw">
+          <table class="vpa-table"><thead><tr><th>Time</th><th>Action</th><th>What happened</th><th>Script</th><th>Visitor</th><th class="act"></th></tr></thead>
+            <tbody><template x-for="(e,i) in ev.items" :key="i"><tr>
+              <td style="white-space:nowrap" x-text="vpaTime(e.t)"></td>
+              <td><span class="vpa-tag" :class="e.action==='drop'?'red':'amber'" x-text="e.action==='drop'?'Blocked':'Logged'"></span></td>
+              <td style="font-size:12px;max-width:380px"><div style="font-weight:600;color:var(--text-primary)" x-text="(e.rule||e.feature)+(e.function?' - '+e.function+'()':'')"></div><div class="vpa-card-s vppg-clamp" :title="e.msg" x-text="e.msg"></div></td>
+              <td class="mono vppg-path" :title="e.file" x-text="(e.file||'-')+(e.line?':'+e.line:'')"></td>
+              <td class="mono" x-text="e.ip||'-'"></td>
+              <td class="act"><button class="btn btn-ghost btn-xs" x-show="e.file" @click="trustFolderOf(e.file)" title="Trust this script's folder">Trust folder</button></td>
+            </tr></template></tbody></table>
+          <div class="vpa-empty" x-show="!ev.items.length">No events.</div>
+          <div class="vpa-pager" x-show="ev.total>ev.size"><button class="btn btn-ghost btn-xs" :disabled="ev.page<=1" @click="loadEvents(ev.page-1)">Previous</button><span x-text="'Page '+ev.page+' of '+Math.ceil(ev.total/ev.size)"></span><button class="btn btn-ghost btn-xs" :disabled="ev.page*ev.size>=ev.total" @click="loadEvents(ev.page+1)">Next</button></div>
+        </div>
+      </div>
+
+      <!-- TRUSTED -->
+      <div x-show="tab==='trusted'">
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Trusted folders</div><div class="vpa-card-s">Scripts in these folders are not checked by the function rules (for example a backup plugin that runs mysqldump).</div></div></div>
+          <div class="vpa-toolbar"><input class="form-input" style="max-width:460px;font-family:var(--font-mono);font-size:12px" placeholder="/var/www/example.com/wp-content/plugins/backup-plugin" x-model="tpath">
+            <button class="btn btn-primary btn-sm" @click="addTrusted()" :disabled="!tpath">Add</button></div>
+          <template x-for="t in trusted" :key="t"><div class="vppg-ev"><span class="mono" style="flex:1" x-text="t"></span><button class="btn btn-ghost btn-xs" @click="delTrusted(t)">Remove</button></div></template>
+          <div class="vpa-empty" style="padding:14px" x-show="!trusted.length">No trusted folders.</div>
+        </div>
+        <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Operation logs</div></div>
+          <div class="vpa-tw"><table class="vpa-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+            <tbody><template x-for="(o,i) in ops" :key="i"><tr><td x-text="vpaTime(o.t)"></td><td x-text="o.user"></td><td><span class="vpa-tag" x-text="o.action"></span></td><td x-text="o.detail"></td></tr></template></tbody></table>
+            <div class="vpa-empty" x-show="!ops.length">No operations yet.</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" x-show="rf.show" @click.self="rf.show=false" x-cloak>
+    <div class="modal" style="max-width:860px"><div class="modal-hd"><div><div class="modal-title">Generated rules</div><div class="vpa-card-s mono" x-text="rf.path"></div></div><button class="modal-close" @click="rf.show=false">&times;</button></div>
+      <pre class="vpa-job" style="max-height:480px" x-text="rf.text"></pre></div>
+  </div>
+  <div class="modal-overlay" x-show="buildLog" @click.self="buildLog=false" x-cloak>
+    <div class="modal" style="max-width:640px"><div class="modal-hd"><div class="modal-title" x-text="'Build for PHP '+build.ver"></div><button class="modal-close" @click="buildLog=false">&times;</button></div>
+      <div class="vpa-job" x-text="(build.lines||[]).join('\n')"></div>
+      <div class="vpa-note" :class="build.state==='done'?'ok':'bad'" style="margin:12px 0 0" x-show="build.state && build.state!=='running'" x-text="build.message"></div></div>
+  </div>
+</div>

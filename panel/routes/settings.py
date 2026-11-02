@@ -279,7 +279,7 @@ def change_port():
     # Open the new port BEFORE restarting; the old one is closed by the
     # helper only once the panel answers on the new port.
     sh(f'ufw allow {new_port}/tcp 2>/dev/null')
-    sh(f'firewall-cmd --permanent --add-port={new_port}/tcp 2>/dev/null && firewall-cmd --reload 2>/dev/null')
+    sh(f'firewall-cmd --permanent --add-port={new_port}/tcp 2>/dev/null && firewall-cmd --add-port={new_port}/tcp 2>/dev/null 2>/dev/null')
 
     try:
         ssl_on = '--certfile' in open(SERVICE_FILE).read()
@@ -341,7 +341,7 @@ def fw(action, prt):
         return
     if action == 'close':
         subprocess.run(f'ufw delete allow {prt}/tcp >/dev/null 2>&1; '
-                       f'firewall-cmd --permanent --remove-port={prt}/tcp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null 2>&1',
+                       f'firewall-cmd --permanent --remove-port={prt}/tcp >/dev/null 2>&1 && firewall-cmd --remove-port={prt}/tcp >/dev/null 2>&1 >/dev/null 2>&1',
                        shell=True)
 time.sleep(2)
 subprocess.run('systemctl daemon-reload; systemctl restart vortexpanel', shell=True)
@@ -555,7 +555,7 @@ def ssl_letsencrypt():
         certbot_enable_renewal()
     except Exception:
         pass
-    sh('ufw allow 80/tcp 2>/dev/null; firewall-cmd --add-service=http --permanent 2>/dev/null; firewall-cmd --reload 2>/dev/null || true')
+    sh('ufw allow 80/tcp 2>/dev/null; firewall-cmd --add-service=http --permanent 2>/dev/null; firewall-cmd --add-service=http 2>/dev/null || true')
 
     # --standalone needs port 80 for itself. On a panel box nginx/apache
     # almost always holds it, so certbot always failed. Stop whichever web

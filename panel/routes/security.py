@@ -5,6 +5,41 @@ from datetime import datetime, timedelta
 from panel.routes.os_utils import get_os
 
 security_bp = Blueprint('security', __name__)
+
+
+# WAF and load-balancer edits are read-modify-write on shared JSON/conf files,
+# and gunicorn runs several workers: two saves at the same moment each read the
+# old state and the second write silently dropped the first change. Every write
+# under these paths holds one cross-process lock for the whole request.
+_SERIAL_PREFIXES = ('/api/security/waf/', '/api/security/modsecurity', '/api/security/loadbalancer',
+                    '/api/security/caddywaf')
+
+
+@security_bp.before_request
+def _serialize_waf_writes():
+    from flask import g
+    if request.method in ('GET', 'HEAD', 'OPTIONS') or not request.path.startswith(_SERIAL_PREFIXES):
+        return None
+    import fcntl
+    try:
+        fh = open('/run/vortexpanel-waf.lock', 'a')
+    except OSError:
+        return None
+    fcntl.flock(fh, fcntl.LOCK_EX)
+    g._vp_waf_lock = fh
+    return None
+
+
+@security_bp.teardown_request
+def _release_waf_lock(exc):
+    from flask import g
+    fh = g.pop('_vp_waf_lock', None)
+    if fh is not None:
+        try:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        finally:
+            fh.close()
 def req(): return _vp_authed()
 def sh(c, t=10):
     try:
@@ -602,7 +637,7 @@ def create_website_jail():
         return jsonify({'ok': False, 'error': 'mode must be anti-cc or anti-scan'}), 400
     if not _F2B_PORT_RE.match(port_val):
         return jsonify({'ok': False, 'error': 'Invalid port list (e.g. 80,443)'}), 400
-    nums, nerr = _f2b_numbers(d, {'maxretry': 30, 'findtime': 300, 'bantime': 600})
+    nums, nerr = _f2b_numbers(d, {'maxretry': 120, 'findtime': 60, 'bantime': 600})
     if nerr:
         return jsonify({'ok': False, 'error': nerr}), 400
     maxretry, findtime, bantime = nums['maxretry'], nums['findtime'], nums['bantime']
@@ -633,10 +668,19 @@ def create_website_jail():
         # Anti-CC: count every request regardless of status (raw request-rate limiting)
         failregex = r'^<HOST> -.*"(GET|POST|HEAD|PUT|DELETE|OPTIONS) [^"]*" \d+ '
 
+    # Anti-CC counts page requests, not the CSS/JS/images/fonts each page pulls in:
+    # one WordPress page view is 50+ requests and banned ordinary visitors.
+    _static = r'\.(?i:css|js|mjs|map|png|jpe?g|gif|webp|avif|svg|ico|bmp|woff2?|ttf|otf|eot|mp4|webm|mp3|ogg|txt|xml)'
+    if mode == 'anti-cc' and log_fmt == 'caddy-json':
+        ignoreregex = rf'"uri":"[^"?]*{_static}(?:\?[^"]*)?"'
+    elif mode == 'anti-cc':
+        ignoreregex = rf'"(?:GET|HEAD) [^" ?]*{_static}(?:\?[^" ]*)? HTTP'
+    else:
+        ignoreregex = ''
     filter_content = (
         f'[Definition]\n'
         f'failregex = {failregex}\n'
-        f'ignoreregex =\n'
+        f'ignoreregex = {ignoreregex}\n'
         f'{datepattern}'
     )
     filter_path = os.path.join(F2B_FILTER_DIR, f'{jail_name}.conf')
@@ -1087,6 +1131,18 @@ def _load_lists():
 def _save_lists_json(data):
     _write_json_state(_modsec_lists_json(), data)
 
+_LIST_LIMITS = {'ip_whitelist': 50000, 'ip_blacklist': 99000, 'ua_blacklist': 999, 'url_blacklist': 999}
+
+
+def _lists_too_long(data):
+    """Error text when a list exceeds what its rule-ID range can hold, else ''."""
+    for k, lim in _LIST_LIMITS.items():
+        n = len([x for x in (data.get(k) or []) if str(x).strip()])
+        if n > lim:
+            return f'{k.replace("_", " ")} has {n} entries; the limit is {lim}.'
+    return ''
+
+
 def _render_lists_conf(data):
     """Build the ModSecurity rules file from the stored lists. Rebuilt
     fully from scratch every save (not appended-to) so a removed entry
@@ -1103,10 +1159,14 @@ def _render_lists_conf(data):
             f'"id:{rid},phase:1,pass,nolog,ctl:ruleEngine=Off"'
         )
 
-    for i, ip in enumerate([x.strip() for x in data.get('ip_blacklist', []) if x.strip()]):
-        rid = _LIST_ID_BASE['ip_blacklist'] + i + 1
+    # Blacklisted IPs go 100 per @ipMatch rule: one rule per IP ran out of the
+    # 1000-ID range at 1000 entries and collided with the UA rules (config test failed).
+    bl = [x.strip() for x in data.get('ip_blacklist', []) if x.strip()]
+    for i in range(0, len(bl), 100):
+        rid = _LIST_ID_BASE['ip_blacklist'] + i // 100 + 1
+        ip_list = ','.join(_modsec_str_escape(ip) for ip in bl[i:i + 100])
         lines.append(
-            f'SecRule REMOTE_ADDR "@ipMatch {_modsec_str_escape(ip)}" '
+            f'SecRule REMOTE_ADDR "@ipMatch {ip_list}" '
             f'"id:{rid},phase:1,deny,status:403,log,msg:\'VortexPanel IP Blacklist\'"'
         )
 
@@ -1163,6 +1223,9 @@ def _connector_present():
     security2 module is a distro package that self-registers via
     a2enmod, so this checks it's actually enabled."""
     if _modsec_target() == 'apache':
+        if os.path.exists('/etc/httpd/conf.d/zz-vortexpanel-modsecurity.conf'):     # RHEL family
+            return any(os.path.exists(p) for p in ('/usr/lib64/httpd/modules/mod_security2.so',
+                                                   '/etc/httpd/modules/mod_security2.so'))
         enabled, _, _ = sh('a2query -m security2 2>&1')
         if 'enabled' in (enabled or '').lower():
             return True
@@ -1194,7 +1257,8 @@ def _modsec_installed():
     unconditionally would make this always return False on a genuinely
     working Apache install."""
     if _modsec_target() == 'apache':
-        engine_present = os.path.exists('/usr/lib/apache2/modules/mod_security2.so')
+        engine_present = any(os.path.exists(p) for p in ('/usr/lib/apache2/modules/mod_security2.so',
+                                                         '/usr/lib64/httpd/modules/mod_security2.so'))
     else:
         engine_present = any(os.path.exists(p) for p in [
             '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
@@ -1674,6 +1738,9 @@ def modsec_save_lists():
             return jsonify({'ok':False, 'error': f'Caddy/Coraza config test failed, reverted: {err}'}), 400
         return jsonify({'ok':True, 'lists': incoming})
 
+    too_long = _lists_too_long(incoming)
+    if too_long:
+        return jsonify({'ok': False, 'error': too_long}), 400
     os.makedirs(_modsec_dir(), exist_ok=True)
 
     backup = None
@@ -2319,7 +2386,13 @@ def lb_status():
     if 'ip_hash'    in content: method = 'iphash'
     if re.search(r'^\s*hash\s+\$cookie_', content, re.MULTILINE): method = 'cookie'
     server_list = [{'address':s[0],'weight':int(s[1]) if s[1] else 1} for s in servers]
-    return jsonify({'ok':True,'configured':True,'servers':server_list,'method':method,'content':content})
+    m_listen = re.search(r'^\s*listen\s+([^;]+);', content, re.MULTILINE)
+    m_name = re.search(r'^\s*server_name\s+([^;]+);', content, re.MULTILINE)
+    m_cookie = re.search(r'^\s*hash\s+\$cookie_([A-Za-z0-9_]+)', content, re.MULTILINE)
+    return jsonify({'ok':True,'configured':True,'servers':server_list,'method':method,'content':content,
+                    'port': m_listen.group(1).strip() if m_listen else '80',
+                    'domain': m_name.group(1).strip() if m_name else '_',
+                    'cookie_name': m_cookie.group(1) if m_cookie else ''})
 
 @security_bp.route('/api/security/loadbalancer', methods=['PUT'])
 def lb_save():
@@ -2337,6 +2410,11 @@ def lb_save():
         return jsonify({'ok':False,'error':'Invalid domain'}), 400
     if not re.fullmatch(r'(\d{1,5})( ssl)?( http2)?', port) or not 1 <= int(port.split()[0]) <= 65535:
         return jsonify({'ok':False,'error':'Invalid port'}), 400
+    if domain == '_' and port.split()[0] in ('80', '443'):
+        # conf.d is included before the website configs, so a nameless server on
+        # 80/443 becomes the catch-all for every request no website matches.
+        return jsonify({'ok':False,'error':'Enter the domain the load balancer answers for (on port 80/443 a '
+                                            'load balancer without a domain would capture every unmatched request).'}), 400
 
     # Build upstream block
     method_directive = ''
@@ -2402,8 +2480,16 @@ server {{
     if existed:
         with open(LB_CONF) as f: backup = f.read()
 
-    with open(LB_CONF,'w') as f: f.write(conf)
-    test_out, test_err, test_rc = sh('nginx -t 2>&1')
+    import fcntl
+    _lk = open('/run/vortexpanel-lb.lock', 'a')      # the health checker rewrites the same file
+    fcntl.flock(_lk, fcntl.LOCK_EX)
+    try:
+        if existed:
+            with open(LB_CONF) as f: backup = f.read()
+        with open(LB_CONF,'w') as f: f.write(conf)
+        test_out, test_err, test_rc = sh('nginx -t 2>&1')
+    finally:
+        fcntl.flock(_lk, fcntl.LOCK_UN); _lk.close()
     test = (test_out + test_err)
     if test_rc != 0 or 'failed' in test.lower():
         if existed:
@@ -2641,7 +2727,20 @@ def lb_tcp_save():
         if not (1 <= port_n <= 65535): raise ValueError()
     except (ValueError, TypeError):
         return jsonify({'ok':False,'error':'Invalid port'}), 400
-    if port_n in (8888,) or (_port_listening(port_n) and not os.path.exists(LB_STREAM_CONF)):
+    try:
+        from panel.routes.firewall import _panel_ports as _pp
+        panel_ports = _pp()
+    except Exception:
+        panel_ports = {8888}
+    # The port this TCP balancer already listens on may be "in use" by nginx itself;
+    # any other listening port (22, 3306, ...) is taken by something else.
+    own_port = None
+    try:
+        m = re.search(r'^\s*listen\s+(\d+)', open(LB_STREAM_CONF).read(), re.MULTILINE)
+        own_port = int(m.group(1)) if m else None
+    except (OSError, ValueError):
+        pass
+    if port_n in panel_ports or port_n == 22 or (_port_listening(port_n) and port_n != own_port):
         return jsonify({'ok':False,'error':f'Port {port_n} is already in use'}), 400
 
     nginx_conf_prev = open('/etc/nginx/nginx.conf').read() if os.path.exists('/etc/nginx/nginx.conf') else None
@@ -2756,10 +2855,28 @@ def save_json(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
+def split_addr(address):
+    """(host, port) for "10.0.0.5", "10.0.0.5:8080", "[::1]:8080", "[::1]", "name:81";
+    None for unix: sockets (cannot be probed from here; treated as healthy)."""
+    a = address.strip()
+    if a.startswith("unix:"):
+        return None
+    if a.startswith("["):
+        host, _, rest = a[1:].partition("]")
+        port = rest[1:] if rest.startswith(":") and rest[1:].isdigit() else "80"
+        return host, port
+    if a.count(":") == 1:
+        host, port = a.rsplit(":", 1)
+        return host, (port if port.isdigit() else "80")
+    return a, "80"
+
 def check_http(address, path, timeout):
     try:
-        host, port = address.rsplit(":", 1)
-        url = "http://" + host + ":" + port + path
+        hp = split_addr(address)
+        if hp is None:
+            return True
+        host, port = hp
+        url = "http://" + ("[" + host + "]" if ":" in host else host) + ":" + port + path
         req = urllib.request.Request(url, headers={"User-Agent": "VortexPanel-HealthCheck"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return 200 <= resp.status < 400
@@ -2768,13 +2885,22 @@ def check_http(address, path, timeout):
 
 def check_tcp(address, timeout):
     try:
-        host, port = address.rsplit(":", 1)
+        hp = split_addr(address)
+        if hp is None:
+            return True
+        host, port = hp
         with socket.create_connection((host, int(port)), timeout=timeout):
             return True
     except Exception:
         return False
 
 def rewrite_upstream(healthy_servers):
+    import fcntl
+    with open("/run/vortexpanel-lb.lock", "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        _rewrite_upstream(healthy_servers)
+
+def _rewrite_upstream(healthy_servers):
     if not os.path.exists(LB_CONF):
         return
     content = open(LB_CONF).read()
@@ -2934,7 +3060,11 @@ def lb_health_save():
         return jsonify({'ok':False,'error':'interval/timeout/threshold values must be numbers'}), 400
     _save_json(LB_HEALTH_CONFIG, cfg)
 
-    if not os.path.exists(LB_HEALTH_SCRIPT):
+    try:
+        current = open(LB_HEALTH_SCRIPT).read()
+    except OSError:
+        current = None
+    if current != _HEALTHCHECK_SCRIPT_BODY:     # first time, or an older copy from a previous version
         _install_health_service()
 
     if cfg['enabled']:
@@ -3638,6 +3768,25 @@ def _write_generated(conf_path, text):
     return _combine_engine_results(modsec_ok, modsec_err, caddy_ok, caddy_err)
 
 
+def _geo_and_custom_apply(geo_rules, adding):
+    """Exactly one generated file declares SecGeoLookupDb: the Region file when it
+    has rules, otherwise the Custom Rules file when a custom rule uses a country.
+    Region changes therefore regenerate both; deleting the last region rule used to
+    leave country-based custom rules without a GeoIP database (they never matched).
+    Order avoids declaring the database twice: on add the custom file drops its
+    declaration first, on delete the region file drops it first."""
+    def geo():
+        return _write_generated(_geo_conf(), _compile_geo_text(geo_rules))
+
+    def custom():
+        return _write_generated(_custom_conf(), _compile_custom_text(_load_json_file(_custom_json(), [])))
+    first, second = (custom, geo) if adding else (geo, custom)
+    ok, err = first()
+    if not ok:
+        return ok, err
+    return second()
+
+
 def _commit_model(path, data, apply):
     """Save a model JSON FIRST (the Coraza sync regenerates from the stored
     models, so saving afterwards left Caddy one change behind), apply it to
@@ -3671,8 +3820,7 @@ def waf_geo():
     if not ok: return jsonify({'ok': False, 'error': n}), 400
     rules = [r for r in rules if (r.get('country') or '').upper() != n['country']]  # replace dup
     rules.append(n)
-    saved, err = _commit_model(_geo_json(), rules,
-                               lambda: _write_generated(_geo_conf(), _compile_geo_text(rules)))
+    saved, err = _commit_model(_geo_json(), rules, lambda: _geo_and_custom_apply(rules, adding=True))
     if not saved: return jsonify({'ok': False, 'error': f'config test failed, reverted: {err}'}), 400
     return jsonify({'ok': True, 'rules': rules})
 
@@ -3682,8 +3830,7 @@ def waf_geo_delete(code):
     if not req(): return jsonify({'ok': False}), 401
     code = code.strip().upper()
     rules = [r for r in _load_json_file(_geo_json(), []) if (r.get('country') or '').upper() != code]
-    saved, err = _commit_model(_geo_json(), rules,
-                               lambda: _write_generated(_geo_conf(), _compile_geo_text(rules)))
+    saved, err = _commit_model(_geo_json(), rules, lambda: _geo_and_custom_apply(rules, adding=False))
     if not saved: return jsonify({'ok': False, 'error': err}), 400
     return jsonify({'ok': True, 'rules': rules})
 
@@ -3802,6 +3949,9 @@ def waf_lists_import():
             cur[k] = vals
         else:
             cur[k] = sorted(set((cur.get(k) or []) + vals))
+    too_long = _lists_too_long(cur)
+    if too_long:
+        return jsonify({'ok': False, 'error': too_long}), 400
 
     def _apply():
         modsec_ok, modsec_err = _apply_modsec_file(_modsec_lists_conf(), _render_lists_conf(cur),
@@ -4286,14 +4436,19 @@ def ssh_block_ip():
             return jsonify({'ok': True, 'via': 'fail2ban'})
     fam = 'ipv6' if ':' in ip else 'ipv4'
     if shutil.which('ufw'):
-        out, err, rc = sh(f'ufw insert 1 deny from {ip} 2>&1')
+        # prepend: first in the IPv4 or IPv6 table ('insert 1' fails for IPv6
+        # when rule 1 is an IPv4 rule); older ufw has no prepend.
+        out, err, rc = sh(f'ufw prepend deny from {ip} 2>&1')
+        if rc != 0 or 'ERROR' in (out or ''):
+            out, err, rc = sh(f'ufw insert 1 deny from {ip} 2>&1')
         active = 'Status: active' in (sh('ufw status 2>&1')[0] or '')
         if rc == 0:
             return jsonify({'ok': True, 'via': 'ufw', 'note': '' if active else 'Rule added, but the firewall is off (Firewall page)'})
         return jsonify({'ok': False, 'error': (out or err)[-300:]}), 400
     if shutil.which('firewall-cmd'):
         rule = f"rule family={fam} source address={ip} drop"
-        out, err, rc = sh(f"firewall-cmd --permanent --add-rich-rule='{rule}' 2>&1 && firewall-cmd --reload 2>&1")
+        # permanent + runtime, no --reload: a reload wipes fail2ban's runtime bans
+        out, err, rc = sh(f"firewall-cmd --permanent --add-rich-rule='{rule}' 2>&1 && firewall-cmd --add-rich-rule='{rule}' 2>&1")
         if rc == 0:
             return jsonify({'ok': True, 'via': 'firewalld'})
         return jsonify({'ok': False, 'error': (out or err)[-300:]}), 400

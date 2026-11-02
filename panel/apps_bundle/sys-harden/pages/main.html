@@ -1,0 +1,256 @@
+<div x-data="vpaSysHarden()" x-init="init()" class="vpa vpsh" style="--vpa-c:#7c3aed">
+  <div class="vpa-head">
+    <div class="vpa-logo" x-html="vpIcon('lock')"></div>
+    <div>
+      <div class="vpa-title">System Hardening</div>
+      <div class="vpa-sub">Tamper protection for accounts, SSH, cron, services and system files, plus a process guard and compliance check</div>
+    </div>
+    <div class="vpa-head-r">
+      <span class="vpa-pill" :class="svc==='active'?'ok':'bad'"><i></i><span x-text="svc==='active'?'Protection running':'Service '+(svc||'unknown')"></span></span>
+      <button class="btn btn-ghost btn-sm" @click="scanNow()"><span x-html="vpIcon('refresh')"></span> Scan now</button>
+    </div>
+  </div>
+
+  <div class="vpa-note bad" x-show="loaded && svc!=='active'">The protection service is not running: changes are not detected and locks are not enforced.
+    <button class="btn btn-ghost btn-xs" style="margin-left:6px" @click="service('restart')">Start service</button></div>
+  <div class="vpa-note warn" x-show="ov.paused" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span x-text="'Locks are paused for maintenance until '+vpaTime(ov.config&&ov.config.paused_until)+'. Changes are still reported.'"></span>
+    <button class="btn btn-ghost btn-xs" @click="pause(0)">Re-lock now</button></div>
+
+  <div class="vpa-stats">
+    <div class="vpa-stat click" :class="scoreTone()" @click="setTab('compliance')"><div class="l">Security score</div><div class="v" x-text="ov.score==null?'--':ov.score+'/100'"></div><div class="h" x-text="ov.score==null?'run the compliance check':(ov.compliance_fail+' check(s) failing')"></div></div>
+    <div class="vpa-stat red click" @click="setTab('events')"><div class="l">Changes (24h)</div><div class="v" x-text="ov.events_24h||0"></div><div class="h" x-text="((ov.by_severity||{}).critical||0)+' critical, '+((ov.by_severity||{}).high||0)+' high'"></div></div>
+    <div class="vpa-stat amber click" @click="setTab('process')"><div class="l">Suspicious processes</div><div class="v" x-text="(ov.processes||[]).length"></div><div class="h" x-text="'checked '+vpaAgo(ov.processes_t)"></div></div>
+    <div class="vpa-stat blue click" @click="setTab('protection')"><div class="l">Protected areas</div><div class="v" x-text="areas.filter(a=>a.mode!=='off').length+'/'+areas.length"></div><div class="h" x-text="areas.filter(a=>a.mode==='lock').length+' locked'"></div></div>
+  </div>
+
+  <div class="vpa-body">
+    <nav class="vpa-nav">
+      <template x-for="t in tabs" :key="t.id">
+        <a :class="{on:tab===t.id}" @click="setTab(t.id)"><span x-html="vpIcon(t.icon)"></span><span x-text="t.label"></span>
+          <span class="n" x-show="t.id==='events' && ov.unread" x-text="ov.unread"></span>
+          <span class="n" x-show="t.id==='process' && (ov.processes||[]).length" x-text="(ov.processes||[]).length"></span></a>
+      </template>
+      <a x-show="ov.scan_detect" @click="go('app-scan-detect')"><span x-html="vpIcon('search')"></span><span>Port anti-scan</span><span class="n">App</span></a>
+    </nav>
+
+    <div>
+      <!-- OVERVIEW -->
+      <div x-show="tab==='overview'">
+        <div class="vpsh-grid">
+          <template x-for="a in areas.filter(x=>!x.custom)" :key="a.id">
+            <div class="vpsh-area" :class="'m-'+a.mode">
+              <div class="vpsh-area-h">
+                <span class="vpsh-ic" x-html="vpIcon(a.icon)"></span>
+                <div style="min-width:0"><div class="vpsh-area-t" x-text="a.label"></div>
+                  <div class="vpa-card-s" x-text="a.mode==='off'?'Off':(a.files+' items, '+(a.mode==='lock'?a.locked+' locked':'monitored'))"></div></div>
+                <span class="vpa-tag" style="margin-left:auto" :class="a.events_24h?'red':'green'" x-show="a.mode!=='off'" x-text="a.events_24h?a.events_24h+' change(s)':'no changes'"></span>
+              </div>
+              <div class="vpsh-seg">
+                <button :class="{on:a.mode==='off'}" @click="setMode(a,'off')">Off</button>
+                <button :class="{on:a.mode==='monitor'}" @click="setMode(a,'monitor')">Monitor</button>
+                <button :class="{on:a.mode==='lock'}" :disabled="!a.lockable" :title="a.lockable?'':'Monitor only: a lock here would stop package updates and the panel'" @click="setMode(a,'lock')">Lock</button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="vpa-card" style="margin-top:14px">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Latest changes</div><div class="vpa-card-s">What changed in the protected areas and what the process guard found</div></div>
+            <div class="r"><a href="#" class="vpsh-more" @click.prevent="setTab('events')">All events</a></div></div>
+          <template x-for="(e,i) in ov.recent||[]" :key="i">
+            <div class="vpsh-ev">
+              <span class="vpa-tag" :class="sevTone(e.severity)" x-text="e.severity"></span>
+              <div style="min-width:0;flex:1"><div class="mono vpsh-path" x-text="e.path"></div><div class="vpa-card-s" x-text="areaLabel(e.area)+' - '+e.kind+(e.detail?': '+e.detail:'')"></div></div>
+              <span class="vpa-card-s" style="white-space:nowrap" x-text="vpaAgo(e.t)"></span>
+            </div>
+          </template>
+          <div class="vpa-empty" x-show="!(ov.recent||[]).length"><span x-html="vpIcon('check')"></span>Nothing has changed since protection started.</div>
+        </div>
+      </div>
+
+      <!-- PROTECTION -->
+      <div x-show="tab==='protection'">
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Maintenance</div><div class="vpa-card-s">Lift every lock for a while to install software, add users or change SSH keys; they come back by themselves.</div></div>
+            <div class="r">
+              <select class="form-input" style="width:140px" x-model.number="pauseMin"><option :value="10">10 minutes</option><option :value="30">30 minutes</option><option :value="60">1 hour</option><option :value="240">4 hours</option></select>
+              <button class="btn btn-ghost btn-sm" @click="pause(pauseMin)" x-show="!ov.paused">Pause locks</button>
+              <button class="btn btn-primary btn-sm" @click="pause(0)" x-show="ov.paused">Re-lock now</button>
+              <button class="btn btn-ghost btn-sm" @click="rebaseline('*')" title="Treat everything as it is now as the expected state">Accept all current state</button>
+            </div></div>
+        </div>
+        <template x-for="a in areas" :key="a.id">
+          <div class="vpa-card vpsh-row" :class="'m-'+a.mode">
+            <div class="vpa-card-h">
+              <span class="vpsh-ic" x-html="vpIcon(a.icon)"></span>
+              <div style="min-width:0"><div class="vpa-card-t" x-text="a.label"></div><div class="vpa-card-s" x-text="a.desc"></div></div>
+              <div class="r">
+                <div class="vpsh-seg">
+                  <button :class="{on:a.mode==='off'}" @click="setMode(a,'off')">Off</button>
+                  <button :class="{on:a.mode==='monitor'}" @click="setMode(a,'monitor')">Monitor</button>
+                  <button :class="{on:a.mode==='lock'}" :disabled="!a.lockable" @click="setMode(a,'lock')">Lock</button>
+                </div>
+              </div>
+            </div>
+            <div class="vpsh-paths"><template x-for="p in a.paths" :key="p"><span class="vpa-tag" x-text="p"></span></template></div>
+            <div class="vpa-note warn" style="margin:10px 0 0" x-show="a.mode==='lock'" x-text="a.lock_warn"></div>
+            <div class="vpa-card-s" style="margin-top:6px" x-show="!a.lockable">Monitor only: locking these would stop package updates and the panel's own installers.</div>
+            <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap" x-show="a.mode!=='off'">
+              <span class="vpa-card-s" x-text="a.files+' files watched'+(a.locked?', '+a.locked+' locked':'')+(a.scanned?', scanned '+vpaAgo(a.scanned):'')"></span>
+              <div style="flex:1"></div>
+              <button class="btn btn-ghost btn-xs" @click="showFiles(a)">View files</button>
+              <button class="btn btn-ghost btn-xs" @click="rebaseline(a.id)">Accept current state</button>
+              <button class="btn btn-danger btn-xs" x-show="a.custom" @click="delCustom(a)">Remove</button>
+            </div>
+          </div>
+        </template>
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Protect your own folder or file</div><div class="vpa-card-s">For example a website's core files: /var/www/example.com/wp-includes</div></div></div>
+          <div class="vpa-toolbar">
+            <input class="form-input" style="max-width:380px;font-family:var(--font-mono);font-size:12px" placeholder="/var/www/example.com/wp-includes" x-model="cp.path">
+            <select class="form-input" style="max-width:130px" x-model="cp.mode"><option value="monitor">Monitor</option><option value="lock">Lock</option></select>
+            <input class="form-input" style="max-width:200px" placeholder="Note" x-model="cp.note">
+            <button class="btn btn-primary btn-sm" @click="addCustom()" :disabled="!cp.path">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROCESS GUARD -->
+      <div x-show="tab==='process'">
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Process guard</div><div class="vpa-card-s">Checks every minute for miners, programs running from temporary folders and reverse shells</div></div>
+            <div class="r"><label class="vpa-switch sm"><input type="checkbox" :checked="pg.auto_kill" @change="setSetting({auto_kill:$event.target.checked})"><span class="t"></span>Kill critical findings automatically</label>
+              <button class="btn btn-ghost btn-sm" @click="loadProcs()"><span x-html="vpIcon('refresh')"></span> Check now</button></div></div>
+          <div class="vpa-tw">
+            <table class="vpa-table">
+              <thead><tr><th>Severity</th><th>Process</th><th>Program</th><th>User</th><th>Why</th><th class="act"></th></tr></thead>
+              <tbody>
+                <template x-for="p in pg.items" :key="p.pid">
+                  <tr><td><span class="vpa-tag" :class="sevTone(p.severity)" x-text="p.severity"></span></td>
+                    <td><div class="mono" x-text="p.name+' ('+p.pid+')'"></div><div class="vpa-card-s vpsh-path" :title="p.cmd" x-text="p.cmd"></div></td>
+                    <td class="mono vpsh-path" x-text="p.exe"></td><td x-text="p.user"></td><td style="font-size:12px" x-text="p.reason"></td>
+                    <td class="act"><button class="btn btn-danger btn-xs" @click="killProc(p)">Kill</button> <button class="btn btn-ghost btn-xs" @click="wlProc(p.exe)">Trust</button></td></tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="vpa-empty" x-show="!pg.items.length"><span x-html="vpIcon('check')"></span>No suspicious process is running.</div>
+          </div>
+        </div>
+        <div class="vpa-grid2" style="margin-top:14px;grid-template-columns:1fr 1fr">
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Trusted programs</div></div>
+            <template x-for="w in pg.whitelist" :key="w"><div class="vpsh-ev"><span class="mono vpsh-path" style="flex:1" x-text="w"></span><button class="btn btn-ghost btn-xs" @click="unwlProc(w)">Remove</button></div></template>
+            <div class="vpa-empty" style="padding:14px" x-show="!pg.whitelist.length">None</div></div>
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Quarantine</div><div class="vpa-card-s">Binaries moved out of reach when a process was killed</div></div>
+            <template x-for="q in pg.quarantine" :key="q"><div class="vpsh-ev mono" x-text="q"></div></template>
+            <div class="vpa-empty" style="padding:14px" x-show="!pg.quarantine.length">Empty</div></div>
+        </div>
+      </div>
+
+      <!-- COMPLIANCE -->
+      <div x-show="tab==='compliance'">
+        <div class="vpa-card">
+          <div class="vpsh-score">
+            <svg viewBox="0 0 120 120" width="120" height="120"><circle cx="60" cy="60" r="50" fill="none" stroke="var(--bg-raised)" stroke-width="12"/>
+              <circle cx="60" cy="60" r="50" fill="none" :stroke="scoreColor()" stroke-width="12" stroke-linecap="round" stroke-dasharray="314.16" :stroke-dashoffset="314.16*(1-(comp.score||0)/100)" transform="rotate(-90 60 60)"/>
+              <text x="60" y="58" text-anchor="middle" font-size="28" font-weight="700" fill="var(--text-primary)" x-text="comp.score==null?'--':comp.score"></text>
+              <text x="60" y="78" text-anchor="middle" font-size="11" fill="var(--text-muted)">of 100</text></svg>
+            <div>
+              <div class="vpa-card-t" style="font-size:16px" x-text="comp.score>=85?'Well hardened':(comp.score>=60?'Needs attention':'At risk')"></div>
+              <div class="vpa-card-s" style="margin:4px 0 10px" x-text="compCount('pass')+' passed, '+compCount('warn')+' warnings, '+compCount('fail')+' failed'+(comp.t?' - checked '+vpaAgo(comp.t):'')"></div>
+              <button class="btn btn-primary btn-sm" @click="loadComp()" :disabled="busy==='comp'" x-text="busy==='comp'?'Checking...':'Run check again'"></button>
+            </div>
+          </div>
+        </div>
+        <template x-for="cat in compCats()" :key="cat">
+          <div class="vpa-card">
+            <div class="vpa-card-h"><div class="vpa-card-t" x-text="cat"></div></div>
+            <template x-for="c in comp.checks.filter(x=>x.category===cat)" :key="c.id">
+              <div class="vpsh-check">
+                <span class="vpsh-st" :class="c.status" x-html="vpIcon(c.status==='pass'?'check':(c.status==='na'?'circle':(c.status==='warn'?'alert':'x-circle')))"></span>
+                <div style="flex:1;min-width:0"><div class="vpsh-check-t" x-text="c.title"></div><div class="vpa-card-s" x-text="c.detail"></div></div>
+                <span class="vpa-tag" :class="sevTone(c.severity)" x-text="c.severity"></span>
+                <button class="btn btn-primary btn-xs" x-show="c.fixable" @click="fix(c)" :disabled="busy==='fix-'+c.id" x-text="busy==='fix-'+c.id?'Fixing...':'Fix'"></button>
+                <button class="btn btn-ghost btn-xs" x-show="!c.fixable && c.link && ['fail','warn'].includes(c.status)" @click="go(c.link)">Open</button>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- LOG AUDIT -->
+      <div x-show="tab==='audit'">
+        <div class="vpa-stats">
+          <div class="vpa-stat green"><div class="l">Sign-ins (24h)</div><div class="v" x-text="au.logins_24h||0"></div></div>
+          <div class="vpa-stat red"><div class="l">Failed sign-ins (24h)</div><div class="v" x-text="au.failed_24h||0"></div></div>
+          <div class="vpa-stat blue"><div class="l">sudo commands (24h)</div><div class="v" x-text="au.sudo_24h||0"></div></div>
+          <div class="vpa-stat amber"><div class="l">Account changes (24h)</div><div class="v" x-text="au.account_changes_24h||0"></div></div>
+        </div>
+        <div class="vpa-grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)" x-show="(au.top_failed_ips||[]).length">
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Most failed sign-ins by address</div></div>
+            <template x-for="r in au.top_failed_ips||[]" :key="r.ip"><div class="vpsh-ev"><span class="mono" style="flex:1" x-text="r.ip"></span><span class="vpa-tag red" x-text="r.n+' failed'"></span>
+              <button class="btn btn-ghost btn-xs" x-show="ov.scan_detect" @click="blockIp(r.ip)">Block</button></div></template></div>
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Last successful sign-ins</div></div>
+            <template x-for="(e,i) in au.last_logins||[]" :key="i"><div class="vpsh-ev"><span class="mono" style="flex:1" x-text="e.user+' from '+e.ip"></span><span class="vpa-tag" x-text="e.detail"></span><span class="vpa-card-s" x-text="vpaAgo(e.t)"></span></div></template></div>
+        </div>
+        <div class="vpa-toolbar">
+          <select class="form-input" style="max-width:200px" x-model="auKind" @change="loadAudit()"><option value="">All events</option><option value="login">Sign-ins</option><option value="failed">Failed sign-ins</option><option value="sudo">sudo</option><option value="su">su</option><option value="user_added">Users added</option><option value="user_deleted">Users deleted</option><option value="password_changed">Password changes</option></select>
+          <input class="form-input" placeholder="User, IP or command" x-model="auQ" @input.debounce.400ms="loadAudit()">
+          <div class="grow"></div><span class="vpa-card-s" x-text="'Source: '+auSource"></span>
+        </div>
+        <div class="vpa-tw">
+          <table class="vpa-table"><thead><tr><th>Time</th><th>Event</th><th>User</th><th>From</th><th>Detail</th></tr></thead>
+            <tbody><template x-for="(e,i) in auItems" :key="i"><tr><td x-text="vpaTime(e.t)"></td><td><span class="vpa-tag" :class="{ok:'green',bad:'red',warn:'amber',info:'blue'}[e.tone]" x-text="e.label"></span></td>
+              <td class="mono" x-text="e.user"></td><td class="mono" x-text="e.ip||'-'"></td><td style="font-size:12px;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="e.detail" x-text="e.detail"></td></tr></template></tbody></table>
+          <div class="vpa-empty" x-show="!auItems.length">No matching events in the system log.</div>
+        </div>
+      </div>
+
+      <!-- EVENTS -->
+      <div x-show="tab==='events'">
+        <div class="vpa-toolbar">
+          <select class="form-input" style="max-width:150px" x-model="evf.severity" @change="loadEvents(1)"><option value="">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option></select>
+          <select class="form-input" style="max-width:200px" x-model="evf.area" @change="loadEvents(1)"><option value="">All areas</option><template x-for="a in areas" :key="a.id"><option :value="a.id" x-text="a.label"></option></template><option value="process">Process guard</option></select>
+          <input class="form-input" placeholder="Path or detail" x-model="evf.q" @input.debounce.400ms="loadEvents(1)">
+          <div class="grow"></div>
+          <button class="btn btn-ghost btn-sm" @click="ackEvents()">Mark all as read</button>
+        </div>
+        <div class="vpa-tw">
+          <table class="vpa-table"><thead><tr><th>Time</th><th>Severity</th><th>Area</th><th>Change</th><th>Path</th><th>Detail</th></tr></thead>
+            <tbody><template x-for="(e,i) in ev.items" :key="i"><tr :class="{'vpsh-new':e.new}"><td x-text="vpaTime(e.t)"></td><td><span class="vpa-tag" :class="sevTone(e.severity)" x-text="e.severity"></span></td>
+              <td x-text="areaLabel(e.area)"></td><td x-text="e.kind"></td><td class="mono vpsh-path" :title="e.path" x-text="e.path"></td><td style="font-size:12px" x-text="e.detail"></td></tr></template></tbody></table>
+          <div class="vpa-empty" x-show="!ev.items.length">No events.</div>
+          <div class="vpa-pager" x-show="ev.total>ev.size"><button class="btn btn-ghost btn-xs" :disabled="ev.page<=1" @click="loadEvents(ev.page-1)">Previous</button><span x-text="'Page '+ev.page+' of '+Math.ceil(ev.total/ev.size)"></span><button class="btn btn-ghost btn-xs" :disabled="ev.page*ev.size>=ev.total" @click="loadEvents(ev.page+1)">Next</button></div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div x-show="tab==='settings'">
+        <div class="vpa-card"><div class="vpa-form">
+          <label>Scan protected areas every</label>
+          <div class="row"><input type="number" min="1" max="1440" class="form-input" x-model.number="sf.scan_minutes"><span class="vpa-unit">minutes</span></div>
+          <label>Alerts</label>
+          <div><label class="vpa-switch sm"><input type="checkbox" x-model="sf.notify"><span class="t"></span>Send critical and high events to the panel's alert channels</label>
+            <div class="hint">Configure email, Telegram or webhook under <a href="#" @click.prevent="go('alerts')">Alerts</a>; at most one message per 10 minutes.</div></div>
+          <label>Process guard</label>
+          <div><label class="vpa-switch sm"><input type="checkbox" x-model="sf.auto_kill"><span class="t"></span>Kill critical findings (miners) automatically and quarantine their binary</label></div>
+          <div class="vpa-form-actions"><button class="btn btn-primary btn-sm" @click="setSetting(sf)">Save settings</button></div>
+        </div></div>
+        <div class="vpa-card"><div class="vpa-card-h"><div><div class="vpa-card-t">Service</div><div class="vpa-card-s" x-text="'vortexpanel-app-sys-harden: '+svc"></div></div><div class="r"><button class="btn btn-ghost btn-sm" @click="service('restart')">Restart</button></div></div></div>
+        <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Operation logs</div></div>
+          <div class="vpa-tw"><table class="vpa-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+            <tbody><template x-for="(o,i) in ops" :key="i"><tr><td x-text="vpaTime(o.t)"></td><td x-text="o.user"></td><td><span class="vpa-tag" x-text="o.action"></span></td><td x-text="o.detail"></td></tr></template></tbody></table>
+            <div class="vpa-empty" x-show="!ops.length">No operations yet.</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- files modal -->
+  <div class="modal-overlay" x-show="fm.show" @click.self="fm.show=false" x-cloak>
+    <div class="modal" style="max-width:760px">
+      <div class="modal-hd"><div><div class="modal-title" x-text="fm.label"></div><div class="vpa-card-s" x-text="fm.total+' item(s) in the baseline'"></div></div><button class="modal-close" @click="fm.show=false">&times;</button></div>
+      <input class="form-input" placeholder="Filter" x-model="fm.q" @input.debounce.300ms="showFiles(fm.area)" style="margin-bottom:10px">
+      <div class="vpa-tw" style="max-height:420px"><table class="vpa-table"><thead><tr><th>Path</th><th class="num">Size</th><th>Mode</th><th>Changed</th><th></th></tr></thead>
+        <tbody><template x-for="f in fm.items" :key="f.path"><tr><td class="mono vpsh-path" x-text="f.path"></td><td class="num" x-text="fmtBytes(f.size)"></td><td class="mono" x-text="f.mode"></td><td x-text="vpaTime(f.mtime)"></td><td><span class="vpa-tag" x-show="f.locked">locked</span></td></tr></template></tbody></table></div>
+    </div>
+  </div>
+</div>

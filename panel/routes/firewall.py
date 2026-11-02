@@ -224,14 +224,27 @@ def _ufw_add_rule(r):
     port = str(r['lo']) if r['hi'] is None else f"{r['lo']}:{r['hi']}"
     protos = ['tcp', 'udp'] if (r['proto'] == 'both' and r['hi'] is not None) else [r['proto']]
     for proto in protos:
-        cmd = f"ufw {r['action']}"
+        rest = ''
         if r['from'] != 'any':
-            cmd += f" from {shlex.quote(r['from'])}"
-        cmd += f' to any port {port}'
+            rest += f" from {shlex.quote(r['from'])}"
+        rest += f' to any port {port}'
         if proto != 'both':
-            cmd += f' proto {proto}'
-        out, err, rc = sh3(cmd + ' 2>&1')
-        if rc != 0 or 'ERROR' in out:
+            rest += f' proto {proto}'
+        if r['action'] in ('deny', 'reject'):
+            # ufw uses the FIRST matching rule: an appended deny sits below the
+            # existing '80/tcp ALLOW Anywhere' and never takes effect. 'prepend'
+            # puts it first in its own (IPv4 or IPv6) table; ufw < 0.36 has no
+            # prepend, so fall back to position 1 and finally to a plain add.
+            attempts = [f"ufw prepend {r['action']}{rest}", f"ufw insert 1 {r['action']}{rest}",
+                        f"ufw {r['action']}{rest}"]
+        else:
+            attempts = [f"ufw {r['action']}{rest}"]
+        out = err = ''
+        for cmd in attempts:
+            out, err, rc = sh3(cmd + ' 2>&1')
+            if rc == 0 and 'ERROR' not in out:
+                break
+        else:
             return False, out or err or 'ufw rejected the rule'
     return True, None
 
@@ -354,6 +367,19 @@ def _fw_set_status(enable):
     return not _fw_active(), (out or err)
 
 
+def _fw_apply(running, zone, args):
+    """Apply one change permanently AND to the running firewall. No --reload:
+    a reload drops every runtime rule, which is where fail2ban keeps its bans
+    (banaction firewallcmd-rich-rules), so it silently unbanned everyone."""
+    base = _fw_cmd(running)
+    out, err, rc = sh3(f'{base} --zone={zone} {args} 2>&1')
+    if rc == 0 and running:
+        o2, e2, rc2 = sh3(f'firewall-cmd --zone={zone} {args} 2>&1')
+        if rc2 != 0 and 'ALREADY_ENABLED' not in (o2 + e2) and 'NOT_ENABLED' not in (o2 + e2):
+            return out, (o2 or e2), rc2
+    return out, err, rc
+
+
 def _fw_add_rule(r):
     running = _fw_active()
     zone = _fw_zone(running)
@@ -364,8 +390,8 @@ def _fw_add_rule(r):
     src = r['from']
 
     for proto in protos:
-        if fa == 'accept' and src == 'any':
-            out, err, rc = sh3(f'{base} --zone={zone} --add-port={port}/{proto} 2>&1')
+        if fa == 'accept' and src == 'any' and r['action'] != 'limit':
+            out, err, rc = _fw_apply(running, zone, f'--add-port={port}/{proto}')
         else:
             if src != 'any':
                 fam = 'ipv6' if ':' in src else 'ipv4'
@@ -373,13 +399,12 @@ def _fw_add_rule(r):
             else:
                 # No family -> the rule applies to IPv4 AND IPv6.
                 head = 'rule '
-            rule = f'{head}port port="{port}" protocol="{proto}" {fa}'
-            out, err, rc = sh3(f'{base} --zone={zone} --add-rich-rule={shlex.quote(rule)} 2>&1')
+            # 'limit' = ufw's limit (about 6 new connections per 30 s per rule)
+            tail = 'accept limit value="12/m"' if r['action'] == 'limit' else fa
+            rule = f'{head}port port="{port}" protocol="{proto}" {tail}'
+            out, err, rc = _fw_apply(running, zone, f'--add-rich-rule={shlex.quote(rule)}')
         if rc != 0:
             return False, out or err or 'firewalld rejected the rule'
-
-    if running:
-        sh('firewall-cmd --reload')
     return True, None
 
 
@@ -392,17 +417,14 @@ def _fw_del_rule(num, force=False):
         return False, ('Refusing to delete a rule that keeps SSH or the panel port reachable '
                        '(this could lock you out). Send force=true to override.')
     running = _fw_active()
-    base = _fw_cmd(running)
     if target['_type'] == 'port':
-        out, err, rc = sh3(f"{base} --zone={zone} --remove-port={shlex.quote(target['_raw'])} 2>&1")
+        out, err, rc = _fw_apply(running, zone, f"--remove-port={shlex.quote(target['_raw'])}")
     elif target['_type'] == 'service':
-        out, err, rc = sh3(f"{base} --zone={zone} --remove-service={shlex.quote(target['_raw'])} 2>&1")
+        out, err, rc = _fw_apply(running, zone, f"--remove-service={shlex.quote(target['_raw'])}")
     else:
-        out, err, rc = sh3(f"{base} --zone={zone} --remove-rich-rule={shlex.quote(target['_raw'])} 2>&1")
+        out, err, rc = _fw_apply(running, zone, f"--remove-rich-rule={shlex.quote(target['_raw'])}")
     if rc != 0:
         return False, out or err or 'firewalld delete failed'
-    if running:
-        sh('firewall-cmd --reload')
     return True, None
 
 
@@ -422,11 +444,9 @@ def _fw_apply_preset(preset):
     base = _fw_cmd(running)
     for kind, val in _FW_PRESETS.get(preset, []):
         if kind == 'port':
-            sh(f'{base} --zone={zone} --add-port={val}')
+            _fw_apply(running, zone, f'--add-port={val}')
         else:
-            sh(f"{base} --zone={zone} --add-rich-rule={shlex.quote(val)}")
-    if running:
-        sh('firewall-cmd --reload')
+            _fw_apply(running, zone, f"--add-rich-rule={shlex.quote(val)}")
 
 
 # ==============================================================================

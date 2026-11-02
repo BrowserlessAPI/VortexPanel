@@ -18,6 +18,7 @@
 <link rel="icon" href="/static/favicon.svg?v={{ panel_version }}" type="image/svg+xml">
 <link rel="stylesheet" href="/static/css/fonts.css?v={{ panel_version }}">
 <link rel="stylesheet" href="/static/css/theme.css?v={{ panel_version }}">
+<link rel="stylesheet" href="/static/css/apps.css?v={{ panel_version }}">
 <link rel="stylesheet" href="/static/css/vendor/xterm/xterm.css">
 <script src="/static/js/vendor/xterm/xterm.js"></script>
 <script src="/static/js/vendor/xterm/xterm-addon-fit.js"></script>
@@ -28,6 +29,7 @@
   <script src="/static/js/vp-lang.js?v={{ panel_version }}"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js?v={{ panel_version }}"></script>
+  <script src="/static/js/apps.js?v={{ panel_version }}"></script>
   <script src="/static/js/vendor/alpine.cdn.min.js" defer></script>
 </head>
 <body>
@@ -2461,10 +2463,6 @@
                       <span style="font-weight:600" x-text="v.version"></span>
                       <span style="margin-left:8px;font-size:11px;color:var(--text-muted)" x-text="v.lts"></span>
                     </div>
-                    <span x-show="v.recommended"
-                          style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">
-                      Recommended
-                    </span>
                     <span x-show="v.status==='maintenance'"
                           style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(245,158,11,.12);color:#d97706">
                       Maintenance
@@ -2995,7 +2993,6 @@
                       <span style="font-weight:600;font-family:var(--font-mono)" x-text="'go'+v.version"></span>
                       <span style="margin-left:8px;font-size:11px;color:var(--text-muted)" x-text="v.label.split('(')[1]?.replace(')','') || ''"></span>
                     </div>
-                    <span x-show="v.recommended" style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(34,197,94,.15);color:var(--green);font-weight:600">Recommended</span>
                     <span x-show="v.status==='rc'" style="font-size:10px;padding:1px 7px;border-radius:8px;background:rgba(99,102,241,.12);color:var(--accent)">RC</span>
                   </div>
                   <div>
@@ -4062,7 +4059,7 @@
       <!-- MODULES -->
       <div x-show="page==='modules'" x-data="modulesPage()">
         <div class="page-header">
-          <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software<span x-show="tested && tested.in_use" x-text="' - versions tested by VortexPanel (list #'+(tested&&tested.serial)+', '+((tested&&tested.issued)||'').slice(0,10)+')'"></span></div></div>
+          <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software and panel Apps<span x-show="tested && tested.in_use" x-text="' - versions tested by VortexPanel (list #'+(tested&&tested.serial)+', '+((tested&&tested.issued)||'').slice(0,10)+')'"></span></div></div>
           <button class="btn btn-ghost btn-sm" @click="refreshCatalog()" :disabled="!!(catalogRefreshing)">
             <span x-show="!catalogRefreshing">Update App List</span>
             <span x-show="catalogRefreshing">Updating…</span>
@@ -4090,33 +4087,74 @@
               </tr>
             </thead>
             <tbody>
-              <template x-for="m in filtered()" :key="m.id">
+              <template x-for="m in filtered()" :key="(m.kind||'mod')+':'+m.id">
                 <tr :style="vpCss(m.installed?'background:rgba(16,185,129,.03)':'')">
+                  <template x-if="m.kind==='app'">
+                    <td style="text-align:center;padding:10px 8px"><span class="vpa-logo" style="width:30px;height:30px;border-radius:8px;display:inline-grid" :style="'--vpa-c:'+m.color" x-html="vpIcon(m.icon)"></span></td>
+                  </template>
+                  <template x-if="m.kind==='app'">
+                    <td>
+                      <div style="font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px"><span x-text="m.name"></span><span class="badge badge-blue" style="font-size:9px" title="VortexPanel App: adds its own page to the panel">APP</span></div>
+                      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);margin-top:1px" x-text="m.category"></div>
+                    </td>
+                  </template>
+                  <template x-if="m.kind==='app'">
+                    <td class="vp-hide-sm" style="font-size:12px;color:var(--text-secondary);padding-right:8px"><span x-text="m.desc"></span>
+                      <div x-show="m.installed && m.error" style="margin-top:4px;font-size:11.5px;color:var(--red);font-weight:600" x-text="m.error"></div></td>
+                  </template>
+                  <template x-if="m.kind==='app'">
+                    <td>
+                      <div x-show="m.installed" style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
+                        <span style="font-size:11px;font-family:var(--font-mono);background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2);padding:1px 7px;border-radius:8px;font-weight:600" x-text="'v'+m.installedVer"></span>
+                        <button type="button" class="vp-upd-badge" x-show="m.hasUpdate" :disabled="appBusy || appJob.show" @click="appAct(m,'update')" :title="'Click to update to v'+m.version" x-text="'Update to v'+m.version"></button>
+                        <div style="display:flex;align-items:center;gap:5px">
+                          <span :class="'dot dot-'+(m.status==='loaded'?'green':m.status==='pending-restart'?'yellow':'red')" style="flex-shrink:0"></span>
+                          <span style="font-size:11px;color:var(--text-muted)" x-text="m.status==='loaded'?'running':m.status==='pending-restart'?'restart pending':'not loaded'"></span>
+                        </div>
+                      </div>
+                      <span x-show="!m.installed" class="badge badge-gray" style="font-size:10px">Not Installed</span>
+                    </td>
+                  </template>
+                  <template x-if="m.kind==='app'">
+                    <td>
+                      <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+                        <button class="btn btn-primary btn-xs" x-show="!m.installed" :disabled="!m.compatible || appBusy || appJob.show" @click="appAct(m,'install')" x-text="m.compatible?'Install':'Needs panel '+m.requires_core"></button>
+                        <button class="btn btn-primary btn-xs" x-show="m.installed && m.status==='loaded' && m.page" @click="go(m.page)">Open</button>
+                        <button class="btn btn-ghost btn-xs" @click="appInfo=m">Details</button>
+                        <button class="btn btn-danger btn-xs" x-show="m.installed" :disabled="appBusy || appJob.show" @click="appRemove=m; appPurge=false">Uninstall</button>
+                      </div>
+                    </td>
+                  </template>
+
                   <!-- Icon -->
+                  <template x-if="m.kind!=='app'">
                   <td style="text-align:center;padding:10px 8px">
                     <img class="vp-app-ic" :src="m.icon" :alt="m.name" style="width:28px;height:28px;object-fit:contain" onerror="this.style.display='none';this.nextElementSibling.style.display='inline';"><span style="display:none;font-size:22px"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
-                  </td>
+                  </td></template>
 
                   <!-- Name + Category -->
+                  <template x-if="m.kind!=='app'">
                   <td>
                     <div style="font-weight:600;font-size:13px" x-text="m.name"></div>
                     <div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);margin-top:1px" x-text="m.category"></div>
-                  </td>
+                  </td></template>
 
                   <!-- Description -->
+                  <template x-if="m.kind!=='app'">
                   <td class="vp-hide-sm" style="font-size:12px;color:var(--text-secondary);padding-right:8px"><span x-text="m.desc"></span>
-                    <div x-show="m.notice" style="margin-top:4px;font-size:11.5px;color:#d97706;font-weight:600" x-text="m.notice"></div></td>
+                    <div x-show="m.notice" style="margin-top:4px;font-size:11.5px;color:#d97706;font-weight:600" x-text="m.notice"></div></td></template>
 
                   <!-- Status / Version -->
+                  <template x-if="m.kind!=='app'">
                   <td>
-                    <div class="vp-d-flex" x-show="m.installed" style="display:flex;flex-direction:column;gap:4px">
+                    <div class="vp-d-flex" x-show="m.installed" style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
                       <!-- Version badge -->
                       <span class="vp-d-inline-block" x-show="m.installedVer"
                             style="font-size:11px;font-family:var(--font-mono);background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2);padding:1px 7px;border-radius:8px;font-weight:600;display:inline-block"
                             x-text="'v'+m.installedVer"></span>
-                      <span class="vp-d-inline-block" x-show="m.hasUpdate" :title="'Newer version available on this track: v'+m.latestSameTrack"
-                            style="font-size:11px;background:rgba(245,158,11,.12);color:#d97706;border:1px solid rgba(245,158,11,.25);padding:1px 7px;border-radius:8px;font-weight:600;display:inline-block;cursor:default"
-                            x-text="'Update available > v'+m.latestSameTrack"></span>
+                      <button type="button" class="vp-upd-badge" x-show="m.hasUpdate" @click="askUpdate(m)" :disabled="!!(m.loading)"
+                              :title="m.updateSecurity ? 'A security build of v'+m.installedVer+' is available. Click to install it.' : 'Click to update to v'+m.latestSameTrack"
+                              x-text="m.updateSecurity ? 'Security update' : 'Update to v'+m.latestSameTrack"></button>
                       <!-- Service status -->
                       <div class="vp-d-flex" x-show="m.manage" style="display:flex;align-items:center;gap:5px">
                         <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus?'red':'gray')" style="flex-shrink:0"></span>
@@ -4124,9 +4162,10 @@
                       </div>
                     </div>
                     <span x-show="!m.installed" class="badge badge-gray" style="font-size:10px">Not Installed</span>
-                  </td>
+                  </td></template>
 
                   <!-- Actions -->
+                  <template x-if="m.kind!=='app'">
                   <td>
                     <!-- INSTALLED -->
                     <div class="vp-d-flex" x-show="m.installed" style="display:flex;flex-direction:column;gap:5px">
@@ -4141,23 +4180,24 @@
                         </button>
                       </div>
                       <!-- PHP: Add Version row -->
-                      <div class="vp-d-flex" x-show="m.id==='php'" style="display:flex;align-items:center;gap:4px">
-                        <select class="form-input" style="font-size:11px;padding:3px 6px;min-width:90px;max-width:250px;text-overflow:ellipsis" x-model="m.selVer">
-                          <template x-for="v in m.versions" :key="v.value">
+                      <div class="vp-d-flex" x-show="m.id==='php' && phpAddable(m).length" style="display:flex;align-items:center;gap:4px">
+                        <span style="font-size:11px;color:var(--text-muted);white-space:nowrap">Add version</span>
+                        <select class="form-input vp-ver-sel" x-model="m.selVer">
+                          <template x-for="v in phpAddable(m)" :key="v.value">
                             <option :value="v.value" x-text="v.label"></option>
                           </template>
                         </select>
-                        <button class="btn btn-primary btn-xs" @click="install(m)" :disabled="!!(m.loading)">
+                        <button class="btn btn-primary btn-xs" style="align-self:center;height:auto;min-height:0;padding:2px 8px;font-size:11px;line-height:1.5" @click="install(m)" :disabled="!!(m.loading)">
                           <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
-                          <span x-text="m.loading?'…':'+ Add'"></span>
+                          <span x-text="m.loading?'…':'Install'"></span>
                         </button>
                       </div>
                     </div>
                     <!-- NOT INSTALLED -->
-                    <div class="vp-d-flex" x-show="!m.installed" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                    <div class="vp-d-flex" x-show="!m.installed" style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap">
                       <!-- Version selector (multi-version modules) -->
-                      <div x-show="m.versions && m.versions.length > 1" style="min-width:110px">
-                        <select class="form-input" style="font-size:11px;padding:3px 6px;max-width:250px;text-overflow:ellipsis" x-model="m.selVer">
+                      <div x-show="m.versions && m.versions.length > 1">
+                        <select class="form-input vp-ver-sel" x-model="m.selVer">
                           <template x-for="v in m.versions" :key="v.value">
                             <option :value="v.value" x-text="v.label"></option>
                           </template>
@@ -4176,14 +4216,75 @@
                              x-text="'Not available: '+(getConflict(m)?.name||'')+' is installed'"></div>
                       </div>
                     </div>
-                  </td>
+                  </td></template>
                 </tr>
               </template>
             </tbody>
           </table></div>
         </div>
 
+        <!-- VortexPanel App: details / uninstall / progress -->
+        <div class="modal-overlay" x-show="appInfo" @click.self="appInfo=null" x-cloak>
+          <div class="modal" style="max-width:560px" x-show="appInfo">
+            <div class="modal-hd"><div style="display:flex;gap:12px;align-items:center"><div class="vpa-logo" :style="'--vpa-c:'+(appInfo&&appInfo.color)" x-html="vpIcon(appInfo&&appInfo.icon)"></div><div><div class="modal-title" x-text="appInfo&&appInfo.name"></div><div style="font-size:12px;color:var(--text-muted)" x-text="appInfo&&(appInfo.category+' - VortexPanel App v'+appInfo.version)"></div></div></div><button class="modal-close" @click="appInfo=null">&times;</button></div>
+            <div style="font-size:13px;line-height:1.6;color:var(--text-secondary);margin-bottom:12px" x-text="appInfo&&appInfo.description"></div>
+            <div style="font-weight:600;font-size:13px;margin-bottom:6px">Features</div>
+            <ul style="margin:0 0 12px 18px;font-size:12.5px;color:var(--text-secondary);line-height:1.7"><template x-for="f in (appInfo&&appInfo.features)||[]" :key="f"><li x-text="f"></li></template></ul>
+            <div style="font-size:12px;color:var(--text-muted)" x-show="appInfo&&appInfo.engines&&appInfo.engines.length" x-text="'Uses: '+((appInfo&&appInfo.engines)||[]).join(', ')"></div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:8px">Apps run separately from the panel core: installing, updating or removing one never changes your websites or other Apps.</div>
+          </div>
+        </div>
+        <div class="modal-overlay" x-show="appRemove" @click.self="appRemove=null" x-cloak>
+          <div class="modal" style="max-width:460px" x-show="appRemove">
+            <div class="modal-hd"><div class="modal-title" x-text="'Uninstall '+(appRemove&&appRemove.name)"></div><button class="modal-close" @click="appRemove=null">&times;</button></div>
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">The App's page, services and firewall rules are removed. Your websites are not touched.</div>
+            <label class="vpa-switch sm" style="margin-bottom:14px"><input type="checkbox" x-model="appPurge"><span class="t"></span>Also delete its settings and history</label>
+            <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-ghost btn-sm" @click="appRemove=null">Cancel</button><button class="btn btn-danger btn-sm" @click="appAct(appRemove,'uninstall',appPurge); appRemove=null">Uninstall</button></div>
+          </div>
+        </div>
+        <div class="modal-overlay" x-show="appJob.show" x-cloak>
+          <div class="modal" style="max-width:620px">
+            <div class="modal-hd"><div><div class="modal-title" x-text="appJob.title"></div><div style="font-size:12px;color:var(--text-muted)" x-text="appJob.state==='running'?'Working... the panel restarts at the end; this window reconnects by itself':(appJob.state==='done'?'Finished':'Failed')"></div></div>
+              <button class="modal-close" x-show="appJob.state!=='running'" @click="closeAppJob()">&times;</button></div>
+            <div class="vpa-job" x-ref="appjoblog" x-text="appJob.lines.join('\n')"></div>
+            <div class="vpa-note" :class="appJob.state==='done'?'ok':'bad'" style="margin:12px 0 0" x-show="appJob.state!=='running'" x-text="appJob.message"></div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px" x-show="appJob.state!=='running'">
+              <button class="btn btn-primary btn-sm" x-show="appJob.state==='done'" @click="location.reload()">Reload panel</button>
+              <button class="btn btn-ghost btn-sm" @click="closeAppJob()">Close</button>
+            </div>
+          </div>
+        </div>
+
         <!-- Version picker modal -->
+        <!-- App Store: confirm a software update -->
+        <div class="modal-overlay" x-show="updModal.show" @click.self="updModal.show=false">
+          <div class="modal" style="max-width:560px">
+            <div class="modal-hd">
+              <div>
+                <div class="modal-title" x-text="'Update '+(updModal.mod?.name||'')"></div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">From this server's package sources, same version track</div>
+              </div>
+              <button class="modal-close" @click="updModal.show=false">×</button>
+            </div>
+            <div class="vp-upd-head">
+              <div><div class="vp-upd-k">Installed</div><div class="vp-upd-v" x-text="'v'+(updModal.mod?.installedVer||'')"></div></div>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              <div><div class="vp-upd-k">After the update</div><div class="vp-upd-v" style="color:var(--green)" x-text="updModal.mod?.updateSecurity ? 'v'+(updModal.mod?.installedVer||'')+' security build' : 'v'+(updModal.mod?.latestSameTrack||'')"></div></div>
+            </div>
+            <p style="font-size:12.5px;color:var(--text-secondary);margin:12px 0 10px">Your configuration files are kept. Running services restart once, which takes a few seconds.</p>
+            <div x-show="(updModal.mod?.updatePackages||[]).length" style="max-height:210px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
+              <table class="vp-upd-tbl"><thead><tr><th>Package</th><th>Installed</th><th>New</th></tr></thead>
+                <tbody><template x-for="p in (updModal.mod?.updatePackages||[])" :key="p.name">
+                  <tr><td x-text="p.name"></td><td style="color:var(--text-muted)" x-text="p.from"></td><td style="color:var(--green)" x-text="p.to"></td></tr>
+                </template></tbody></table>
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="updModal.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="runUpdate()">Update now</button>
+            </div>
+          </div>
+        </div>
+
         <div class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd">
@@ -4819,7 +4920,7 @@
                   <select id="vp-switch-ver" class="form-input vp-select-lg" x-model="settingsModal.switchVer">
                     <option value="" disabled>-- Select a version --</option>
                     <template x-for="v in ((settingsModal.versions||[]).length ? settingsModal.versions : (settingsModal.mod?.versions||[]))" :key="v.value">
-                      <option :value="v.value" :selected="!!(settingsModal.switchVer===v.value)" x-text="v.label+(v.recommended && !/recommend/i.test(v.label)?' - recommended':'')"></option>
+                      <option :value="v.value" :selected="!!(settingsModal.switchVer===v.value)" x-text="v.label"></option>
                     </template>
                   </select>
                   <div style="display:flex;gap:8px;margin-top:16px">
@@ -9402,7 +9503,9 @@
 
       <!-- Plugin pages (HTML fragments served by /api/plugins/<id>/fragment/<page>) -->
       <template x-for="pp in pluginPages" :key="pp.id">
-        <div x-show="page===pp.id" x-html="pp.html"></div>
+        <!-- inserted once (x-init), not x-html: x-for refreshes every row's scope when a page is
+             added, and x-html then rebuilt earlier pages, wiping what the admin was doing on them -->
+        <div x-show="page===pp.id" x-init="$el.innerHTML = pp.html; Array.from($el.children).forEach(c => Alpine.initTree(c))"></div>
       </template>
 
       <div x-show="page==='users'" x-data="usersPage()">
@@ -10993,7 +11096,6 @@
                 <input type="checkbox" :value="v.value" x-model="pick.php" :disabled="!!(v.installed || running)">
                 <span class="onb-choice-name" x-text="'PHP '+v.value"></span>
                 <span class="onb-choice-tag" x-show="v.installed">Installed</span>
-                <span class="onb-choice-tag" x-show="!v.installed && v.recommended">Recommended</span>
                 <span class="onb-choice-tag" x-show="!v.installed && v.eol" style="color:var(--red)">End of life</span>
               </label>
             </template>

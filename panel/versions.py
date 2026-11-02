@@ -241,7 +241,6 @@ def apply(mod, live=None):
                 pick['recommended'] = True
     if versions and not any(v.get('recommended') for v in versions):
         versions[0]['recommended'] = True
-    for v in versions:
-        if v.get('recommended') and 'recommended' not in v['label'].lower():
-            v['label'] += ' - recommended'
+    for v in versions:      # the flag only pre-selects the version; the label stays a plain version
+        v['label'] = re.sub(r'\s*(?:-\s*|\(\s*)?recommended(?:\s*\))?', '', re.sub(r',\s*recommended(?=\s*\))', '', v['label'], flags=re.I), flags=re.I).strip()
     return versions

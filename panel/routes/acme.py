@@ -585,7 +585,7 @@ def issue_panel_ip(ip, email=''):
     mode, args, err = _prepare_ip_webroot(ip)
     if err:
         return False, err
-    _sh('ufw allow 80/tcp 2>/dev/null; firewall-cmd --add-service=http --permanent 2>/dev/null; firewall-cmd --reload 2>/dev/null')
+    _sh('ufw allow 80/tcp 2>/dev/null; firewall-cmd --add-service=http --permanent 2>/dev/null; firewall-cmd --add-service=http 2>/dev/null')
     cmd = (f'{_base()} --issue --force -d {shlex.quote(ip)} {args} --keylength ec-256 '
            '--certificate-profile shortlived --days -3')
     if email:

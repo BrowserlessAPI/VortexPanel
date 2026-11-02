@@ -259,16 +259,16 @@
       "desc": "Industry standard authoritative DNS server",
       "versions": [
         {
-          "label": "Current stable (ISC PPA isc/bind)",
-          "value": "9.22"
-        },
-        {
-          "label": "9.20.30 (Extended support - ISC PPA isc/bind-esv)",
+          "label": "9.20.30 (current stable, extended support)",
           "value": "9.20",
           "recommended": true
         },
         {
-          "label": "9.18 (Ubuntu/Debian package - upstream support ended Jun 2026)",
+          "label": "9.21.27 (development)",
+          "value": "9.21"
+        },
+        {
+          "label": "9.18 (end of life, distribution package)",
           "value": "9.18"
         }
       ]
@@ -424,24 +424,6 @@
         {
           "label": "Latest (main branch)",
           "value": "latest"
-        }
-      ]
-    },
-    "nginx-lb": {
-      "name": "Nginx Load Balancer",
-      "desc": "Configure Nginx upstream load balancing (Round Robin, Least Conn, IP Hash)",
-      "versions": [
-        {
-          "label": "Round Robin (Default)",
-          "value": "roundrobin"
-        },
-        {
-          "label": "Least Connections",
-          "value": "leastconn"
-        },
-        {
-          "label": "IP Hash (Sticky)",
-          "value": "iphash"
         }
       ]
     },

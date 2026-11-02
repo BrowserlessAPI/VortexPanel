@@ -142,9 +142,52 @@ class PluginContext:
         print(f'[plugin {self.id}] {msg}', file=sys.stderr, flush=True)
 
 
+_RESERVED = {'panel', 'app', 'web', 'flask', 'werkzeug', 'jinja2', 'json', 'os', 'sys', 're', 'subprocess',
+             'requests', 'cryptography', 'gunicorn'}
+
+
+def _top_level_names(d):
+    """Importable top-level modules a plugin folder provides (packages and .py files)."""
+    out = set()
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return out
+    for n in names:
+        p = os.path.join(d, n)
+        if n.endswith('.py') and os.path.isfile(p):
+            out.add(n[:-3])
+        elif os.path.isdir(p) and os.path.isfile(os.path.join(p, '__init__.py')):
+            out.add(n)
+        elif n.endswith('.so') and os.path.isfile(p):
+            out.add(n.split('.', 1)[0])
+    out.discard('plugin')          # every plugin has one; it is loaded by path under a unique name
+    return out
+
+
+def _name_clash(pid, d, man, claimed):
+    """Error text when this plugin's Python names would collide with the core, a library
+    or another plugin (two plugins with a 'common' package would silently share one)."""
+    names = _top_level_names(d)
+    bad = sorted(names & _RESERVED)
+    if bad:
+        return f'plugin provides Python module(s) {", ".join(bad)} that would replace the panel\'s own; rename them'
+    if man.get('kind') == 'app':
+        stray = sorted(n for n in names if not n.startswith('vpapp_'))
+        if stray:
+            return f'App modules must live in a vpapp_* package (found {", ".join(stray)})'
+    for n in sorted(names):
+        if n in claimed and claimed[n] != pid:
+            return f'conflicts with plugin "{claimed[n]}": both provide the Python module "{n}"'
+    for n in names:
+        claimed[n] = pid
+    return ''
+
+
 def load_all(app):
     """Load every enabled, compatible plugin into the Flask app."""
     REGISTRY.clear()
+    claimed = {}
     cv = core_version()
     sm = safe_mode()
     off = disabled_ids()
@@ -164,10 +207,20 @@ def load_all(app):
             entry.update(status='incompatible',
                          error=f'needs VortexPanel {spec}, this panel is {cv}. Update the plugin or the panel.')
             continue
-        src = os.path.join(d, man.get('entry') or 'plugin.py')
+        src = os.path.realpath(os.path.join(d, man.get('entry') or 'plugin.py'))
+        if not src.startswith(os.path.realpath(d) + os.sep) or not src.endswith('.py'):
+            entry.update(status='error', error='plugin.json "entry" must be a .py file inside the plugin folder')
+            continue
+        clash = _name_clash(pid, d, man, claimed)
+        if clash:
+            entry.update(status='error', error=clash)
+            continue
         try:
+            # Appended, not prepended: a plugin can never shadow the panel's own
+            # modules or installed libraries (a plugin file named json.py or a
+            # folder named panel/ would otherwise replace them for everyone).
             if d not in sys.path:
-                sys.path.insert(0, d)
+                sys.path.append(d)
             spec_ = importlib.util.spec_from_file_location(f'vp_plugin_{pid.replace("-", "_")}', src)
             mod = importlib.util.module_from_spec(spec_)
             sys.modules[spec_.name] = mod

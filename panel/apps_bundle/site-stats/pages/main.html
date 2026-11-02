@@ -1,0 +1,258 @@
+<div x-data="vpaSiteStats()" x-init="init()" class="vpa vpss" style="--vpa-c:#2563eb">
+  <div class="vpa-head">
+    <div class="vpa-logo" x-html="vpIcon('bar-chart')"></div>
+    <div>
+      <div class="vpa-title">Website Statistics</div>
+      <div class="vpa-sub">Visitors, traffic and crawlers for every website, from the server's own access logs (no tracking script)</div>
+    </div>
+    <div class="vpa-head-r">
+      <span class="vpa-pill" :class="svc==='active'?'ok':'bad'"><i></i><span x-text="svc==='active'?'Collector running':'Collector '+(svc||'unknown')"></span></span>
+      <span class="vpa-card-s" x-text="'Updated '+vpaAgo(lastCollect)"></span>
+      <button class="btn btn-ghost btn-sm" @click="collectNow()" :disabled="busy==='collect'"><span x-html="vpIcon('refresh')"></span> <span x-text="busy==='collect'?'Reading logs...':'Refresh'"></span></button>
+    </div>
+  </div>
+
+  <div class="vpa-note bad" x-show="loaded && svc!=='active'">The collector service is not running, so the numbers are not being updated.
+    <button class="btn btn-ghost btn-xs" style="margin-left:6px" @click="service('restart')">Start collector</button></div>
+
+  <!-- filter bar -->
+  <div class="vpss-bar">
+    <select class="form-input" style="max-width:260px" x-model="site" @change="reload()">
+      <option value="">All websites</option>
+      <template x-for="s in sites" :key="s.site"><option :value="s.site" x-text="s.site"></option></template>
+    </select>
+    <div class="vpss-seg">
+      <template x-for="r in ranges" :key="r.v"><button :class="{on:range===r.v}" @click="range=r.v; reload()" x-text="r.l"></button></template>
+    </div>
+    <select class="form-input" style="max-width:210px" x-model="compare" @change="reload()" x-show="['overview'].includes(tab)">
+      <option value="">No comparison</option>
+      <option value="prev" x-text="range==='today'?'Compare with yesterday':(range==='yesterday'?'Compare with the day before':'Compare with previous period')"></option>
+      <option value="week" x-show="range==='today'||range==='yesterday'">Same day last week</option>
+    </select>
+  </div>
+
+  <div class="vpa-body">
+    <nav class="vpa-nav">
+      <template x-for="t in tabs" :key="t.id">
+        <a :class="{on:tab===t.id}" @click="setTab(t.id)"><span x-html="vpIcon(t.icon)"></span><span x-text="t.label"></span></a>
+      </template>
+    </nav>
+
+    <div>
+      <!-- OVERVIEW -->
+      <div x-show="tab==='overview'">
+        <div class="vpa-stats vpss-stats">
+          <template x-for="c in cards()" :key="c.k">
+            <div class="vpa-stat" :class="c.tone" :title="c.title||''">
+              <div class="l" x-text="c.l"></div>
+              <div class="v" x-text="c.v"></div>
+              <div class="h"><span x-show="c.d!==null" :class="'vpss-d '+(c.d>0?'up':(c.d<0?'down':''))" x-text="c.d===null?'':(c.d>0?'+':'')+c.d+'%'"></span> <span x-text="c.h"></span></div>
+            </div>
+          </template>
+        </div>
+
+        <div class="vpa-card">
+          <div class="vpa-card-h">
+            <div><div class="vpa-card-t">Trend</div><div class="vpa-card-s" x-text="(sum.step==='hour'?'By hour':'By day')+(compare?' - dashed line: comparison period':'')"></div></div>
+            <div class="r vpss-seg sm">
+              <template x-for="m in metrics" :key="m.v"><button :class="{on:metric===m.v}" @click="metric=m.v; charts()" x-text="m.l"></button></template>
+            </div>
+          </div>
+          <div class="vpa-chart" style="height:260px"><canvas x-ref="trend"></canvas></div>
+        </div>
+
+        <div class="vpa-grid2" style="margin-top:14px">
+          <div class="vpa-card">
+            <div class="vpa-card-h"><div><div class="vpa-card-t">Live requests</div><div class="vpa-card-s">Per minute, last 60 minutes</div></div>
+              <div class="r"><span class="vpa-pill ok"><i></i><span x-text="sum.qps+' req/s'"></span></span></div></div>
+            <div class="vpa-chart" style="height:180px"><canvas x-ref="live"></canvas></div>
+          </div>
+          <div class="vpa-card">
+            <div class="vpa-card-h"><div><div class="vpa-card-t">Status codes</div><div class="vpa-card-s">All requests in the period</div></div></div>
+            <div class="vpa-chart" style="height:180px"><canvas x-ref="status"></canvas></div>
+          </div>
+        </div>
+
+        <div class="vpss-quad">
+          <template x-for="b in blocks" :key="b.kind">
+            <div class="vpa-card">
+              <div class="vpa-card-h"><div class="vpa-card-t" x-text="b.title"></div><div class="r"><a href="#" class="vpss-more" @click.prevent="setTab(b.tab)">View all</a></div></div>
+              <template x-for="(it,i) in (mini[b.kind]||[]).slice(0,6)" :key="i">
+                <div class="vpss-row">
+                  <div class="k" :title="it.k"><span x-show="b.kind==='country'" class="vpa-tag" x-text="it.k||'--'"></span> <span x-text="label(b.kind,it.k)"></span></div>
+                  <div class="vpa-bar"><i :style="'width:'+it.w+'%'"></i></div>
+                  <div class="n" x-text="vpaNum(it.hits)"></div>
+                </div>
+              </template>
+              <div class="vpa-empty" style="padding:16px" x-show="!(mini[b.kind]||[]).length">No data yet</div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- WEBSITES -->
+      <div x-show="tab==='sites'">
+        <div class="vpa-tw">
+          <table class="vpa-table">
+            <thead><tr><th>Website</th><th class="num">Page views</th><th class="num">Visitors</th><th class="num">IPs</th><th class="num">Requests</th><th class="num">Traffic</th><th class="num">Spiders</th><th class="num">4xx</th><th class="num">5xx</th><th class="act"></th></tr></thead>
+            <tbody>
+              <template x-for="s in sites" :key="s.site">
+                <tr>
+                  <td class="mono"><a href="#" @click.prevent="site=s.site; setTab('overview'); reload()" x-text="s.site"></a></td>
+                  <td class="num" x-text="vpaNum(s.pv)"></td><td class="num" x-text="vpaNum(s.uv)"></td><td class="num" x-text="vpaNum(s.ip)"></td>
+                  <td class="num" x-text="vpaNum(s.req)"></td><td class="num" x-text="fmtBytes(s.bytes)"></td><td class="num" x-text="vpaNum(s.spider)"></td>
+                  <td class="num" :class="s.s4?'vpss-warn':''" x-text="vpaNum(s.s4)"></td><td class="num" :class="s.s5?'vpss-bad':''" x-text="vpaNum(s.s5)"></td>
+                  <td class="act"><button class="btn btn-ghost btn-xs" @click="site=s.site; setTab('overview'); reload()">Open</button></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="vpa-empty" x-show="!sites.length"><span x-html="vpIcon('globe')"></span>No website access logs found yet. Websites created in the panel appear here after their first visit.</div>
+        </div>
+      </div>
+
+      <!-- VISITORS -->
+      <div x-show="tab==='visitors'">
+        <div class="vpa-toolbar">
+          <input class="form-input" placeholder="Filter by IP" x-model="vis.q" @input.debounce.400ms="loadVisitors(1)">
+          <select class="form-input" style="max-width:150px" x-model="vis.kind" @change="loadVisitors(1)"><option value="">Everyone</option><option value="people">People</option><option value="spiders">Bots and spiders</option></select>
+          <select class="form-input" style="max-width:170px" x-model="vis.sort" @change="loadVisitors(1)"><option value="hits">Most requests</option><option value="pv">Most page views</option><option value="bytes">Most traffic</option><option value="s4">Most 4xx errors</option><option value="last">Most recent</option></select>
+          <div class="grow"></div><span class="vpa-card-s" x-text="vpaNum(vis.total)+' address(es)'"></span>
+        </div>
+        <div class="vpa-tw">
+          <table class="vpa-table">
+            <thead><tr><th>IP address</th><th>Region</th><th>Type</th><th class="num">Requests</th><th class="num">Page views</th><th class="num">Traffic</th><th class="num">4xx</th><th>Last seen</th><th class="act"></th></tr></thead>
+            <tbody>
+              <template x-for="v in vis.items" :key="v.ip">
+                <tr>
+                  <td class="mono" x-text="v.ip"></td>
+                  <td><span class="vpa-tag" x-text="v.country||'--'"></span> <span class="vpa-card-s" x-text="cname(v.country)"></span></td>
+                  <td><span class="vpa-tag" :class="v.spider?'amber':'blue'" x-text="v.spider||'Person'"></span></td>
+                  <td class="num" x-text="vpaNum(v.hits)"></td><td class="num" x-text="vpaNum(v.pv)"></td><td class="num" x-text="fmtBytes(v.bytes)"></td>
+                  <td class="num" :class="v.s4>20?'vpss-warn':''" x-text="vpaNum(v.s4)"></td>
+                  <td x-text="vpaAgo(v.last)"></td>
+                  <td class="act">
+                    <button class="btn btn-ghost btn-xs" x-show="scanDetect" @click="blockIp(v.ip)" title="Block with Network Scan Detection">Block</button>
+                    <button class="btn btn-ghost btn-xs" @click="copyText(v.ip)">Copy</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="vpa-empty" x-show="!vis.items.length">No visitors in this period.</div>
+          <div class="vpa-pager" x-show="vis.total>vis.size">
+            <button class="btn btn-ghost btn-xs" :disabled="vis.page<=1" @click="loadVisitors(vis.page-1)">Previous</button>
+            <span x-text="'Page '+vis.page+' of '+Math.ceil(vis.total/vis.size)"></span>
+            <button class="btn btn-ghost btn-xs" :disabled="vis.page*vis.size>=vis.total" @click="loadVisitors(vis.page+1)">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- LIST VIEWS: regions / spiders / pages / sources / clients / status -->
+      <template x-for="lv in listViews" :key="lv.tab">
+        <div x-show="tab===lv.tab">
+          <div class="vpa-note warn" x-show="lv.tab==='regions' && geoInfo && (!geoInfo.db || !geoInfo.module)">
+            <span x-text="(geoInfo && !geoInfo.module)?'Country lookups need the maxminddb module.':'No country database is installed yet.'"></span>
+            <button class="btn btn-ghost btn-xs" style="margin-left:6px" @click="installGeo()" :disabled="busy==='geo'" x-text="busy==='geo'?'Downloading...':'Download free country database'"></button>
+          </div>
+          <div class="vpa-toolbar" x-show="lv.subs.length>1">
+            <div class="vpss-seg">
+              <template x-for="sb in lv.subs" :key="sb.kind"><button :class="{on:sub[lv.tab]===sb.kind}" @click="sub[lv.tab]=sb.kind; loadList(lv.tab)" x-text="sb.l"></button></template>
+            </div>
+            <div class="grow"></div>
+            <input class="form-input" placeholder="Filter" x-model="lq" @input.debounce.400ms="loadList(lv.tab)" x-show="lv.search">
+          </div>
+          <div class="vpa-grid2" x-show="lv.chart" style="grid-template-columns:minmax(0,1fr) minmax(0,1.4fr)">
+            <div class="vpa-card"><div class="vpa-chart" style="height:240px"><canvas :data-chart="lv.tab"></canvas></div></div>
+            <div class="vpa-tw" style="align-self:start">
+              <table class="vpa-table"><thead><tr><th x-text="lv.col"></th><th class="num">Count</th><th style="width:35%">Share</th></tr></thead>
+                <tbody><template x-for="(it,i) in list" :key="i"><tr><td x-text="label(sub[lv.tab],it.k)"></td><td class="num" x-text="vpaNum(it.hits)"></td>
+                  <td><div style="display:flex;gap:8px;align-items:center"><div class="vpa-bar" style="flex:1"><i :style="'width:'+it.w+'%'"></i></div><span class="vpa-card-s" style="min-width:40px;text-align:right" x-text="it.pct+'%'"></span></div></td></tr></template></tbody></table>
+            </div>
+          </div>
+          <div class="vpa-tw" x-show="!lv.chart">
+            <table class="vpa-table">
+              <thead><tr><th style="width:36px">#</th><th x-text="lv.col"></th><th class="num" x-text="lv.count||'Count'"></th><th class="num" x-show="lv.bytes">Traffic</th><th style="width:28%">Share</th></tr></thead>
+              <tbody>
+                <template x-for="(it,i) in list" :key="i">
+                  <tr><td class="vpa-card-s" x-text="i+1"></td>
+                    <td :class="lv.mono?'mono':''" style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="it.k">
+                      <span x-show="lv.tab==='regions'" class="vpa-tag" x-text="it.k||'--'"></span> <span x-text="label(sub[lv.tab],it.k)"></span></td>
+                    <td class="num" x-text="vpaNum(it.hits)"></td><td class="num" x-show="lv.bytes" x-text="fmtBytes(it.bytes)"></td>
+                    <td><div style="display:flex;gap:8px;align-items:center"><div class="vpa-bar" style="flex:1"><i :style="'width:'+it.w+'%'"></i></div><span class="vpa-card-s" style="min-width:40px;text-align:right" x-text="it.pct+'%'"></span></div></td></tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="vpa-empty" x-show="!list.length">No data in this period.</div>
+          </div>
+        </div>
+      </template>
+
+      <!-- ERROR LOG -->
+      <div x-show="tab==='errors'">
+        <div class="vpa-note" x-show="!site">Choose a website above to see its error log.</div>
+        <div x-show="site">
+          <div class="vpa-toolbar"><input class="form-input" placeholder="Filter" x-model="err.q" @input.debounce.400ms="loadErrors()"><div class="grow"></div><span class="vpa-card-s mono" x-text="err.path||'No error log found'"></span></div>
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Most frequent messages</div></div>
+            <div class="vpa-tw"><table class="vpa-table"><thead><tr><th>Level</th><th>Message</th><th class="num">Count</th><th>Last</th></tr></thead>
+              <tbody><template x-for="(g,i) in err.groups" :key="i"><tr><td><span class="vpa-tag" :class="['error','crit','alert','emerg'].includes(g.level)?'red':'amber'" x-text="g.level||'-'"></span></td><td style="font-size:12px" x-text="g.msg"></td><td class="num" x-text="g.n"></td><td class="vpa-card-s" x-text="g.last"></td></tr></template></tbody></table>
+              <div class="vpa-empty" x-show="!err.groups.length">No errors logged.</div></div>
+          </div>
+          <div class="vpa-card"><div class="vpa-card-h"><div class="vpa-card-t">Latest lines</div></div>
+            <div class="vpa-log" style="max-height:360px"><template x-for="(l,i) in err.lines" :key="i"><div style="white-space:pre-wrap" x-text="l"></div></template></div></div>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div x-show="tab==='settings'">
+        <div class="vpa-card">
+          <div class="vpa-form">
+            <div class="vpa-sec">Collection</div>
+            <label>Websites</label>
+            <div><label class="vpa-switch sm"><input type="checkbox" :checked="!f.sites.length" @change="f.sites = $event.target.checked ? [] : allSites.slice()"><span class="t"></span>Every website</label>
+              <div class="vpss-checks" x-show="f.sites.length">
+                <template x-for="s in allSites" :key="s"><label><input type="checkbox" :value="s" x-model="f.sites"> <span x-text="s"></span></label></template>
+              </div></div>
+            <label>Read logs every</label>
+            <div class="row"><input type="number" min="30" max="3600" class="form-input" x-model.number="f.interval"><span class="vpa-unit">seconds</span></div>
+            <label>Keep statistics</label>
+            <div class="row"><input type="number" min="1" max="400" class="form-input" x-model.number="f.retention_days"><span class="vpa-unit">days</span></div>
+            <div class="vpa-sec">Exclusions</div>
+            <label>Ignore IP addresses</label>
+            <div><textarea class="form-input" rows="3" style="font-family:var(--font-mono);font-size:12px" x-model="exIps" placeholder="203.0.113.10&#10;198.51.100.0/24"></textarea>
+              <div class="hint">Your office, uptime monitors, your own server. One per line.</div></div>
+            <label>Ignore URL paths</label>
+            <div><textarea class="form-input" rows="3" style="font-family:var(--font-mono);font-size:12px" x-model="exPaths" placeholder="/wp-cron.php&#10;/health"></textarea>
+              <div class="hint">Requests whose path starts with one of these are not counted.</div></div>
+            <div class="vpa-sec">Regions</div>
+            <label>Country database</label>
+            <div><span class="vpa-tag" :class="geoInfo && geoInfo.db && geoInfo.module ? 'green':'amber'" x-text="geoInfo && geoInfo.db ? geoInfo.db : 'Not installed'"></span>
+              <button class="btn btn-ghost btn-xs" style="margin-left:6px" @click="installGeo()" :disabled="busy==='geo'" x-text="busy==='geo'?'Downloading...':(geoInfo&&geoInfo.db?'Update':'Download')"></button>
+              <div class="hint">Free DB-IP Lite country database (CC BY 4.0), shared with the WAF's region rules.</div></div>
+            <div class="vpa-form-actions">
+              <button class="btn btn-primary btn-sm" @click="saveSettings()" :disabled="busy==='settings'" x-text="busy==='settings'?'Saving...':'Save settings'"></button>
+            </div>
+          </div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Data</div><div class="vpa-card-s" x-text="'Database size '+fmtBytes(dbSize)"></div></div>
+            <div class="r">
+              <select class="form-input" style="width:220px" x-model="cleanSite"><option value="">All websites</option><template x-for="s in allSites" :key="s"><option :value="s" x-text="s"></option></template></select>
+              <button class="btn btn-danger btn-sm" @click="cleanup()">Delete statistics</button>
+            </div></div>
+          <div class="vpa-card-s">Deleting statistics does not touch the access logs; the next read starts from where the logs are now.</div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div><div class="vpa-card-t">Collector service</div><div class="vpa-card-s" x-text="'vortexpanel-app-site-stats: '+svc"></div></div>
+            <div class="r"><button class="btn btn-ghost btn-sm" @click="service('restart')">Restart</button></div></div>
+        </div>
+        <div class="vpa-card">
+          <div class="vpa-card-h"><div class="vpa-card-t">Operation logs</div></div>
+          <div class="vpa-tw"><table class="vpa-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr></thead>
+            <tbody><template x-for="(o,i) in ops" :key="i"><tr><td x-text="vpaTime(o.t)"></td><td x-text="o.user"></td><td><span class="vpa-tag" x-text="o.action"></span></td><td x-text="o.detail"></td></tr></template></tbody></table>
+            <div class="vpa-empty" x-show="!ops.length">No operations yet.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

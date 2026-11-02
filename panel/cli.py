@@ -249,7 +249,7 @@ def set_unit(host=None, port=None, tls=None):
 def firewall_open(port):
     sh(f'command -v ufw >/dev/null && ufw allow {port}/tcp')
     sh(f'command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1 && '
-       f'firewall-cmd --permanent --add-port={port}/tcp && firewall-cmd --reload')
+       f'firewall-cmd --permanent --add-port={port}/tcp && firewall-cmd --add-port={port}/tcp')
 
 
 def cmd_port(a):

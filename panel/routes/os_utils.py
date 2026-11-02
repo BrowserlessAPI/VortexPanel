@@ -224,7 +224,7 @@ def nginx_install_script(channel='stable'):
         '(ufw status 2>/dev/null | grep -q "Status: active" && ufw allow 443/udp 2>/dev/null); '
         '(firewall-cmd --state 2>/dev/null | grep -q running && '
         'firewall-cmd --add-port=443/udp --permanent 2>/dev/null && '
-        'firewall-cmd --reload 2>/dev/null); '
+        'firewall-cmd --add-port=443/udp 2>/dev/null); '
         'true )'
     )
     if os_info['family'] == 'debian':
