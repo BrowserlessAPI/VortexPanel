@@ -43,6 +43,8 @@ options {
 	directory "/var/named";
 	dump-file "/var/named/data/cache_dump.db";
 	statistics-file "/var/named/data/named_stats.txt";
+	managed-keys-directory "/var/named/dynamic";
+	session-keyfile "/run/named/session.key";
 	listen-on port 53 { any; };
 	listen-on-v6 port 53 { any; };
 	allow-query { any; };
@@ -55,6 +57,10 @@ include "/etc/named.rfc1912.zones";
 C
     [ -e /etc/named.rfc1912.zones ] || echo '// zones (VortexPanel)' > /etc/named.rfc1912.zones
     chgrp named /etc/named.conf /etc/named.rfc1912.zones; chmod 0640 /etc/named.conf
+  fi
+  # (also for a named.conf this script wrote earlier) DNSSEC managed keys must be writable
+  if grep -q '^// BIND configuration (VortexPanel)' /etc/named.conf && ! grep -q 'managed-keys-directory' /etc/named.conf; then
+    sed -i 's|^\(\s*statistics-file .*\)$|\1\n\tmanaged-keys-directory "/var/named/dynamic";|' /etc/named.conf
   fi
   KEY=/etc/rndc.key
 fi

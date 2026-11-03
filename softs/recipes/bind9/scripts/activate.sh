@@ -7,5 +7,6 @@ if has_systemd; then
 else
   "$VP_CURRENT/sbin/rndc" stop >/dev/null 2>&1 || pkill -x named 2>/dev/null || true
   for i in $(seq 1 10); do pgrep -x named >/dev/null || break; sleep 1; done
-  setsid "$VP_CURRENT/sbin/vp-named-start" </dev/null >/dev/null 2>&1 &
+  install -d /run/named
+  setsid "$VP_CURRENT/sbin/vp-named-start" -g </dev/null >/run/named/vp-start.log 2>&1 &
 fi

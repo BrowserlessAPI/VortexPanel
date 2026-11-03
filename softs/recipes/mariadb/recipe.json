@@ -85,7 +85,8 @@
         "numactl-libs",
         "systemd-libs",
         "ncurses-libs",
-        "procps-ng"
+        "procps-ng",
+        "libcrypt.so.1()(64bit)"
       ]
     }
   },

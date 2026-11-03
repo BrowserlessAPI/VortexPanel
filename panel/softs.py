@@ -418,7 +418,8 @@ def ensure_packages(names, repos=(), log=None):
         # package names, or rpm capabilities such as perl(Sys::Hostname) that resolve on every
         # EL version whichever package carries the module there
         alts = [x for x in str(spec).split('|') if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.+_:-]*', x)
-                or (family() == 'rpm' and re.fullmatch(r'perl\([A-Za-z0-9_:]{1,80}\)', x))]
+                or (family() == 'rpm' and (re.fullmatch(r'perl\([A-Za-z0-9_:]{1,80}\)', x)
+                                           or re.fullmatch(r'lib[A-Za-z0-9_.+-]{1,80}\.so\.[0-9.]+\(\)\(64bit\)', x)))]
         if not alts or any(_pkg_installed(a) for a in alts):
             continue
         pick = next((a for a in alts if len(alts) == 1 or _pkg_exists(a)), alts[0])

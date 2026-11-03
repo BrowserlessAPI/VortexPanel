@@ -21,7 +21,8 @@ UNIVERSAL_TEST_TARGETS = ['el8', 'el10', 'ubuntu22', 'debian13']
 
 SCRIPT = r'''
 set -e
-. /etc/os-release
+# read only the OS version: sourcing os-release would overwrite VERSION (the software version)
+VERSION_ID="$(. /etc/os-release; echo "$VERSION_ID")"
 if command -v apt-get >/dev/null; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq && apt-get install -y -qq python3 curl procps ca-certificates >/dev/null
@@ -70,7 +71,17 @@ def main():
     if a.image:
         images = [a.image]
     elif man['target'] == 'linux':
-        images = [C.TARGETS['targets'][t]['image'] for t in UNIVERSAL_TEST_TARGETS]
+        # systems with their own build (also_targets) never get the universal one: test the
+        # next system of that family instead (el8 -> el9)
+        own = set(C.recipes()[man['app']].get('also_targets') or [])
+        tg = []
+        for t in UNIVERSAL_TEST_TARGETS:
+            if t in own:
+                fam = [x for x in C.TARGETS['targets'] if x[:2] == t[:2] and x not in own and x not in UNIVERSAL_TEST_TARGETS]
+                t = fam[0] if fam else None
+            if t and t not in tg:
+                tg.append(t)
+        images = [C.TARGETS['targets'][t]['image'] for t in tg]
     else:
         images = [C.TARGETS['targets'][man['target']]['image']]
     failed = [img for img in images if test(a.zip, img) != 0]

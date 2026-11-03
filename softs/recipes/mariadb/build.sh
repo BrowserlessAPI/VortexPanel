@@ -13,6 +13,9 @@ if [ "$ARCH" = x86_64 ]; then
 else
   tar -xzf "$SOURCE_FILE" --no-same-owner
   S="$(echo "$SRC"/mariadb-"$VERSION")"
+  # the ABI check compares preprocessed plugin headers with MariaDB's reference copies, a
+  # check for MariaDB developers that fails on newer compilers; it does not change the build
+  sed -i 's/SET(RUN_ABI_CHECK 1)/SET(RUN_ABI_CHECK 0)/' "$S/cmake/abi_check.cmake"
   mkdir build; cd build
   cmake "$S" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX="$PREFIX" -DINSTALL_LAYOUT=STANDALONE \
     -DWITH_SSL=system -DWITH_ZLIB=system -DWITH_PCRE=system -DWITH_SYSTEMD=yes -DWITH_LIBAIO=ON -DWITH_NUMA=ON \
