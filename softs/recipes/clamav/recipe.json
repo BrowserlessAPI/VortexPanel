@@ -22,7 +22,22 @@
       "rpm": [
         "ca-certificates"
       ]
-    }
+    },
+    "build_el8": [
+      "cmake",
+      "rust",
+      "cargo",
+      "openssl-devel",
+      "libcurl-devel",
+      "json-c-devel",
+      "pcre2-devel",
+      "bzip2-devel",
+      "zlib-devel",
+      "libxml2-devel",
+      "ncurses-devel",
+      "systemd-devel",
+      "python3"
+    ]
   },
   "replaces": {
     "deb": [
@@ -37,5 +52,13 @@
       "clamav-update"
     ]
   },
-  "smoke": "smoke.sh"
+  "smoke": "smoke.sh",
+  "comment": "Cisco Talos' Linux release package (one build for every Linux with glibc 2.30 or newer). EL8 has glibc 2.28, so it gets its own build compiled from the same release's source (also_targets).",
+  "also_targets": [
+    "el8"
+  ],
+  "rpm_repos": [
+    "epel",
+    "crb"
+  ]
 }

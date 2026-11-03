@@ -2,9 +2,12 @@
 # libinjection and mbedTLS included). Lua, MaxMind and ssdeep are used when this system has them.
 cd "$SRC"; tar -xzf "$SOURCE_FILE" --no-same-owner
 cd modsecurity-v"$VERSION"
-./configure --prefix="$PREFIX" --disable-static --disable-doxygen-doc --disable-examples \
+# EL8's libmaxminddb takes a non-const MMDB_s*; the call does not modify it, so the
+# const conversion is allowed there instead of building without GeoIP rules
+EXTRA_CXX="-O2 -g"; [ "$TARGET" = el8 ] && EXTRA_CXX="$EXTRA_CXX -fpermissive"
+CXXFLAGS="${CXXFLAGS:-} $EXTRA_CXX" ./configure --prefix="$PREFIX" --disable-static --disable-doxygen-doc --disable-examples \
   --with-pcre2 --with-lmdb --with-yajl --with-maxmind --with-curl --with-libxml >/dev/null 2>&1 \
-|| ./configure --prefix="$PREFIX" --disable-static --disable-doxygen-doc --disable-examples --with-pcre2
+|| CXXFLAGS="${CXXFLAGS:-} $EXTRA_CXX" ./configure --prefix="$PREFIX" --disable-static --disable-doxygen-doc --disable-examples --with-pcre2
 make -j"$JOBS"
 make install DESTDIR="$DEST" >/dev/null
 rm -rf "$DEST$PREFIX"/lib/*.la "$DEST$PREFIX/lib/pkgconfig"

@@ -1,7 +1,7 @@
 #!/bin/bash
 . "$(dirname "$0")/lib.sh"
 if [ -f /etc/bind/named.conf ]; then CONF=/etc/bind/named.conf; else CONF=/etc/named.conf; fi
-"$VP_CURRENT/sbin/named-checkconf" "$CONF" || fail "named-checkconf rejected $CONF with BIND $VP_VERSION"
+"$VP_CURRENT/bin/named-checkconf" "$CONF" || fail "named-checkconf rejected $CONF with BIND $VP_VERSION"
 if has_systemd; then
   systemctl restart named
 else

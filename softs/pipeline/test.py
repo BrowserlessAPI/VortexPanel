@@ -28,7 +28,8 @@ if command -v apt-get >/dev/null; then
   PY=python3
 else
   if [ "${VERSION_ID%%.*}" = 8 ]; then dnf -y -q install python3.11 curl procps-ng >/dev/null; PY=python3.11
-  else dnf -y -q install python3 curl procps-ng >/dev/null || true; PY=python3; fi
+  else dnf -y -q install python3 procps-ng >/dev/null; PY=python3; fi
+  command -v curl >/dev/null || dnf -y -q install curl >/dev/null   # EL9/10 images already have curl-minimal
 fi
 mkdir -p /vp && cp /panel/softs.py /vp/softs.py
 echo "=== install"

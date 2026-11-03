@@ -38,17 +38,17 @@
         "perl-interpreter",
         "curl",
         "ca-certificates",
-        "perl-Data-Dumper",
-        "perl-File-Temp",
-        "perl-Getopt-Long",
-        "perl-Sys-Hostname|perl-interpreter",
-        "perl-version",
-        "perl-Digest-SHA",
-        "perl-JSON-PP",
-        "perl-File-Path",
-        "perl-File-Basename|perl-interpreter",
-        "perl-Socket",
-        "perl-Time-HiRes"
+        "perl(Data::Dumper)",
+        "perl(File::Temp)",
+        "perl(Getopt::Long)",
+        "perl(Sys::Hostname)",
+        "perl(version)",
+        "perl(Digest::SHA)",
+        "perl(JSON::PP)",
+        "perl(File::Path)",
+        "perl(File::Basename)",
+        "perl(Socket)",
+        "perl(Time::HiRes)"
       ]
     }
   },

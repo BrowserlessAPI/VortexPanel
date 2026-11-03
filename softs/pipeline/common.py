@@ -64,7 +64,9 @@ def build_matrix(recipe):
     build for every Linux (an upstream binary), the others one build per system (compiled)."""
     arches = recipe.get('arches') or list(TARGETS['arches'])
     if recipe.get('universal'):
-        return [('linux', a) for a in arches]
+        # also_targets: systems the universal binary cannot run on (e.g. older glibc) get their
+        # own build; a server takes its own system's build first (panel/softs.py file_keys)
+        return [('linux', a) for a in arches] + [(t, a) for t in recipe.get('also_targets') or [] for a in arches]
     tg = recipe.get('targets') or list(TARGETS['targets'])
     uni = recipe.get('universal_arches') or []
     return [('linux', a) for a in arches if a in uni] + [(t, a) for t in tg for a in arches if a not in uni]

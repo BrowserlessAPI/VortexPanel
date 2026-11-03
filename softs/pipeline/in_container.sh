@@ -28,8 +28,9 @@ if [ "$FAMILY" = deb ]; then
   apt-get install -y -qq --no-install-recommends python3 ca-certificates curl xz-utils tar gzip bzip2 file \
       build-essential pkg-config >/dev/null
 else
-  dnf -y -q install python3 ca-certificates curl xz tar gzip bzip2 file gcc gcc-c++ make pkgconf-pkg-config \
-      dnf-plugins-core findutils which >/dev/null
+  # --allowerasing: EL9/10 images ship curl-minimal, which conflicts with the full curl
+  dnf -y -q install --allowerasing python3 ca-certificates curl xz tar gzip bzip2 file gcc gcc-c++ make \
+      pkgconf-pkg-config dnf-plugins-core findutils which >/dev/null
   if [ -n "$(json rpm_repos)" ]; then
     dnf -y -q install epel-release >/dev/null || true
     dnf config-manager --set-enabled crb >/dev/null 2>&1 || dnf config-manager --set-enabled powertools >/dev/null 2>&1 || true
@@ -45,7 +46,7 @@ if [ -n "$PKGS$TPKGS" ]; then
     # one missing optional package must not stop the build: install what exists
     for p in $PKGS $TPKGS; do apt-get install -y -qq --no-install-recommends "$p" >/dev/null 2>&1 || say "  (not available here: $p)"; done
   else
-    for p in $PKGS $TPKGS; do dnf -y -q install "$p" >/dev/null 2>&1 || say "  (not available here: $p)"; done
+    for p in $PKGS $TPKGS; do dnf -y -q install --allowerasing "$p" >/dev/null 2>&1 || say "  (not available here: $p)"; done
   fi
 fi
 

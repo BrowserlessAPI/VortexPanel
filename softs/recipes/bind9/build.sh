@@ -29,7 +29,7 @@ fi
 case " $OPTIONS " in *" -u "*) ;; *) OPTIONS="-u $U $OPTIONS" ;; esac
 case " $OPTIONS " in *" -c "*) ;; *) OPTIONS="-c $CONF $OPTIONS" ;; esac
 install -d -m 0775 -o root -g "$U" /run/named 2>/dev/null || install -d /run/named
-"$D/named-checkconf" "$CONF" || exit 1
+"$D/../bin/named-checkconf" "$CONF" || exit 1
 # shellcheck disable=SC2086
 exec "$D/named" -f $OPTIONS "$@"
 WRAP

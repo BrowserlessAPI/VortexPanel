@@ -27,6 +27,7 @@ def main():
     ap.add_argument('--plan', default='plan.json')
     ap.add_argument('--review', default='review.json')
     ap.add_argument('--notes', default='notes')
+    ap.add_argument('--approve', default='', help='app=version,...: publish although the AI review held it')
     a = ap.parse_args()
     plan = json.load(open(a.plan)) if os.path.exists(a.plan) else []
     review = json.load(open(a.review)) if os.path.exists(a.review) else {}
@@ -42,7 +43,10 @@ def main():
     for item in plan:
         app, ver = item['app'], item['version']
         rv = review.get(f'{app}-{ver}') or {}
-        if rv.get('hold'):
+        approved = f'{app}={ver}' in [x.strip() for x in a.approve.split(',')]
+        if rv.get('hold') and approved:
+            C.log(f'{app} {ver}: held by the AI review, published because it was approved')
+        if rv.get('hold') and not approved:
             skipped.append(f'{app} {ver}: held by the AI review ({"; ".join(rv.get("breaking") or [])[:300]})')
             continue
         old_rel = C.find_release(cat, app, ver) or {}

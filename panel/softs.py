@@ -382,7 +382,14 @@ def _pkg_installed(name):
         r = subprocess.run(['dpkg-query', '-W', '-f=${Status}', name], capture_output=True, text=True)
         return 'install ok installed' in r.stdout
     if fam == 'rpm':
-        return subprocess.run(['rpm', '-q', name], capture_output=True).returncode == 0
+        if subprocess.run(['rpm', '-q', name], capture_output=True).returncode == 0:
+            return True
+        # EL9/10 images ship curl-minimal/libcurl-minimal, which conflict with curl/libcurl:
+        # the minimal variant (or any package providing the name) counts as installed
+        if subprocess.run(['rpm', '-q', '--whatprovides', name], capture_output=True).returncode == 0:
+            return True
+        return name in ('curl', 'libcurl') and \
+            subprocess.run(['rpm', '-q', name + '-minimal'], capture_output=True).returncode == 0
     return False
 
 
@@ -408,7 +415,10 @@ def ensure_packages(names, repos=(), log=None):
                            shell=True, capture_output=True)
     need = []
     for spec in names:
-        alts = [x for x in str(spec).split('|') if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.+_:-]*', x)]
+        # package names, or rpm capabilities such as perl(Sys::Hostname) that resolve on every
+        # EL version whichever package carries the module there
+        alts = [x for x in str(spec).split('|') if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.+_:-]*', x)
+                or (family() == 'rpm' and re.fullmatch(r'perl\([A-Za-z0-9_:]{1,80}\)', x))]
         if not alts or any(_pkg_installed(a) for a in alts):
             continue
         pick = next((a for a in alts if len(alts) == 1 or _pkg_exists(a)), alts[0])

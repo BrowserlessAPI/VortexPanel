@@ -12,6 +12,9 @@ def resolve(item, target, arch):
     if not assets:
         r = C.http_json(f'https://api.github.com/repos/Cisco-Talos/clamav/releases/tags/clamav-{item["version"]}')
         assets = {a['name']: a['browser_download_url'] for a in r.get('assets', [])}
+    if target != 'linux':                    # compiled from the release's source tarball
+        name = f'clamav-{item["version"]}.tar.gz'
+        return {'VP_URL': assets[name]} if name in assets else None
     for name in (f'clamav-{item["version"]}.linux.{arch}.deb',
                  f'clamav-{item["version"]}.linux.{"arm64" if arch == "aarch64" else "amd64"}.deb'):
         if name in assets:
