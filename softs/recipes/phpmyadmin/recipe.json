@@ -1,0 +1,11 @@
+{
+  "name": "phpMyAdmin",
+  "panel_id": "phpmyadmin",
+  "kind": "mirror",
+  "watch": {"type": "github-tags", "repo": "phpmyadmin/phpmyadmin", "regex": "^RELEASE_(\\d+_\\d+_\\d+)$", "sep": "_",
+            "track_depth": 1, "keep_tracks": 1, "min_track": "5"},
+  "files": {
+    "tarball": {"url": "https://files.phpmyadmin.net/phpMyAdmin/{version}/phpMyAdmin-{version}-all-languages.tar.gz",
+                "sha256_url": "https://files.phpmyadmin.net/phpMyAdmin/{version}/phpMyAdmin-{version}-all-languages.tar.gz.sha256"}
+  }
+}

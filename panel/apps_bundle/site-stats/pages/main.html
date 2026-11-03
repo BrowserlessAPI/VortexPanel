@@ -148,6 +148,15 @@
         </div>
       </div>
 
+      <!-- other domains pointed at this server -->
+      <div class="vpa-note warn vpss-xhost" x-show="(tab==='overview' || tab==='sources' || tab==='pages') && (hosts.items||[]).length">
+        <div style="flex:1;min-width:0">
+          <b x-text="vpaNum(foreignTotal())+' requests for other domains'"></b> reached your websites and were <b>not counted</b>:
+          <span class="mono" x-text="(hosts.items||[]).slice(0,4).map(i => i.k).join(', ')+((hosts.items||[]).length>4?' ...':'')"></span>.
+          These domains point at this server's IP address, so the first website answers for them.
+        </div>
+        <button class="btn btn-primary btn-xs" x-show="!hosts.catchall.on" @click="setCatchall(true)" :disabled="busy==='catchall'">Block unknown host names</button>
+      </div>
       <!-- LIST VIEWS: regions / spiders / pages / sources / clients / status -->
       <template x-for="lv in listViews" :key="lv.tab">
         <div x-show="tab===lv.tab">
@@ -224,6 +233,13 @@
             <label>Ignore URL paths</label>
             <div><textarea class="form-input" rows="3" style="font-family:var(--font-mono);font-size:12px" x-model="exPaths" placeholder="/wp-cron.php&#10;/health"></textarea>
               <div class="hint">Requests whose path starts with one of these are not counted.</div></div>
+            <div class="vpa-sec">Website matching</div>
+            <label>Own domains only</label>
+            <div><label class="vpa-switch sm"><input type="checkbox" :checked="hosts.own_domains_only" @change="setOwnDomains($event.target.checked)" :disabled="busy==='hostlog'"><span class="t"></span>Count a request only when it is for one of the website's own domain names</label>
+              <div class="hint" x-text="hosts.logging && hosts.logging.nginx ? ('Adds the host name as the last field of each website\'s nginx access log (vp_stats format). '+(hosts.logging.tagged||0)+' log(s) record it'+(hosts.logging.untagged ? ', '+hosts.logging.untagged+' not yet' : '')+'. Requests logged before this was on cannot be checked.') : 'Needs nginx; Caddy logs include the host already.'"></div></div>
+            <label>Unknown host names</label>
+            <div><label class="vpa-switch sm"><input type="checkbox" :checked="hosts.catchall && hosts.catchall.on" @change="setCatchall($event.target.checked)" :disabled="busy==='catchall' || !(hosts.catchall && hosts.catchall.nginx)"><span class="t"></span>Close connections for host names no website here serves</label>
+              <div class="hint">Without this, any domain pointed at this server's IP shows your first website. Adds a default nginx server (HTTP 444, TLS handshake refused).<span x-show="hosts.catchall && (hosts.catchall.other_default||[]).length" x-text="' Already marked as default: '+(hosts.catchall.other_default||[]).join(', ')"></span></div></div>
             <div class="vpa-sec">Regions</div>
             <label>Country database</label>
             <div><span class="vpa-tag" :class="geoInfo && geoInfo.db && geoInfo.module ? 'green':'amber'" x-text="geoInfo && geoInfo.db ? geoInfo.db : 'Not installed'"></span>

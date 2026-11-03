@@ -1,0 +1,10 @@
+{
+  "name": "Adminer",
+  "panel_id": "adminer",
+  "kind": "mirror",
+  "watch": {"type": "github-releases", "repo": "vrana/adminer", "regex": "^v(\\d+\\.\\d+\\.\\d+)$", "track_depth": 1, "keep_tracks": 1, "min_track": "5"},
+  "files": {
+    "adminer": {"asset": "adminer-{version}.php"},
+    "mongo": {"url": "https://raw.githubusercontent.com/vrana/adminer/v{version}/plugins/drivers/mongo.php"}
+  }
+}

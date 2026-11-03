@@ -1,0 +1,13 @@
+{
+  "name": "Pure-FTPd",
+  "panel_id": "pure-ftpd",
+  "watch": {"type": "github-tags", "repo": "jedisct1/pure-ftpd", "regex": "^(\\d+\\.\\d+\\.\\d+)$", "keep_tracks": 1, "track_depth": 2, "min_track": "1.0"},
+  "changelog": "https://github.com/jedisct1/pure-ftpd/blob/{version}/NEWS",
+  "source": "https://download.pureftpd.org/pub/pure-ftpd/releases/pure-ftpd-{version}.tar.gz",
+  "service": "pure-ftpd",
+  "rpm_repos": ["epel", "crb"],
+  "deps": {"build": {"deb": ["libssl-dev", "libpam0g-dev", "libcap-dev"], "rpm": ["openssl-devel", "pam-devel", "libcap-devel"]},
+           "run": {"deb": ["openssl"], "rpm": ["openssl"]}},
+  "replaces": {"deb": ["pure-ftpd", "pure-ftpd-common", "pure-ftpd-mysql", "pure-ftpd-postgresql", "pure-ftpd-ldap"], "rpm": ["pure-ftpd"]},
+  "smoke": "smoke.sh"
+}

@@ -7,10 +7,13 @@ schedule):
                                                   Hosting Module licence check-in (when due)
     vortexpanel-metrics.timer    every minute     monitoring history, alerts,
                                                   App Store version data (daily)
+    vortexpanel-softs.timer      every 6 hours    VortexPanel software builds: new versions,
+                                                  notifications, automatic updates
 
     python3 -m panel.tasks bandwidth
     python3 -m panel.tasks backups
     python3 -m panel.tasks metrics
+    python3 -m panel.tasks softs
     python3 -m panel.tasks install-timers
 """
 import os, sys, subprocess
@@ -22,6 +25,7 @@ _UNITS = {
     'vortexpanel-bandwidth': ('VortexPanel per-site traffic history', 'bandwidth', 'OnCalendar=*:0/5\nRandomizedDelaySec=30'),
     'vortexpanel-backups': ('VortexPanel scheduled website backups', 'backups', 'OnCalendar=*:0/5'),
     'vortexpanel-metrics': ('VortexPanel monitoring history and alerts', 'metrics', 'OnCalendar=*:*:00\nAccuracySec=5s'),
+    'vortexpanel-softs': ('VortexPanel software updates', 'softs', 'OnCalendar=00/6:23\nRandomizedDelaySec=45min'),
 }
 
 
@@ -172,6 +176,13 @@ def main(argv):
             versions.refresh()
         except Exception:
             pass
+        return 0
+    if cmd == 'softs':
+        from panel import softs
+        try:
+            print(softs.periodic())
+        except softs.SoftError as e:
+            print(f'software updates: {e}')
         return 0
     if cmd == 'install-timers':
         p = install_timers()

@@ -1,0 +1,92 @@
+{
+  "name": "Apache2",
+  "panel_id": "apache2",
+  "comment": "httpd built against the system APR/APR-util/PCRE2/OpenSSL with every module and MPM shared, plus mod_security2 (ModSecurity v2) built with this httpd's apxs. Debian/Ubuntu keep the /etc/apache2 layout (apache2.conf, envvars, mods-/sites-/conf-available+enabled; a2enmod, a2ensite, a2query and apache2ctl are provided by this build); RHEL family uses /etc/httpd (httpd.service, alias apache2.service). A switch from the OS packages also replaces libapache2-mod-php (PHP moves to PHP-FPM, checked first by precheck.sh) and libapache2-mod-security2 (built in). /etc/apache2 and /etc/modsecurity are copied before the packages are removed and put back exactly afterwards.",
+  "watch": {
+    "type": "github-tags",
+    "repo": "apache/httpd",
+    "regex": "^(2\\.4\\.\\d+)$",
+    "keep_tracks": 1,
+    "track_depth": 2,
+    "min_track": "2.4"
+  },
+  "changelog": "https://downloads.apache.org/httpd/CHANGES_2.4",
+  "source": "https://archive.apache.org/dist/httpd/httpd-{version}.tar.bz2",
+  "service": "apache2",
+  "rpm_repos": [
+    "epel",
+    "crb"
+  ],
+  "deps": {
+    "build": {
+      "deb": [
+        "libapr1-dev",
+        "libaprutil1-dev",
+        "libpcre2-dev",
+        "libssl-dev",
+        "zlib1g-dev",
+        "libnghttp2-dev",
+        "libxml2-dev",
+        "libjansson-dev",
+        "libcurl4-openssl-dev",
+        "libbrotli-dev",
+        "liblua5.4-dev",
+        "perl",
+        "libyajl-dev",
+        "git"
+      ],
+      "rpm": [
+        "apr-devel",
+        "apr-util-devel",
+        "pcre2-devel",
+        "openssl-devel",
+        "zlib-devel",
+        "libnghttp2-devel",
+        "libxml2-devel",
+        "jansson-devel",
+        "libcurl-devel",
+        "brotli-devel",
+        "lua-devel",
+        "perl",
+        "yajl-devel",
+        "git"
+      ]
+    },
+    "run": {
+      "deb": [
+        "ca-certificates",
+        "media-types",
+        "procps"
+      ],
+      "rpm": [
+        "ca-certificates",
+        "mailcap",
+        "procps-ng",
+        "openssl"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "apache2",
+      "apache2-bin",
+      "apache2-utils",
+      "libapache2-mod-php*",
+      "libapache2-mod-security2"
+    ],
+    "rpm": [
+      "httpd",
+      "httpd-core",
+      "httpd-tools",
+      "mod_ssl",
+      "mod_http2",
+      "mod_lua",
+      "mod_security"
+    ]
+  },
+  "smoke": "smoke.sh",
+  "keep_on_switch": [
+    "/etc/apache2",
+    "/etc/modsecurity"
+  ]
+}

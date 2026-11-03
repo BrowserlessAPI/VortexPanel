@@ -1,0 +1,11 @@
+{
+  "name": "Composer",
+  "panel_id": "composer",
+  "universal": true,
+  "arches": ["noarch"],
+  "watch": {"type": "composer", "track_depth": 1, "keep_tracks": 1, "min_track": "2"},
+  "changelog": "https://github.com/composer/composer/releases/tag/{version}",
+  "deps": {"build": {"deb": [], "rpm": []}, "run": {"deb": [], "rpm": []}},
+  "replaces": {"deb": ["composer"], "rpm": ["composer"]},
+  "smoke": "smoke.sh"
+}

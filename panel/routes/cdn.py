@@ -6,6 +6,51 @@ cdn_bp = Blueprint('cdn', __name__)
 def req(): return _vp_authed()
 
 CONFIG_FILE = '/opt/vortexpanel/cdn_config.json'
+# CDN Manager is part of the panel (no service of its own); the App Store turns it
+# on and off. Off: its page is hidden and its API refuses every call except this switch.
+MODULE_FILE = '/opt/vortexpanel/data/cdn_module.json'
+
+
+def module_enabled():
+    try:
+        with open(MODULE_FILE) as f:
+            return bool(json.load(f).get('enabled', True))
+    except (OSError, ValueError):
+        return True
+
+
+def module_state():
+    cfg = load_config()
+    providers = sorted(k for k, v in cfg.items() if isinstance(v, dict))
+    active = cfg.get('active_cdn', '')
+    names = {p['id']: p['name'] for p in CDN_PROVIDERS}
+    return {'enabled': module_enabled(), 'active': active, 'active_name': names.get(active, active),
+            'providers': [{'id': p, 'name': names.get(p, p)} for p in providers]}
+
+
+@cdn_bp.before_request
+def _module_switch():
+    if request.path.startswith('/api/cdn/') and request.path != '/api/cdn/module' and not module_enabled():
+        return jsonify({'ok': False, 'error': 'CDN Manager is turned off (App Store > CDN Manager > Settings).'}), 403
+    return None
+
+
+@cdn_bp.route('/api/cdn/module', methods=['GET', 'POST'])
+def cdn_module():
+    if not req(): return jsonify({'ok': False}), 401
+    if request.method == 'POST':
+        on = bool((request.get_json(silent=True) or {}).get('enabled'))
+        os.makedirs(os.path.dirname(MODULE_FILE), exist_ok=True)
+        tmp = MODULE_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump({'enabled': on}, f)
+        os.replace(tmp, MODULE_FILE)
+        try:
+            from panel.routes.os_utils import panel_cache
+            panel_cache.invalidate('modules_list')
+        except Exception:
+            pass
+    return jsonify({'ok': True, 'state': module_state()})
 
 _SECRET_KEYS = ('api_key', 'api_token', 'auth_secret')
 _CF_ID_RE = re.compile(r'^[0-9a-f]{32}$')

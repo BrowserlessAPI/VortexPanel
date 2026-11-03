@@ -1,0 +1,7 @@
+{
+  "name": "Roundcube",
+  "panel_id": "roundcube",
+  "kind": "mirror",
+  "watch": {"type": "github-releases", "repo": "roundcube/roundcubemail", "regex": "^(\\d+\\.\\d+\\.\\d+)$", "keep_tracks": 2, "min_track": "1.6"},
+  "files": {"tarball": {"asset": "roundcubemail-{version}-complete.tar.gz"}}
+}

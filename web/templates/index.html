@@ -4060,10 +4060,16 @@
       <div x-show="page==='modules'" x-data="modulesPage()">
         <div class="page-header">
           <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software and panel Apps<span x-show="tested && tested.in_use" x-text="' - versions tested by VortexPanel (list #'+(tested&&tested.serial)+', '+((tested&&tested.issued)||'').slice(0,10)+')'"></span></div></div>
-          <button class="btn btn-ghost btn-sm" @click="refreshCatalog()" :disabled="!!(catalogRefreshing)">
-            <span x-show="!catalogRefreshing">Update App List</span>
-            <span x-show="catalogRefreshing">Updating…</span>
-          </button>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="btn btn-ghost btn-sm" @click="openVx()" x-show="vx.status && vx.status.configured">
+              <span>Software updates</span>
+              <span class="badge badge-orange" style="font-size:10px;margin-left:4px" x-show="(vx.updates||[]).length" x-text="(vx.updates||[]).length"></span>
+            </button>
+            <button class="btn btn-ghost btn-sm" @click="refreshCatalog()" :disabled="!!(catalogRefreshing)">
+              <span x-show="!catalogRefreshing">Update App List</span>
+              <span x-show="catalogRefreshing">Updating…</span>
+            </button>
+          </div>
         </div>
 
         <!-- Category filter tabs -->
@@ -4152,9 +4158,19 @@
                       <span class="vp-d-inline-block" x-show="m.installedVer"
                             style="font-size:11px;font-family:var(--font-mono);background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2);padding:1px 7px;border-radius:8px;font-weight:600;display:inline-block"
                             x-text="'v'+m.installedVer"></span>
+                      <span class="vpx-tag" x-show="m.vortex && m.vortex.slots" title="Installed from a VortexPanel build">VortexPanel build</span>
+                      <button type="button" class="vpx-withdrawn" x-show="m.vortex && (m.vortex.withdrawn||[]).length" @click="askRollback(m)"
+                              x-text="'Withdrawn - roll back'"></button>
                       <button type="button" class="vp-upd-badge" x-show="m.hasUpdate" @click="askUpdate(m)" :disabled="!!(m.loading)"
-                              :title="m.updateSecurity ? 'A security build of v'+m.installedVer+' is available. Click to install it.' : 'Click to update to v'+m.latestSameTrack"
-                              x-text="m.updateSecurity ? 'Security update' : 'Update to v'+m.latestSameTrack"></button>
+                              :class="m.updateSecurity ? 'vp-upd-sec' : ''"
+                              :title="(m.updateSecurity && !(m.vortex && m.vortex.slots)) ? 'A security build of v'+m.installedVer+' is available. Click to install it.' : ((m.updateSecurity ? 'Security update. ' : '')+'Click to update to v'+m.latestSameTrack)"
+                              x-text="(m.updateSecurity && !(m.vortex && m.vortex.slots)) ? 'Security update' : ('Update to v'+m.latestSameTrack)"></button>
+                      <!-- Built-in module (CDN Manager): on/off and what it is connected to -->
+                      <div x-show="m.builtinState" style="display:flex;align-items:center;gap:5px">
+                        <span :class="'dot dot-'+((m.builtinState||{}).enabled ? 'green' : 'gray')" style="flex-shrink:0"></span>
+                        <span style="font-size:11px;color:var(--text-muted)"
+                              x-text="!(m.builtinState||{}).enabled ? 'turned off' : ((m.builtinState||{}).active ? (m.builtinState.active_name+' connected') : 'on, no CDN connected')"></span>
+                      </div>
                       <!-- Service status -->
                       <div class="vp-d-flex" x-show="m.manage" style="display:flex;align-items:center;gap:5px">
                         <span :class="'dot dot-'+(m.svcStatus==='active'?'green':m.svcStatus?'red':'gray')" style="flex-shrink:0"></span>
@@ -4174,6 +4190,8 @@
                           Settings
                         </button>
                         <span x-show="m.builtin" class="badge badge-gray" style="font-size:10px">Built-in</span>
+                        <button class="btn btn-ghost btn-xs" x-show="vxPrev(m)" @click="askRollback(m)" :title="'Go back to v'+vxPrev(m)" x-text="'Roll back'"></button>
+                        <button class="btn btn-ghost btn-xs" x-show="m.vortex && m.vortex.switchable" @click="askSwitch(m)" title="Move to the VortexPanel build of this software">Use VortexPanel build</button>
                         <button class="btn btn-danger btn-xs" @click="uninstall(m)" :disabled="!!(m.loading)" x-show="!m.builtin">
                           <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
                           <span x-text="m.loading?'…':'Uninstall'"></span>
@@ -4196,7 +4214,7 @@
                     <!-- NOT INSTALLED -->
                     <div class="vp-d-flex" x-show="!m.installed" style="display:flex;align-items:center;gap:6px;flex-wrap:nowrap">
                       <!-- Version selector (multi-version modules) -->
-                      <div x-show="m.versions && m.versions.length > 1">
+                      <div x-show="m.versions && m.versions.length > 1 && !getConflict(m) && !m.blocked">
                         <select class="form-input vp-ver-sel" x-model="m.selVer">
                           <template x-for="v in m.versions" :key="v.value">
                             <option :value="v.value" x-text="v.label"></option>
@@ -4206,14 +4224,14 @@
                       <!-- Install button — disabled if conflict exists -->
                       <div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">
                         <button class="btn btn-primary btn-xs"
-                                x-show="!getConflict(m)" @click="install(m)" :disabled="!!(m.loading || m.blocked)">
+                                x-show="!getConflict(m) && !m.blocked" @click="install(m)" :disabled="!!(m.loading)">
                           <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
                           <span x-text="m.loading?'Installing…':'Install'"></span>
                         </button>
                         <div x-show="m.blocked && !getConflict(m)" class="vp-conflict" x-text="m.blocked"></div>
                         <div x-show="getConflict(m)" class="vp-conflict"
                              :title="'Remove '+(getConflict(m)?.name||'')+' first, or keep it: they use the same port or files'"
-                             x-text="'Not available: '+(getConflict(m)?.name||'')+' is installed'"></div>
+                             x-text="(getConflict(m)?.name||'')+' is installed'"></div>
                       </div>
                     </div>
                   </td></template>
@@ -4256,22 +4274,143 @@
         </div>
 
         <!-- Version picker modal -->
+        <!-- CDN Manager (built into the panel) -->
+        <div class="modal-overlay" x-show="cdnMod.show" @click.self="cdnMod.show=false">
+          <div class="modal" style="max-width:520px">
+            <div class="modal-hd"><div><div class="modal-title">CDN Manager</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Part of the panel: it runs inside VortexPanel and has no service of its own</div></div>
+              <button class="modal-close" @click="cdnMod.show=false">×</button></div>
+            <div class="vpx-grid" style="grid-template-columns:1fr 1fr">
+              <div class="vpx-stat"><div class="vp-upd-k">Status</div><div class="vpx-v" :style="'color:'+((cdnMod.state||{}).enabled?'var(--green)':'var(--text-muted)')" x-text="(cdnMod.state||{}).enabled ? 'On' : 'Off'"></div></div>
+              <div class="vpx-stat"><div class="vp-upd-k">Connected CDN</div><div class="vpx-v" x-text="(cdnMod.state||{}).active_name || 'None'"></div></div>
+            </div>
+            <div x-show="((cdnMod.state||{}).providers||[]).length" style="font-size:12.5px;color:var(--text-secondary);margin-top:12px"
+                 x-text="'Saved providers: '+((cdnMod.state||{}).providers||[]).map(p => p.name).join(', ')"></div>
+            <label class="vpx-check" style="display:flex;gap:10px;align-items:flex-start;margin-top:14px;font-size:13px">
+              <input type="checkbox" :checked="(cdnMod.state||{}).enabled" :disabled="cdnMod.busy" @change="setCdnModule($event.target.checked)">
+              <span>Turn on CDN Manager<span style="display:block;font-size:12px;color:var(--text-muted)">Off hides its page and closes its API. Saved provider settings are kept and work again when it is turned back on.</span></span>
+            </label>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="cdnMod.show=false">Close</button>
+              <button class="btn btn-primary" x-show="(cdnMod.state||{}).enabled" @click="cdnMod.show=false; window.dispatchEvent(new CustomEvent('nav', {detail: {page: 'cdn'}}))">Open CDN Manager</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- VortexPanel builds: roll back -->
+        <div class="modal-overlay" x-show="vxRb.show" @click.self="vxRb.show=false">
+          <div class="modal" style="max-width:460px">
+            <div class="modal-hd"><div><div class="modal-title" x-text="'Roll back '+(vxRb.mod?.name||'')"></div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Switches back to the previous version kept on this server</div></div>
+              <button class="modal-close" @click="vxRb.show=false">×</button></div>
+            <template x-for="(sl, key) in (vxRb.mod?.vortex?.slots||{})" :key="key">
+              <label class="vpx-slot" x-show="sl.prev">
+                <input type="radio" name="vxrb" :value="key" x-model="vxRb.slot">
+                <span style="font-family:var(--font-mono)" x-text="'v'+sl.version+'  ->  v'+sl.prev"></span>
+              </label>
+            </template>
+            <p style="font-size:12.5px;color:var(--text-secondary);margin:10px 0 14px">The previous version starts and is checked. If it does not start, the current version stays in use.</p>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="vxRb.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="runRollback()" :disabled="!vxRb.slot">Roll back</button></div>
+          </div>
+        </div>
+
+        <!-- VortexPanel builds: switch an OS-package install to the build -->
+        <div class="modal-overlay" x-show="vxSw.show" @click.self="vxSw.show=false">
+          <div class="modal" style="max-width:500px">
+            <div class="modal-hd"><div><div class="modal-title" x-text="'Use the VortexPanel build of '+(vxSw.mod?.name||'')"></div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px" x-text="'Installed now'+(vxSw.mod?.installedVer ? ': v'+vxSw.mod.installedVer : '')+' from the operating system packages'"></div></div>
+              <button class="modal-close" @click="vxSw.show=false">×</button></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <span style="font-size:12.5px;color:var(--text-secondary)">Version</span>
+              <select class="form-input vp-ver-sel" x-model="vxSw.ver">
+                <template x-for="v in (vxSw.mod?.versions||[])" :key="v.value"><option :value="v.value.slice(3)" x-text="v.label"></option></template>
+              </select>
+            </div>
+            <ul class="vpx-list">
+              <li>The build is downloaded and verified first.</li>
+              <li>The operating system packages are removed; configuration files and websites are kept.</li>
+              <li>If the build does not start, the packages are reinstalled and the old setup comes back.</li>
+              <li>From then on, updates come from VortexPanel.</li>
+            </ul>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="vxSw.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="runSwitch()" :disabled="!vxSw.ver">Switch</button></div>
+          </div>
+        </div>
+
+        <!-- VortexPanel builds: update settings -->
+        <div class="modal-overlay" x-show="vx.show" @click.self="vx.show=false">
+          <div class="modal" style="max-width:640px">
+            <div class="modal-hd"><div><div class="modal-title">Software updates</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Server software built, tested and signed by VortexPanel</div></div>
+              <button class="modal-close" @click="vx.show=false">×</button></div>
+            <div class="vpx-grid">
+              <div class="vpx-stat"><div class="vp-upd-k">This server</div><div class="vpx-v" x-text="vx.status?.supported ? (vx.status.target+' / '+vx.status.arch) : ('not supported ('+(vx.status?.arch||'')+')')"></div></div>
+              <div class="vpx-stat"><div class="vp-upd-k">Catalog</div><div class="vpx-v" x-text="vx.status?.serial ? ('#'+vx.status.serial) : 'not loaded'"></div></div>
+              <div class="vpx-stat"><div class="vp-upd-k">Last check</div><div class="vpx-v" x-text="vx.status?.checked ? vpaAgo(vx.status.checked) : 'never'"></div></div>
+            </div>
+            <div x-show="vx.status?.error" class="vpx-err" x-text="'Last check: '+(vx.status?.error||'')"></div>
+            <div class="vpx-form">
+              <label><span>Channel</span>
+                <select class="form-input" x-model="vx.form.channel">
+                  <option value="stable">Stable - releases after 24 hours on beta</option>
+                  <option value="beta">Beta - new versions as soon as they pass the tests</option>
+                </select></label>
+              <label><span>Automatic updates</span>
+                <select class="form-input" x-model="vx.form.auto">
+                  <option value="security">Security updates only</option>
+                  <option value="all">All updates</option>
+                  <option value="off">Off - I update from the App Store</option>
+                </select></label>
+              <label class="vpx-check"><input type="checkbox" x-model="vx.form.notify"><span>Send alerts for new versions and automatic updates (Settings > Alerts channels)</span></label>
+            </div>
+            <div x-show="(vx.updates||[]).length" style="margin-top:14px">
+              <div class="vp-upd-k" style="margin-bottom:6px">Available now</div>
+              <table class="vp-upd-tbl" style="border:1px solid var(--border);border-radius:8px"><thead><tr><th>Software</th><th>Installed</th><th>New</th><th></th></tr></thead>
+                <tbody><template x-for="u in (vx.updates||[])" :key="u.app+u.slot">
+                  <tr><td x-text="u.app"></td><td x-text="u.from"></td><td style="color:var(--green)" x-text="u.to || 'withdrawn'"></td>
+                    <td><span class="badge badge-red" style="font-size:10px" x-show="u.security">Security</span></td></tr>
+                </template></tbody></table>
+            </div>
+            <div x-show="(vx.events||[]).length" style="margin-top:14px">
+              <div class="vp-upd-k" style="margin-bottom:6px">Recent activity</div>
+              <div class="vpx-events"><template x-for="e in (vx.events||[]).slice(0,12)" :key="e.t+e.title">
+                <div><span class="vpx-time" x-text="vpaTime(e.t)"></span><span x-text="e.title"></span></div>
+              </template></div>
+            </div>
+            <div class="modal-ft">
+              <button class="btn btn-ghost" @click="vxCheck()" :disabled="vx.busy" x-text="vx.busy ? 'Checking...' : 'Check now'"></button>
+              <button class="btn btn-primary" @click="vxSave()">Save</button>
+            </div>
+          </div>
+        </div>
+
         <!-- App Store: confirm a software update -->
         <div class="modal-overlay" x-show="updModal.show" @click.self="updModal.show=false">
           <div class="modal" style="max-width:560px">
             <div class="modal-hd">
               <div>
                 <div class="modal-title" x-text="'Update '+(updModal.mod?.name||'')"></div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">From this server's package sources, same version track</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px" x-text="updModal.mod?.vortex?.slots ? 'VortexPanel build, tested on this system before release' : 'From this server\'s package sources, same version track'"></div>
               </div>
               <button class="modal-close" @click="updModal.show=false">×</button>
             </div>
             <div class="vp-upd-head">
               <div><div class="vp-upd-k">Installed</div><div class="vp-upd-v" x-text="'v'+(updModal.mod?.installedVer||'')"></div></div>
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-              <div><div class="vp-upd-k">After the update</div><div class="vp-upd-v" style="color:var(--green)" x-text="updModal.mod?.updateSecurity ? 'v'+(updModal.mod?.installedVer||'')+' security build' : 'v'+(updModal.mod?.latestSameTrack||'')"></div></div>
+              <div><div class="vp-upd-k">After the update</div><div class="vp-upd-v" style="color:var(--green)" x-text="(updModal.mod?.updateSecurity && !updModal.mod?.vortex?.slots) ? 'v'+(updModal.mod?.installedVer||'')+' security build' : 'v'+(updModal.mod?.latestSameTrack||'')"></div></div>
             </div>
-            <p style="font-size:12.5px;color:var(--text-secondary);margin:12px 0 10px">Your configuration files are kept. Running services restart once, which takes a few seconds.</p>
+            <template x-for="u in (updModal.mod?.vortex?.updates||[])" :key="u.slot">
+              <div class="vpx-note">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="font:600 13px var(--font-mono)" x-text="u.from+' -> '+u.to"></span>
+                  <span class="badge badge-red" style="font-size:10px" x-show="u.security">Security</span>
+                  <template x-for="c in (u.cves||[]).slice(0,6)" :key="c"><span class="vpx-cve" x-text="c"></span></template>
+                </div>
+                <div style="font-size:12.5px;color:var(--text-secondary);margin-top:6px;white-space:pre-line" x-text="u.notes || 'No release notes.'"></div>
+              </div>
+            </template>
+            <p style="font-size:12.5px;color:var(--text-secondary);margin:12px 0 10px" x-text="updModal.mod?.vortex?.slots ? 'The new version is installed next to the current one and checked after it starts. If it does not start, the current version keeps running. Configuration files are kept.' : 'Your configuration files are kept. Running services restart once, which takes a few seconds.'"></p>
             <div x-show="(updModal.mod?.updatePackages||[]).length" style="max-height:210px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
               <table class="vp-upd-tbl"><thead><tr><th>Package</th><th>Installed</th><th>New</th></tr></thead>
                 <tbody><template x-for="p in (updModal.mod?.updatePackages||[])" :key="p.name">

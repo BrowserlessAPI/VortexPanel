@@ -15,9 +15,10 @@ DEFAULTS = {
     'sites': [],                # [] = every site
     'interval': 60,             # seconds between collector runs
     'top_keep': 500,            # rows kept per list per day after the day ends
+    'own_domains_only': True,   # count a request only when its host is one of the site's names
 }
 
-TOP_KINDS = ('url', 'ref', 'search', 'spider', 'browser', 'os', 'device', 'status', 'url404', 'method')
+TOP_KINDS = ('url', 'ref', 'search', 'spider', 'browser', 'os', 'device', 'status', 'url404', 'method', 'xhost')
 
 
 def db_path():
@@ -64,6 +65,7 @@ def clean_settings(d):
     out['retention_days'] = appkit.clamp_int(d.get('retention_days', cur['retention_days']), 1, 400, 30)
     out['interval'] = appkit.clamp_int(d.get('interval', cur['interval']), 30, 3600, 60)
     out['top_keep'] = appkit.clamp_int(d.get('top_keep', cur['top_keep']), 50, 5000, 500)
+    out['own_domains_only'] = bool(d.get('own_domains_only', cur.get('own_domains_only', True)))
     ips = []
     for tok in (d.get('exclude_ips', cur['exclude_ips']) or []):
         ip = appkit.parse_ip(tok)

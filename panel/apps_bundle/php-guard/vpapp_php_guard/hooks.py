@@ -18,6 +18,10 @@ def upgrade(log, old_version):
     from vpapp_php_guard import engine
     ok, err = engine.apply_rules()
     log('Rules refreshed.' if ok else 'Rules could not be refreshed: ' + err)
+    old = [l['ver'] for l in engine.layouts() if engine.version_status(l)['outdated']]
+    if old:
+        log(f'Snuffleupagus {engine.SRC_TAG} is available: rebuild the module for PHP {", ".join(old)} on the App page '
+            '(PHP versions tab, "Rebuild"). The current module keeps working until then.')
 
 
 def uninstall(log, purge):

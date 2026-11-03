@@ -72,6 +72,31 @@ def bundled():
     return out
 
 
+def cloud():
+    """Apps published on the VortexPanel download server: {id: release} (cached catalog)."""
+    try:
+        from panel import softs
+        if not softs.configured():
+            return {}
+        return softs.panel_apps()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def best(aid, b=None, c=None):
+    """(manifest, source) of the newest available copy: 'bundle' (shipped with the
+    panel) or 'cloud' (published since). None when neither has the App."""
+    b = bundled() if b is None else b
+    c = cloud() if c is None else c
+    bm, cr = b.get(aid), c.get(aid)
+    if cr and (not bm or _vt(cr.get('version')) > _vt(bm.get('version'))):
+        man = dict(cr.get('manifest') or {}, id=aid, kind='app', version=cr['version'])
+        if cr.get('requires_core'):
+            man['requires_core'] = cr['requires_core']
+        return man, 'cloud'
+    return (bm, 'bundle') if bm else (None, '')
+
+
 def installed():
     out = {}
     try:
@@ -95,11 +120,13 @@ def _vt(v):
 def catalog():
     """Everything the App Store needs, one entry per bundled or installed App."""
     from panel import plugins
-    b, i = bundled(), installed()
+    b, i, c = bundled(), installed(), cloud()
     core = plugins.core_version()
     out = []
-    for aid in sorted(set(b) | set(i), key=lambda k: (b.get(k) or i.get(k)).get('order', 100)):
-        m = b.get(aid) or i.get(aid)
+    avail = {aid: best(aid, b, c) for aid in set(b) | set(c)}
+    for aid in sorted(set(avail) | set(i), key=lambda k: ((avail.get(k) or (None,))[0] or i.get(k) or {}).get('order', 100)):
+        bm, src = avail.get(aid) or (None, '')
+        m = bm or i.get(aid)
         inst = i.get(aid)
         reg = plugins.REGISTRY.get(aid) or {}
         compatible = plugins.version_matches(core, m.get('requires_core', ''))
@@ -108,15 +135,16 @@ def catalog():
             'summary': m.get('summary') or '', 'description': m.get('description') or '',
             'icon': m.get('icon') or 'puzzle', 'color': m.get('color') or '#0e7490',
             'features': m.get('features') or [], 'engines': m.get('engines') or [],
-            'version': (b.get(aid) or {}).get('version') or '',
+            'version': (bm or {}).get('version') or '',
             'installed': bool(inst), 'installed_version': (inst or {}).get('version') or '',
-            'has_update': bool(inst and b.get(aid) and _vt(b[aid].get('version')) > _vt(inst.get('version'))),
+            'has_update': bool(inst and bm and _vt(bm.get('version')) > _vt(inst.get('version'))),
+            'source': src, 'notes': ((c.get(aid) or {}).get('notes') or '') if src == 'cloud' else '',
             'status': reg.get('status') or ('pending-restart' if inst else ''),
             'error': reg.get('error') or '',
             'page': ((inst or m).get('pages') or [{}])[0].get('id', ''),
             'compatible': compatible, 'requires_core': m.get('requires_core', ''),
             'conflicts': m.get('conflicts') or [],
-            'bundled': aid in b,
+            'bundled': aid in b, 'cloud': aid in c,
         })
     return out
 
@@ -199,9 +227,9 @@ def start(action, aid, purge=False):
 
 def precheck(aid):
     from panel import plugins
-    m = bundled().get(aid)
+    m, _src = best(aid)
     if not m:
-        return False, 'This App is not available in this panel version.'
+        return False, 'This App is not available.'
     if not plugins.version_matches(plugins.core_version(), m.get('requires_core', '')):
         return False, f'{m["name"]} needs VortexPanel {m.get("requires_core")}; update the panel first.'
     inst = installed()
@@ -309,13 +337,24 @@ def run_install(aid, update=False):
     j = Job('update' if update else 'install', aid)
     if os.geteuid() != 0:
         return j.done(False, 'Must run as root.')
-    man = bundled().get(aid)
+    man, src = best(aid)
     if not man:
-        return j.done(False, 'This App is not in this panel version.')
+        return j.done(False, 'This App is not available.')
     if not update:
         ok, why = precheck(aid)
         if not ok:
             return j.done(False, why)
+    src_dir = os.path.join(BUNDLE_DIR, aid)
+    if src == 'cloud':
+        j.say(f'Downloading {man.get("name", aid)} {man["version"]} from the VortexPanel download server...')
+        try:
+            from panel import softs
+            src_dir = softs.fetch_panel_app(aid, man['version'], os.path.join(APPS_DATA, '_download', aid), j.say)
+            man = _manifest(src_dir) or man
+            if man.get('id') != aid:
+                return j.done(False, 'The downloaded App does not match.')
+        except Exception as e:  # noqa: BLE001
+            return j.done(False, f'Could not download the App: {e}')
     final = os.path.join(PLUGINS_DIR, aid)
     new = final + '.new'
     prev_man = installed().get(aid)
@@ -325,7 +364,9 @@ def run_install(aid, update=False):
           + (f' (from {prev_man.get("version")})' if prev_man else '') + '...')
     try:
         os.makedirs(PLUGINS_DIR, exist_ok=True)
-        _copy_bundle(os.path.join(BUNDLE_DIR, aid), new)
+        _copy_bundle(src_dir, new)
+        if src == 'cloud':
+            shutil.rmtree(src_dir, ignore_errors=True)
     except (OSError, ValueError) as e:
         shutil.rmtree(new, ignore_errors=True)
         return j.done(False, f'Could not copy the App files: {e}')

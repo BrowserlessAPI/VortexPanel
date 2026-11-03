@@ -12,8 +12,11 @@ def install(log):
                                  'maxminddb>=2.5,<3'], timeout=300)
         log('Country lookups enabled (maxminddb).' if rc == 0 else
             'maxminddb could not be installed (no internet?); everything works except the Regions view.')
-    from vpapp_site_stats import collector, store
+    from vpapp_site_stats import collector, hostguard, store
     store.connect().close()
+    if store.settings().get('own_domains_only', True):
+        ok, msg = hostguard.apply_logging()
+        log(('Host names in the logs: ' if ok else 'Host names in the logs not enabled: ') + msg)
     n = len(collector.log_sources())
     log(f'Found {n} website access log(s); the collector reads the last 64 MB of each to start with.')
     appkit.install_service(APP, 'vpapp_site_stats.collector', description='Website Statistics collector')
@@ -29,4 +32,8 @@ def upgrade(log, old_version):
 
 def uninstall(log, purge):
     appkit.remove_units(APP)
+    from vpapp_site_stats import hostguard
+    ok, msg = hostguard.remove_logging()
+    if not ok:
+        log('The host-name log format could not be removed: ' + msg)
     log('Collector stopped. Your websites and their logs are not changed.')

@@ -1,0 +1,16 @@
+{
+  "name": "BIND9 DNS",
+  "panel_id": "bind9",
+  "watch": {"type": "github-tags", "repo": "isc-projects/bind9", "regex": "^v(9\\.\\d*[02468]\\.\\d+)$", "keep_tracks": 2, "min_track": "9.18", "pages": 6},
+  "changelog": "https://downloads.isc.org/isc/bind9/{version}/doc/arm/html/changelog.html",
+  "source": "https://downloads.isc.org/isc/bind9/{version}/bind-{version}.tar.xz",
+  "service": "named",
+  "rpm_repos": ["epel", "crb"],
+  "deps": {"build": {"deb": ["liburcu-dev", "libuv1-dev", "libssl-dev", "libcap-dev", "libnghttp2-dev", "libjson-c-dev", "libxml2-dev",
+                             "libidn2-dev", "libjemalloc-dev", "libmaxminddb-dev", "zlib1g-dev", "pkg-config"],
+                     "rpm": ["userspace-rcu-devel", "libuv-devel", "openssl-devel", "libcap-devel", "libnghttp2-devel", "json-c-devel", "libxml2-devel",
+                             "libidn2-devel", "jemalloc-devel", "libmaxminddb-devel", "zlib-devel", "pkgconf-pkg-config", "perl"]},
+           "run": {"deb": ["dns-root-data"], "rpm": []}},
+  "replaces": {"deb": ["bind9", "bind9utils", "bind9-utils"], "rpm": ["bind", "bind-chroot"]},
+  "smoke": "smoke.sh"
+}

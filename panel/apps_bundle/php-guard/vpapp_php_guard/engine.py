@@ -22,8 +22,8 @@ from vpapp_php_guard import rules as R
 
 APP = 'php-guard'
 SRC_REPO = 'https://github.com/jvoisin/snuffleupagus'
-SRC_TAG = 'v0.11.0'
-SRC_COMMIT = '0ba0c07bc7c9cba401e061ae86ee4adcf9655be9'    # verified after cloning
+SRC_TAG = 'v0.14.0'      # first release that builds on PHP 8.5 (and fixes a cookie-encryption type confusion)
+SRC_COMMIT = '1d8614af85a1baa52656f3adbd4684772df91288'    # verified after cloning
 RULES_DIR = '/etc/vortexpanel/php-guard'
 RULES_FILE = os.path.join(RULES_DIR, 'snuffleupagus.rules')
 INI_NAME = '99-vortexpanel-php-guard.ini'
@@ -56,6 +56,8 @@ def layouts():
 def tools(lay):
     """phpize, php-config and the dev package for one version."""
     v, vn = lay['ver'], lay['ver'].replace('.', '')
+    if lay['flavor'] == 'vortex':          # VortexPanel PHP build ships phpize and the headers
+        return f'/usr/bin/phpize{v}', f'/usr/bin/php-config{v}', []
     if lay['flavor'] == 'debian':
         return f'/usr/bin/phpize{v}', f'/usr/bin/php-config{v}', [f'php{v}-dev']
     if lay['flavor'] == 'remi':
@@ -76,7 +78,7 @@ def ext_dir(lay):
 
 def ini_path(lay):
     v, vn = lay['ver'], lay['ver'].replace('.', '')
-    if lay['flavor'] == 'debian':
+    if lay['flavor'] in ('debian', 'vortex'):
         return f'/etc/php/{v}/fpm/conf.d/{INI_NAME}'
     if lay['flavor'] == 'remi':
         return f'/etc/opt/remi/php{vn}/php.d/{INI_NAME}'
@@ -92,7 +94,11 @@ def version_status(lay):
     so = so_path(lay)
     ini = ini_path(lay)
     loaded = 'snuffleupagus' in _php().php_loaded_modules(lay) if os.path.exists(ini) else False
-    return {'ver': lay['ver'], 'flavor': lay['flavor'], 'built': bool(so and os.path.exists(so)),
+    built_tag = (appkit.read_json(APP, 'built.json', {}) or {}).get(lay['ver'], '')
+    built = bool(so and os.path.exists(so))
+    return {'ver': lay['ver'], 'flavor': lay['flavor'], 'built': built,
+            # built with an older Snuffleupagus release (or before this was recorded): rebuild
+            'outdated': built and built_tag != SRC_TAG, 'built_tag': built_tag,
             'enabled': os.path.exists(ini), 'loaded': loaded, 'svc': lay['svc'], 'svc_state': _php().php_svc_status(lay),
             'ini': ini, 'so': so}
 
@@ -180,6 +186,7 @@ def build(ver, log):
     if not so or not os.path.exists(so):
         raise RuntimeError('the module was not installed into the PHP extension folder')
     log(f'Built {so}')
+    appkit.update_json(APP, 'built.json', lambda d: dict(d or {}, **{ver: SRC_TAG}), {})
     return so
 
 

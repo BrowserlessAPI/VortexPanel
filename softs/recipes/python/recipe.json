@@ -1,0 +1,11 @@
+{
+  "name": "Python",
+  "panel_id": "python",
+  "universal": true,
+  "coexist": true,
+  "watch": {"type": "python-standalone", "track_depth": 2, "keep_tracks": 5, "min_track": "3.10"},
+  "changelog": "https://docs.python.org/release/{version}/whatsnew/changelog.html",
+  "deps": {"build": {"deb": [], "rpm": []}, "run": {"deb": ["ca-certificates"], "rpm": ["ca-certificates"]}},
+  "replaces": {"deb": [], "rpm": []},
+  "smoke": "smoke.sh"
+}

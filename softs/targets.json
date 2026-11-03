@@ -1,0 +1,16 @@
+{
+  "comment": "Build targets. One build per target and architecture for software compiled against the system libraries; 'linux' builds run on every target. The panel maps /etc/os-release to one of these ids (see panel/softs.py target()).",
+  "targets": {
+    "el8":      {"image": "almalinux:8",  "family": "rpm", "covers": "AlmaLinux, Rocky Linux, RHEL, Oracle Linux, CentOS Stream, CloudLinux 8"},
+    "el9":      {"image": "almalinux:9",  "family": "rpm", "covers": "AlmaLinux, Rocky Linux, RHEL, Oracle Linux, CentOS Stream, CloudLinux 9"},
+    "el10":     {"image": "almalinux:10", "family": "rpm", "covers": "AlmaLinux, Rocky Linux, RHEL, Oracle Linux, CentOS Stream 10"},
+    "ubuntu22": {"image": "ubuntu:22.04", "family": "deb", "covers": "Ubuntu 22.04"},
+    "ubuntu24": {"image": "ubuntu:24.04", "family": "deb", "covers": "Ubuntu 24.04"},
+    "debian12": {"image": "debian:12",    "family": "deb", "covers": "Debian 12"},
+    "debian13": {"image": "debian:13",    "family": "deb", "covers": "Debian 13"}
+  },
+  "arches": {
+    "x86_64":  {"runner": "ubuntu-24.04"},
+    "aarch64": {"runner": "ubuntu-24.04-arm"}
+  }
+}

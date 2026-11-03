@@ -1,0 +1,122 @@
+{
+  "name": "MariaDB",
+  "panel_id": "mariadb",
+  "arches": [
+    "x86_64",
+    "aarch64"
+  ],
+  "comment": "x86_64: the MariaDB Foundation's systemd binary tarball (one build for every Linux). aarch64: MariaDB has no binary tarball for ARM, so it is compiled from the same release's source for each system, in the same standalone layout. Each release series is its own track: updates never move a server to another series.",
+  "watch": {
+    "type": "url-regex",
+    "url": "https://archive.mariadb.org/",
+    "regex": "mariadb-(\\d+\\.\\d+\\.\\d+)/",
+    "tracks": [
+      "13.0",
+      "12.3",
+      "11.8",
+      "11.4",
+      "10.11"
+    ]
+  },
+  "changelog": "https://mariadb.com/kb/en/mariadb-{under}-release-notes/",
+  "service": "mariadb",
+  "deps": {
+    "build": {
+      "deb": [
+        "cmake",
+        "bison",
+        "libncurses-dev",
+        "libssl-dev",
+        "libaio-dev",
+        "libnuma-dev",
+        "libsystemd-dev",
+        "zlib1g-dev",
+        "libpcre2-dev",
+        "liblz4-dev",
+        "libzstd-dev",
+        "libxml2-dev",
+        "libcurl4-openssl-dev",
+        "libbz2-dev",
+        "liblzma-dev",
+        "libsnappy-dev",
+        "libpam0g-dev",
+        "libcrack2-dev",
+        "gnutls-dev",
+        "libboost-dev",
+        "pkg-config",
+        "git"
+      ],
+      "rpm": [
+        "cmake",
+        "bison",
+        "ncurses-devel",
+        "openssl-devel",
+        "libaio-devel",
+        "numactl-devel",
+        "systemd-devel",
+        "zlib-devel",
+        "pcre2-devel",
+        "lz4-devel",
+        "libzstd-devel",
+        "libxml2-devel",
+        "libcurl-devel",
+        "bzip2-devel",
+        "xz-devel",
+        "snappy-devel",
+        "pam-devel",
+        "cracklib-devel",
+        "gnutls-devel",
+        "boost-devel",
+        "pkgconf-pkg-config",
+        "git",
+        "gcc-c++"
+      ]
+    },
+    "run": {
+      "deb": [
+        "libaio1t64|libaio1",
+        "libnuma1",
+        "libsystemd0",
+        "libncurses6|libncurses5",
+        "procps"
+      ],
+      "rpm": [
+        "libaio",
+        "numactl-libs",
+        "systemd-libs",
+        "ncurses-libs",
+        "procps-ng"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "mariadb-server",
+      "mariadb-server-*",
+      "mariadb-client",
+      "mariadb-client-*",
+      "mariadb-plugin-*",
+      "mariadb-backup",
+      "default-mysql-server",
+      "default-mysql-server-core",
+      "default-mysql-client",
+      "default-mysql-client-core"
+    ],
+    "rpm": [
+      "MariaDB-server",
+      "MariaDB-client",
+      "MariaDB-backup",
+      "mariadb-server",
+      "mariadb",
+      "mariadb-backup"
+    ]
+  },
+  "smoke": "smoke.sh",
+  "universal_arches": [
+    "x86_64"
+  ],
+  "rpm_repos": [
+    "epel",
+    "crb"
+  ]
+}

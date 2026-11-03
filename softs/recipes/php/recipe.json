@@ -1,0 +1,116 @@
+{
+  "name": "PHP",
+  "panel_id": "php",
+  "coexist": true,
+  "watch": {
+    "type": "php-net",
+    "majors": [
+      "8"
+    ],
+    "track_depth": 2,
+    "tracks": [
+      "8.1",
+      "8.2",
+      "8.3",
+      "8.4",
+      "8.5"
+    ]
+  },
+  "changelog": "https://www.php.net/ChangeLog-{major}.php",
+  "source": "https://www.php.net/distributions/php-{version}.tar.xz",
+  "rpm_repos": [
+    "epel",
+    "crb"
+  ],
+  "deps": {
+    "build": {
+      "deb": [
+        "autoconf",
+        "bison",
+        "re2c",
+        "libxml2-dev",
+        "libssl-dev",
+        "libcurl4-openssl-dev",
+        "libzip-dev",
+        "libonig-dev",
+        "libsqlite3-dev",
+        "libpng-dev",
+        "libjpeg-dev",
+        "libwebp-dev",
+        "libfreetype-dev",
+        "libfreetype6-dev",
+        "libicu-dev",
+        "libsodium-dev",
+        "libgmp-dev",
+        "libxslt1-dev",
+        "libreadline-dev",
+        "libbz2-dev",
+        "libargon2-dev",
+        "libpq-dev",
+        "libsystemd-dev",
+        "libldap2-dev",
+        "libffi-dev",
+        "libenchant-2-dev",
+        "libtidy-dev",
+        "libavif-dev",
+        "libedit-dev",
+        "libmagickwand-dev",
+        "libmemcached-dev",
+        "zlib1g-dev"
+      ],
+      "rpm": [
+        "autoconf",
+        "bison",
+        "re2c",
+        "libxml2-devel",
+        "openssl-devel",
+        "libcurl-devel",
+        "libzip-devel",
+        "oniguruma-devel",
+        "sqlite-devel",
+        "libpng-devel",
+        "libjpeg-turbo-devel",
+        "libwebp-devel",
+        "freetype-devel",
+        "libicu-devel",
+        "libsodium-devel",
+        "gmp-devel",
+        "libxslt-devel",
+        "readline-devel",
+        "bzip2-devel",
+        "libargon2-devel",
+        "libpq-devel",
+        "systemd-devel",
+        "openldap-devel",
+        "libffi-devel",
+        "libtidy-devel",
+        "libedit-devel",
+        "ImageMagick-devel",
+        "libmemcached-awesome-devel",
+        "libmemcached-devel",
+        "zlib-devel"
+      ]
+    },
+    "run": {
+      "deb": [
+        "ca-certificates",
+        "tzdata"
+      ],
+      "rpm": [
+        "ca-certificates",
+        "tzdata"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "php{track}",
+      "php{track}-*"
+    ],
+    "rpm": [
+      "php{nodot}",
+      "php{nodot}-php-*"
+    ]
+  },
+  "smoke": "smoke.sh"
+}

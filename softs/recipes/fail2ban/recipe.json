@@ -1,0 +1,13 @@
+{
+  "name": "Fail2ban",
+  "panel_id": "fail2ban",
+  "universal": true,
+  "watch": {"type": "github-tags", "repo": "fail2ban/fail2ban", "regex": "^(\\d+\\.\\d+\\.\\d+)$", "keep_tracks": 1, "min_track": "1.1"},
+  "changelog": "https://raw.githubusercontent.com/fail2ban/fail2ban/{tag}/ChangeLog",
+  "source": "https://github.com/fail2ban/fail2ban/archive/refs/tags/{version}.tar.gz",
+  "service": "fail2ban",
+  "deps": {"build": {"deb": ["python3"], "rpm": ["python3"]},
+           "run": {"deb": ["python3", "python3-systemd", "nftables|iptables"], "rpm": ["python3", "python3-systemd"]}},
+  "replaces": {"deb": ["fail2ban"], "rpm": ["fail2ban", "fail2ban-server", "fail2ban-firewalld", "fail2ban-sendmail", "fail2ban-systemd"]},
+  "smoke": "smoke.sh"
+}

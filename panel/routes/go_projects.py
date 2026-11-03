@@ -251,7 +251,8 @@ def apache_enable_modules():
         # httpd package — there is no separate 'mod_proxy' package to install. They're loaded
         # via LoadModule lines in /etc/httpd/conf.modules.d/, uncommented by default on a
         # standard install. We just ensure httpd itself is present; nothing to "enable" here.
-        sh('dnf install -y httpd 2>/dev/null || yum install -y httpd 2>/dev/null || true')
+        # never over an Apache that is already there (the VortexPanel build is not an rpm)
+        sh('command -v httpd >/dev/null 2>&1 || dnf install -y httpd 2>/dev/null || yum install -y httpd 2>/dev/null || true')
 
 def apache_enable_site(name):
     if os_family() == 'debian': sh(f'a2ensite {name} 2>/dev/null')

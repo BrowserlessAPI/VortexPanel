@@ -1,0 +1,12 @@
+{
+  "name": "Caddy",
+  "panel_id": "caddy",
+  "universal": true,
+  "watch": {"type": "github-releases", "repo": "caddyserver/caddy", "regex": "^v(\\d+\\.\\d+\\.\\d+)$", "keep_tracks": 1, "track_depth": 1},
+  "asset_pattern": "caddy_{version}_linux_{goarch}.tar.gz",
+  "changelog": "https://api.github.com/repos/caddyserver/caddy/releases/tags/v{version}",
+  "service": "caddy",
+  "deps": {"build": {"deb": [], "rpm": []}, "run": {"deb": ["ca-certificates"], "rpm": ["ca-certificates"]}},
+  "replaces": {"deb": ["caddy"], "rpm": ["caddy"]},
+  "smoke": "smoke.sh"
+}

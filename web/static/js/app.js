@@ -649,15 +649,21 @@ function rootApp() {
       site:   ['dashboard', 'websites', 'wp', 'files'],
       viewer: ['dashboard', 'monitoring', 'bandwidth', 'services', 'alerts'],
     },
+    cdnOff: false,
     visibleNav() {
       const allow = this._rolePages[this.role];
-      if (!allow) return this.nav;
-      return this.nav.map(g => ({group: g.group, items: g.items.filter(i => allow.includes(i.id))}))
+      // modules turned off in the App Store (CDN Manager) leave the sidebar
+      const hide = i => (i.id === 'cdn' && this.cdnOff);
+      return this.nav.map(g => ({group: g.group, items: g.items.filter(i => (!allow || allow.includes(i.id)) && !hide(i))}))
                      .filter(g => g.items.length);
     },
 
     async init() {
       window.addEventListener('nav', e => this.go(e.detail.page));
+      window.addEventListener('vp:cdn-state', e => { this.cdnOff = !e.detail.enabled; });
+      document.addEventListener('vortex-logged-in', async () => {
+        try { const r = await get('/api/cdn/module'); if (r && r.ok) this.cdnOff = !r.state.enabled; } catch (e) {}
+      });
       window.addEventListener('keydown', e => {
         if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K') && _vpAuthed) { e.preventDefault(); this.openSearch(); }
       });
@@ -3509,6 +3515,9 @@ function modulesPage() {
     modules: [], cat: '',
     verModal:  {show:false, mod:null, selVer:'', action:'install'},
     updModal:  {show:false, mod:null},
+    vxRb: {show:false, mod:null, slot:''},
+    vxSw: {show:false, mod:null, ver:''},
+    vx: {show:false, busy:false, status:null, updates:[], events:[], form:{channel:'stable', auto:'security', notify:true}},
     phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
     installingStream: false,
@@ -3538,6 +3547,7 @@ function modulesPage() {
 
     async load() {
       this.loadApps();
+      this.loadVx();
       const r = await get('/api/modules');
       if (r.ok) this.tested = r.tested || null;
       if (r.ok) this.modules = r.modules.map(m=>({
@@ -3587,7 +3597,46 @@ function modulesPage() {
       return conflict ? {group: m.conflict_group, name: conflict.name, id: conflict.id} : null;
     },
     // PHP versions that can still be added (an installed track is updated with its badge instead)
-    phpAddable(m) { const have = m.installedTracks || []; return (m.versions || []).filter(v => !have.includes(String(v.value))); },
+    phpAddable(m) { const have = m.installedTracks || []; return (m.versions || []).filter(v => !have.includes(String(v.track || v.value))); },
+    // ---- VortexPanel builds
+    // the kept previous version, only when it is older than the one in use (otherwise it is not a rollback)
+    _vxOlder(a, b) { const p = v => String(v).split('.').map(x => parseInt(x, 10) || 0);
+      const x = p(a), y = p(b); for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i]||0) !== (y[i]||0)) return (x[i]||0) < (y[i]||0); } return false; },
+    vxPrev(m) { const sl = (m.vortex && m.vortex.slots) || {};
+      const k = Object.keys(sl).find(k => sl[k].prev && this._vxOlder(sl[k].prev, sl[k].version)); return k ? sl[k].prev : ''; },
+    askRollback(m) { const sl = (m.vortex && m.vortex.slots) || {};
+      this.vxRb = {show:true, mod:m, slot: Object.keys(sl).find(k => sl[k].prev && (this._vxOlder(sl[k].prev, sl[k].version) || (m.vortex.withdrawn||[]).length)) || ''}; },
+    async runRollback() {
+      const {mod, slot} = this.vxRb; this.vxRb.show = false;
+      if (mod) await this._startJob(mod, 'rollback', '', {slot});
+    },
+    askSwitch(m) {
+      const t = (m.installedVer || '').split('.').slice(0, 2).join('.');
+      const vs = m.versions || [];
+      const same = vs.find(v => (v.track && (t === v.track || t.startsWith(v.track + '.') || (m.installedVer || '').startsWith(v.track + '.'))));
+      this.vxSw = {show:true, mod:m, ver: ((same || vs[0] || {}).value || '').slice(3)};
+    },
+    async runSwitch() {
+      const {mod, ver} = this.vxSw; this.vxSw.show = false;
+      if (mod && ver) await this._startJob(mod, 'switch', ver);
+    },
+    async loadVx() {
+      const r = await get('/api/softs/status');
+      if (r.ok) { this.vx.status = r.status; this.vx.updates = r.updates || []; this.vx.events = r.events || [];
+        this.vx.form = Object.assign({}, r.status.settings || this.vx.form); }
+    },
+    async openVx() { await this.loadVx(); this.vx.show = true; },
+    async vxSave() {
+      const r = await post('/api/softs/settings', this.vx.form);
+      if (r.ok) { toast('Saved', 'success'); this.vx.show = false; } else toast(r.error || 'Failed', 'error');
+    },
+    async vxCheck() {
+      this.vx.busy = true;
+      const r = await post('/api/softs/refresh', {});
+      this.vx.busy = false;
+      if (!r.ok) toast(r.error || 'The catalog could not be loaded', 'error');
+      await this.loadVx(); await this.load();
+    },
     askUpdate(m) { this.updModal = {show: true, mod: m}; },
     async runUpdate() {
       const m = this.updModal.mod; this.updModal.show = false;
@@ -3628,9 +3677,9 @@ function modulesPage() {
       await this._startJob(mod, action||'install', selVer);
     },
 
-    async _startJob(m, action, ver) {
+    async _startJob(m, action, ver, extra) {
       m.loading = true;
-      const r = await post(`/api/modules/${m.id}/${action}`, {version: ver});
+      const r = await post(`/api/modules/${m.id}/${action}`, Object.assign({version: ver}, extra || {}));
       if (!r.ok) {
         m.loading = false;
         if (r.open_settings) { await this.openSettings(m); return; }
@@ -3640,7 +3689,9 @@ function modulesPage() {
       const isChannel = ver && ['stable','mainline','latest','builtin'].includes(ver.toLowerCase());
       const verLabel  = ver ? (isChannel ? ' ('+ver+')' : ' v'+ver) : '';
       const label = action==='update' ? `Updating: ${m.name} v${m.installedVer||''}`
-                  : `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel}`;
+                  : action==='rollback' ? `Rolling back: ${m.name}`
+                  : action==='switch' ? `Switching to the VortexPanel build: ${m.name} ${ver.replace(/^vx:/,'')}`
+                  : `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel.replace('vx:','')}`;
       this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:'', message:''};
       this._followJob(r.job_id, (d) => {
         m.loading=false; m.installed=d.installed;
@@ -3809,7 +3860,24 @@ function modulesPage() {
       ddnsLog: '', showAddDomain: false,
     },
 
+    // CDN Manager: built into the panel, switched on/off here (no service to start)
+    cdnMod: {show:false, busy:false, state:null},
+    async openCdnModule(m) {
+      const r = await get('/api/cdn/module');
+      this.cdnMod = {show:true, busy:false, state: r.ok ? r.state : (m.builtinState || null)};
+    },
+    async setCdnModule(on) {
+      this.cdnMod.busy = true;
+      const r = await post('/api/cdn/module', {enabled: on});
+      this.cdnMod.busy = false;
+      if (!r.ok) { toast(r.error || 'Failed', 'error'); return; }
+      this.cdnMod.state = r.state;
+      window.dispatchEvent(new CustomEvent('vp:cdn-state', {detail: {enabled: on}}));
+      toast(on ? 'CDN Manager is on' : 'CDN Manager is off: its page is hidden and its API is closed', 'success');
+      this.load();
+    },
     async openSettings(m) {
+      if (m.id === 'cdn') return this.openCdnModule(m);
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal

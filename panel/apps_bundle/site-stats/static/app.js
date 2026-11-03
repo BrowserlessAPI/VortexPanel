@@ -12,6 +12,7 @@ function vpaSiteStats() {
   const PAGE = 'app-site-stats';
   return {
     loaded: false, busy: '', tab: 'overview', svc: '', lastCollect: 0,
+    hosts: {items: [], logging: {}, catchall: {}, own_domains_only: true},
     site: '', range: 'today', compare: 'prev', metric: 'pv',
     sites: [], sum: {totals: {}, series: [], live: [], qps: 0, step: 'hour'}, mini: {}, scanDetect: false, geoInfo: null,
     list: [], lq: '', sub: {regions: 'country', spiders: 'spider', pages: 'url', sources: 'ref', clients: 'browser', status: 'status'},
@@ -62,9 +63,31 @@ function vpaSiteStats() {
     },
     setTab(t) {
       this.tab = t; this.lq = '';
+      if (t === 'settings' || t === 'sources') this.loadHosts();
       if (t === 'settings') this.loadSettings(); else this.reload();
     },
+    async loadHosts() {
+      const r = await get(API + '/hosts?' + this.qs({}));
+      if (r.ok) this.hosts = r;
+    },
+    foreignTotal() { return (this.hosts.items || []).reduce((a, i) => a + i.hits, 0); },
+    async setCatchall(on) {
+      if (on && !confirm('Close connections for host names that no website on this server serves?\n\nOther domains pointed at this server stop showing your website. Opening the server by its IP address stops working too.')) return;
+      this.busy = 'catchall';
+      const r = await post(API + '/hosts/catchall', {on});
+      this.busy = '';
+      toast(r.ok ? r.message : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+      await this.loadHosts();
+    },
+    async setOwnDomains(on) {
+      this.busy = 'hostlog';
+      const r = await post(API + '/hosts/logging', {on});
+      this.busy = '';
+      toast(r.ok ? r.message : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+      await this.loadHosts();
+    },
     async loadSummary(quiet) {
+      this.loadHosts();
       const r = await get(API + '/summary?' + this.qs({compare: this.compare}));
       if (!r.ok) { if (!quiet) toast(r.error || 'Could not load statistics', 'error'); return; }
       this.sum = r; this.lastCollect = r.last_collect;

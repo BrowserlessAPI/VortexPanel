@@ -1,0 +1,64 @@
+{
+  "name": "DDNS Manager (ddclient)",
+  "panel_id": "ddns",
+  "universal": true,
+  "watch": {
+    "type": "github-tags",
+    "repo": "ddclient/ddclient",
+    "regex": "^v(\\d+\\.\\d+\\.\\d+)$",
+    "keep_tracks": 1,
+    "track_depth": 1,
+    "min_track": "4"
+  },
+  "changelog": "https://raw.githubusercontent.com/ddclient/ddclient/{tag}/ChangeLog.md",
+  "source": "https://github.com/ddclient/ddclient/archive/refs/tags/v{version}.tar.gz",
+  "service": "ddclient",
+  "deps": {
+    "build": {
+      "deb": [
+        "autoconf",
+        "automake",
+        "perl",
+        "curl"
+      ],
+      "rpm": [
+        "autoconf",
+        "automake",
+        "perl",
+        "curl"
+      ]
+    },
+    "run": {
+      "deb": [
+        "perl",
+        "curl",
+        "ca-certificates"
+      ],
+      "rpm": [
+        "perl-interpreter",
+        "curl",
+        "ca-certificates",
+        "perl-Data-Dumper",
+        "perl-File-Temp",
+        "perl-Getopt-Long",
+        "perl-Sys-Hostname|perl-interpreter",
+        "perl-version",
+        "perl-Digest-SHA",
+        "perl-JSON-PP",
+        "perl-File-Path",
+        "perl-File-Basename|perl-interpreter",
+        "perl-Socket",
+        "perl-Time-HiRes"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "ddclient"
+    ],
+    "rpm": [
+      "ddclient"
+    ]
+  },
+  "smoke": "smoke.sh"
+}

@@ -140,6 +140,14 @@ Optional modules installed from the App Store, each with its own page. Every App
 - **System Hardening** — monitor or lock users, SSH keys, cron, services, start-up files and your own folders; process guard for miners and reverse shells; compliance check with one-click fixes; sign-in and sudo audit
 - **PHP Security** — Snuffleupagus runtime protection per PHP version: blocks webshells in upload folders, command injection, PHP uploads and remote inclusion, with log-only testing and trusted folders
 
+### VortexPanel software builds *(new in 3.11)*
+Every App Store module (web servers, databases, PHP, Node.js, Python, Docker, Redis, Memcached, Supervisor, Fail2ban, ClamAV, BIND9, ddclient, Pure-FTPd, Caddy WAF) is built, tested and signed by VortexPanel and installed from the VortexPanel download server instead of the OS package sources. Tools installed from a released file (phpMyAdmin, Adminer, Roundcube, Anubis, ffmpeg, OWASP CRS) are mirrored there, and VortexPanel Apps are published there too.
+- **Automated every 24 hours** — new upstream releases are found, reviewed by AI (security fixes, CVEs, breaking changes), built for EL 8/9/10, Ubuntu 22.04/24.04 and Debian 12/13 on x86_64 and ARM, installed and smoke-tested on a fresh system, then published
+- **Signed catalog** — panels accept only catalogs signed with the VortexPanel key, never an older one, and check every download's SHA-256
+- **One-click update and rollback** — each version gets its own folder; an update that does not start falls back to the previous version automatically
+- **Automatic security updates**, stable and beta channels, alerts, and a switch from OS packages to VortexPanel builds that keeps your configuration
+- Pipeline and setup: [`softs/README.md`](softs/README.md)
+
 ### ⚙ Settings — redesigned card-based control center
 - **Network & Access** — panel port (auto-updates firewall), custom domain, webroot
 - **Panel SSL** — one-click self-signed or Let's Encrypt, validity countdown, automatic safe cutover (no downtime race conditions)

@@ -6,7 +6,7 @@ import time
 from flask import jsonify, request
 
 from panel import appkit
-from vpapp_site_stats import collector, geo, store
+from vpapp_site_stats import collector, geo, hostguard, store
 
 APP = store.APP
 SERVICE = appkit.unit_name(APP)
@@ -320,3 +320,40 @@ def service():
     rc, _, err = appkit.run(['systemctl', action, SERVICE], timeout=60)
     appkit.oplog(APP, f'service {action}', '' if rc == 0 else err[-200:])
     return jsonify({'ok': rc == 0, 'error': err.strip()[-300:], 'service': appkit.service_state(SERVICE)})
+
+@bp.route('/hosts')
+def hosts():
+    """Other domains that reached the websites, and the two controls for them."""
+    site = _site_arg()
+    if site is None:
+        return _err('Bad request')
+    rng, start, end, _ = _range()
+    days = store.days_between(start, end)
+    w, a = _where(site)
+    con = store.connect()
+    try:
+        ph = ','.join('?' * len(days))
+        rows = con.execute(f"SELECT k, SUM(hits), SUM(bytes) FROM top WHERE {w} AND day IN ({ph}) AND kind='xhost' "
+                           f'GROUP BY k ORDER BY 2 DESC LIMIT 50', a + tuple(days)).fetchall()
+    finally:
+        con.close()
+    return jsonify({'ok': True, 'items': [{'k': r[0], 'hits': r[1], 'bytes': r[2]} for r in rows],
+                    'logging': hostguard.logging_status(), 'catchall': hostguard.catchall_status(),
+                    'own_domains_only': store.settings().get('own_domains_only', True)})
+
+
+@bp.route('/hosts/catchall', methods=['POST'])
+def hosts_catchall():
+    ok, msg = hostguard.set_catchall(bool(appkit.body().get('on')))
+    return jsonify({'ok': ok, 'message': msg, 'error': '' if ok else msg, 'catchall': hostguard.catchall_status()})
+
+
+@bp.route('/hosts/logging', methods=['POST'])
+def hosts_logging():
+    on = bool(appkit.body().get('on'))
+    s = store.settings()
+    s['own_domains_only'] = on
+    appkit.write_json(APP, 'settings.json', s)
+    ok, msg = hostguard.apply_logging() if on else (True, 'All requests in the logs are counted.')
+    appkit.oplog(APP, 'own domains only', 'on' if on else 'off')
+    return jsonify({'ok': ok, 'message': msg, 'error': '' if ok else msg, 'logging': hostguard.logging_status()})

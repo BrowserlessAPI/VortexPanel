@@ -1,0 +1,13 @@
+{
+  "name": "Docker",
+  "panel_id": "docker",
+  "universal": true,
+  "watch": {"type": "github-tags", "repo": "docker/cli", "regex": "^v(\\d+\\.\\d+\\.\\d+)$", "track_depth": 1, "keep_tracks": 1, "min_track": "28"},
+  "changelog": "https://docs.docker.com/engine/release-notes/{major}/",
+  "service": "docker",
+  "deps": {"build": {"deb": ["git"], "rpm": ["git"]},
+           "run": {"deb": ["ca-certificates", "iptables", "xz-utils", "procps"], "rpm": ["ca-certificates", "iptables", "xz", "procps-ng"]}},
+  "replaces": {"deb": ["docker-ce", "docker-ce-cli", "docker-ce-rootless-extras", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin", "docker.io", "docker-buildx", "docker-compose-v2", "containerd", "runc"],
+               "rpm": ["docker-ce", "docker-ce-cli", "docker-ce-rootless-extras", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin", "moby-engine", "moby-cli", "moby-containerd", "moby-runc", "runc", "containerd"]},
+  "smoke": "smoke.sh"
+}

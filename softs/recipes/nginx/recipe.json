@@ -1,0 +1,79 @@
+{
+  "name": "Nginx",
+  "panel_id": "nginx",
+  "watch": {
+    "type": "github-tags",
+    "repo": "nginx/nginx",
+    "regex": "^release-(\\d+\\.\\d+\\.\\d+)$",
+    "keep_tracks": 2,
+    "min_track": "1.28"
+  },
+  "changelog": "https://nginx.org/en/CHANGES-{track}",
+  "source": "https://nginx.org/download/nginx-{version}.tar.gz",
+  "service": "nginx",
+  "rpm_repos": [
+    "epel",
+    "crb"
+  ],
+  "deps": {
+    "build": {
+      "deb": [
+        "libpcre2-dev",
+        "libssl-dev",
+        "zlib1g-dev",
+        "git",
+        "libxml2-dev",
+        "libyajl-dev",
+        "libcurl4-openssl-dev",
+        "liblmdb-dev",
+        "autoconf",
+        "automake",
+        "libtool",
+        "binutils"
+      ],
+      "rpm": [
+        "pcre2-devel",
+        "openssl-devel",
+        "zlib-devel",
+        "git",
+        "libxml2-devel",
+        "yajl-devel",
+        "libcurl-devel",
+        "lmdb-devel",
+        "autoconf",
+        "automake",
+        "libtool",
+        "gcc-c++",
+        "binutils"
+      ]
+    },
+    "run": {
+      "deb": [
+        "ca-certificates",
+        "logrotate"
+      ],
+      "rpm": [
+        "ca-certificates",
+        "logrotate"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "nginx",
+      "nginx-common",
+      "nginx-core",
+      "nginx-full",
+      "nginx-light",
+      "nginx-extras",
+      "libnginx-mod-*"
+    ],
+    "rpm": [
+      "nginx",
+      "nginx-core",
+      "nginx-filesystem",
+      "nginx-mod-*"
+    ]
+  },
+  "smoke": "smoke.sh"
+}

@@ -1224,8 +1224,7 @@ def _connector_present():
     a2enmod, so this checks it's actually enabled."""
     if _modsec_target() == 'apache':
         if os.path.exists('/etc/httpd/conf.d/zz-vortexpanel-modsecurity.conf'):     # RHEL family
-            return any(os.path.exists(p) for p in ('/usr/lib64/httpd/modules/mod_security2.so',
-                                                   '/etc/httpd/modules/mod_security2.so'))
+            return _modsec2_present()
         enabled, _, _ = sh('a2query -m security2 2>&1')
         if 'enabled' in (enabled or '').lower():
             return True
@@ -1233,7 +1232,7 @@ def _connector_present():
 
     so_present = any(
         os.path.exists(os.path.join(d, 'ngx_http_modsecurity_module.so'))
-        for d in ['/usr/lib/nginx/modules', '/usr/lib64/nginx/modules']
+        for d in ['/usr/lib/nginx/modules', '/usr/lib64/nginx/modules', '/usr/local/vortex/nginx/current/modules']
     )
     wired = False
     if os.path.exists('/etc/nginx/nginx.conf'):
@@ -1242,6 +1241,16 @@ def _connector_present():
         except Exception:
             pass
     return so_present and wired
+
+# mod_security2.so: Debian package, RHEL package, and the VortexPanel Apache build
+# (/usr/lib/apache2/modules and /etc/httpd/modules point at the build's modules folder)
+_MODSEC2_PATHS = ('/usr/lib/apache2/modules/mod_security2.so', '/usr/lib64/httpd/modules/mod_security2.so',
+                  '/etc/httpd/modules/mod_security2.so')
+
+
+def _modsec2_present():
+    return any(os.path.exists(p) for p in _MODSEC2_PATHS)
+
 
 def _modsec_installed():
     """'Installed' = the core engine is actually usable, which requires
@@ -1257,13 +1266,13 @@ def _modsec_installed():
     unconditionally would make this always return False on a genuinely
     working Apache install."""
     if _modsec_target() == 'apache':
-        engine_present = any(os.path.exists(p) for p in ('/usr/lib/apache2/modules/mod_security2.so',
-                                                         '/usr/lib64/httpd/modules/mod_security2.so'))
+        engine_present = _modsec2_present()
     else:
         engine_present = any(os.path.exists(p) for p in [
             '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
             '/usr/lib64/libmodsecurity.so.3',
             '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
+            '/usr/local/vortex/libmodsecurity/current/lib/libmodsecurity.so.3',
         ])
     return engine_present and os.path.exists(_modsec_conf()) and _connector_present()
 
@@ -2016,7 +2025,7 @@ def modsec_repair():
     # Apache install whose modsecurity.conf went missing: _modsec_target()
     # cannot tell it is Apache any more, so restore the conf from the
     # package's recommended copy first.
-    if _modsec_target() is None and os.path.exists('/usr/lib/apache2/modules/mod_security2.so') \
+    if _modsec_target() is None and _modsec2_present() \
             and os.path.exists('/etc/modsecurity/modsecurity.conf-recommended'):
         content = open('/etc/modsecurity/modsecurity.conf-recommended').read()
         content = content.replace('SecRuleEngine DetectionOnly', 'SecRuleEngine On')
@@ -2164,15 +2173,16 @@ def _modsec_engine_present():
     """Engine library + webserver module present (modsecurity.conf NOT
     required -- that is what repair recreates)."""
     if _modsec_target() == 'apache':
-        return os.path.exists('/usr/lib/apache2/modules/mod_security2.so')
+        return _modsec2_present()
     lib = any(os.path.exists(p) for p in [
         '/usr/lib/x86_64-linux-gnu/libmodsecurity.so.3',
         '/usr/lib64/libmodsecurity.so.3',
         '/usr/lib/aarch64-linux-gnu/libmodsecurity.so.3',
         '/usr/local/modsecurity/lib/libmodsecurity.so.3',
+        '/usr/local/vortex/libmodsecurity/current/lib/libmodsecurity.so.3',
     ])
     so = any(os.path.exists(os.path.join(d, 'ngx_http_modsecurity_module.so'))
-             for d in ['/usr/lib/nginx/modules', '/usr/lib64/nginx/modules', '/usr/share/nginx/modules'])
+             for d in ['/usr/lib/nginx/modules', '/usr/lib64/nginx/modules', '/usr/share/nginx/modules', '/usr/local/vortex/nginx/current/modules'])
     return lib and so
 
 
@@ -2183,7 +2193,26 @@ def _fetch(url, dest, t=30):
     return rc
 
 
+def _crs_cloud():
+    """(tag, url, sha256) of the OWASP CRS release VortexPanel mirrors, or None when the
+    download server is not set up. Panels then never fetch rules straight from GitHub."""
+    try:
+        from panel import softs
+        if not softs.configured():
+            return None
+        for r in softs.pinned('coreruleset'):
+            f = r['files'].get('tarball')
+            if f and re.fullmatch(r'\d+\.\d+\.\d+', r['version']):
+                return 'v' + r['version'], f['url'], f['sha256']
+    except Exception:
+        return None
+    return None
+
+
 def _crs_latest_tag():
+    cloud = _crs_cloud()
+    if cloud:
+        return cloud[0]
     out, _, rc = sh('curl -s --max-time 10 https://api.github.com/repos/coreruleset/coreruleset/releases/latest'
                     ' | python3 -c "import json,sys; print(json.load(sys.stdin)[\'tag_name\'])"', t=15)
     tag = out.strip()
@@ -2220,8 +2249,18 @@ def modsec_update_crs():
         tarball = os.path.join(work, 'crs.tar.gz')
         new_dir = os.path.join(work, 'crs')
         os.makedirs(new_dir)
-        if _fetch(f'https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz', tarball, t=90) != 0:
+        cloud = _crs_cloud()
+        url = cloud[1] if cloud and cloud[0] == tag else f'https://github.com/coreruleset/coreruleset/archive/refs/tags/{tag}.tar.gz'
+        if _fetch(url, tarball, t=90) != 0:
             return jsonify({'ok':False, 'error':f'Download of CRS {tag} failed. Nothing was changed.'}), 502
+        if cloud and cloud[0] == tag:
+            import hashlib
+            h = hashlib.sha256()
+            with open(tarball, 'rb') as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b''):
+                    h.update(chunk)
+            if h.hexdigest() != cloud[2]:
+                return jsonify({'ok':False, 'error':f'CRS {tag} does not match the checksum in the signed VortexPanel catalog. Nothing was changed.'}), 502
         out, err, rc = sh(f'tar -xzf {tarball} -C {new_dir} --strip-components=1 2>&1', t=60)
         if rc != 0 or not os.path.exists(os.path.join(new_dir, 'crs-setup.conf.example')) \
                 or not os.path.isdir(os.path.join(new_dir, 'rules')):

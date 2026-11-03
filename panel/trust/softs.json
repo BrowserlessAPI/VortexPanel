@@ -1,0 +1,5 @@
+{
+  "comment": "VortexPanel software builds. base_url: the public address of the R2 bucket (custom domain). keys: Ed25519 public keys allowed to sign catalog.json (from softs/pipeline/keygen.py). While either is empty, the App Store keeps installing from the OS package sources.",
+  "base_url": "",
+  "keys": []
+}

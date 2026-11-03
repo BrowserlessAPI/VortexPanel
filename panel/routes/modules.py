@@ -599,6 +599,7 @@ def get_version(mod_id, ver=None):
         'mariadb':      "{ mariadbd --version 2>/dev/null || mysqld --version 2>/dev/null; } | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'mongodb':      "mongod --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'redis':        "redis-server --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
+        'memcached':    "memcached -V 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1",
         'nodejs':       "node --version 2>/dev/null | tr -d 'v'",
         # PHP and PostgreSQL both support multiple versions installed side by
         # side. A fixed priority list here (checking 8.5 before 7.4, or just
@@ -625,7 +626,7 @@ def get_version(mod_id, ver=None):
         'anubis':       "cat /usr/local/lib/vortexpanel-anubis/VERSION 2>/dev/null",
         'adminer':      "grep -oP '@version \\K[0-9]+[.][0-9]+[.][0-9]+' /usr/share/adminer/adminer.php 2>/dev/null | head -1",
         'roundcube':    "grep -oP '\"version\": \"\\K[0-9]+[.][0-9]+[.][0-9]+' /var/www/roundcube/composer.json 2>/dev/null | head -1",
-        'modsecurity':  "{ modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1; dpkg-query -W -f='${Version}\\n' libmodsecurity3t64 libmodsecurity3 2>/dev/null; rpm -q --qf '%{VERSION}\\n' libmodsecurity mod_security 2>/dev/null | grep -v 'not installed'; } | grep -m1 .",
+        'modsecurity':  "{ cat /usr/local/vortex/libmodsecurity/current/share/VERSION 2>/dev/null; modsec_rules_check --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1; dpkg-query -W -f='${Version}\\n' libmodsecurity3t64 libmodsecurity3 2>/dev/null; rpm -q --qf '%{VERSION}\\n' libmodsecurity mod_security 2>/dev/null | grep -v 'not installed'; } | grep -m1 .",
     }
 
     if mod_id == 'php':
@@ -2403,12 +2404,14 @@ fi''',
             '(test -f /usr/lib/x86_64-linux-gnu/libmodsecurity.so.3 || '
             'test -f /usr/lib64/libmodsecurity.so.3 || '
             'test -f /usr/lib/aarch64-linux-gnu/libmodsecurity.so.3 || '
+            'test -f /usr/local/vortex/libmodsecurity/current/lib/libmodsecurity.so.3 || '
             'which modsec_rules_check 2>/dev/null 1>&2) && '
             'test -f /etc/nginx/modsec/modsecurity.conf && '
-            '(find /usr/lib/nginx/modules /usr/lib64/nginx/modules -name "ngx_http_modsecurity_module.so" 2>/dev/null | grep -q .) && '
+            '(find /usr/lib/nginx/modules /usr/lib64/nginx/modules /usr/local/vortex/nginx/current/modules/ -name "ngx_http_modsecurity_module.so" 2>/dev/null | grep -q .) && '
             'grep -q "modsecurity_rules_file" /etc/nginx/nginx.conf 2>/dev/null'
             ') || ('
-            '(dpkg -l libapache2-mod-security2 2>/dev/null | grep -q "^ii" || rpm -q mod_security >/dev/null 2>&1) && '
+            '(dpkg -l libapache2-mod-security2 2>/dev/null | grep -q "^ii" || rpm -q mod_security >/dev/null 2>&1 || '
+            'test -e /usr/lib/apache2/modules/mod_security2.so || test -e /etc/httpd/modules/mod_security2.so) && '
             'test -f /etc/modsecurity/modsecurity.conf && '
             '(a2query -m security2 2>/dev/null | grep -q enabled || grep -rq "security2" /etc/apache2/mods-enabled/ 2>/dev/null || '
             'test -f /etc/httpd/conf.d/zz-vortexpanel-modsecurity.conf)'
@@ -2457,7 +2460,7 @@ fi''',
             # sed deleted every line that mentioned modsecurity anywhere.
             '  sed -i -E "/^[[:space:]]*load_module[[:space:]].*ngx_http_modsecurity_module\\.so;/d; /^[[:space:]]*modsecurity[[:space:]]+(on|off);/d; /^[[:space:]]*modsecurity_rules_file[[:space:]]+\\/etc\\/nginx\\/modsec\\//d" /etc/nginx/nginx.conf 2>/dev/null; '
             '  for f in /etc/nginx/sites-enabled/* /etc/nginx/sites-available/* /etc/nginx/conf.d/*.conf /etc/nginx/vortex/*.conf; do [ -f "$f" ] && sed -i -E "/^[[:space:]]*modsecurity[[:space:]]+(on|off);/d; /^[[:space:]]*modsecurity_rules(_file)?[[:space:]]/d" "$f"; done; '
-            '  if nginx -t 2>/dev/null; then systemctl reload nginx 2>/dev/null; rm -f /etc/nginx/nginx.conf.vp-pre-modsec-removal; '
+            '  if nginx -t 2>/dev/null; then systemctl reload nginx 2>/dev/null; rm -f /etc/nginx/nginx.conf.vp-pre-modsec-removal; if [ -d /usr/local/vortex/libmodsecurity ]; then (cd /opt/vortexpanel && venv/bin/python3 -m panel.softs uninstall libmodsecurity) || true; fi; '
             '  else echo "[VortexPanel] nginx -t failed after removing ModSecurity -- your previous nginx.conf is saved as /etc/nginx/nginx.conf.vp-pre-modsec-removal"; nginx -t; fi; '
             'fi'
         ),
@@ -2697,9 +2700,20 @@ def _get_mod(mod_id):
 
 
 def module_versions(m, live=None, signed=None):
-    """(versions, source) for an app: the signed tested-versions list from the
-    licence server when it covers the app, else the built-in list with the live
-    labels from endoflife.date. source: 'tested' | 'live' | 'builtin'."""
+    """(versions, source) for an app: the files VortexPanel mirrors on its download
+    server (signed catalog), else the signed tested-versions list from the licence
+    server, else the built-in list with live labels from endoflife.date.
+    source: 'vortex' | 'tested' | 'live' | 'builtin'."""
+    if m['id'] != 'ffmpeg':
+        try:
+            from panel import softs
+            if softs.configured():
+                pins = softs.pinned(m['id'])
+                if pins:
+                    return [{'value': p['version'], 'label': p['version'], 'files': p['files'], 'recommended': i == 0,
+                             'vortex': True} for i, p in enumerate(pins)], 'vortex'
+        except Exception:
+            pass
     try:
         from panel import appversions
         vs = appversions.entries(m['id'], m.get('versions'), signed)
@@ -2724,10 +2738,16 @@ def _fill_downloads(cmd, entry):
     if '{dl_' not in cmd:
         return cmd, ''
     files = (entry or {}).get('files') or {}
+    try:
+        from panel import softs
+        own = softs.trust()['base_url'].rstrip('/') + '/pinned/' if softs.configured() else None
+    except Exception:
+        own = None
     for name, f in files.items():
         url, sha = str(f.get('url') or ''), str(f.get('sha256') or '').lower()
-        if not re.fullmatch(r'https://(github\.com|raw\.githubusercontent\.com|files\.phpmyadmin\.net)/[A-Za-z0-9._~/%+-]+', url) \
-                or '..' in url or (sha and not re.fullmatch(r'[0-9a-f]{64}', sha)):
+        mine = bool(own and url.startswith(own) and re.fullmatch(r'[A-Za-z0-9._~/%+-]+', url[len(own):]))
+        if not (mine or re.fullmatch(r'https://(github\.com|raw\.githubusercontent\.com|files\.phpmyadmin\.net)/[A-Za-z0-9._~/%+-]+', url)) \
+                or '..' in url or (sha and not re.fullmatch(r'[0-9a-f]{64}', sha)) or (mine and not sha):
             return '', f'The download address for {name} is not allowed'
         cmd = cmd.replace('{dl_%s_url}' % name, url).replace('{dl_%s_sha256}' % name, sha)
     if re.search(r'\{dl_[a-z0-9]+_(url|sha256)\}', cmd):
@@ -2875,6 +2895,21 @@ def refresh_catalog():
                     'tested': tested})
 
 
+def _plain_version_label(label, value=''):
+    """The App Store shows only the version: '9.20.30 (current stable, extended
+    support - ISC PPA)' -> '9.20.30', '8.4.13 LTS' -> '8.4.13'. Labels that are not a
+    version ('v3 + OWASP CRS v4', 'Latest (apt)') lose only their bracketed notes."""
+    label = str(label or '').strip()
+    m = re.match(r'v?(\d+(?:\.\d+){1,3})(?=$|\s|\()', label)
+    if m:
+        return m.group(1)
+    plain = re.sub(r'\s*\(.*?\)', '', label).strip(' -')
+    plain = re.sub(r'\s+-\s+.*$', '', plain).strip()
+    if not plain and re.fullmatch(r'\d+(\.\d+)*', str(value)):
+        return str(value)
+    return plain or label
+
+
 @modules_bp.route('/api/modules')
 def list_modules():
     if not req(): return jsonify({'ok':False}), 401
@@ -2899,9 +2934,25 @@ def list_modules():
         updata = modupdates.load()
     except Exception:
         modupdates, updata = None, {}
+    sv = _softs()
+    vx_cat = sv.load() if sv else None
+    vx_updates = sv.updates(vx_cat) if (sv and vx_cat) else []
     for base_m in MODULES:
         m = _get_mod(base_m['id'])  # merged with any catalog override
         vs, source = module_versions(m, live, signed)
+        # A VortexPanel build exists for this server: offer only those versions
+        # (value "vx:<version>"; the install route sends them to panel/softs.py)
+        vx_tracks = sv.tracks(m['id'], vx_cat) if (sv and vx_cat) else {}
+        if vx_tracks:
+            built = [{'value': 'vx:' + r['version'], 'label': r['version'] + (' (LTS)' if 'lts' in (r.get('tags') or []) else ''),
+                      'track': r['track'], 'recommended': i == 0, 'vortex': True}
+                     for i, r in enumerate(sorted(vx_tracks.values(), key=lambda r: [int(x) if x.isdigit() else 0 for x in r['version'].split('.')], reverse=True))]
+            # tracks VortexPanel does not build (PHP 7.4, ...) stay available from the OS sources
+            os_only = [dict(v, recommended=False) for v in vs
+                       if m['id'] in ('php', 'python') and str(v.get('value', '')) not in vx_tracks
+                       and re.fullmatch(r'\d+\.\d+', str(v.get('value', '')))]
+            vs = built + os_only
+            source = 'vortex'
         m = dict(m, versions=vs)
         installed   = is_installed(m['check'])
         svc_status  = ''
@@ -2927,6 +2978,31 @@ def list_modules():
                 update_security, update_pkgs = upd['security'], upd['details']
             elif m['id'] == 'composer':
                 has_update, latest_same_track = _composer_update(installed_ver, m.get('versions', []))
+        builtin_state = None
+        if m['id'] == 'cdn':
+            try:
+                from panel.routes.cdn import module_state
+                builtin_state = module_state()
+                svc_status = 'on' if builtin_state['enabled'] else 'off'
+            except Exception:
+                builtin_state = None
+        vx_slots = sv.installed(m['id']) if sv else {}
+        vx_info = {}
+        if vx_slots:
+            # installed from a VortexPanel build: versions and updates come from the catalog only
+            mine = [u for u in vx_updates if u['app'] == m['id']]
+            ups = [u for u in mine if u.get('to')]
+            installed_ver = sv.installed_version(m['id']) or installed_ver
+            if ups or m['id'] not in ('php', 'python'):
+                has_update = bool(ups)
+                latest_same_track = max((u['to'] for u in ups), key=lambda v: [int(x) if x.isdigit() else 0 for x in v.split('.')], default='')
+                update_security = any(u['security'] for u in ups)
+                update_pkgs = []
+            vx_info = {'slots': {k: {'version': v['version'], 'track': v['track'],
+                                     'prev': (v.get('prev') or {}).get('version') or ''} for k, v in vx_slots.items()},
+                       'updates': ups, 'withdrawn': [u for u in mine if u.get('withdrawn')]}
+        elif installed and vx_tracks:
+            vx_info = {'switchable': True}
         result.append({
             'id': m['id'], 'name': m['name'], 'icon': m['icon'],
             'category': m['category'], 'desc': m['desc'],
@@ -2937,10 +3013,11 @@ def list_modules():
             'installedTracks': ([l['ver'] for l in installed_php_layouts()] if m['id'] == 'php' and installed else
                                 [v for v in ('3.10', '3.11', '3.12', '3.13', '3.14', '3.15') if shutil.which(f'python{v}')]
                                 if m['id'] == 'python' else []),
-            'versions': [dict({k: v for k, v in x.items() if k != 'files'},
-                              label=re.sub(r'\s*(?:-\s*|\(\s*)?recommended(?:\s*\))?', '', re.sub(r',\s*recommended(?=\s*\))', '', str(x.get('label', '')), flags=re.I), flags=re.I).strip())
+            'versions': [dict({k: v for k, v in x.items() if k != 'files'}, label=_plain_version_label(x.get('label', ''), x.get('value', '')))
                          for x in m.get('versions', [])],
             'versionsSource': source,
+            'vortex': vx_info,
+            'builtinState': builtin_state,
             'notice': (appversions.notice(m['id'], signed) if appversions and source == 'tested' else ''),
             'manage': m.get('manage', False),
             'builtin': m.get('builtin', False),
@@ -2991,7 +3068,167 @@ def build_install_cmd(mod, ver, entry=None):
     elif mod['id'] == 'docker': cmd = docker_install_script()
     elif mod['id'] == 'nodejs': cmd = nodejs_install_script(ver or '22')
     elif mod['id'] == 'php': cmd = php_install_script(ver or '8.3')
+    if mod['id'] == 'modsecurity':
+        if (ver or '3') == '3':
+            cmd = _modsec_vortex_nginx(cmd)
+        cmd = _crs_from_cloud(cmd)
+        cmd = _apache_build_modsec(cmd)
     return cmd, ''
+
+
+def _apache_build_managed():
+    """True when Apache is the VortexPanel build: installing an OS Apache module package
+    (libapache2-mod-security2, mod_security, libapache2-mod-php) would pull the OS Apache
+    packages back in over it."""
+    try:
+        from panel import softs
+        return bool(softs.installed('apache2'))
+    except Exception:
+        return False
+
+
+def _apache_build_modsec(cmd):
+    """ModSecurity v2 on the VortexPanel Apache build: mod_security2 is part of the build
+    (modules/mod_security2.so, security2.load/.conf, /etc/modsecurity/modsecurity.conf-recommended),
+    so the OS module package is not installed; the config and CRS steps run as usual."""
+    if not _apache_build_managed():
+        return cmd
+    built = 'echo "[VortexPanel] ModSecurity v2 is part of the VortexPanel Apache build (no package needed)"'
+    cmd = cmd.replace('apt-get install -y libapache2-mod-security2 2>&1   || echo "[WARN] libapache2-mod-security2 install reported errors"', built)
+    cmd = cmd.replace('dnf install -y mod_security mod_security_crs 2>&1 || echo "[WARN] mod_security package install reported errors"', 'true')
+    return cmd
+
+
+def _vortex_nginx_build():
+    """True when Nginx is a VortexPanel build and the download server is set up."""
+    try:
+        from panel import softs
+        return softs.configured() and bool(softs.installed('nginx'))
+    except Exception:
+        return False
+
+
+_MODSEC_V3_OS_START = 'CONNECTOR_OK=0; MODULES_PATH=/usr/lib/nginx/modules;'
+_MODSEC_V3_OS_END = 'echo "[VortexPanel] Writing core engine config...";'
+_MODSEC_V3_VORTEX = (
+    'CONNECTOR_OK=0; MODULES_PATH=/usr/local/vortex/nginx/current/modules; '
+    'echo "[VortexPanel] Nginx is a VortexPanel build: using its ModSecurity module and the VortexPanel ModSecurity library"; '
+    'if (cd /opt/vortexpanel && venv/bin/python3 -m panel.routes.modules modsec-lib); then '
+    '  if [ -f "$MODULES_PATH/ngx_http_modsecurity_module.so" ]; then CONNECTOR_OK=1; '
+    '    echo "[VortexPanel] OK ModSecurity module of the Nginx build: $MODULES_PATH/ngx_http_modsecurity_module.so"; '
+    '  else echo "[ERROR] This Nginx build has no ModSecurity module. nginx.conf will NOT be modified; update Nginx from the App Store and reinstall the WAF."; fi; '
+    'else echo "[ERROR] The VortexPanel ModSecurity library could not be installed (see above). nginx.conf will NOT be modified."; fi; '
+)
+
+
+def _modsec_vortex_nginx(cmd):
+    """ModSecurity v3 on a VortexPanel Nginx build: the library comes from the VortexPanel
+    download server (softs app libmodsecurity) and the module ships with the Nginx build,
+    so no OS packages are installed and nothing is compiled on the server. The module is
+    loaded from .../nginx/current/modules (follows Nginx updates and rollbacks)."""
+    if not _vortex_nginx_build():
+        return cmd
+    i = cmd.find(_MODSEC_V3_OS_START)
+    j = cmd.find(_MODSEC_V3_OS_END, i + 1) if i >= 0 else -1
+    if i < 0 or j < 0:
+        return cmd
+    return cmd[:i] + _MODSEC_V3_VORTEX + cmd[j:]
+
+
+def _cli_modsec_lib():
+    """python3 -m panel.routes.modules modsec-lib: install (or keep) the newest VortexPanel
+    libmodsecurity. Exit 0 when the library is in place."""
+    from panel import softs
+    if not softs.configured():
+        print('[VortexPanel] The VortexPanel download server is not set up')
+        return 1
+    log = lambda line: print(line, flush=True)
+    try:
+        cat = softs.refresh(log=log)
+        tr = softs.tracks('libmodsecurity', cat)
+        if not tr:
+            print('[VortexPanel] No ModSecurity library is published for this system yet')
+            return 1
+        new = max(tr.values(), key=lambda r: softs.vt(r['version']))
+        have = softs.installed_version('libmodsecurity')
+        if have and softs.vt(have) >= softs.vt(new['version']):
+            print(f'[VortexPanel] OK ModSecurity library {have} is installed')
+            return 0
+        if have:
+            softs.update('libmodsecurity', log=log)
+        else:
+            # migrate: an OS libmodsecurity3 left by an earlier WAF install is replaced
+            # (the engine refuses when other packages still need it; nothing changes then)
+            softs.install('libmodsecurity', new['version'], log=log, migrate=True)
+        print(f'[VortexPanel] OK ModSecurity library {softs.installed_version("libmodsecurity")} is installed')
+        return 0
+    except softs.SoftError as e:
+        print(f'[VortexPanel] ERROR: {e}')
+        return 1
+
+
+def _crs_from_cloud(cmd):
+    """ModSecurity install: take the OWASP CRS release VortexPanel mirrors (fixed version,
+    checksum from the signed catalog) instead of asking GitHub for its newest release."""
+    try:
+        from panel.routes.security import _crs_cloud
+        cloud = _crs_cloud()
+    except Exception:
+        cloud = None
+    if not cloud:
+        return cmd
+    tag, url, sha = cloud
+    if not (re.fullmatch(r'v\d+\.\d+\.\d+', tag) and re.fullmatch(r'[0-9a-f]{64}', sha)
+            and re.fullmatch(r'https://[A-Za-z0-9._~/%+-]+', url)):
+        return cmd
+    lookup = re.compile(r'CRS_TAG=\$\(curl -s --max-time 10 https://api\.github\.com/repos/coreruleset/coreruleset/releases/latest.*?2>/dev/null\);')
+    fallback = re.compile(r'\[ -n "\$CRS_TAG" \] \|\| CRS_TAG=\$\(curl -sI .*?\);')
+    fetch = re.compile(r'wget -q --timeout=15 "https://github\.com/coreruleset/coreruleset/archive/refs/tags/\$\{CRS_TAG\}\.tar\.gz" -O /opt/vortexpanel/data/tmp/crs\.tar\.gz')
+    if not (lookup.search(cmd) and fetch.search(cmd)):
+        return cmd
+    cmd = lookup.sub(lambda m: f'CRS_TAG={tag};', cmd)
+    cmd = fallback.sub('true;', cmd)
+    cmd = fetch.sub(lambda m: (f'wget -q --timeout=60 "{url}" -O /opt/vortexpanel/data/tmp/crs.tar.gz '
+                               f'&& echo "{sha}  /opt/vortexpanel/data/tmp/crs.tar.gz" | sha256sum -c - >/dev/null'), cmd)
+    return cmd
+
+
+# ---------------------------------------------------------------- VortexPanel builds
+# Server software built and published by VortexPanel (panel/softs.py): installed,
+# updated and rolled back from the VortexPanel download server instead of the OS
+# package sources. Inactive until panel/trust/softs.json names the server and key.
+
+def _softs():
+    try:
+        from panel import softs
+        return softs if softs.configured() else None
+    except Exception:
+        return None
+
+
+def _softs_job(mod, title, fn):
+    """Run fn(log) as an App Store job (same progress window as installs)."""
+    job_id = str(uuid.uuid4())[:8]
+    _job_create(job_id, initial_installed=True)
+
+    def run_job():
+        from panel import softs
+        log = lambda line: _job_append_line(job_id, str(line))
+        _job_append_line(job_id, f'[VortexPanel] {title}')
+        try:
+            res = fn(log) or {}
+            ver = res.get('version', '') if isinstance(res, dict) else ''
+            _job_finish(job_id, success=True, installed=is_installed(mod['check']) or bool(softs.installed(mod['id'])),
+                        inst_ver=ver or get_version(mod['id']), message=f'{title}: done.')
+        except softs.SoftError as e:
+            _job_finish(job_id, success=False, installed=is_installed(mod['check']), message=str(e))
+        try:
+            panel_cache.invalidate('modules_list')
+        except Exception:
+            pass
+
+    _start_job_thread(job_id, run_job, installed_on_error=True)
+    return job_id
 
 
 @modules_bp.route('/api/modules/<mod_id>/install', methods=['POST'])
@@ -3011,6 +3248,21 @@ def install_module(mod_id):
 
     d   = request.get_json() or {}
     ver = str(d.get('version') or '')
+
+    if ver.startswith('vx:'):
+        sv = _softs()
+        if not sv:
+            return jsonify({'ok': False, 'error': 'VortexPanel builds are not available on this server.'}), 400
+        vx = ver[3:]
+        if not re.fullmatch(r'[0-9][0-9A-Za-z.+-]{0,40}', vx) or not any(r['version'] == vx for r in sv.releases(mod_id, channel='beta')):
+            return jsonify({'ok': False, 'error': f'{mod["name"]} {vx} is not available for this server. Reload the App Store.'}), 400
+        conflict_group, conflict_mod = get_conflict(mod_id)
+        if conflict_group and conflict_mod:
+            conflict_name = next((m['name'] for m in MODULES if m['id'] == conflict_mod), conflict_mod)
+            return jsonify({'ok': False, 'error': f'Cannot install: {conflict_name} is already installed.', 'conflict': conflict_mod}), 409
+        job_id = _softs_job(mod, f'Installing {mod["name"]} {vx} (VortexPanel build)',
+                            lambda log: sv.install(mod_id, vx, log))
+        return jsonify({'ok': True, 'job_id': job_id, 'action': 'install'})
 
     versions, _src = module_versions(mod, _live_data())
     if versions and not ver:
@@ -3188,6 +3440,25 @@ def update_module(mod_id):
     if not is_installed(mod['check']):
         return jsonify({'ok': False, 'error': f'{mod["name"]} is not installed'}), 400
     from panel import modupdates
+    sv = _softs()
+    vx_ups = [u for u in sv.updates() if u['app'] == mod_id and u.get('to')] if (sv and sv.installed(mod_id)) else []
+    slot = str((request.get_json(silent=True) or {}).get('slot') or '')
+    if slot:
+        vx_ups = [u for u in vx_ups if u['slot'] == slot]
+    # VortexPanel build updates first; OS-package versions next to them (PHP 7.4 from
+    # the OS beside a VortexPanel PHP 8.4) keep their package updates below
+    if vx_ups:
+        ups = vx_ups
+
+        def run_updates(log):
+            last = {}
+            for u in ups:
+                last = sv.update(mod_id, u['slot'], log)
+            return last
+        title = f'Updating {mod["name"]} ' + ', '.join(f'{u["from"]} -> {u["to"]}' for u in ups)
+        return jsonify({'ok': True, 'job_id': _softs_job(mod, title, run_updates), 'action': 'update'})
+    if sv and sv.installed(mod_id) and mod_id not in ('php', 'python'):
+        return jsonify({'ok': False, 'error': f'{mod["name"]} is already up to date.'}), 400
     installed_ver = get_version(mod_id)
     if mod_id == 'composer':
         has, latest = _composer_update(installed_ver, mod.get('versions', []))
@@ -3198,7 +3469,7 @@ def update_module(mod_id):
     else:
         upd = modupdates.for_module(mod_id, installed_ver)
         if not upd:
-            return jsonify({'ok': False, 'error': f'No update for {mod["name"]} is available from this server\'s package sources. Reload the App Store.'}), 400
+            return jsonify({'ok': False, 'error': f'No update for {mod["name"]} is available. Reload the App Store.'}), 400
         pkgs = upd['packages']
         cmd = modupdates.update_command(mod_id, pkgs)
         svcs = modupdates.services_after(mod_id, pkgs)
@@ -3239,6 +3510,69 @@ def update_module(mod_id):
     return jsonify({'ok': True, 'job_id': job_id, 'action': 'update'})
 
 
+@modules_bp.route('/api/modules/<mod_id>/rollback', methods=['POST'])
+def rollback_module(mod_id):
+    """Go back to the previous VortexPanel build kept on disk."""
+    if not req(): return jsonify({'ok': False}), 401
+    mod = _get_mod(mod_id)
+    from panel import softs
+    if not mod or not softs.installed(mod_id):
+        return jsonify({'ok': False, 'error': 'This software is not installed from a VortexPanel build.'}), 400
+    slot = str((request.get_json(silent=True) or {}).get('slot') or '') or None
+    return jsonify({'ok': True, 'action': 'rollback',
+                    'job_id': _softs_job(mod, f'Rolling back {mod["name"]}', lambda log: softs.rollback(mod_id, slot, log))})
+
+
+@modules_bp.route('/api/modules/<mod_id>/switch', methods=['POST'])
+def switch_module(mod_id):
+    """Move software installed from the OS packages to the VortexPanel build of the
+    same version track. The OS packages are removed (configuration kept) only after
+    the build is downloaded and verified; if the build does not start, they are
+    reinstalled."""
+    if not req(): return jsonify({'ok': False}), 401
+    mod = _get_mod(mod_id)
+    sv = _softs()
+    if not mod or not sv:
+        return jsonify({'ok': False, 'error': 'VortexPanel builds are not available on this server.'}), 400
+    ver = str((request.get_json(silent=True) or {}).get('version') or '')
+    if not any(r['version'] == ver for r in sv.releases(mod_id)):
+        return jsonify({'ok': False, 'error': 'Choose a version from the list.'}), 400
+    return jsonify({'ok': True, 'action': 'install',
+                    'job_id': _softs_job(mod, f'Switching {mod["name"]} to the VortexPanel build {ver}',
+                                         lambda log: sv.install(mod_id, ver, log, action='update', migrate=True))})
+
+
+@modules_bp.route('/api/softs/status')
+def softs_status():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import softs
+    return jsonify({'ok': True, 'status': softs.catalog_status(), 'updates': softs.updates() if softs.load() else [],
+                    'events': softs.events(30), 'installed': softs.state()})
+
+
+@modules_bp.route('/api/softs/settings', methods=['POST'])
+def softs_settings():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import softs
+    d = request.get_json(silent=True) or {}
+    s = softs.save_settings({k: d[k] for k in ('channel', 'auto', 'notify') if k in d})
+    panel_cache.invalidate('modules_list')
+    return jsonify({'ok': True, 'settings': s})
+
+
+@modules_bp.route('/api/softs/refresh', methods=['POST'])
+def softs_refresh():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import softs
+    try:
+        softs.refresh(force=True)
+    except softs.SoftError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    panel_cache.invalidate('modules_list')
+    st = softs.catalog_status()
+    return jsonify({'ok': not st['error'], 'status': st, 'error': st['error']})
+
+
 @modules_bp.route('/api/modules/<mod_id>/uninstall-impact')
 def uninstall_impact(mod_id):
     if not req(): return jsonify({'ok': False}), 401
@@ -3271,6 +3605,23 @@ def uninstall_module(mod_id):
     ver = str(d.get('version', '') or '').strip()
     if ver and not re.match(r'^[0-9A-Za-z._-]{1,20}$', ver):
         return jsonify({'ok': False, 'error': 'Invalid version'}), 400
+
+    try:
+        from panel import softs as _sv
+        slots = _sv.installed(mod_id)
+    except Exception:
+        slots = {}
+    # a version that is not a VortexPanel build (PHP 7.4 from the OS next to a
+    # VortexPanel PHP 8.4) is removed the normal way below
+    # one-version apps (slot "current"): always the build's own uninstall, whatever
+    # version the page sent -- never the OS command below, which can delete data
+    single = bool(slots) and set(slots) == {'current'}
+    if slots and (single or not ver or ver in slots):
+        slot = None if single else (ver or None)
+        what = f'{mod["name"]} {ver}' if ver else mod['name']
+        return jsonify({'ok': True, 'action': 'uninstall',
+                        'job_id': _softs_job(mod, f'Removing {what} (configuration files are kept)',
+                                             lambda log: _sv.uninstall(mod_id, slot, log))})
 
     # The OS's own Python must never be removed from here: on Ubuntu/Debian
     # removing python3.X (the default) also removes python3, apt tooling,
@@ -3532,7 +3883,25 @@ def _ffmpeg_arch():
 def _ffmpeg_dir(version):
     return os.path.join(FFMPEG_BASE_DIR, f'ffmpeg-{version}')
 
+def _ffmpeg_cloud(v):
+    """(url, sha256) of the copy VortexPanel mirrors for this branch and processor, or None."""
+    try:
+        from panel import softs
+        if not softs.configured():
+            return None
+        arch = _ffmpeg_arch()
+        for p in softs.pinned('ffmpeg'):
+            if p['track'] == v['version'] and arch in p['files']:
+                return p['files'][arch]['url'], p['files'][arch]['sha256']
+    except Exception:
+        return None
+    return None
+
+
 def _ffmpeg_url(v):
+    cloud = _ffmpeg_cloud(v)
+    if cloud:
+        return cloud[0], cloud[0].rsplit('/', 1)[-1]
     """Build the exact BtbN download URL for a given version + current arch.
     Pattern verified live from GitHub expanded_assets 2026-07-03."""
     arch = _ffmpeg_arch()
@@ -3601,7 +3970,7 @@ def ffmpeg_install_version(version):
     def run_job():
         try:
             _job_append_line(job_id, f'[VortexPanel] FFmpeg {version} — {arch} build')
-            _job_append_line(job_id, f'[VortexPanel] Source: BtbN/FFmpeg-Builds (listed on ffmpeg.org/download.html#build-linux)')
+            _job_append_line(job_id, '[VortexPanel] Source: ' + ('VortexPanel download server (mirrored BtbN/FFmpeg-Builds)' if _ffmpeg_cloud(v) else 'BtbN/FFmpeg-Builds (listed on ffmpeg.org/download.html#build-linux)'))
             _job_append_line(job_id, f'[VortexPanel] Downloading: {url}')
 
             # Download with progress visible in the job terminal
@@ -3615,6 +3984,19 @@ def ffmpeg_install_version(version):
                 return
 
             file_size = os.path.getsize(tmp_archive)
+            cloud = _ffmpeg_cloud(v)
+            if cloud:
+                import hashlib
+                h = hashlib.sha256()
+                with open(tmp_archive, 'rb') as f:
+                    for b in iter(lambda: f.read(1 << 20), b''):
+                        h.update(b)
+                if h.hexdigest() != cloud[1]:
+                    os.remove(tmp_archive)
+                    _job_append_line(job_id, '[ERROR] The download does not match the signed VortexPanel catalog (checksum) -- not installed')
+                    _job_finish(job_id, False, False)
+                    return
+                _job_append_line(job_id, '[VortexPanel] Checksum verified against the signed VortexPanel catalog.')
             _job_append_line(job_id, f'[VortexPanel] Downloaded {round(file_size/1024/1024, 1)} MB — extracting...')
 
             os.makedirs(dest_dir, exist_ok=True)
@@ -5617,6 +5999,8 @@ except Exception:
 
 if __name__ == '__main__':
     import sys
+    if sys.argv[1:2] == ['modsec-lib']:
+        sys.exit(_cli_modsec_lib())
     if sys.argv[1:2] == ['update-crs']:
         sys.exit(_cli_update_crs())
     print('usage: python3 -m panel.routes.modules update-crs')

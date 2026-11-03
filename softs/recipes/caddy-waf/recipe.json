@@ -1,0 +1,12 @@
+{
+  "name": "Caddy WAF",
+  "panel_id": "caddy-waf",
+  "universal": true,
+  "comment": "Caddy built with the caddy-waf module (github.com/fabriziosalmi/caddy-waf). Follows Caddy's releases; the newest caddy-waf release at build time is used and recorded in share/BUILDINFO. Takes over /usr/bin/caddy and caddy.service from the plain Caddy build while installed.",
+  "watch": {"type": "github-releases", "repo": "caddyserver/caddy", "regex": "^v(\\d+\\.\\d+\\.\\d+)$", "keep_tracks": 1, "track_depth": 1},
+  "changelog": "https://github.com/fabriziosalmi/caddy-waf/releases",
+  "service": "caddy",
+  "deps": {"build": {"deb": ["git"], "rpm": ["git"]}, "run": {"deb": ["ca-certificates"], "rpm": ["ca-certificates"]}},
+  "replaces": {"deb": ["caddy"], "rpm": ["caddy"]},
+  "smoke": "smoke.sh"
+}

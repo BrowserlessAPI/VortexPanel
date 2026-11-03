@@ -1,0 +1,68 @@
+{
+  "name": "ModSecurity library (libmodsecurity v3)",
+  "panel_id": "libmodsecurity",
+  "comment": "The ModSecurity v3 engine used by the Nginx build's ModSecurity module (ngx_http_modsecurity_module, linked with run path /usr/local/vortex/libmodsecurity/current/lib). Not an App Store entry of its own: the ModSecurity WAF module installs it when Nginx is a VortexPanel build. Built per system from the official release tarball (it bundles libinjection and mbedTLS).",
+  "watch": {
+    "type": "github-releases",
+    "repo": "owasp-modsecurity/ModSecurity",
+    "regex": "^v(3\\.\\d+\\.\\d+)$",
+    "keep_tracks": 1,
+    "min_track": "3.0"
+  },
+  "source": "https://github.com/owasp-modsecurity/ModSecurity/releases/download/v{version}/modsecurity-v{version}.tar.gz",
+  "changelog": "https://github.com/owasp-modsecurity/ModSecurity/releases/tag/v{version}",
+  "service": "",
+  "rpm_repos": [
+    "epel",
+    "crb"
+  ],
+  "deps": {
+    "build": {
+      "deb": [
+        "libpcre2-dev",
+        "libxml2-dev",
+        "libyajl-dev",
+        "libcurl4-openssl-dev",
+        "liblmdb-dev",
+        "libmaxminddb-dev",
+        "liblua5.4-dev",
+        "libfuzzy-dev",
+        "zlib1g-dev",
+        "libssl-dev",
+        "pkg-config",
+        "file"
+      ],
+      "rpm": [
+        "pcre2-devel",
+        "libxml2-devel",
+        "yajl-devel",
+        "libcurl-devel",
+        "lmdb-devel",
+        "libmaxminddb-devel",
+        "lua-devel",
+        "ssdeep-devel",
+        "zlib-devel",
+        "openssl-devel",
+        "pkgconf-pkg-config",
+        "gcc-c++",
+        "file"
+      ]
+    },
+    "run": {
+      "deb": [],
+      "rpm": []
+    }
+  },
+  "replaces": {
+    "deb": [
+      "libmodsecurity3",
+      "libmodsecurity3t64",
+      "libmodsecurity-dev"
+    ],
+    "rpm": [
+      "libmodsecurity",
+      "libmodsecurity-devel"
+    ]
+  },
+  "smoke": "smoke.sh"
+}

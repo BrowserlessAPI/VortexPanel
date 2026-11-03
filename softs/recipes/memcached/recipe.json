@@ -1,0 +1,40 @@
+{
+  "name": "Memcached",
+  "panel_id": "memcached",
+  "watch": {
+    "type": "github-tags",
+    "repo": "memcached/memcached",
+    "regex": "^(\\d+\\.\\d+\\.\\d+)$",
+    "keep_tracks": 1,
+    "min_track": "1.6"
+  },
+  "source": "https://memcached.org/files/memcached-{version}.tar.gz",
+  "service": "memcached",
+  "deps": {
+    "build": {
+      "deb": [
+        "libevent-dev",
+        "libssl-dev",
+        "libsasl2-dev"
+      ],
+      "rpm": [
+        "libevent-devel",
+        "openssl-devel",
+        "cyrus-sasl-devel"
+      ]
+    },
+    "run": {
+      "deb": [],
+      "rpm": []
+    }
+  },
+  "replaces": {
+    "deb": [
+      "memcached"
+    ],
+    "rpm": [
+      "memcached"
+    ]
+  },
+  "smoke": "smoke.sh"
+}

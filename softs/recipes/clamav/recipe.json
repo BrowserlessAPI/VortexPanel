@@ -1,0 +1,41 @@
+{
+  "name": "ClamAV",
+  "panel_id": "clamav",
+  "universal": true,
+  "watch": {
+    "type": "github-releases",
+    "repo": "Cisco-Talos/clamav",
+    "regex": "^clamav-(\\d+\\.\\d+\\.\\d+)$",
+    "keep_tracks": 2,
+    "min_track": "1.4"
+  },
+  "service": "clamav-daemon",
+  "deps": {
+    "build": {
+      "deb": [],
+      "rpm": []
+    },
+    "run": {
+      "deb": [
+        "ca-certificates"
+      ],
+      "rpm": [
+        "ca-certificates"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "clamav",
+      "clamav-daemon",
+      "clamav-freshclam",
+      "clamdscan"
+    ],
+    "rpm": [
+      "clamav",
+      "clamd",
+      "clamav-update"
+    ]
+  },
+  "smoke": "smoke.sh"
+}

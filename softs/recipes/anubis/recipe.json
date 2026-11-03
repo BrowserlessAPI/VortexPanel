@@ -1,0 +1,10 @@
+{
+  "name": "Anubis Bot Protection",
+  "panel_id": "anubis",
+  "kind": "mirror",
+  "watch": {"type": "github-releases", "repo": "TecharoHQ/anubis", "regex": "^v(\\d+\\.\\d+\\.\\d+)$", "track_depth": 1, "keep_tracks": 1},
+  "files": {
+    "amd64": {"asset": "anubis-{version}-linux-amd64.tar.gz"},
+    "arm64": {"asset": "anubis-{version}-linux-arm64.tar.gz"}
+  }
+}

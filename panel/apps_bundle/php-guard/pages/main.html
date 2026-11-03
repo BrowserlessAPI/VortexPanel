@@ -95,7 +95,7 @@
             <div class="vppg-ver" :class="{on:v.enabled&&v.loaded}">
               <div class="vppg-ver-h"><div class="vppg-ver-n" x-text="'PHP '+v.ver"></div>
                 <span class="vpa-pill" :class="v.enabled&&v.loaded?'ok':(v.enabled?'bad':'')"><i></i><span x-text="v.enabled&&v.loaded?'Protected':(v.enabled?'Not loaded':'Off')"></span></span></div>
-              <div class="vppg-kv"><span>Module</span><b x-text="v.built?'built':'not built yet'"></b></div>
+              <div class="vppg-kv"><span>Module</span><b :style="v.outdated?'color:var(--accent-warn)':''" x-text="!v.built ? 'not built yet' : (v.outdated ? 'older release - rebuild' : 'built')"></b></div>
               <div class="vppg-kv"><span>Service</span><b x-text="v.svc+' ('+v.svc_state+')'"></b></div>
               <div class="vppg-kv"><span>Applies to</span><b x-text="v.flavor==='debian'?'websites (PHP-FPM)':'websites and command line'"></b></div>
               <div style="display:flex;gap:6px;margin-top:12px;flex-wrap:wrap">

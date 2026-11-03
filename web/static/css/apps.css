@@ -157,4 +157,29 @@
 .vp-upd-tbl tr:last-child td{border-bottom:0}
 
 /* App Store: version pickers as wide as their text, not the whole column */
-.form-input.vp-ver-sel{width:auto;min-width:0;max-width:230px;font-size:11.5px;padding:4px 26px 4px 9px;height:28px;text-overflow:ellipsis}
+.form-input.vp-ver-sel{width:auto;min-width:0;max-width:170px;font-size:11.5px;padding:4px 26px 4px 9px;height:28px;text-overflow:ellipsis}
+
+/* App Store: VortexPanel builds */
+.vpx-tag{font-size:10px;font-weight:600;letter-spacing:.2px;color:var(--accent);background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.25);padding:0 6px;border-radius:6px;white-space:nowrap}
+.vpx-withdrawn{font-family:inherit;font-size:11px;font-weight:600;color:var(--red);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);padding:1px 7px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.vpx-note{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:10px;background:var(--bg-raised)}
+.vpx-cve{font:600 10.5px var(--font-mono);color:var(--red);background:rgba(239,68,68,.08);border-radius:5px;padding:0 5px}
+.vpx-slot{display:flex;align-items:center;gap:8px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px}
+.vpx-list{margin:0 0 14px;padding-left:18px;font-size:12.5px;color:var(--text-secondary);line-height:1.7}
+.vpx-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.vpx-stat{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-raised)}
+.vpx-v{font:600 13px var(--font-mono);color:var(--text-primary);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vpx-err{margin-top:10px;font-size:12px;color:var(--red);background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:8px 10px}
+.vpx-form{display:grid;gap:10px;margin-top:14px}
+.vpx-form label{display:grid;grid-template-columns:150px 1fr;align-items:center;gap:10px;font-size:12.5px;color:var(--text-secondary)}
+.vpx-form label.vpx-check{grid-template-columns:auto 1fr}
+.vpx-events{border:1px solid var(--border);border-radius:8px;max-height:180px;overflow:auto;font-size:12px}
+.vpx-events>div{display:flex;gap:10px;padding:6px 10px;border-bottom:1px solid var(--border)}
+.vpx-events>div:last-child{border-bottom:0}
+.vpx-time{font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap}
+@media (max-width:640px){.vpx-grid{grid-template-columns:1fr}.vpx-form label{grid-template-columns:1fr}}
+.vp-upd-badge.vp-upd-sec{color:var(--red);background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.35)}
+.vp-upd-badge.vp-upd-sec:hover{background:rgba(239,68,68,.18)}
+
+/* App Store: compact "not available" note (no empty dropdown beside it) */
+.vp-conflict{font-size:11px;color:var(--text-muted);background:var(--bg-raised);border:1px dashed var(--border);border-radius:6px;padding:2px 8px;max-width:260px;line-height:1.4}

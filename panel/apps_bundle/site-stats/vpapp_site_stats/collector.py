@@ -15,14 +15,14 @@ import sys
 import time
 
 from panel import appkit
-from vpapp_site_stats import geo, store
+from vpapp_site_stats import geo, hostguard, store
 
 APP = store.APP
 FIRST_READ_MAX = 64 * 1024 * 1024      # a brand-new log: only its tail
 RUN_READ_MAX = 256 * 1024 * 1024       # per log per run
 
 _FULL = re.compile(rb'^(\S+) \S+ \S+ \[(\d{2})/(\w{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-]\d{4})\] '
-                   rb'"(\S+) (\S+)[^"]*" (\d{3}) (\d+|-)(?: "([^"]*)" "([^"]*)")?', re.M)
+                   rb'"(\S+) (\S+)[^"]*" (\d{3}) (\d+|-)(?: "([^"]*)" "([^"]*)")?(?: "([^"]*)")?', re.M)
 _MONTHS = {m: i for i, m in enumerate([b'Jan', b'Feb', b'Mar', b'Apr', b'May', b'Jun', b'Jul', b'Aug',
                                        b'Sep', b'Oct', b'Nov', b'Dec'], 1)}
 _ASSET = re.compile(r'\.(?:css|js|mjs|png|jpe?g|gif|svg|ico|webp|avif|bmp|woff2?|ttf|otf|eot|map|mp4|webm|mp3|ogg|'
@@ -126,8 +126,10 @@ def error_log(site):
 # ------------------------------------------------------------------- aggregate
 
 class Agg:
-    def __init__(self, site, s):
+    def __init__(self, site, s, names=None):
         self.site = site
+        self.names = names or set()   # the site's own host names (empty: not known, nothing filtered)
+        self.foreign = {}             # (day, host) -> [hits, bytes]: other domains pointed at this server
         import ipaddress
         self.ex_ips = set(x for x in s['exclude_ips'] if '/' not in x)
         self.ex_nets = [ipaddress.ip_network(x, strict=False) for x in s['exclude_ips'] if '/' in x]
@@ -168,8 +170,17 @@ class Agg:
             e[0] += 1
             e[1] += nbytes
 
-    def add(self, ts, ip, method, path, status, nbytes, ref, ua, rt=None):
+    def add(self, ts, ip, method, path, status, nbytes, ref, ua, rt=None, host=''):
         if ip in self.ex_ips or (self.ex_paths and path.startswith(self.ex_paths)) or self._in_nets(ip):
+            return
+        if host and self.names and not hostguard.host_matches(host, self.names):
+            # a request for another domain that points at this server: not this site's traffic
+            k = (self.day(ts - ts % 3600), host.lower().split(':')[0][:200])
+            f = self.foreign.get(k)
+            if f is None:
+                f = self.foreign[k] = [0, 0]
+            f[0] += 1
+            f[1] += nbytes
             return
         hour = ts - ts % 3600
         day = self.day(hour)
@@ -259,7 +270,8 @@ def parse_combined(data, agg):
         size = m.group(12)
         agg.add(ts, m.group(1).decode('ascii', 'replace'), m.group(9).decode('ascii', 'replace'),
                 m.group(10).decode('utf-8', 'replace'), int(m.group(11)), int(size) if size != b'-' else 0,
-                (m.group(13) or b'').decode('utf-8', 'replace'), (m.group(14) or b'').decode('utf-8', 'replace'))
+                (m.group(13) or b'').decode('utf-8', 'replace'), (m.group(14) or b'').decode('utf-8', 'replace'),
+                host=(m.group(15) or b'').decode('utf-8', 'replace'))
 
 
 def parse_caddy(data, agg):
@@ -280,7 +292,8 @@ def parse_caddy(data, agg):
         ip = str(rq.get('client_ip') or rq.get('remote_ip') or '')
         dur = j.get('duration')
         agg.add(int(ts), ip, str(rq.get('method') or ''), str(rq.get('uri') or '/'), int(j.get('status') or 0),
-                int(j.get('size') or 0), ref, ua, float(dur) if isinstance(dur, (int, float)) else None)
+                int(j.get('size') or 0), ref, ua, float(dur) if isinstance(dur, (int, float)) else None,
+                host=str(rq.get('host') or ''))
 
 
 # ----------------------------------------------------------------------- write
@@ -304,6 +317,9 @@ def flush(con, agg):
         pv=pv+excluded.pv, bytes=bytes+excluded.bytes, first=min(first, excluded.first),
         last=max(last, excluded.last), country=excluded.country,
         spider=CASE WHEN ips.spider='' OR excluded.spider='' THEN '' ELSE excluded.spider END, s4=s4+excluded.s4''', rows)
+    con.executemany('''INSERT INTO top (site, day, kind, k, hits, bytes) VALUES (?,?,?,?,?,?)
+        ON CONFLICT(site, day, kind, k) DO UPDATE SET hits=hits+excluded.hits, bytes=bytes+excluded.bytes''',
+                    [(agg.site, d, 'xhost', h, v[0], v[1]) for (d, h), v in agg.foreign.items()])
     con.executemany('''INSERT INTO minute (site, minute, req, bytes) VALUES (?,?,?,?)
         ON CONFLICT(site, minute) DO UPDATE SET req=req+excluded.req, bytes=bytes+excluded.bytes''',
                     [(agg.site, m, v[0], v[1]) for m, v in agg.minute.items()])
@@ -333,6 +349,9 @@ def _collect(s=None):
     done = {}
     try:
         offsets = {r[0]: (r[1], r[2]) for r in con.execute('SELECT path, inode, pos FROM offsets')}
+        names = {}
+        for site, path, fmt in log_sources():
+            names[site] = hostguard.site_names(site) if s.get('own_domains_only', True) else set()
         for site, path, fmt in log_sources():
             if only and site not in only:
                 continue
@@ -354,13 +373,13 @@ def _collect(s=None):
                 rotated = path + '.1'
                 if inode is not None and os.path.exists(rotated) and os.stat(rotated).st_ino == inode:
                     data, _ = _read(rotated, pos, RUN_READ_MAX)
-                    agg = Agg(site, s)
+                    agg = Agg(site, s, names.get(site))
                     (parse_caddy if fmt == 'caddy' else parse_combined)(data, agg)
                     flush(con, agg)
                 pos = 0
             data, newpos = _read(path, pos, RUN_READ_MAX)
             if data:
-                agg = Agg(site, s)
+                agg = Agg(site, s, names.get(site))
                 (parse_caddy if fmt == 'caddy' else parse_combined)(data, agg)
                 flush(con, agg)
                 done[site] = len(data)
@@ -420,6 +439,11 @@ def main():
             if t0 - last_clean > 3600:
                 cleanup(s)
                 last_clean = t0
+                if s.get('own_domains_only', True):
+                    try:
+                        hostguard.apply_logging()     # websites added since the last hour
+                    except Exception as e:  # noqa: BLE001
+                        print(f'host logging: {e}', flush=True)
         except Exception as e:  # noqa: BLE001 - keep running, report why
             print(f'collect error: {type(e).__name__}: {e}', flush=True)
         wait = max(5, int(s['interval']) - int(time.time() - t0))

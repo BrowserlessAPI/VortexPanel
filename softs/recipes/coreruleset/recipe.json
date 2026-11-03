@@ -1,0 +1,9 @@
+{
+  "name": "OWASP Core Rule Set (ModSecurity WAF rules)",
+  "panel_id": "modsecurity",
+  "kind": "mirror",
+  "watch": {"type": "github-releases", "repo": "coreruleset/coreruleset", "regex": "^v(\\d+\\.\\d+\\.\\d+)$", "track_depth": 1, "keep_tracks": 1, "min_track": "4"},
+  "files": {
+    "tarball": {"url": "https://github.com/coreruleset/coreruleset/archive/refs/tags/v{version}.tar.gz"}
+  }
+}

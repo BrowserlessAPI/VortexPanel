@@ -1,0 +1,11 @@
+{
+  "name": "Supervisor",
+  "panel_id": "supervisor",
+  "watch": {"type": "github-tags", "repo": "Supervisor/supervisor", "regex": "^(\\d+\\.\\d+\\.\\d+)$", "keep_tracks": 1, "track_depth": 1, "min_track": "4"},
+  "changelog": "https://raw.githubusercontent.com/Supervisor/supervisor/{tag}/CHANGES.rst",
+  "service": "supervisor",
+  "deps": {"build": {"deb": ["python3-venv", "python3-pip"], "rpm": ["python3", "python3-pip"]},
+           "run": {"deb": ["python3"], "rpm": ["python3"]}},
+  "replaces": {"deb": ["supervisor"], "rpm": ["supervisor"]},
+  "smoke": "smoke.sh"
+}

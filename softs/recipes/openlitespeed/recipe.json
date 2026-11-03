@@ -1,0 +1,51 @@
+{
+  "name": "OpenLiteSpeed",
+  "panel_id": "openlitespeed",
+  "universal": true,
+  "comment": "Official LiteSpeed binary release. OpenLiteSpeed lives in /usr/local/lsws by design: each version is kept here unpacked and activate.sh runs that version's own upstream installer in upgrade mode. A server installed from the LiteSpeed repository is switched over too: the engine copies the configuration (keep_on_switch) before the package is removed and puts it back exactly afterwards; activate.sh also keeps conf/ and admin/conf/ as they were around every installer run.",
+  "watch": {
+    "type": "github-releases",
+    "repo": "litespeedtech/openlitespeed",
+    "regex": "^v(\\d+\\.\\d+\\.\\d+(?:\\.\\d+)?)$",
+    "keep_tracks": 1,
+    "track_depth": 2,
+    "min_track": "1.8"
+  },
+  "changelog": "https://openlitespeed.org/release-log/",
+  "service": "lsws",
+  "deps": {
+    "build": {
+      "deb": [],
+      "rpm": []
+    },
+    "run": {
+      "deb": [
+        "ca-certificates",
+        "curl",
+        "openssl",
+        "procps"
+      ],
+      "rpm": [
+        "ca-certificates",
+        "curl",
+        "openssl",
+        "procps-ng"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "openlitespeed"
+    ],
+    "rpm": [
+      "openlitespeed"
+    ]
+  },
+  "smoke": "smoke.sh",
+  "keep_on_switch": [
+    "/usr/local/lsws/conf",
+    "/usr/local/lsws/admin/conf",
+    "/usr/local/lsws/Example",
+    "/usr/local/lsws/adminpasswd"
+  ]
+}

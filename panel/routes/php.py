@@ -89,6 +89,15 @@ def php_layout(ver, _sys=None):
     if not valid_php_ver(ver):
         return None
     vn = ver.replace('.', '')
+    if os.path.isdir(f'/usr/local/vortex/php/{ver}'):
+        # VortexPanel build: Debian paths, but extensions are switched on/off from the
+        # build's own extension folder (never installed from apt/dnf packages)
+        return {'flavor': 'vortex', 'ver': ver,
+                'bin': f'/usr/bin/php{ver}', 'fpm_bin': f'/usr/sbin/php-fpm{ver}',
+                'ini': f'/etc/php/{ver}/fpm/php.ini', 'ini_cli': f'/etc/php/{ver}/cli/php.ini',
+                'pool': f'/etc/php/{ver}/fpm/pool.d/www.conf', 'pool_dir': f'/etc/php/{ver}/fpm/pool.d',
+                'svc': f'php{ver}-fpm', 'sock': f'/run/php/php{ver}-fpm.sock',
+                'log': f'/var/log/php{ver}-fpm.log', 'pkg_prefix': ''}
     if os.path.exists(f'/usr/bin/php{ver}') or os.path.exists(f'/usr/sbin/php-fpm{ver}'):
         fpm_ini, cli_ini = f'/etc/php/{ver}/fpm/php.ini', f'/etc/php/{ver}/cli/php.ini'
         if not os.path.exists(fpm_ini) and os.path.exists(cli_ini):
@@ -319,6 +328,8 @@ IONCUBE_DIR = '/usr/local/lib/ioncube'
 
 
 def _ioncube_ini_paths(lay):
+    if lay['flavor'] == 'vortex':
+        return [f'/etc/php/{lay["ver"]}/mods-available/ioncube.ini']
     if lay['flavor'] == 'debian':
         return [f'/etc/php/{lay["ver"]}/mods-available/ioncube.ini']
     if lay['flavor'] == 'remi':
@@ -373,6 +384,11 @@ def _install_ioncube(lay):
             f.write(ini)
     if lay['flavor'] == 'debian' and shutil_which('phpenmod'):
         _run(['phpenmod', '-v', ver, 'ioncube'], t=30)
+    if lay['flavor'] == 'vortex':
+        for sapi in ('fpm', 'cli'):
+            l = f'/etc/php/{ver}/{sapi}/conf.d/01-ioncube.ini'
+            if not os.path.lexists(l):
+                os.symlink(f'/etc/php/{ver}/mods-available/ioncube.ini', l)
     # check before reloading FPM: a loader that does not start must not take PHP down
     rc, out = _run([lay['bin'], '-v'], t=20)
     if rc != 0 or 'with the ioncube php loader' not in out.lower():
@@ -387,6 +403,12 @@ def _install_ioncube(lay):
 def _remove_ioncube_ini(lay):
     if lay['flavor'] == 'debian' and shutil_which('phpdismod'):
         _run(['phpdismod', '-v', lay['ver'], 'ioncube'], t=30)
+    if lay['flavor'] == 'vortex':
+        for sapi in ('fpm', 'cli'):
+            try:
+                os.unlink(f'/etc/php/{lay["ver"]}/{sapi}/conf.d/01-ioncube.ini')
+            except OSError:
+                pass
     for p in _ioncube_ini_paths(lay):
         try:
             os.unlink(p)
@@ -406,6 +428,36 @@ def _uninstall_ioncube(lay):
     return True, f'ionCube Loader removed from PHP {lay["ver"]}.'
 
 
+
+def _vortex_ext_toggle(lay, ext, on):
+    """VortexPanel PHP build: every extension of the build is in mods-available;
+    switching one on/off is a conf.d link (like phpenmod/phpdismod)."""
+    ver = lay['ver']
+    avail = f'/etc/php/{ver}/mods-available/{ext}.ini'
+    if not os.path.exists(avail):
+        return False, (f'{ext} is not part of the VortexPanel PHP {ver} build. '
+                       'It includes the common extensions plus redis, apcu, imagick, igbinary and memcached.')
+    pr = '10' if ext in ('opcache', 'ioncube') else '20'
+    for sapi in ('fpm', 'cli'):
+        d = f'/etc/php/{ver}/{sapi}/conf.d'
+        os.makedirs(d, exist_ok=True)
+        links = [os.path.join(d, n) for n in os.listdir(d) if re.fullmatch(rf'\d+-{re.escape(ext)}\.ini', n)]
+        if on and not links:
+            os.symlink(avail, os.path.join(d, f'{pr}-{ext}.ini'))
+        if not on:
+            for l in links:
+                os.unlink(l)
+    # check the CLI first: an extension that breaks PHP must not reach PHP-FPM
+    rc, out = _run([lay['bin'], '-v'], t=20)
+    if on and (rc != 0 or 'warning' in out.lower() and ext in out.lower()):
+        _vortex_ext_toggle(lay, ext, False)
+        return False, f'PHP {ver} did not start with {ext}; it was switched off again: ' + out[-300:]
+    php_reload(lay)
+    loaded = ext in php_loaded_modules(lay)
+    if on:
+        return (True, f'{ext} enabled for PHP {ver}.') if loaded else (False, f'PHP {ver} does not load {ext}.')
+    return (True, f'{ext} disabled for PHP {ver}.') if not loaded else (False, f'{ext} is built into PHP {ver} and cannot be switched off.')
+
 def php_install_ext(ver, ext):
     """Install/enable one extension for one PHP version. Returns (ok, message)."""
     lay = php_layout(ver)
@@ -418,6 +470,8 @@ def php_install_ext(ver, ext):
         return True, f'{ext} is already enabled for PHP {ver}.'
     if ext == 'ioncube':
         return _install_ioncube(lay)
+    if lay['flavor'] == 'vortex':
+        return _vortex_ext_toggle(lay, ext, True)
     pkg, suf = _ext_pkg(lay, ext)
     if not pkg:
         return False, f'{ext} is built into the PHP CLI binary and cannot be added to PHP-FPM as a package.'
@@ -446,6 +500,8 @@ def php_uninstall_ext(ver, ext):
         return True, f'{ext} is not enabled for PHP {ver}.'
     if ext == 'ioncube':
         return _uninstall_ioncube(lay)
+    if lay['flavor'] == 'vortex':
+        return _vortex_ext_toggle(lay, ext, False)
     pkg, suf = _ext_pkg(lay, ext)
     if not pkg or suf in _SHARED_PKGS:
         if lay['flavor'] == 'debian' and pkg and shutil_which('phpdismod'):

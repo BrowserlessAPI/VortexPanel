@@ -256,7 +256,8 @@ def apache_enable_modules():
         # RHEL-family httpd ships proxy/rewrite/headers modules INSIDE the base httpd
         # package — there's no separate 'mod_proxy' package. They load by default via
         # LoadModule lines in /etc/httpd/conf.modules.d/. Just ensure httpd is present.
-        sh('dnf install -y httpd 2>/dev/null || yum install -y httpd 2>/dev/null || true')
+        # never over an Apache that is already there (the VortexPanel build is not an rpm)
+        sh('command -v httpd >/dev/null 2>&1 || dnf install -y httpd 2>/dev/null || yum install -y httpd 2>/dev/null || true')
 
 def apache_enable_site(name):
     """Enable a vhost config — Debian needs a2ensite, RHEL just needs the file present."""

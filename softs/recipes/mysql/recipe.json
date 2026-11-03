@@ -1,0 +1,18 @@
+{
+  "name": "MySQL",
+  "panel_id": "mysql",
+  "universal": true,
+  "comment": "Oracle's generic Linux (glibc 2.28) release tarballs, one per processor; they carry their own OpenSSL. Each LTS line is its own track: updates never move a server to another major version.",
+  "watch": {"type": "github-tags", "repo": "mysql/mysql-server", "regex": "^mysql-(\\d+\\.\\d+\\.\\d+)$", "pages": 10,
+            "tracks": ["9.7", "8.4", "8.0"]},
+  "changelog": "https://dev.mysql.com/doc/relnotes/mysql/{track}/en/",
+  "service": "mysql",
+  "deps": {"build": {"deb": [], "rpm": []},
+           "run": {"deb": ["libaio1t64|libaio1", "libnuma1", "libncurses6|libncurses5", "procps"],
+                   "rpm": ["libaio", "numactl-libs", "ncurses-libs", "procps-ng"]}},
+  "replaces": {"deb": ["mysql-server", "mysql-server-*", "mysql-client", "mysql-client-*",
+                       "mysql-community-server", "mysql-community-server-core", "mysql-community-client",
+                       "mysql-community-client-core"],
+               "rpm": ["mysql-server", "mysql", "mysql-community-server", "mysql-community-client"]},
+  "smoke": "smoke.sh"
+}
