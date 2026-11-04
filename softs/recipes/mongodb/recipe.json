@@ -2,18 +2,71 @@
   "name": "MongoDB",
   "panel_id": "mongodb",
   "comment": "MongoDB's own release tarballs for each system (no compile), plus the mongosh shell. Each long-term line is its own track: updates never move a server to another major version (that needs a featureCompatibilityVersion step).",
-  "watch": {"type": "github-tags", "repo": "mongodb/mongo", "regex": "^r(\\d+\\.\\d+\\.\\d+)$", "pages": 10,
-            "tracks": ["9.0", "8.0", "7.0"]},
+  "watch": {
+    "type": "github-tags",
+    "repo": "mongodb/mongo",
+    "regex": "^r(\\d+\\.\\d+\\.\\d+)$",
+    "pages": 10,
+    "tracks": [
+      "9.0",
+      "8.0",
+      "7.0"
+    ]
+  },
   "changelog": "https://www.mongodb.com/docs/manual/release-notes/{track}/",
   "service": "mongod",
-  "deps": {"build": {"deb": [], "rpm": []},
-           "run": {"deb": ["libcurl4t64|libcurl4", "libssl3t64|libssl3", "liblzma5", "procps", "tzdata"],
-                   "rpm": ["libcurl", "openssl-libs", "xz-libs", "procps-ng", "tzdata"]}},
-  "replaces": {"deb": ["mongodb-org", "mongodb-org-server", "mongodb-org-mongos", "mongodb-org-shell", "mongodb-org-database",
-                       "mongodb-org-database-tools-extra", "mongodb-mongosh", "mongodb-mongosh-shared-openssl3",
-                       "mongodb-mongosh-shared-openssl11", "mongodb-org-tools"],
-               "rpm": ["mongodb-org", "mongodb-org-server", "mongodb-org-mongos", "mongodb-org-shell", "mongodb-org-database",
-                       "mongodb-org-database-tools-extra", "mongodb-mongosh", "mongodb-mongosh-shared-openssl3",
-                       "mongodb-org-tools"]},
-  "smoke": "smoke.sh"
+  "deps": {
+    "build": {
+      "deb": [],
+      "rpm": []
+    },
+    "run": {
+      "deb": [
+        "libcurl4t64|libcurl4",
+        "libssl3t64|libssl3",
+        "liblzma5",
+        "procps",
+        "tzdata"
+      ],
+      "rpm": [
+        "libcurl",
+        "openssl-libs",
+        "xz-libs",
+        "procps-ng",
+        "tzdata",
+        "util-linux"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "mongodb-org",
+      "mongodb-org-server",
+      "mongodb-org-mongos",
+      "mongodb-org-shell",
+      "mongodb-org-database",
+      "mongodb-org-database-tools-extra",
+      "mongodb-mongosh",
+      "mongodb-mongosh-shared-openssl3",
+      "mongodb-mongosh-shared-openssl11",
+      "mongodb-org-tools"
+    ],
+    "rpm": [
+      "mongodb-org",
+      "mongodb-org-server",
+      "mongodb-org-mongos",
+      "mongodb-org-shell",
+      "mongodb-org-database",
+      "mongodb-org-database-tools-extra",
+      "mongodb-mongosh",
+      "mongodb-mongosh-shared-openssl3",
+      "mongodb-org-tools"
+    ]
+  },
+  "smoke": "smoke.sh",
+  "runners": {
+    "x86_64": "ubuntu-22.04",
+    "aarch64": "ubuntu-22.04-arm"
+  },
+  "runners_comment": "Built and tested on Ubuntu 22.04 runners: MongoDB 8.0 refuses to start on Linux kernel 6.19+ (SERVER-121912), which newer runners use; supported servers run older kernels."
 }

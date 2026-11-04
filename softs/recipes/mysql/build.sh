@@ -10,7 +10,9 @@ echo "[build] using $got"
 mkdir x; tar -xJf "$got" -C x --no-same-owner
 D="$(echo x/mysql-*)"
 rm -rf "$D/mysql-test" "$D/docs" "$D/man" "$D/LICENSE.router" "$D/README.router"
-find "$D" -name '*debug*' -prune -exec rm -rf {} +
+# debug builds only (mysqld-debug, lib/plugin/debug): libraries such as
+# libabsl_debugging_internal.so are needed by the server
+rm -f "$D/bin/mysqld-debug" "$D/bin/mariadbd-debug"; rm -rf "$D/lib/plugin/debug" "$D/lib/debug"
 # strip the full tarball's binaries (the minimal one already is)
 find "$D/bin" "$D/lib" -type f \( -perm -u+x -o -name '*.so*' \) -print0 | while IFS= read -r -d '' f; do
   file -b "$f" | grep -q 'ELF.*not stripped' && strip --strip-unneeded "$f" 2>/dev/null || true

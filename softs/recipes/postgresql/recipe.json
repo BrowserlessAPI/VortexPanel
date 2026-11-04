@@ -2,22 +2,92 @@
   "name": "PostgreSQL",
   "panel_id": "postgresql",
   "comment": "Built from the postgresql.org source for each system. A track is one major version: updates are minor releases of the same major (no dump/restore needed); moving to another major is an explicit pg_upgrade, never automatic.",
-  "watch": {"type": "url-regex", "url": "https://ftp.postgresql.org/pub/source/", "regex": "href=\"v(\\d+\\.\\d+)/\"",
-            "track_depth": 1, "keep_tracks": 4, "min_track": "15"},
+  "watch": {
+    "type": "url-regex",
+    "url": "https://ftp.postgresql.org/pub/source/",
+    "regex": "href=\"v(\\d+\\.\\d+)/\"",
+    "track_depth": 1,
+    "keep_tracks": 4,
+    "min_track": "15"
+  },
   "changelog": "https://www.postgresql.org/docs/release/{version}/",
   "source": "https://ftp.postgresql.org/pub/source/v{version}/postgresql-{version}.tar.bz2",
   "service": "postgresql",
-  "rpm_repos": ["epel", "crb"],
-  "deps": {"build": {"deb": ["libreadline-dev", "zlib1g-dev", "libssl-dev", "libicu-dev", "libxml2-dev", "libxslt1-dev",
-                             "liblz4-dev", "libzstd-dev", "libsystemd-dev", "uuid-dev", "libldap-dev", "libpam0g-dev",
-                             "bison", "flex", "perl", "pkg-config"],
-                     "rpm": ["readline-devel", "zlib-devel", "openssl-devel", "libicu-devel", "libxml2-devel", "libxslt-devel",
-                             "lz4-devel", "libzstd-devel", "systemd-devel", "libuuid-devel", "openldap-devel", "pam-devel",
-                             "bison", "flex", "perl", "perl-FindBin", "perl-File-Compare"]},
-           "run": {"deb": ["util-linux", "procps", "tzdata"], "rpm": ["util-linux", "procps-ng", "tzdata"]}},
-  "replaces": {"deb": ["postgresql", "postgresql-[0-9][0-9]", "postgresql-contrib", "postgresql-common", "postgresql-client",
-                       "postgresql-client-[0-9][0-9]", "postgresql-client-common"],
-               "rpm": ["postgresql-server", "postgresql", "postgresql-contrib", "postgresql[0-9][0-9]-server", "postgresql[0-9][0-9]",
-                       "postgresql[0-9][0-9]-contrib"]},
+  "rpm_repos": [
+    "epel",
+    "crb"
+  ],
+  "deps": {
+    "build": {
+      "deb": [
+        "libreadline-dev",
+        "zlib1g-dev",
+        "libssl-dev",
+        "libicu-dev",
+        "libxml2-dev",
+        "libxslt1-dev",
+        "liblz4-dev",
+        "libzstd-dev",
+        "libsystemd-dev",
+        "uuid-dev",
+        "libldap-dev",
+        "libpam0g-dev",
+        "bison",
+        "flex",
+        "perl",
+        "pkg-config"
+      ],
+      "rpm": [
+        "readline-devel",
+        "zlib-devel",
+        "openssl-devel",
+        "libicu-devel",
+        "libxml2-devel",
+        "libxslt-devel",
+        "lz4-devel",
+        "libzstd-devel",
+        "systemd-devel",
+        "libuuid-devel",
+        "openldap-devel",
+        "pam-devel",
+        "bison",
+        "flex",
+        "perl",
+        "perl-FindBin",
+        "perl-File-Compare"
+      ]
+    },
+    "run": {
+      "deb": [
+        "util-linux",
+        "procps",
+        "tzdata"
+      ],
+      "rpm": [
+        "util-linux",
+        "procps-ng",
+        "tzdata"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "postgresql",
+      "postgresql-[0-9][0-9]",
+      "postgresql-contrib",
+      "postgresql-common",
+      "postgresql-client",
+      "postgresql-client-[0-9][0-9]",
+      "postgresql-client-common"
+    ],
+    "rpm": [
+      "postgresql-server",
+      "postgresql",
+      "postgresql-contrib",
+      "postgresql[0-9][0-9]-server",
+      "postgresql[0-9][0-9]",
+      "postgresql[0-9][0-9]-contrib"
+    ]
+  },
   "smoke": "smoke.sh"
 }

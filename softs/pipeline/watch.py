@@ -286,7 +286,8 @@ def matrix(pl):
             if 'resolved' in p and f'{target}-{arch}' not in p['resolved']:
                 continue                    # upstream offers nothing for this system
             rows.append({'app': p['app'], 'version': p['version'], 'target': target, 'arch': arch,
-                         'runner': C.TARGETS['arches'][arch]['runner'] if arch in C.TARGETS['arches'] else 'ubuntu-24.04',
+                         'runner': (rs[p['app']].get('runners') or {}).get(arch)
+                                   or (C.TARGETS['arches'][arch]['runner'] if arch in C.TARGETS['arches'] else 'ubuntu-24.04'),
                          'image': (C.TARGETS['targets'].get(target) or {}).get('image', 'ubuntu:24.04')})
     return rows
 

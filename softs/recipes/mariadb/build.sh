@@ -7,7 +7,9 @@ if [ "$ARCH" = x86_64 ]; then
   mkdir x; tar -xzf "$SOURCE_FILE" -C x --no-same-owner
   D="$(echo x/mariadb-*)"
   rm -rf "$D/mysql-test" "$D/mariadb-test" "$D/sql-bench" "$D/docs" "$D/man"
-  find "$D" -name '*debug*' -prune -exec rm -rf {} +
+  # debug builds only (mysqld-debug, lib/plugin/debug): libraries such as
+# libabsl_debugging_internal.so are needed by the server
+rm -f "$D/bin/mysqld-debug" "$D/bin/mariadbd-debug"; rm -rf "$D/lib/plugin/debug" "$D/lib/debug"
   install -d "$DEST$PREFIX"
   cp -a "$D"/. "$DEST$PREFIX/"
 else
