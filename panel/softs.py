@@ -435,6 +435,10 @@ def ensure_packages(names, repos=(), log=None):
             rc = _run(['apt-get', 'install', '-y', '--no-install-recommends'] + need, log, env)
     else:
         rc = _run(['dnf', '-y', 'install'] + need, log, env)
+        if rc != 0:
+            # a mirror can serve a broken index for a moment: refresh it and try once more
+            _run(['dnf', 'clean', 'metadata'], log, env)
+            rc = _run(['dnf', '-y', 'install'] + need, log, env)
     if rc != 0:
         raise SoftError('Runtime packages could not be installed: ' + ' '.join(need))
 

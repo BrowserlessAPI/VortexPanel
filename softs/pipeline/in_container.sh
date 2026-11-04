@@ -22,14 +22,16 @@ for k in sys.argv[1].split('.'):
 print(' '.join(v) if isinstance(v, list) else (v if isinstance(v, str) else ''))" "$1"; }
 
 # --- base tools + python3 (needed to read recipe.json) -------------------------
+# package mirrors fail now and then (broken index, timeout): retry with a fresh index
+try3() { local i; for i in 1 2 3; do "$@" && return 0; echo "[build] attempt $i failed, retrying" >&2; dnf clean metadata >/dev/null 2>&1 || apt-get update -qq >/dev/null 2>&1 || true; sleep 10; done; return 1; }
 if [ "$FAMILY" = deb ]; then
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq --no-install-recommends python3 ca-certificates curl xz-utils tar gzip bzip2 file \
+  try3 apt-get update -qq
+  try3 apt-get install -y -qq --no-install-recommends python3 ca-certificates curl xz-utils tar gzip bzip2 file \
       build-essential pkg-config >/dev/null
 else
   # --allowerasing: EL9/10 images ship curl-minimal, which conflicts with the full curl
-  dnf -y -q install --allowerasing python3 ca-certificates curl xz tar gzip bzip2 file gcc gcc-c++ make \
+  try3 dnf -y -q install --allowerasing python3 ca-certificates curl xz tar gzip bzip2 file gcc gcc-c++ make \
       pkgconf-pkg-config dnf-plugins-core findutils which >/dev/null
   if [ -n "$(json rpm_repos)" ]; then
     dnf -y -q install epel-release >/dev/null || true

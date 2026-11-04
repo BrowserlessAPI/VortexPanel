@@ -34,7 +34,9 @@ C
   KEY=/etc/bind/rndc.key
 else
   U=named; ensure_user named /var/named
-  install -d -m 0750 -o root -g named /var/named
+  # like Red Hat's bind package: named must be able to write its working directory
+  # (BIND 9.18+ refuses to start otherwise); sticky so it cannot remove root's zone files
+  install -d -m 1770 -o root -g named /var/named
   install -d -m 0770 -o named -g named /var/named/data /var/named/dynamic
   if [ ! -e /etc/named.conf ]; then
     cat > /etc/named.conf <<'C'

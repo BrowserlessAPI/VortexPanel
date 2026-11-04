@@ -40,6 +40,10 @@ the server's system, instead of using the operating system's package sources.
     when there is not enough free space) and put back if the new version fails.
     Updates stay inside one release line (for example MySQL 8.4, PostgreSQL 17);
     a new major version is never installed automatically.
+  - Caddy and Caddy WAF: the new version must accept the server's own Caddyfile (sites,
+    WAF directives and rule files) before anything changes, and every site must answer
+    as it did before the update, or the update is rolled back automatically. Caddy WAF
+    also follows caddy-waf's own releases (published as a rebuild, e.g. 2.11.8.1).
   - The previous version is kept for a one-click **Roll back**.
   - Configuration files (`/etc/nginx`, `/etc/php/X.Y`, `/etc/mysql`, ...) are never
     replaced.

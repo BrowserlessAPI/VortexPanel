@@ -43,7 +43,7 @@ def env_for(recipe, item, target, arch, prefix, dest):
     e = {'APP': recipe['id'], 'VERSION': item['version'], 'TRACK': item.get('track') or C.track_of(item['version']),
          'PREFIX': prefix, 'DEST': dest, 'TARGET': target, 'ARCH': arch, 'FAMILY': fam,
          'JOBS': str(os.cpu_count() or 2)}
-    for k in ('url', 'sha256', 'tag', 'build'):
+    for k in ('url', 'sha256', 'tag', 'build', 'plugin'):
         if item.get(k):
             e['VP_' + k.upper()] = str(item[k])
     for k, v in ((item.get('resolved') or {}).get(f'{target}-{arch}') or {}).items():

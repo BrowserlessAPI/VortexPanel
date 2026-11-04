@@ -164,6 +164,27 @@ def pick(recipe, found):
 RECHECK_DAYS = 14
 
 
+def plugin_version(item, plugin, rels):
+    """Program version + module release (Caddy WAF = Caddy + caddy-waf).
+      - program version not published yet: build it with the newest module release
+      - published, same module release: keep that version (the normal retry/recheck rules apply)
+      - published with an older module release: rebuild as a fourth number, 2.11.8 -> 2.11.8.1
+      - published before module releases were recorded: left as it is (the next program
+        release records it)"""
+    base = item['version']
+    same = sorted((x for x in rels.values() if '.'.join(x['version'].split('.')[:3]) == base),
+                  key=lambda x: C.vt(x['version']), reverse=True)
+    if not same:
+        return dict(item, plugin=plugin)
+    newest = same[0]
+    if newest.get('plugin') is None:
+        return None
+    if newest['plugin'] == plugin:
+        return dict(item, version=newest['version'], plugin=plugin)
+    parts = newest['version'].split('.')
+    n = int(parts[3]) + 1 if len(parts) > 3 else 1
+    return dict(item, version=f'{base}.{n}', plugin=plugin)
+
 def availability(recipe, item):
     """Ask the recipe which systems upstream really offers this version for.
     resolved: {target-arch: env}, unavailable: [target-arch] (not built, not a failure)."""
@@ -194,7 +215,19 @@ def plan(only=None, force=None, catalog=None):
             C.log(f'{app}: cannot read releases: {e}')
             continue
         rels = {x['version']: x for x in C.releases(cat, app)}
+        plugin = None
+        if r['watch'].get('plugin'):
+            # a module built into the program (Caddy WAF): its newest release is part of the build
+            try:
+                plugin = max((p['tag'] for p in src_github_tags(r['watch']['plugin'])), key=lambda t: C.vt(t.lstrip('v')))
+            except Exception as e:  # noqa: BLE001
+                C.log(f'{app}: cannot read the module releases: {e}')
+                continue
         for item in pick(r, found):
+            if plugin:
+                item = plugin_version(item, plugin, rels)
+                if item is None:
+                    continue
             v = item['version']
             forced = bool(force and force.get(app) == v)
             rel = rels.get(v)

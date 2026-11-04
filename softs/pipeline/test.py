@@ -23,14 +23,16 @@ SCRIPT = r'''
 set -e
 # read only the OS version: sourcing os-release would overwrite VERSION (the software version)
 VERSION_ID="$(. /etc/os-release; echo "$VERSION_ID")"
+# package mirrors fail now and then (broken index, timeout): retry with a fresh index
+try3() { local i; for i in 1 2 3; do "$@" && return 0; echo "(attempt $i failed, retrying)"; dnf clean metadata >/dev/null 2>&1 || apt-get update -qq >/dev/null 2>&1 || true; sleep 10; done; return 1; }
 if command -v apt-get >/dev/null; then
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq && apt-get install -y -qq python3 curl procps ca-certificates >/dev/null
+  try3 sh -c 'apt-get update -qq && apt-get install -y -qq python3 curl procps ca-certificates >/dev/null'
   PY=python3
 else
-  if [ "${VERSION_ID%%.*}" = 8 ]; then dnf -y -q install python3.11 curl procps-ng >/dev/null; PY=python3.11
-  else dnf -y -q install python3 procps-ng >/dev/null; PY=python3; fi
-  command -v curl >/dev/null || dnf -y -q install curl >/dev/null   # EL9/10 images already have curl-minimal
+  if [ "${VERSION_ID%%.*}" = 8 ]; then try3 dnf -y -q install python3.11 curl procps-ng >/dev/null; PY=python3.11
+  else try3 dnf -y -q install python3 procps-ng >/dev/null; PY=python3; fi
+  command -v curl >/dev/null || try3 dnf -y -q install curl >/dev/null   # EL9/10 images already have curl-minimal
 fi
 mkdir -p /vp && cp /panel/softs.py /vp/softs.py
 echo "=== install"

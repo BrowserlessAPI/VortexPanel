@@ -96,6 +96,7 @@ def main():
             'security': security or bool(old_rel.get('security')), 'cves': rv.get('cves') or old_rel.get('cves') or [],
             'breaking': rv.get('breaking') or old_rel.get('breaking') or [], 'notes': (notes or old_rel.get('notes') or '')[:1500],
             'files': files,
+            **({'plugin': item['plugin']} if item.get('plugin') else ({'plugin': old_rel['plugin']} if old_rel.get('plugin') else {})),
             'missing': still_missing,
             # upstream has no file for these systems (they keep the OS packages; checked again for 14 days)
             'not_offered': sorted((set(old_rel.get('not_offered') or []) | not_offered_now) - set(files) - set(still_missing)),
