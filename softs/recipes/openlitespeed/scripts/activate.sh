@@ -33,7 +33,15 @@ for d in conf admin/conf; do
 done
 [ -f "$L/adminpasswd" ] && cp -a "$L/adminpasswd" "$KEEP/adminpasswd"
 # upstream prints the generated WebAdmin password; it is kept in /usr/local/lsws/adminpasswd
-( cd "$W" && sh ./install.sh ) 2>&1 | grep -viE 'passw' || true
+# no input, a time limit, and downloads that give up instead of retrying for hours
+mkdir -p "$W/.vp-bin"
+for t in wget curl; do
+  real="$(command -v $t || true)"; [ -n "$real" ] || continue
+  if [ $t = wget ]; then printf '#!/bin/sh\nexec %s --timeout=30 --tries=3 "$@"\n' "$real" > "$W/.vp-bin/wget"
+  else printf '#!/bin/sh\nexec %s --connect-timeout 20 --max-time 120 --retry 2 "$@"\n' "$real" > "$W/.vp-bin/curl"; fi
+  chmod 0755 "$W/.vp-bin/$t"
+done
+( cd "$W" && PATH="$W/.vp-bin:$PATH" timeout 1200 sh ./install.sh </dev/null ) 2>&1 | grep -viE 'passw' || true
 for d in conf admin/conf; do
   [ -d "$KEEP/$d" ] || continue
   rm -rf "$L/$d.vortex-new"

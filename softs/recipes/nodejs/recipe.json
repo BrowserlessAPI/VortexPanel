@@ -2,9 +2,40 @@
   "name": "Node.js",
   "panel_id": "nodejs",
   "universal": true,
-  "watch": {"type": "nodejs", "track_depth": 1, "keep_tracks": 3, "min_track": "20"},
+  "watch": {
+    "type": "nodejs",
+    "track_depth": 1,
+    "keep_tracks": 3,
+    "min_track": "20"
+  },
   "changelog": "https://raw.githubusercontent.com/nodejs/node/main/doc/changelogs/CHANGELOG_V{major}.md",
-  "deps": {"build": {"deb": [], "rpm": []}, "run": {"deb": ["ca-certificates"], "rpm": ["ca-certificates"]}},
-  "replaces": {"deb": ["nodejs", "npm"], "rpm": ["nodejs", "npm"]},
+  "deps": {
+    "build": {
+      "deb": [],
+      "rpm": []
+    },
+    "run": {
+      "deb": [
+        "ca-certificates",
+        "libatomic1",
+        "libstdc++6"
+      ],
+      "rpm": [
+        "ca-certificates",
+        "libatomic",
+        "libstdc++"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "nodejs",
+      "npm"
+    ],
+    "rpm": [
+      "nodejs",
+      "npm"
+    ]
+  },
   "smoke": "smoke.sh"
 }

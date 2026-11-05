@@ -9,4 +9,9 @@ tar -xzf "$NAME" -C "$DEST$PREFIX/dist" --strip-components=1 --no-same-owner
 # the upstream installer fetches its admin PHP binary and this server's IP over plain HTTP
 sed -i -e 's#http://www\.litespeedtech\.com/#https://www.litespeedtech.com/#g' \
        -e 's#http://cyberpanel\.sh/#https://cyberpanel.sh/#g' "$DEST$PREFIX/dist/_in.sh"
+# the installer looks up this server's public IP from cyberpanel.sh for the WebAdmin
+# certificate but never uses it (that line is commented out upstream); without a time
+# limit the lookup can hang for hours, so it is removed
+grep -qE '^[[:space:]]*testMyIP[[:space:]]*$' "$DEST$PREFIX/dist/_in.sh" || { echo "[build] installer layout changed (testMyIP)"; exit 3; }
+sed -i -E 's/^([[:space:]]*)testMyIP[[:space:]]*$/\1MYIP=127.0.0.1   # VortexPanel: lookup removed (unused)/' "$DEST$PREFIX/dist/_in.sh"
 rm -rf "$DEST$PREFIX/dist/docs"
