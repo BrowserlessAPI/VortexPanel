@@ -19,6 +19,9 @@ pkg-config --exists 'libavif >= 0.8.2' 2>/dev/null && EXTRA="$EXTRA $(opt '--wit
 FREETYPE=--with-freetype
 SYSTEMD=""; [ -e /usr/include/systemd/sd-daemon.h ] && SYSTEMD=--with-fpm-systemd
 
+# EL8's linker (binutils 2.30) cannot link mbstring's CPU-specific functions (IFUNC) into
+# a non-PIE program ("recompile with -fPIE and relink with -pie"): build PIE there
+if [ "$TARGET" = el8 ]; then export CFLAGS="${CFLAGS:-} -O2 -g -fPIE" LDFLAGS="${LDFLAGS:-} -pie"; fi
 ./configure \
   --prefix="$PREFIX" \
   --with-config-file-path="$ETC/fpm" \

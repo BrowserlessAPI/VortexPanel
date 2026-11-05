@@ -46,18 +46,20 @@ if [ -d "$D/conf" ]; then
     v="$(head -1 "$f" | tr -d '\r')"
     [ -n "$v" ] && echo "$k $v" >> "$TMP"
   done
+  if [ ! -f /proc/net/if_inet6 ] && ! grep -qiE '^IPV(4|6)Only[[:space:]]+yes' "$TMP"; then echo 'IPV4Only yes' >> "$TMP"; fi
   mv -f "$TMP" "$OUT"
   exec "$BIN" "$OUT"
 fi
 for C in "$D/pure-ftpd.conf" /etc/pure-ftpd.conf; do
   if [ -f "$C" ]; then
-    # the service runs in the foreground: drop a Daemonize line
-    if grep -qiE '^[[:space:]]*Daemonize[[:space:]]+yes' "$C"; then
-      install -d -m 0755 /run/pure-ftpd
-      grep -viE '^[[:space:]]*Daemonize[[:space:]]' "$C" > /run/pure-ftpd/pure-ftpd.conf
-      exec "$BIN" /run/pure-ftpd/pure-ftpd.conf
+    # run in the foreground (no Daemonize); on a system without IPv6, listen on IPv4 only
+    # (pure-ftpd does not start when it cannot open its IPv6 socket)
+    install -d -m 0755 /run/pure-ftpd
+    grep -viE '^[[:space:]]*Daemonize[[:space:]]' "$C" > /run/pure-ftpd/pure-ftpd.conf
+    if [ ! -f /proc/net/if_inet6 ] && ! grep -qiE '^[[:space:]]*IPV(4|6)Only[[:space:]]+yes' "$C"; then
+      echo 'IPV4Only                     yes' >> /run/pure-ftpd/pure-ftpd.conf
     fi
-    exec "$BIN" "$C"
+    exec "$BIN" /run/pure-ftpd/pure-ftpd.conf
   fi
 done
 echo "no Pure-FTPd configuration found in $D" >&2; exit 1
