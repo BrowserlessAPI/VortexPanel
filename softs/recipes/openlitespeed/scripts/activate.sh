@@ -43,7 +43,10 @@ for t in wget curl; do
   else printf '#!/bin/sh\nexec %s --connect-timeout 20 --max-time 120 --retry 2 "$@"\n' "$real" > "$W/.vp-bin/curl"; fi
   chmod 0755 "$W/.vp-bin/$t"
 done
-( cd "$W" && PATH="$W/.vp-bin:$PATH" timeout 1200 sh ./install.sh </dev/null ) 2>&1 | grep -viE 'passw' || true
+# output to a file, not a pipe: the installer starts the server in the background, and a
+# server holding a pipe open would keep this script waiting forever
+( cd "$W" && PATH="$W/.vp-bin:$PATH" timeout 1200 sh ./install.sh </dev/null >"$W/install.log" 2>&1 ) || true
+grep -viE 'passw' "$W/install.log" | tail -40 || true
 for d in conf admin/conf; do
   [ -d "$KEEP/$d" ] || continue
   rm -rf "$L/$d.vortex-new"
@@ -62,7 +65,7 @@ if has_systemd; then
   systemctl enable lshttpd >/dev/null 2>&1 || true
   systemctl restart lsws
 else
-  "$L/bin/lswsctrl" stop >/dev/null 2>&1 || true; sleep 1
-  "$L/bin/lswsctrl" start >/dev/null
+  "$L/bin/lswsctrl" stop >/dev/null 2>&1 </dev/null || true; sleep 1
+  "$L/bin/lswsctrl" start >/dev/null 2>&1 </dev/null
 fi
 DONE=1

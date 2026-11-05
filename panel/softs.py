@@ -215,10 +215,19 @@ def _run(cmd, log=None, env=None, timeout=3600, cwd=None):
     w = threading.Timer(timeout, kill)
     w.daemon = True
     w.start()
+    def read():
+        try:
+            for line in p.stdout:
+                _say(log, line.rstrip('\n'))
+        except (OSError, ValueError):
+            pass
+    # read in a thread: a server the script started in the background may keep the pipe open
+    # after the script ends; the script's own exit is what counts
+    r = threading.Thread(target=read, daemon=True)
+    r.start()
     try:
-        for line in p.stdout:
-            _say(log, line.rstrip('\n'))
         rc = p.wait()
+        r.join(10)
     finally:
         w.cancel()
     if timed_out:
