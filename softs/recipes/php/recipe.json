@@ -88,7 +88,8 @@
         "ImageMagick-devel",
         "libmemcached-awesome-devel",
         "libmemcached-devel",
-        "zlib-devel"
+        "zlib-devel",
+        "libavif-devel"
       ]
     },
     "run": {

@@ -13,7 +13,9 @@ opt() { ./configure --help | grep -q -- "$1" && echo "$2"; }
 LIBDIR=lib
 if [ "$FAMILY" = rpm ]; then LIBDIR=lib64
 elif MA="$(gcc -print-multiarch 2>/dev/null)" && [ -n "$MA" ]; then LIBDIR="lib/$MA"; fi
-EXTRA="$(opt '--with-password-argon2' '--with-password-argon2') $(opt '--with-avif' '--with-avif')"
+EXTRA="$(opt '--with-password-argon2' '--with-password-argon2')"
+# AVIF images only where this system offers libavif 0.8.2+ (Debian/Ubuntu; EPEL where it has it)
+pkg-config --exists 'libavif >= 0.8.2' 2>/dev/null && EXTRA="$EXTRA $(opt '--with-avif' '--with-avif')"
 FREETYPE=--with-freetype
 SYSTEMD=""; [ -e /usr/include/systemd/sd-daemon.h ] && SYSTEMD=--with-fpm-systemd
 
