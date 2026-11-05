@@ -35,6 +35,8 @@ done
 # upstream prints the generated WebAdmin password; it is kept in /usr/local/lsws/adminpasswd
 # no input, a time limit, and downloads that give up instead of retrying for hours
 mkdir -p "$W/.vp-bin"
+# the installer finds its download tool with `which`, missing on minimal systems
+command -v which >/dev/null 2>&1 || { printf '#!/bin/sh\ncommand -v "$1"\n' > "$W/.vp-bin/which"; chmod 0755 "$W/.vp-bin/which"; }
 for t in wget curl; do
   real="$(command -v $t || true)"; [ -n "$real" ] || continue
   if [ $t = wget ]; then printf '#!/bin/sh\nexec %s --timeout=30 --tries=3 "$@"\n' "$real" > "$W/.vp-bin/wget"

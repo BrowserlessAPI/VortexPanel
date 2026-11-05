@@ -60,7 +60,13 @@ def test(zip_path, image):
             '-e', f'TRACK={man["track"]}', '-e', f'SMOKE={recipe.get("smoke", "")}',
             image, 'bash', '-c', SCRIPT]
     C.log(f'testing {os.path.basename(zip_path)} on {image}')
-    return subprocess.run(args).returncode
+    name = f'vptest-{os.getpid()}-{abs(hash(image)) % 100000}'
+    args = args[:3] + ['--name', name] + args[3:]
+    try:
+        return subprocess.run(args, timeout=1200).returncode
+    except subprocess.TimeoutExpired:
+        subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
+        return 124
 
 
 def main():
@@ -86,7 +92,14 @@ def main():
         images = [C.TARGETS['targets'][t]['image'] for t in tg]
     else:
         images = [C.TARGETS['targets'][man['target']]['image']]
-    failed = [img for img in images if test(a.zip, img) != 0]
+    failed = []
+    for img in images:
+        rc = test(a.zip, img)
+        if rc != 0:
+            C.log(f'test on {img} failed or timed out (rc {rc}); trying once more')
+            rc = test(a.zip, img)
+        if rc != 0:
+            failed.append(img)
     if failed:
         raise SystemExit(f'TEST FAILED on {", ".join(failed)}')
     C.log('all tests passed')

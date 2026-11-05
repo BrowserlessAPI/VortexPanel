@@ -1,11 +1,45 @@
 {
   "name": "Redis",
   "panel_id": "redis",
-  "watch": {"type": "github-releases", "repo": "redis/redis", "regex": "^(\\d+\\.\\d+\\.\\d+)$", "keep_tracks": 2, "min_track": "7.2"},
+  "watch": {
+    "type": "github-releases",
+    "repo": "redis/redis",
+    "regex": "^(\\d+\\.\\d+\\.\\d+)$",
+    "keep_tracks": 2,
+    "min_track": "7.2"
+  },
   "source": "https://github.com/redis/redis/archive/refs/tags/{version}.tar.gz",
   "service": "redis-server",
-  "deps": {"build": {"deb": ["libssl-dev", "libsystemd-dev", "pkg-config", "tcl"], "rpm": ["openssl-devel", "systemd-devel", "tcl"]},
-           "run": {"deb": [], "rpm": []}},
-  "replaces": {"deb": ["redis", "redis-server", "redis-tools"], "rpm": ["redis"]},
+  "deps": {
+    "build": {
+      "deb": [
+        "libssl-dev",
+        "libsystemd-dev",
+        "pkg-config",
+        "tcl"
+      ],
+      "rpm": [
+        "openssl-devel",
+        "systemd-devel",
+        "tcl"
+      ]
+    },
+    "run": {
+      "deb": [],
+      "rpm": [
+        "util-linux"
+      ]
+    }
+  },
+  "replaces": {
+    "deb": [
+      "redis",
+      "redis-server",
+      "redis-tools"
+    ],
+    "rpm": [
+      "redis"
+    ]
+  },
   "smoke": "smoke.sh"
 }

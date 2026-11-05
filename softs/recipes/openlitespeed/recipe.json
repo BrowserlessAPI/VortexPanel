@@ -23,13 +23,15 @@
         "ca-certificates",
         "curl",
         "openssl",
-        "procps"
+        "procps",
+        "debianutils"
       ],
       "rpm": [
         "ca-certificates",
         "curl",
         "openssl",
-        "procps-ng"
+        "procps-ng",
+        "which"
       ]
     }
   },

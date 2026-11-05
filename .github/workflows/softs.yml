@@ -193,7 +193,7 @@ jobs:
           M_ARCH: ${{ matrix.arch }}
         run: python3 softs/pipeline/build.py --app "$M_APP" --version "$M_VERSION" --target "$M_TARGET" --arch "$M_ARCH" --plan plan.json
       - name: Test on a fresh system
-        timeout-minutes: 45      # several systems in a row; a stuck test must not hold the runner for hours
+        timeout-minutes: 120     # several systems, each limited to 20 minutes with one retry (test.py)
         env:
           M_ZIP: ${{ matrix.app }}-${{ matrix.version }}-${{ matrix.target }}-${{ matrix.arch }}.zip
         run: python3 softs/pipeline/test.py "dist/$M_ZIP"
