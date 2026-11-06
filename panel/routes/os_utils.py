@@ -144,18 +144,61 @@ def pkg_install(packages, extra_flags=''):
 import time as _time
 
 class _TTLCache:
-    """Simple in-process TTL cache for expensive read-only endpoints."""
+    """In-process TTL cache for expensive read-only endpoints.
+
+    The panel runs 4 gunicorn workers, each with its own copy. An invalidation is
+    written to a small stamp file as well, so every worker drops entries older than
+    it (before, the other workers kept serving the old App Store list for up to
+    30 seconds after an install). The last value of a key can also be kept on disk
+    (snapshot) so a page shows it at once while the fresh one is built."""
+    STAMP_DIR = '/opt/vortexpanel/data/cache'
+
     def __init__(self):
         self._store = {}
+
+    def _stamp(self, key):
+        try:
+            return os.path.getmtime(os.path.join(self.STAMP_DIR, key + '.stale'))
+        except OSError:
+            return 0.0
+
     def get(self, key):
         item = self._store.get(key)
-        if item and (_time.monotonic() - item['ts']) < item['ttl']:
+        if item and (_time.monotonic() - item['ts']) < item['ttl'] and item['wall'] > self._stamp(key):
             return item['val']
         return None
-    def set(self, key, val, ttl=30):
-        self._store[key] = {'val': val, 'ts': _time.monotonic(), 'ttl': ttl}
+
+    def set(self, key, val, ttl=30, snapshot=False):
+        self._store[key] = {'val': val, 'ts': _time.monotonic(), 'wall': _time.time(), 'ttl': ttl}
+        if snapshot:
+            try:
+                import json as _json
+                os.makedirs(self.STAMP_DIR, mode=0o700, exist_ok=True)
+                tmp = os.path.join(self.STAMP_DIR, f'{key}.json.{os.getpid()}')
+                with open(tmp, 'w') as f:
+                    _json.dump(val, f)
+                os.replace(tmp, os.path.join(self.STAMP_DIR, key + '.json'))
+            except (OSError, TypeError, ValueError):
+                pass
+
+    def snapshot(self, key):
+        """The last value written with snapshot=True (any age), or None."""
+        try:
+            import json as _json
+            with open(os.path.join(self.STAMP_DIR, key + '.json')) as f:
+                return _json.load(f)
+        except (OSError, ValueError):
+            return None
+
     def invalidate(self, key):
         self._store.pop(key, None)
+        try:
+            os.makedirs(self.STAMP_DIR, mode=0o700, exist_ok=True)
+            with open(os.path.join(self.STAMP_DIR, key + '.stale'), 'w'):
+                pass
+            os.utime(os.path.join(self.STAMP_DIR, key + '.stale'))
+        except OSError:
+            pass
 
 panel_cache = _TTLCache()
 

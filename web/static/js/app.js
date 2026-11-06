@@ -136,6 +136,46 @@ function vpActivePage() {
   } catch (e) { return null; }
 }
 
+// Page components start in order: the page on screen first, the others one after
+// another once it has loaded, so they do not all hit the server at the same moment
+// after login (the panel serves 16 requests at a time). Opening a page starts it
+// at once. Used in index.html: x-data="vpLazy('modules', modulesPage())".
+const _vpLazyQ = [];
+let _vpLazyBusy = false;
+function _vpLazyPump() {
+  if (_vpLazyBusy) return;
+  _vpLazyBusy = true;
+  setTimeout(async () => {
+    while (_vpLazyQ.length) {
+      const go = _vpLazyQ.shift();
+      // each page gets up to 3 s before the next one starts
+      await Promise.race([go(), new Promise(r => setTimeout(r, 3000))]);
+    }
+    _vpLazyBusy = false;
+  }, 1500);
+}
+function vpLazy(pageId, obj) {
+  const orig = obj && obj.init;
+  if (typeof orig !== 'function') return obj;
+  let started = false;
+  obj.init = function () {
+    const self = this;
+    if (started) return orig.call(self);
+    const go = () => {
+      if (started) return Promise.resolve();
+      started = true;
+      try { return Promise.resolve(orig.call(self)).catch(() => {}); } catch (e) { return Promise.resolve(); }
+    };
+    if (vpActivePage() === pageId) return go();
+    window.addEventListener('vp:page', e => { if (e.detail === pageId) go(); });
+    document.addEventListener('vortex-logged-in', () => setTimeout(() => {
+      if (started) return;
+      if (vpActivePage() === pageId) go(); else { _vpLazyQ.push(go); _vpLazyPump(); }
+    }, 0));
+  };
+  return obj;
+}
+
 // Poll a background-job status URL until it reports done. Several job
 // endpoints keep their state in the memory of one gunicorn worker, so a poll
 // can land on a worker that has never seen the job and get "not found";
@@ -592,7 +632,12 @@ function rootApp() {
     totpLoading: false,
 
     // Panel state
-    username: '', page: 'dashboard',
+    // open the page in the address (#modules, ...) from the start instead of showing the
+    // dashboard first; _onLoggedIn checks it against the user's role
+    username: '', page: (['websites','databases','files','modules','services','firewall','terminal','backups','mail','ftp',
+                          'cron','monitoring','bandwidth','security','docker','caddy','cdn','logs','settings','node-projects',
+                          'go-projects','python-projects','wp','waf','disk','users','alerts','migration']
+                         .includes(location.hash.replace('#', '')) ? location.hash.replace('#', '') : 'dashboard'),
     sidebarOpen: false,
     themeMode: (function(){ try { return localStorage.getItem('vp-theme') || 'system'; } catch(e) { return 'system'; } })(),
     online: true,
@@ -781,20 +826,21 @@ function rootApp() {
       document.documentElement.setAttribute('data-role', this.role);
       try { Alpine.store('vp').role = this.role; } catch (e) {}
       if (this.role !== 'admin') { document.dispatchEvent(new CustomEvent('vortex-logged-in')); return; }
-      // Load module status for sidebar indicators
-      try {
-        const r = await get('/api/modules');
-        if (r.ok) r.modules.forEach(m => { this.moduleStatus[m.id] = m.installed; });
-      } catch {}
-      // Sidebar version display
-      try {
-        const uv = await get('/api/update/version');
-        if (uv.ok) this.panelVersion = uv.version;
-      } catch {}
+      // Pages start loading their data now; nothing below waits for the slow App
+      // Store list (before, every page waited for it after each login and reload).
+      document.dispatchEvent(new CustomEvent('vortex-logged-in'));
+      // Sidebar indicators: the last App Store list at once, the fresh one when the
+      // App Store page builds it
+      const setStatus = r => { if (r && r.ok) r.modules.forEach(m => { this.moduleStatus[m.id] = m.installed; }); };
+      get('/api/modules?fast=1').then(r => {
+        setStatus(r);
+        // a saved list may be old: refresh the indicators once the pages have loaded
+        if (r && r.stale) setTimeout(() => get('/api/modules').then(setStatus).catch(() => {}), 8000);
+      }).catch(() => {});
+      get('/api/update/version').then(uv => { if (uv && uv.ok) this.panelVersion = uv.version; }).catch(() => {});
       await this.loadPluginPages();
       // Silent update check after 3s
       setTimeout(() => this.silentUpdateCheck(), 3000);
-      document.dispatchEvent(new CustomEvent('vortex-logged-in'));
     },
 
     // --- Theme (light / dark / system) -----------------------------------------
@@ -820,7 +866,7 @@ function rootApp() {
       const add = (list) => { this.search.items = this.search.items.concat(list); };
       const admin = this.role === 'admin';
       get('/api/websites').then(w => { if (w.ok) add((w.sites || []).map(x => ({kind: 'Website', label: x.domain, sub: x.path || '', icon: 'globe',
-        go: () => { this.go('websites'); setTimeout(() => window.dispatchEvent(new CustomEvent('vp:open-site', {detail: x.domain})), 300); }}))); }).catch(() => {});
+        go: () => { window.__vpOpenSite = x.domain; this.go('websites'); setTimeout(() => window.dispatchEvent(new CustomEvent('vp:open-site', {detail: x.domain})), 300); }}))); }).catch(() => {});
       if (!admin) return;
       get('/api/modules').then(m => { if (m.ok) add((m.modules || []).filter(x => x.installed).map(x => ({kind: 'App', label: x.name, sub: 'App Store - installed', icon: 'package',
         go: () => { this.go('modules'); setTimeout(() => window.dispatchEvent(new CustomEvent('vp:open-app', {detail: x.id})), 600); }}))); }).catch(() => {});
@@ -1229,7 +1275,10 @@ function websitesPage() {
       this.loadMaintAll();
       if (!vpOnce(this, 'init')) return;
       document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="websites") { this.load(); this.refreshPhpVersions(); } });
+      // a site picked in search before this page had started: open it now
+      if (window.__vpOpenSite) { const d = window.__vpOpenSite; window.__vpOpenSite = ''; const s0 = this.sites.find(x => x.domain === d); if (s0) this.openDrawer(s0); }
       window.addEventListener('vp:open-site', async (e) => {
+        window.__vpOpenSite = '';
         if (!this.sites.length) await this.load();
         const s = this.sites.find(x => x.domain === e.detail); if (s) this.openDrawer(s);
       });
@@ -3556,15 +3605,30 @@ function modulesPage() {
     async load() {
       this.loadApps();
       this.loadVx();
+      const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
+      if (!this.modules.length) {
+        // first paint: the last list the panel built shows at once, the fresh one follows
+        const f = await get('/api/modules?fast=1');
+        if (f.ok && seq === this._loadSeq) { this._setModules(f); if (!f.stale) return; }
+      }
       const r = await get('/api/modules');
-      if (r.ok) this.tested = r.tested || null;
-      if (r.ok) this.modules = r.modules.map(m=>({
-        ...m,
-        loading:   false,
-        svcStatus: m.svcStatus ? (m.svcStatus.startsWith('active') ? 'active' : m.svcStatus) : m.svcStatus,
-        selVer:    (() => { const vs = (m.versions||[]).filter(v => !(m.installedTracks||[]).includes(String(v.value)));
-                            return vs.length ? (vs.find(v=>v.recommended) || vs[0]).value : ''; })(),
-      }));
+      if (r.ok && seq === this._loadSeq) this._setModules(r);
+    },
+    _setModules(r) {
+      this.tested = r.tested || null;
+      // keep the versions the user picked, so the list does not jump while it refreshes
+      const prev = Object.fromEntries((this.modules || []).map(m => [m.id, m]));
+      this.modules = r.modules.map(m => {
+        const old = prev[m.id] || {};
+        const vs = (m.versions||[]).filter(v => !(m.installedTracks||[]).includes(String(v.value)));
+        const keep = old.selVer && (m.versions||[]).some(v => v.value === old.selVer);
+        return {
+          ...m,
+          loading:   false,
+          svcStatus: m.svcStatus ? (m.svcStatus.startsWith('active') ? 'active' : m.svcStatus) : m.svcStatus,
+          selVer:    keep ? old.selVer : (vs.length ? (vs.find(v=>v.recommended) || vs[0]).value : ''),
+        };
+      });
     },
 
     categories() { return [...new Set(this.modules.map(m=>m.category).concat(this.apps.map(a=>a.category)))].sort(); },

@@ -2917,6 +2917,13 @@ def list_modules():
     if not req(): return jsonify({'ok':False}), 401
     cached = panel_cache.get('modules_list')
     if cached: return jsonify(cached)
+    if request.args.get('fast'):
+        # first paint: the last list built (any worker, any age) at once; the page
+        # asks for the fresh one right after
+        snap = panel_cache.snapshot('modules_list')
+        if snap:
+            return jsonify(dict(snap, stale=True))
+    t0 = time.time()
     result = []
     try:
         from panel import versions as _live
@@ -3054,7 +3061,10 @@ def list_modules():
         response['tested'] = appversions.status() if appversions else {}
     except Exception:
         response['tested'] = {}
-    panel_cache.set('modules_list', response, ttl=30)
+    panel_cache.set('modules_list', response, ttl=30, snapshot=True)
+    took = time.time() - t0
+    if took > 3:
+        print(f'[VortexPanel] App Store list took {took:.1f}s', flush=True)
     return jsonify(response)
 
 def _install_blocked(mod_id):

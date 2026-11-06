@@ -19,18 +19,18 @@
 <link rel="stylesheet" href="/static/css/fonts.css?v={{ panel_version }}">
 <link rel="stylesheet" href="/static/css/theme.css?v={{ panel_version }}">
 <link rel="stylesheet" href="/static/css/apps.css?v={{ panel_version }}">
-<link rel="stylesheet" href="/static/css/vendor/xterm/xterm.css">
-<script src="/static/js/vendor/xterm/xterm.js"></script>
-<script src="/static/js/vendor/xterm/xterm-addon-fit.js"></script>
-<link rel="stylesheet" href="/static/css/vendor/codemirror/codemirror.css">
-<link rel="stylesheet" href="/static/css/vendor/codemirror/theme/material-darker.css">
-<script src="/static/js/vendor/chart.umd.min.js"></script>
-<script src="/static/js/vendor/qrcode.min.js"></script>  <style>[x-cloak]{display:none!important}</style>
+<link rel="stylesheet" href="/static/css/vendor/xterm/xterm.css?v={{ panel_version }}">
+<script src="/static/js/vendor/xterm/xterm.js?v={{ panel_version }}"></script>
+<script src="/static/js/vendor/xterm/xterm-addon-fit.js?v={{ panel_version }}"></script>
+<link rel="stylesheet" href="/static/css/vendor/codemirror/codemirror.css?v={{ panel_version }}">
+<link rel="stylesheet" href="/static/css/vendor/codemirror/theme/material-darker.css?v={{ panel_version }}">
+<script src="/static/js/vendor/chart.umd.min.js?v={{ panel_version }}"></script>
+<script src="/static/js/vendor/qrcode.min.js?v={{ panel_version }}"></script>  <style>[x-cloak]{display:none!important}</style>
   <script src="/static/js/vp-lang.js?v={{ panel_version }}"></script>
   <!-- app.js must load before Alpine so all function definitions exist -->
   <script src="/static/js/app.js?v={{ panel_version }}"></script>
   <script src="/static/js/apps.js?v={{ panel_version }}"></script>
-  <script src="/static/js/vendor/alpine.cdn.min.js" defer></script>
+  <script src="/static/js/vendor/alpine.cdn.min.js?v={{ panel_version }}" defer></script>
 </head>
 <body>
 
@@ -202,7 +202,7 @@
     </div>
 
     <!-- Global search -->
-    <div class="modal-overlay vp-search-overlay" x-show="search.show" @click.self="search.show=false" @keydown.escape.window="search.show=false" style="align-items:flex-start;padding-top:12vh">
+    <div x-cloak class="modal-overlay vp-search-overlay" x-show="search.show" @click.self="search.show=false" @keydown.escape.window="search.show=false" style="align-items:flex-start;padding-top:12vh">
       <div class="vp-search-box" role="dialog" aria-label="Search">
         <div class="vp-search-in"><span x-html="vpIcon('search')"></span>
           <input id="vp-search-input" x-model="search.q" @input="search.sel=0" @keydown="searchKey($event)" placeholder="Search pages, websites, apps, projects..." autocomplete="off"></div>
@@ -222,7 +222,7 @@
     <!-- PAGE CONTENT -->
     <div class="page-content">
       <!-- DASHBOARD -->
-      <div x-show="page==='dashboard'" x-data="dashboardPage()">
+      <div x-show="page==='dashboard'" x-data="vpLazy('dashboard', dashboardPage())">
         <div class="page-header">
           <div><div class="page-title">Dashboard</div><div class="page-sub">Server overview & real-time metrics</div></div>
         </div>
@@ -362,7 +362,7 @@
       </div>
 
       <!-- WEBSITES -->
-      <div x-show="page==='websites'" x-data="websitesPage()">
+      <div x-show="page==='websites'" x-data="vpLazy('websites', websitesPage())">
         <div class="page-header">
           <div><div class="page-title">Websites</div><div class="page-sub">Manage websites on nginx, Apache, OpenLiteSpeed and Caddy</div></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -458,7 +458,7 @@
         </div>
 
         <!-- Add Site Modal -->
-        <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
+        <div x-cloak class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
           <div class="modal">
             <div class="modal-hd"><div class="modal-title">Add Site</div><button class="modal-close" @click="showAdd=false">×</button></div>
             <div class="tabs">
@@ -581,7 +581,7 @@
         </div>
 
         <!-- One-click Deploy progress and result -->
-        <div class="modal-overlay" x-show="deployRun.show">
+        <div x-cloak class="modal-overlay" x-show="deployRun.show">
           <div class="modal">
             <div class="modal-hd"><div class="modal-title" x-text="(deployRun.done?(deployRun.success?'Installed ':'Install failed: '):'Installing ')+(deployRun.app?deployRun.app.name:'')+' on '+deployRun.domain"></div>
               <button class="modal-close" x-show="deployRun.done" @click="closeDeploy(false)">×</button></div>
@@ -615,7 +615,7 @@
         <!-- SITE MANAGEMENT MODAL -->
         
         <!-- === SITE MANAGEMENT MODAL (aaPanel-style) === -->
-        <div x-show="drawer.show" class="modal-overlay" style="z-index:200;padding:20px"
+        <div x-cloak x-show="drawer.show" class="modal-overlay" style="z-index:200;padding:20px"
              x-transition:enter="drawer-fade-enter" x-transition:enter-start="drawer-fade-enter-start" x-transition:enter-end="drawer-fade-enter-end"
              x-transition:leave="drawer-fade-leave" x-transition:leave-start="drawer-fade-leave-start" x-transition:leave-end="drawer-fade-leave-end"
              @keydown.escape.window="drawer.show=false"
@@ -1689,7 +1689,7 @@
       <!-- ================================================================== -->
       <!-- WP TOOLKIT PAGE                                                    -->
       <!-- ================================================================== -->
-      <div x-show="page==='wp'" x-data="wpPage()">
+      <div x-show="page==='wp'" x-data="vpLazy('wp', wpPage())">
 
         <!-- Page Header -->
         <div class="page-header">
@@ -1804,7 +1804,7 @@
         </div>
 
         <!-- === SITE DETAIL DRAWER === -->
-        <div x-show="drawer.show" @click.self="drawer.show=false" class="modal-overlay"
+        <div x-cloak x-show="drawer.show" @click.self="drawer.show=false" class="modal-overlay"
              style="z-index:100;align-items:stretch;justify-content:flex-end">
           <div style="width:700px;background:var(--bg-card);height:100%;display:flex;flex-direction:column;overflow:hidden;box-shadow:-4px 0 24px rgba(0,0,0,.2)">
 
@@ -2156,7 +2156,7 @@
         </div>
 
         <!-- === INSTALL MODAL === -->
-        <div x-show="showInstall" @click.self="showInstall=false" class="modal-overlay" style="z-index:200">
+        <div x-cloak x-show="showInstall" @click.self="showInstall=false" class="modal-overlay" style="z-index:200">
           <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:88vh;overflow-y:auto;border:1px solid var(--border);box-shadow:var(--shadow-lg)">
             <!-- Modal header -->
             <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:var(--bg-card);z-index:1">
@@ -2331,7 +2331,7 @@
       <!-- END WP TOOLKIT PAGE -->
 
       <!-- NODE.JS PROJECTS PAGE -->
-      <div x-show="page==='node-projects'" x-data="nodeProjectsPage()" @keydown.escape.window="addModal.show=false;logsModal.show=false">
+      <div x-show="page==='node-projects'" x-data="vpLazy('node-projects', nodeProjectsPage())" @keydown.escape.window="addModal.show=false;logsModal.show=false">
 
         <div class="page-header">
           <div>
@@ -2728,7 +2728,7 @@
 
       <!-- GO PROJECTS PAGE -->
       <!-- == PYTHON PROJECTS == -->
-      <div x-show="page==='python-projects'" x-data="pythonProjectsPage()" @keydown.escape.window="form.show=false;logs.show=false;job.show=false">
+      <div x-show="page==='python-projects'" x-data="vpLazy('python-projects', pythonProjectsPage())" @keydown.escape.window="form.show=false;logs.show=false;job.show=false">
         <div class="page-header">
           <div>
             <div class="page-title">Python Projects</div>
@@ -2800,7 +2800,7 @@
         </div>
 
         <!-- add / edit -->
-        <div class="modal-overlay" x-show="form.show" @click.self="form.show=false">
+        <div x-cloak class="modal-overlay" x-show="form.show" @click.self="form.show=false">
           <div class="modal" style="max-width:640px">
             <div class="modal-hd"><div class="modal-title" x-text="form.id?'Edit '+form.name:'Add Python project'"></div><button class="modal-close" @click="form.show=false">&times;</button></div>
             <div class="form-row form-row-2">
@@ -2838,7 +2838,7 @@
         </div>
 
         <!-- deploy output -->
-        <div class="modal-overlay" x-show="job.show" @click.self="job.show=false">
+        <div x-cloak class="modal-overlay" x-show="job.show" @click.self="job.show=false">
           <div class="modal" style="max-width:760px">
             <div class="modal-hd"><div class="modal-title" x-text="'Deploy: '+job.name"></div><button class="modal-close" @click="job.show=false">&times;</button></div>
             <div style="font-size:13px;margin-bottom:8px" x-text="job.data.running?('Working: '+(job.data.step||'')):(job.data.success?'Deployed and running':('Failed: '+(job.data.error||'')))"
@@ -2848,7 +2848,7 @@
         </div>
 
         <!-- logs -->
-        <div class="modal-overlay" x-show="logs.show" @click.self="logs.show=false">
+        <div x-cloak class="modal-overlay" x-show="logs.show" @click.self="logs.show=false">
           <div class="modal" style="max-width:900px">
             <div class="modal-hd"><div class="modal-title" x-text="'Logs: '+logs.name"></div>
               <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-xs" @click="showLogs(logs.p)">Refresh</button><button class="modal-close" @click="logs.show=false">&times;</button></div></div>
@@ -2857,7 +2857,7 @@
         </div>
       </div>
 
-      <div x-show="page==='go-projects'" x-data="goProjectsPage()" @keydown.escape.window="addModal.show=false;editModal.show=false;logsModal.show=false">
+      <div x-show="page==='go-projects'" x-data="vpLazy('go-projects', goProjectsPage())" @keydown.escape.window="addModal.show=false;editModal.show=false;logsModal.show=false">
 
         <div class="page-header">
           <div>
@@ -3310,7 +3310,7 @@
       <!-- END GO PROJECTS PAGE -->
 
       <!-- GLOBAL FILE PICKER (used by Node.js + Go project modals) -->
-      <div x-data="filePickerModal()" x-show="show" @file-picker.window="open($event.detail.path, $event.detail.mode, $event.detail.cb)"
+      <div x-cloak x-data="filePickerModal()" x-show="show" @file-picker.window="open($event.detail.path, $event.detail.mode, $event.detail.cb)"
            class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:2000" @click.self="show=false">
         <div style="background:var(--bg-card);border-radius:12px;width:560px;height:480px;display:flex;flex-direction:column;overflow:hidden">
           <!-- Header -->
@@ -3352,8 +3352,8 @@
       <!-- END FILE PICKER -->
 
       <!-- DATABASES -->
-      <div x-show="page==='databases'" x-data="databasesPage()">
-        <div class="modal-overlay" x-show="recycle.show" @click.self="recycle.show=false" @keydown.escape.window="recycle.show=false">
+      <div x-show="page==='databases'" x-data="vpLazy('databases', databasesPage())">
+        <div x-cloak class="modal-overlay" x-show="recycle.show" @click.self="recycle.show=false" @keydown.escape.window="recycle.show=false">
           <div class="modal" style="max-width:720px">
             <div class="modal-hd"><div class="modal-title">Database recycle bin</div><button class="modal-close" @click="recycle.show=false">&times;</button></div>
             <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" x-text="'Dropped databases are kept here for '+recycle.days+' days.'"></div>
@@ -3458,7 +3458,7 @@
         </div>
 
         <!-- CREATE DB MODAL -->
-        <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
+        <div x-cloak class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
           <div class="modal" style="max-width:480px">
             <div class="modal-hd"><div class="modal-title">Create Database</div><button class="modal-close" @click="showAdd=false">×</button></div>
             <div class="form-group"><label class="form-label">Database Name <span style="color:var(--red)">*</span></label><input class="form-input" x-model="form.name" placeholder="myapp_db"></div>
@@ -3480,7 +3480,7 @@
         </div>
 
         <!-- ADD USER MODAL -->
-        <div class="modal-overlay" x-show="showAddUser" @click.self="showAddUser=false">
+        <div x-cloak class="modal-overlay" x-show="showAddUser" @click.self="showAddUser=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd"><div class="modal-title">Add Database User</div><button class="modal-close" @click="showAddUser=false">×</button></div>
             <div class="form-group"><label class="form-label">Username <span style="color:var(--red)">*</span></label><input class="form-input" x-model="userForm.name" placeholder="dbuser"></div>
@@ -3501,7 +3501,7 @@
         </div>
 
         <!-- USER DETAIL MODAL -->
-        <div class="modal-overlay" x-show="showUserDetail" @click.self="showUserDetail=false">
+        <div x-cloak class="modal-overlay" x-show="showUserDetail" @click.self="showUserDetail=false">
           <div class="modal" style="max-width:480px">
             <div class="modal-hd">
               <div><div class="modal-title" x-text="'Manage User: '+selUser?.user"></div><div style="font-size:11px;color:var(--text-muted)" x-text="'Host: '+selUser?.host"></div></div>
@@ -3536,7 +3536,7 @@
         </div>
 
         <!-- IMPORT MODAL -->
-        <div class="modal-overlay" x-show="showImport" @click.self="showImport=false">
+        <div x-cloak class="modal-overlay" x-show="showImport" @click.self="showImport=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd"><div class="modal-title">Import SQL</div><button class="modal-close" @click="showImport=false">×</button></div>
             <div class="form-group">
@@ -3562,7 +3562,7 @@
 
         <!-- MYSQL TOOLBOX (per-table) - aaPanel-style: engine, charset, row
              count, size per table with inline Repair/Optimize/Convert -->
-        <div class="modal-overlay" x-show="tableToolbox.show" @click.self="tableToolbox.show=false"
+        <div x-cloak class="modal-overlay" x-show="tableToolbox.show" @click.self="tableToolbox.show=false"
              x-transition:enter="drawer-fade-enter" x-transition:enter-start="drawer-fade-enter-start" x-transition:enter-end="drawer-fade-enter-end">
           <div class="modal" style="max-width:900px;width:95vw">
             <div class="modal-hd">
@@ -3607,7 +3607,7 @@
 
       <!-- FILE MANAGER -->
       <!-- FILES -->
-      <div x-show="page==='files'" x-data="filesPage()">
+      <div x-show="page==='files'" x-data="vpLazy('files', filesPage())">
         <div class="page-header">
           <div>
             <div class="page-title">File Manager</div>
@@ -3770,7 +3770,7 @@
         </div>
 
         <!-- Recycle bin -->
-        <div class="modal-overlay" x-show="recycle.show" @click.self="recycle.show=false">
+        <div x-cloak class="modal-overlay" x-show="recycle.show" @click.self="recycle.show=false">
           <div class="modal" style="max-width:760px">
             <div class="modal-hd"><div class="modal-title">Recycle bin</div><button class="modal-close" @click="recycle.show=false">&times;</button></div>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px">
@@ -3796,7 +3796,7 @@
           </div>
         </div>
         <!-- Edit history -->
-        <div class="modal-overlay" x-show="hist.show" @click.self="hist.show=false">
+        <div x-cloak class="modal-overlay" x-show="hist.show" @click.self="hist.show=false">
           <div class="modal" style="max-width:820px">
             <div class="modal-hd"><div class="modal-title" x-text="'Edit history - '+(hist.name||'')"></div><button class="modal-close" @click="hist.show=false">&times;</button></div>
             <div style="display:grid;grid-template-columns:220px 1fr;gap:12px;min-height:300px">
@@ -3813,7 +3813,7 @@
           </div>
         </div>
         <!-- Owner -->
-        <div class="modal-overlay" x-show="owner.show" @click.self="owner.show=false">
+        <div x-cloak class="modal-overlay" x-show="owner.show" @click.self="owner.show=false">
           <div class="modal" style="max-width:420px">
             <div class="modal-hd"><div class="modal-title" x-text="'Owner - '+(owner.name||'')"></div><button class="modal-close" @click="owner.show=false">&times;</button></div>
             <div class="form-row form-row-2">
@@ -3847,7 +3847,7 @@
           <div class="ctx-item" @click="ctxRename()">
             <span class="ctx-icon"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span> Rename
           </div>
-          <div class="ctx-item" @click="openOwner(ctxTarget);ctxMenu.show=false" x-show="$store.vp.role!=='site'">
+          <div x-cloak class="ctx-item" @click="openOwner(ctxTarget);ctxMenu.show=false" x-show="$store.vp.role!=='site'">
             <span class="ctx-icon" x-html="vpIcon('users')"></span><span>Owner</span>
           </div>
           <div class="ctx-item" @click="openHistory(ctxTarget);ctxMenu.show=false" x-show="ctxTarget && ctxTarget.type!=='dir'">
@@ -3889,7 +3889,7 @@
         </div>
 
         <!-- Scan Result Modal -->
-        <div class="modal-overlay" x-show="showScanResult" @click.self="showScanResult=false" style="z-index:450">
+        <div x-cloak class="modal-overlay" x-show="showScanResult" @click.self="showScanResult=false" style="z-index:450">
           <div class="modal" style="max-width:600px">
             <div class="modal-hd">
               <div>
@@ -4004,7 +4004,7 @@
         </div>
 
         <!-- New file/folder modal -->
-        <div class="modal-overlay" x-show="showNewFileModal" @click.self="showNewFileModal=false">
+        <div x-cloak class="modal-overlay" x-show="showNewFileModal" @click.self="showNewFileModal=false">
           <div class="modal" style="max-width:380px">
             <div class="modal-hd"><div class="modal-title" x-text="newFileIsFolder?'New Folder':'New File'"></div><button class="modal-close" @click="showNewFileModal=false">×</button></div>
             <div class="form-group"><label class="form-label" x-text="newFileIsFolder?'Folder Name':'File Name'"></label><input class="form-input" x-model="newFileName" x-ref="newFileInput" @keydown.enter="createNew()"></div>
@@ -4013,7 +4013,7 @@
         </div>
 
         <!-- Rename modal -->
-        <div class="modal-overlay" x-show="showRenameModal" @click.self="showRenameModal=false">
+        <div x-cloak class="modal-overlay" x-show="showRenameModal" @click.self="showRenameModal=false">
           <div class="modal" style="max-width:380px">
             <div class="modal-hd"><div class="modal-title">Rename</div><button class="modal-close" @click="showRenameModal=false">×</button></div>
             <div class="form-group"><label class="form-label">New name</label><input class="form-input" x-model="renameValue" @keydown.enter="doRename()"></div>
@@ -4022,7 +4022,7 @@
         </div>
 
         <!-- Chmod modal -->
-        <div class="modal-overlay" x-show="showChmodModal" @click.self="showChmodModal=false">
+        <div x-cloak class="modal-overlay" x-show="showChmodModal" @click.self="showChmodModal=false">
           <div class="modal" style="max-width:360px">
             <div class="modal-hd"><div class="modal-title">Change Permissions</div><button class="modal-close" @click="showChmodModal=false">×</button></div>
             <div class="form-group"><label class="form-label">File</label><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)" x-text="chmodTarget?.path"></div></div>
@@ -4035,7 +4035,7 @@
         </div>
 
         <!-- Properties modal -->
-        <div class="modal-overlay" x-show="showPropsModal" @click.self="showPropsModal=false">
+        <div x-cloak class="modal-overlay" x-show="showPropsModal" @click.self="showPropsModal=false">
           <div class="modal" style="max-width:400px">
             <div class="modal-hd"><div class="modal-title">Properties</div><button class="modal-close" @click="showPropsModal=false">×</button></div>
             <template x-if="props">
@@ -4057,7 +4057,7 @@
       <!-- PHP -->
       <!-- PHP -->
       <!-- MODULES -->
-      <div x-show="page==='modules'" x-data="modulesPage()">
+      <div x-show="page==='modules'" x-data="vpLazy('modules', modulesPage())">
         <div class="page-header">
           <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software and panel Apps<span x-show="tested && tested.in_use" x-text="' - versions tested by VortexPanel (list #'+(tested&&tested.serial)+', '+((tested&&tested.issued)||'').slice(0,10)+')'"></span></div></div>
           <div style="display:flex;gap:6px;align-items:center">
@@ -4273,7 +4273,7 @@
 
         <!-- Version picker modal -->
         <!-- CDN Manager (built into the panel) -->
-        <div class="modal-overlay" x-show="cdnMod.show" @click.self="cdnMod.show=false">
+        <div x-cloak class="modal-overlay" x-show="cdnMod.show" @click.self="cdnMod.show=false">
           <div class="modal" style="max-width:520px">
             <div class="modal-hd"><div><div class="modal-title">CDN Manager</div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Part of the panel: it runs inside VortexPanel and has no service of its own</div></div>
@@ -4296,7 +4296,7 @@
         </div>
 
         <!-- VortexPanel builds: roll back -->
-        <div class="modal-overlay" x-show="vxRb.show" @click.self="vxRb.show=false">
+        <div x-cloak class="modal-overlay" x-show="vxRb.show" @click.self="vxRb.show=false">
           <div class="modal" style="max-width:460px">
             <div class="modal-hd"><div><div class="modal-title" x-text="'Roll back '+(vxRb.mod?.name||'')"></div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Switches back to the previous version kept on this server</div></div>
@@ -4314,7 +4314,7 @@
         </div>
 
         <!-- VortexPanel builds: update settings -->
-        <div class="modal-overlay" x-show="vx.show" @click.self="vx.show=false">
+        <div x-cloak class="modal-overlay" x-show="vx.show" @click.self="vx.show=false">
           <div class="modal" style="max-width:640px">
             <div class="modal-hd"><div><div class="modal-title">Software updates</div>
               <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Server software built, tested and signed by VortexPanel</div></div>
@@ -4361,7 +4361,7 @@
         </div>
 
         <!-- App Store: confirm a software update -->
-        <div class="modal-overlay" x-show="updModal.show" @click.self="updModal.show=false">
+        <div x-cloak class="modal-overlay" x-show="updModal.show" @click.self="updModal.show=false">
           <div class="modal" style="max-width:560px">
             <div class="modal-hd">
               <div>
@@ -4423,7 +4423,7 @@
           </div>
         </div>
 
-        <div class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
+        <div x-cloak class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd">
               <div>
@@ -4455,7 +4455,7 @@
         </div>
 
         <!-- == PHP UNINSTALL MODAL == -->
-        <div class="modal-overlay" x-show="phpUninstallModal.show" @click.self="phpUninstallModal.show=false">
+        <div x-cloak class="modal-overlay" x-show="phpUninstallModal.show" @click.self="phpUninstallModal.show=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd">
               <div>
@@ -4487,7 +4487,7 @@
         </div>
 
         <!-- == APP SETTINGS MODAL (aaPanel-style left-sidebar tabs) ============== -->
-        <div x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
+        <div x-cloak x-show="settingsModal.show" @keydown.escape.window="settingsModal.show=false"
              class="modal-overlay vp-d-flex" style="z-index:99999;padding:20px;display:flex;align-items:center;justify-content:center"
              @click.self="settingsModal.show=false">
           <div id="settings-modal-box" class="vp-mwin" style="cursor:default;margin:auto">
@@ -6098,7 +6098,7 @@
         </div>
 
         <!-- Job progress modal -->
-        <div class="modal-overlay" x-show="jobModal.show">
+        <div x-cloak class="modal-overlay" x-show="jobModal.show">
           <div class="modal" style="max-width:620px">
             <div class="modal-hd">
               <div style="display:flex;align-items:center;gap:10px">
@@ -6137,7 +6137,7 @@
       </div>
 
       <!-- SERVICES -->
-      <div x-show="page==='services'" x-data="servicesPage()">
+      <div x-show="page==='services'" x-data="vpLazy('services', servicesPage())">
         <div class="page-header"><div><div class="page-title">Services</div><div class="page-sub">Manage system services</div></div><button class="btn btn-ghost btn-sm" @click="load()">Refresh</button></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
           <template x-for="s in services" :key="s.name">
@@ -6163,7 +6163,7 @@
       </div>
 
       <!-- FIREWALL -->
-      <div x-show="page==='firewall'" x-data="firewallPage()">
+      <div x-show="page==='firewall'" x-data="vpLazy('firewall', firewallPage())">
         <div class="page-header"><div><div class="page-title">Firewall</div><div class="page-sub" x-text="backend ? 'Firewall rules managed with '+backendLabel : 'Firewall rules (UFW on Debian/Ubuntu, firewalld on RHEL-family)'"></div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-success btn-sm" x-show="backend && status!=='active'" @click="toggleFirewall(true)">Turn on firewall</button>
@@ -6198,7 +6198,7 @@
           <template x-if="rules.length===0"><div class="empty-state"><div class="empty-icon"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="empty-text">No rules configured</div></div></template>
         </div>
         <!-- Add rule modal -->
-        <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
+        <div x-cloak class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
           <div class="modal" style="max-width:420px">
             <div class="modal-hd"><div class="modal-title">Add Firewall Rule</div><button class="modal-close" @click="showAdd=false">×</button></div>
             <div class="form-row form-row-2">
@@ -6231,7 +6231,7 @@
       </div>
 
       <!-- BACKUPS -->
-      <div x-show="page==='backups'" x-data="backupsPage()">
+      <div x-show="page==='backups'" x-data="vpLazy('backups', backupsPage())">
         <div class="page-header"><div><div class="page-title">Backups</div><div class="page-sub">Create and restore server backups</div></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="showUpload=true">Upload</button>
@@ -6454,7 +6454,7 @@
             <template x-if="!browse.files.length"><div class="empty-state"><div class="empty-text" x-text="browse.loading?'Loading...':'No files'"></div></div></template>
           </div>
           <!-- destination modal -->
-          <div class="modal-overlay" x-show="targetForm.show" @click.self="targetForm.show=false">
+          <div x-cloak class="modal-overlay" x-show="targetForm.show" @click.self="targetForm.show=false">
             <div class="modal" style="max-width:520px">
               <div class="modal-hd"><div class="modal-title" x-text="(targetForm.id?'Edit ':'Add ')+(targetForm.type==='ftp'?'FTP server':'rclone destination')"></div><button class="modal-close" @click="targetForm.show=false">&times;</button></div>
               <div class="form-group"><label class="form-label">Name</label><input class="form-input" x-model="targetForm.name" placeholder="e.g. Office NAS"></div>
@@ -6536,7 +6536,7 @@
           </div>
         </div>
         <!-- Job modal -->
-        <div class="modal-overlay" x-show="jobModal.show">
+        <div x-cloak class="modal-overlay" x-show="jobModal.show">
           <div class="modal" style="max-width:560px">
             <div class="modal-hd"><div style="display:flex;align-items:center;gap:8px"><span x-show="!jobModal.done" class="loading-spinner"></span><span x-show="jobModal.done&&jobModal.success" style="color:var(--green);font-weight:600">Done</span><div class="modal-title" x-text="jobModal.title"></div></div></div>
             <div class="terminal-out" style="max-height:240px"><template x-for="(l,i) in jobModal.lines" :key="i"><div :style="vpCss(l.startsWith('[VortexPanel] OK')?'color:#4ade80;font-weight:600':l.startsWith('[VortexPanel]')?'color:#fbbf24;font-weight:600':l.startsWith('[VortexPanel]')?'color:#67e8f9;font-weight:500':'color:#d1fae5')" x-text="l"></div></template></div>
@@ -6544,7 +6544,7 @@
           </div>
         </div>
         <!-- Restore modal -->
-        <div class="modal-overlay" x-show="restoreModal.show" @click.self="restoreModal.show=false">
+        <div x-cloak class="modal-overlay" x-show="restoreModal.show" @click.self="restoreModal.show=false">
           <div class="modal" style="max-width:420px">
             <div class="modal-hd"><div class="modal-title">Restore Backup</div><button class="modal-close" @click="restoreModal.show=false">×</button></div>
             <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Restoring: <strong x-text="restoreModal.name"></strong></div>
@@ -6651,7 +6651,7 @@
           </div>
         </div>
       </div>
-      <div x-show="page==='mail'" x-data="mailPage()">
+      <div x-show="page==='mail'" x-data="vpLazy('mail', mailPage())">
         <div class="page-header"><div><div class="page-title">Mail Server</div><div class="page-sub">Postfix + Dovecot management</div></div></div>
         <div class="card" style="margin-bottom:14px;border-color:var(--tint-amber-border)" x-show="status.checked && !status.configured">
           <div class="card-hd"><div class="card-title">Set up the mail server</div></div>
@@ -6699,8 +6699,8 @@
             <div x-show="selDomain && !accounts.length" style="font-size:12px;color:var(--text-muted);padding:10px 0">No mailboxes yet.</div>
           </div>
         </div>
-        <div class="modal-overlay" x-show="showResetPass" @click.self="showResetPass=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title" x-text="'Reset Password: '+resetPassTarget"></div><button class="modal-close" @click="showResetPass=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="resetPassValue" placeholder="Password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showResetPass=false">Cancel</button><button class="btn btn-primary" @click="resetPassword()">Update Password</button></div></div></div>
-        <div class="modal-overlay" x-show="showAddForward" @click.self="showAddForward=false"><div class="modal" style="max-width:420px"><div class="modal-hd"><div class="modal-title">Add Forwarding Rule</div><button class="modal-close" @click="showAddForward=false">×</button></div><div class="form-group"><label class="form-label">From (this domain's address)</label><input class="form-input" x-model="forwardForm.source" :placeholder="'name@'+selDomain"></div><div class="form-group"><label class="form-label">Forward To</label><input class="form-input" x-model="forwardForm.destination" placeholder="destination@example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddForward=false">Cancel</button><button class="btn btn-primary" @click="addForwarding()">Add Rule</button></div></div></div>
+        <div x-cloak class="modal-overlay" x-show="showResetPass" @click.self="showResetPass=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title" x-text="'Reset Password: '+resetPassTarget"></div><button class="modal-close" @click="showResetPass=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="resetPassValue" placeholder="Password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showResetPass=false">Cancel</button><button class="btn btn-primary" @click="resetPassword()">Update Password</button></div></div></div>
+        <div x-cloak class="modal-overlay" x-show="showAddForward" @click.self="showAddForward=false"><div class="modal" style="max-width:420px"><div class="modal-hd"><div class="modal-title">Add Forwarding Rule</div><button class="modal-close" @click="showAddForward=false">×</button></div><div class="form-group"><label class="form-label">From (this domain's address)</label><input class="form-input" x-model="forwardForm.source" :placeholder="'name@'+selDomain"></div><div class="form-group"><label class="form-label">Forward To</label><input class="form-input" x-model="forwardForm.destination" placeholder="destination@example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddForward=false">Cancel</button><button class="btn btn-primary" @click="addForwarding()">Add Rule</button></div></div></div>
         <div x-show="tab==='dkim'" class="card">
           <div class="card-hd"><div class="card-title">Mail DNS records</div>
             <select class="form-input" style="width:auto;padding:4px 8px;font-size:12px" x-model="dkimDomain" @change="loadRecords()">
@@ -6845,8 +6845,8 @@
           <pre class="code-block" x-text="filteredMailLog || mailLogOutput || 'No log entries found.'"
                style="white-space:pre-wrap;max-height:500px;overflow-y:auto;font-size:11px;line-height:1.6"></pre>
         </div>
-        <div class="modal-overlay" x-show="showAddDomain" @click.self="showAddDomain=false"><div class="modal" style="max-width:360px"><div class="modal-hd"><div class="modal-title">Add Mail Domain</div><button class="modal-close" @click="showAddDomain=false">×</button></div><div class="form-group"><label class="form-label">Domain</label><input class="form-input" x-model="domainForm.domain" placeholder="example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddDomain=false">Cancel</button><button class="btn btn-primary" @click="addDomain()">Add</button></div></div></div>
-        <div class="modal-overlay" x-show="showAddAccount" @click.self="showAddAccount=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title">Add Mail Account</div><button class="modal-close" @click="showAddAccount=false">×</button></div><div class="form-group"><label class="form-label">Email Address</label><input class="form-input" x-model="accountForm.user" :placeholder="'name@'+selDomain"></div><div style="font-size:11px;color:var(--text-muted);margin:-6px 0 10px">Must end with @<span x-text="selDomain"></span></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="accountForm.pass" placeholder="Password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddAccount=false">Cancel</button><button class="btn btn-primary" @click="addAccount()">Create</button></div></div></div>
+        <div x-cloak class="modal-overlay" x-show="showAddDomain" @click.self="showAddDomain=false"><div class="modal" style="max-width:360px"><div class="modal-hd"><div class="modal-title">Add Mail Domain</div><button class="modal-close" @click="showAddDomain=false">×</button></div><div class="form-group"><label class="form-label">Domain</label><input class="form-input" x-model="domainForm.domain" placeholder="example.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddDomain=false">Cancel</button><button class="btn btn-primary" @click="addDomain()">Add</button></div></div></div>
+        <div x-cloak class="modal-overlay" x-show="showAddAccount" @click.self="showAddAccount=false"><div class="modal" style="max-width:380px"><div class="modal-hd"><div class="modal-title">Add Mail Account</div><button class="modal-close" @click="showAddAccount=false">×</button></div><div class="form-group"><label class="form-label">Email Address</label><input class="form-input" x-model="accountForm.user" :placeholder="'name@'+selDomain"></div><div style="font-size:11px;color:var(--text-muted);margin:-6px 0 10px">Must end with @<span x-text="selDomain"></span></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="accountForm.pass" placeholder="Password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAddAccount=false">Cancel</button><button class="btn btn-primary" @click="addAccount()">Create</button></div></div></div>
         <div class="modal-overlay" x-show="ar.show" x-cloak @click.self="ar.show=false"><div class="modal" style="max-width:480px">
           <div class="modal-hd"><div class="modal-title" x-text="'Autoresponder: '+ar.email"></div><button class="modal-close" @click="ar.show=false">&times;</button></div>
           <div class="mx-row"><div><b>Reply automatically</b><span>Senders get this reply once, then again after the number of days below.</span></div>
@@ -6870,7 +6870,7 @@
       </div>
 
       <!-- FTP -->
-      <div x-show="page==='ftp'" x-data="ftpPage()">
+      <div x-show="page==='ftp'" x-data="vpLazy('ftp', ftpPage())">
         <div class="page-header"><div><div class="page-title">FTP / SFTP</div><div class="page-sub" x-text="'FTP account management'+(ftpStatus.daemon?' ('+ftpStatus.daemon+')':'')"></div></div><button class="btn btn-primary btn-sm" @click="showAdd=true" x-show="ftpStatus.installed">Add account</button></div>
         <template x-if="!ftpStatus.installed"><div class="card" style="text-align:center;padding:40px"><div style="font-size:40px;margin-bottom:12px"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div><div style="font-size:14px;font-weight:600;margin-bottom:8px">Pure-FTPd Not Installed</div><button class="btn btn-primary" @click="$dispatch('nav',{page:'modules'})">Install via Modules</button></div></template>
         <div x-show="ftpStatus.installed">
@@ -6896,12 +6896,12 @@
             <div class="terminal-out" x-show="logsShown" style="max-height:300px;margin:0 12px 12px"><template x-for="(l,i) in logs" :key="i"><div x-text="l"></div></template><div x-show="!logs.length">No FTP log entries.</div></div>
           </div>
         </div>
-        <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false"><div class="modal" style="max-width:420px"><div class="modal-hd"><div class="modal-title">Add FTP Account</div><button class="modal-close" @click="showAdd=false">×</button></div><div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="form.user"></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="form.password"></div><div class="form-group"><label class="form-label">Home Directory</label><input class="form-input" x-model="form.home" placeholder="/www/wwwroot/domain.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAdd=false">Cancel</button><button class="btn btn-primary" @click="create()">Create</button></div></div></div>
-        <div class="modal-overlay" x-show="pwModal.show" @click.self="pwModal.show=false"><div class="modal" style="max-width:360px"><div class="modal-hd"><div class="modal-title">Change Password</div><button class="modal-close" @click="pwModal.show=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwModal.password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="pwModal.show=false">Cancel</button><button class="btn btn-primary" @click="savePw()">Save</button></div></div></div>
+        <div x-cloak class="modal-overlay" x-show="showAdd" @click.self="showAdd=false"><div class="modal" style="max-width:420px"><div class="modal-hd"><div class="modal-title">Add FTP Account</div><button class="modal-close" @click="showAdd=false">×</button></div><div class="form-group"><label class="form-label">Username</label><input class="form-input" x-model="form.user"></div><div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" x-model="form.password"></div><div class="form-group"><label class="form-label">Home Directory</label><input class="form-input" x-model="form.home" placeholder="/www/wwwroot/domain.com"></div><div class="modal-ft"><button class="btn btn-ghost" @click="showAdd=false">Cancel</button><button class="btn btn-primary" @click="create()">Create</button></div></div></div>
+        <div x-cloak class="modal-overlay" x-show="pwModal.show" @click.self="pwModal.show=false"><div class="modal" style="max-width:360px"><div class="modal-hd"><div class="modal-title">Change Password</div><button class="modal-close" @click="pwModal.show=false">×</button></div><div class="form-group"><label class="form-label">New Password</label><input class="form-input" type="password" x-model="pwModal.password"></div><div class="modal-ft"><button class="btn btn-ghost" @click="pwModal.show=false">Cancel</button><button class="btn btn-primary" @click="savePw()">Save</button></div></div></div>
       </div>
 
       <!-- CRON -->
-      <div x-show="page==='cron'" x-data="cronPage()">
+      <div x-show="page==='cron'" x-data="vpLazy('cron', cronPage())">
         <div class="page-header"><div><div class="page-title">Cron Jobs</div><div class="page-sub">Schedule automated server tasks</div></div><button class="btn btn-primary" @click="openAdd()">+ Add Task</button></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" x-text="jobs.length"></div></div>
@@ -6929,7 +6929,7 @@
           <template x-if="jobs.length===0"><div class="empty-state" style="padding:40px"><div class="empty-icon"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div style="font-size:15px;font-weight:600;margin-bottom:6px">No scheduled tasks</div><div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Automate backups, SSL renewals, cleanups and more</div><button class="btn btn-primary" @click="openAdd()">+ Add Your First Task</button></div></template>
         </div>
         <!-- Add/Edit Modal -->
-        <div class="modal-overlay" x-show="showForm" @click.self="showForm=false">
+        <div x-cloak class="modal-overlay" x-show="showForm" @click.self="showForm=false">
           <div class="modal" style="max-width:620px">
             <div class="modal-hd"><div class="modal-title" x-text="editTarget?'Edit Task':'Add Cron Task'"></div><button class="modal-close" @click="showForm=false">×</button></div>
             <div class="form-group"><label class="form-label">Task Name</label><input class="form-input" x-model="form.name" placeholder="e.g. Daily Backup, SSL Renewal"></div>
@@ -6958,7 +6958,7 @@
           </div>
         </div>
         <!-- Run modal -->
-        <div class="modal-overlay" x-show="runModal.show">
+        <div x-cloak class="modal-overlay" x-show="runModal.show">
           <div class="modal" style="max-width:560px">
             <div class="modal-hd"><div style="display:flex;align-items:center;gap:8px"><span x-show="!runModal.done" class="loading-spinner"></span><span x-show="runModal.done&&runModal.exit===0" style="color:var(--green);font-weight:600">Done</span><span x-show="runModal.done&&runModal.exit!==0&&runModal.exit!==null" style="color:var(--red);font-weight:600">Failed</span><div class="modal-title" x-text="'Running: '+runModal.name"></div></div><button class="modal-close" @click="runModal.show=false" x-show="runModal.done">×</button></div>
             <div class="terminal-out" style="max-height:280px" x-ref="runTerminal"><template x-for="(l,i) in runModal.lines" :key="i"><div :style="vpCss(l.startsWith('[VortexPanel]')?'color:var(--accent)':l.startsWith('✗')?'color:var(--red)':'')" x-text="l"></div></template></div>
@@ -6966,11 +6966,11 @@
           </div>
         </div>
         <!-- Logs modal -->
-        <div class="modal-overlay" x-show="logModal.show" @click.self="logModal.show=false"><div class="modal" style="max-width:600px"><div class="modal-hd"><div class="modal-title" x-text="'Log: '+logModal.name"></div><button class="modal-close" @click="logModal.show=false">×</button></div><div class="terminal-out" style="max-height:340px;white-space:pre-wrap" x-text="logModal.log||'No logs yet'"></div><div class="modal-ft"><button class="btn btn-primary" @click="logModal.show=false">Close</button></div></div></div>
+        <div x-cloak class="modal-overlay" x-show="logModal.show" @click.self="logModal.show=false"><div class="modal" style="max-width:600px"><div class="modal-hd"><div class="modal-title" x-text="'Log: '+logModal.name"></div><button class="modal-close" @click="logModal.show=false">×</button></div><div class="terminal-out" style="max-height:340px;white-space:pre-wrap" x-text="logModal.log||'No logs yet'"></div><div class="modal-ft"><button class="btn btn-primary" @click="logModal.show=false">Close</button></div></div></div>
       </div>
 
       <!-- MONITORING -->
-      <div x-show="page==='monitoring'" x-data="monitoringPage()">
+      <div x-show="page==='monitoring'" x-data="vpLazy('monitoring', monitoringPage())">
         <div class="page-header"><div><div class="page-title">Monitoring</div><div class="page-sub">Live server performance and history</div></div></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card">
@@ -7035,7 +7035,7 @@
         </div>
       </div>
       <!-- LOG VIEWER -->
-      <div x-show="page==='logs'" x-data="logsPage()">
+      <div x-show="page==='logs'" x-data="vpLazy('logs', logsPage())">
         <div class="page-header"><div><div class="page-title">Log Viewer</div><div class="page-sub">Real-time server and application logs</div></div></div>
         <div class="card-sm" style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <select class="form-input" style="width:auto;min-width:180px" x-model="source" @change="load()">
@@ -7059,7 +7059,7 @@
       </div>
 
       <!-- BANDWIDTH -->
-      <div x-show="page==='bandwidth'" x-data="bandwidthPage()">
+      <div x-show="page==='bandwidth'" x-data="vpLazy('bandwidth', bandwidthPage())">
         <div class="page-header"><div><div class="page-title">Bandwidth</div><div class="page-sub">Network traffic monitoring</div></div><button class="btn btn-ghost btn-sm" x-show="!hasVnstat" @click="installVnstat()">Install vnstat</button></div>
         <div class="grid-4" style="margin-bottom:16px">
           <div class="stat-card"><div class="stat-label">Interface</div><div class="stat-value" style="font-size:16px;padding-top:4px" x-text="summary.interface||'—'"></div></div>
@@ -7130,7 +7130,7 @@
       </div>
 
       <!-- DISK USAGE -->
-      <div x-show="page==='migration'" x-data="migrationPage()">
+      <div x-show="page==='migration'" x-data="vpLazy('migration', migrationPage())">
         <div class="page-header">
           <div><div class="page-title">Migration</div><div class="page-sub">Move websites and databases to another VortexPanel server. The sites here keep running while they are copied.</div></div>
         </div>
@@ -7259,7 +7259,7 @@
         </div>
       </div>
 
-      <div x-show="page==='disk'" x-data="diskPage()">
+      <div x-show="page==='disk'" x-data="vpLazy('disk', diskPage())">
         <div class="page-header">
           <div><div class="page-title">Disk Usage</div><div class="page-sub">Find what is using the space, and clean it up</div></div>
         </div>
@@ -7363,7 +7363,7 @@
       </div>
 
       <!-- SECURITY -->
-      <div x-show="page==='security'" x-data="securityPage()">
+      <div x-show="page==='security'" x-data="vpLazy('security', securityPage())">
         <div class="page-header"><div><div class="page-title">Security</div><div class="page-sub">Server hardening & intrusion prevention</div></div></div>
         <div class="card" style="margin-bottom:16px">
           <div class="card-hd"><div class="card-title">Security Score</div><div style="font-size:28px;font-weight:700" :style="vpCss('color:'+(score>=80?'var(--green)':score>=50?'var(--yellow)':'var(--red)'))" x-text="score+'%'"></div></div>
@@ -7906,7 +7906,7 @@
       </div>
 
       <!-- WAF -->
-      <div x-show="page==='waf'" x-data="wafPage()">
+      <div x-show="page==='waf'" x-data="vpLazy('waf', wafPage())">
         <div class="page-header">
           <div><div class="page-title">WAF Analytics</div><div class="page-sub">ModSecurity / Coraza + OWASP CRS: attack visibility, exceptions, region and custom rules, rate limits</div></div>
         </div>
@@ -8338,7 +8338,7 @@
         </div>
 
         <!-- WAF exception modal -->
-        <div class="modal-overlay" x-show="wafExcForm.show" @click.self="wafExcForm.show=false">
+        <div x-cloak class="modal-overlay" x-show="wafExcForm.show" @click.self="wafExcForm.show=false">
           <div class="modal" style="max-width:620px">
             <div class="modal-hd"><div class="modal-title">Add WAF Exception</div><button class="modal-close" @click="wafExcForm.show=false">&times;</button></div>
             <div class="form-row form-row-2">
@@ -8397,7 +8397,7 @@
         </div>
 
         <!-- WAF custom rule modal -->
-        <div class="modal-overlay" x-show="wafCustomForm.show" @click.self="wafCustomForm.show=false">
+        <div x-cloak class="modal-overlay" x-show="wafCustomForm.show" @click.self="wafCustomForm.show=false">
           <div class="modal" style="max-width:620px">
             <div class="modal-hd"><div class="modal-title">Add Custom Rule</div><button class="modal-close" @click="wafCustomForm.show=false">&times;</button></div>
             <div class="form-row form-row-2">
@@ -8436,7 +8436,7 @@
         </div>
       </div>
 
-      <div x-show="page==='docker'" x-data="dockerPage()">
+      <div x-show="page==='docker'" x-data="vpLazy('docker', dockerPage())">
         <div class="page-header">
           <div><div class="page-title">Docker</div><div class="page-sub">Container management with Docker Hardened &amp; Official images</div></div>
           <div style="display:flex;gap:8px">
@@ -8643,7 +8643,7 @@
         </template>
 
         <!-- DEPLOY MODAL -->
-        <div class="modal-overlay" x-show="showRun" @click.self="showRun=false">
+        <div x-cloak class="modal-overlay" x-show="showRun" @click.self="showRun=false">
           <div class="modal" style="max-width:600px">
             <div class="modal-hd">
               <div>
@@ -8718,7 +8718,7 @@
         </div>
 
         <!-- JOB MODAL -->
-        <div class="modal-overlay" x-show="jobModal.show">
+        <div x-cloak class="modal-overlay" x-show="jobModal.show">
           <div class="modal" style="max-width:600px">
             <div class="modal-hd">
               <div style="display:flex;align-items:center;gap:10px">
@@ -8746,7 +8746,7 @@
         </div>
 
         <!-- LOGS MODAL -->
-        <div class="modal-overlay" x-show="logsModal.show" @click.self="logsModal.show=false">
+        <div x-cloak class="modal-overlay" x-show="logsModal.show" @click.self="logsModal.show=false">
           <div class="modal" style="max-width:700px">
             <div class="modal-hd"><div class="modal-title">Logs: <span x-text="logsModal.name"></span></div><button class="modal-close" @click="logsModal.show=false">×</button></div>
             <div class="terminal-out" style="max-height:400px;white-space:pre-wrap" x-text="logsModal.content"></div>
@@ -8755,7 +8755,7 @@
         </div>
 
         <!-- STATS MODAL -->
-        <div class="modal-overlay" x-show="statsModal.show" @click.self="statsModal.show=false">
+        <div x-cloak class="modal-overlay" x-show="statsModal.show" @click.self="statsModal.show=false">
           <div class="modal" style="max-width:400px">
             <div class="modal-hd"><div class="modal-title">Stats: <span x-text="statsModal.name"></span></div><button class="modal-close" @click="statsModal.show=false">×</button></div>
             <div class="grid-2" style="gap:10px">
@@ -8770,7 +8770,7 @@
       </div>
 
       <!-- CADDY -->
-      <div x-show="page==='caddy'" x-data="caddyPage()">
+      <div x-show="page==='caddy'" x-data="vpLazy('caddy', caddyPage())">
         <div class="page-header">
           <div>
             <div class="page-title">Caddy Web Server</div>
@@ -8890,7 +8890,7 @@
         </template>
 
         <!-- ADD SITE MODAL -->
-        <div class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
+        <div x-cloak class="modal-overlay" x-show="showAdd" @click.self="showAdd=false">
           <div class="modal" style="max-width:540px">
             <div class="modal-hd"><div class="modal-title">Add Caddy Site</div><button class="modal-close" @click="showAdd=false">×</button></div>
 
@@ -8953,7 +8953,7 @@
         </div>
 
         <!-- CADDYFILE EDITOR MODAL -->
-        <div class="modal-overlay" x-show="showCaddyfile" @click.self="showCaddyfile=false">
+        <div x-cloak class="modal-overlay" x-show="showCaddyfile" @click.self="showCaddyfile=false">
           <div class="modal" style="max-width:800px">
             <div class="modal-hd">
               <div>
@@ -9015,7 +9015,7 @@
 
       <!-- CDN MANAGER -->
       <!-- CDN -->
-      <div x-show="page==='cdn'" x-data="cdnPage()">
+      <div x-show="page==='cdn'" x-data="vpLazy('cdn', cdnPage())">
         <div class="page-header">
           <div>
             <div class="page-title">CDN Manager</div>
@@ -9417,7 +9417,7 @@
 
 <!-- USERS & API KEYS -->
       <!-- HOSTING MODULE (licence, buying with PayPal, installing) -->
-      <div x-show="page==='hosting-module'" x-data="hostingModulePage()">
+      <div x-show="page==='hosting-module'" x-data="vpLazy('hosting-module', hostingModulePage())">
         <div class="page-header">
           <div><div class="page-title">Hosting Module</div><div class="page-sub">Shared hosting for VortexPanel: customer accounts with packages and limits and their own portal</div></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap" x-show="st">
@@ -9646,7 +9646,7 @@
         <div x-show="page===pp.id" x-init="$el.innerHTML = pp.html; Array.from($el.children).forEach(c => Alpine.initTree(c))"></div>
       </template>
 
-      <div x-show="page==='users'" x-data="usersPage()">
+      <div x-show="page==='users'" x-data="vpLazy('users', usersPage())">
         <div class="page-header">
           <div><div class="page-title">Users &amp; API</div><div class="page-sub">Panel accounts with limited access, and keys for scripts and monitoring</div></div>
           <div style="display:flex;gap:8px">
@@ -9728,7 +9728,7 @@
         </div>
 
         <!-- user modal -->
-        <div class="modal-overlay" x-show="userForm.show" @click.self="userForm.show=false" @keydown.escape.window="userForm.show=false">
+        <div x-cloak class="modal-overlay" x-show="userForm.show" @click.self="userForm.show=false" @keydown.escape.window="userForm.show=false">
           <div class="modal" style="max-width:480px">
             <div class="modal-hd"><div class="modal-title" x-text="userForm.id?'Edit '+userForm.username:'Add user'"></div><button class="modal-close" @click="userForm.show=false">&times;</button></div>
             <div class="form-group" x-show="!userForm.id"><label class="form-label">Username</label><input class="form-input" x-model="userForm.username" autocomplete="off"></div>
@@ -9749,7 +9749,7 @@
         </div>
 
         <!-- key modal -->
-        <div class="modal-overlay" x-show="keyForm.show" @click.self="keyForm.show=false" @keydown.escape.window="keyForm.show=false">
+        <div x-cloak class="modal-overlay" x-show="keyForm.show" @click.self="keyForm.show=false" @keydown.escape.window="keyForm.show=false">
           <div class="modal" style="max-width:460px">
             <div class="modal-hd"><div class="modal-title">Create API key</div><button class="modal-close" @click="keyForm.show=false">&times;</button></div>
             <div class="form-group"><label class="form-label">Name</label><input class="form-input" x-model="keyForm.name" placeholder="e.g. uptime monitor"></div>
@@ -9776,7 +9776,7 @@
       </div>
 
 <!-- ALERTS -->
-      <div x-show="page==='alerts'" x-data="alertsPage()">
+      <div x-show="page==='alerts'" x-data="vpLazy('alerts', alertsPage())">
         <div class="page-header">
           <div><div class="page-title">Alerts</div><div class="page-sub">Get a message when the server or a website needs attention</div></div>
           <div class="vp-d-flex" style="display:flex;gap:8px;align-items:center" x-show="isAdmin">
@@ -9861,7 +9861,7 @@
       </div>
 
 <!-- SETTINGS -->
-      <div x-show="page==='settings'" x-data="settingsPage()">
+      <div x-show="page==='settings'" x-data="vpLazy('settings', settingsPage())">
         <div class="page-header">
           <div><div class="page-title">Settings</div><div class="page-sub">Panel configuration &amp; security</div></div>
           <div style="display:flex;gap:8px">
@@ -10314,21 +10314,21 @@
 
         <!-- ── Security floating modals (2FA / Password / IP Allowlist / Audit Log) ── -->
         <!-- 2FA Modal -->
-        <div x-data="{}" x-show="$store.vp.security.show2FA" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.show2FA=false" @keydown.escape.window="$store.vp.security.show2FA=false">
+        <div x-cloak x-data="{}" x-show="$store.vp.security.show2FA" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.show2FA=false" @keydown.escape.window="$store.vp.security.show2FA=false">
           <div style="background:var(--bg-card);border-radius:12px;width:480px;max-width:92vw;max-height:88vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,.5)">
             <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
               <div style="font-weight:600;font-size:14px">Two-Factor Authentication (2FA)</div>
               <button class="modal-close" @click="$store.vp.security.show2FA=false">×</button>
             </div>
             <div style="padding:18px">
-              <div x-show="!$store.vp.security.twofa.enabled">
+              <div x-cloak x-show="!$store.vp.security.twofa.enabled">
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Add TOTP verification on every login (Google Authenticator, Authy, etc).</div>
-                <div x-show="!$store.vp.security.twofa.secret"><button class="btn btn-primary btn-sm" :disabled="!!($store.vp.security.twofa.setupLoading)" @click="setup2FA()"><span x-show="$store.vp.security.twofa.setupLoading">Generating…</span><span x-show="!$store.vp.security.twofa.setupLoading">Enable 2FA</span></button></div>
-                <div x-show="$store.vp.security.twofa.secret">
+                <div x-cloak x-show="!$store.vp.security.twofa.secret"><button class="btn btn-primary btn-sm" :disabled="!!($store.vp.security.twofa.setupLoading)" @click="setup2FA()"><span x-show="$store.vp.security.twofa.setupLoading">Generating…</span><span x-show="!$store.vp.security.twofa.setupLoading">Enable 2FA</span></button></div>
+                <div x-cloak x-show="$store.vp.security.twofa.secret">
                   <div style="font-size:12px;font-weight:600;margin-bottom:8px">Scan QR code in your authenticator app:</div>
                   <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:12px">
-                    <div x-show="$store.vp.security.twofa.qr_svg" x-html="$store.vp.security.twofa.qr_svg" style="width:160px;height:160px;flex-shrink:0;border:2px solid var(--border);border-radius:var(--radius);background:var(--bg-card);overflow:hidden"></div>
-                    <div x-show="!$store.vp.security.twofa.qr_svg" style="width:160px;flex-shrink:0;font-size:11px;color:var(--text-muted)">QR code unavailable - enter the manual key in your authenticator app.</div>
+                    <div x-cloak x-show="$store.vp.security.twofa.qr_svg" x-html="$store.vp.security.twofa.qr_svg" style="width:160px;height:160px;flex-shrink:0;border:2px solid var(--border);border-radius:var(--radius);background:var(--bg-card);overflow:hidden"></div>
+                    <div x-cloak x-show="!$store.vp.security.twofa.qr_svg" style="width:160px;flex-shrink:0;font-size:11px;color:var(--text-muted)">QR code unavailable - enter the manual key in your authenticator app.</div>
                     <div>
                       <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Manual key:</div>
                       <div style="font-family:var(--font-mono);font-size:11px;font-weight:600;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;word-break:break-all" x-text="$store.vp.security.twofa.secret"></div>
@@ -10339,10 +10339,10 @@
                     <button class="btn btn-primary btn-sm" :disabled="!!($store.vp.security.twofa.enabling)" @click="enable2FA()"><span x-show="$store.vp.security.twofa.enabling">Verifying…</span><span x-show="!$store.vp.security.twofa.enabling">Verify &amp; Enable</span></button>
                     <button class="btn btn-ghost btn-sm" @click="$store.vp.security.twofa.secret='';$store.vp.security.twofa.code=''">Cancel</button>
                   </div>
-                  <div x-show="$store.vp.security.twofa.err" style="margin-top:6px;font-size:11px;color:var(--red)" x-text="$store.vp.security.twofa.err"></div>
+                  <div x-cloak x-show="$store.vp.security.twofa.err" style="margin-top:6px;font-size:11px;color:var(--red)" x-text="$store.vp.security.twofa.err"></div>
                 </div>
               </div>
-              <div x-show="$store.vp.security.twofa.backupCodes.length" style="margin-bottom:14px;padding:12px;border:1px solid var(--accent-warn);border-radius:var(--radius);background:var(--bg-raised)">
+              <div x-cloak x-show="$store.vp.security.twofa.backupCodes.length" style="margin-bottom:14px;padding:12px;border:1px solid var(--accent-warn);border-radius:var(--radius);background:var(--bg-raised)">
                 <div style="font-size:12px;font-weight:600;margin-bottom:4px">Save your backup codes</div>
                 <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">Each code signs you in once if you lose your phone. They are shown only now.</div>
                 <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:4px 16px;font-family:var(--font-mono);font-size:13px;margin-bottom:8px">
@@ -10354,14 +10354,14 @@
                   <button class="btn btn-primary btn-sm" @click="$store.vp.security.twofa.backupCodes=[]">I have saved them</button>
                 </div>
               </div>
-              <div x-show="$store.vp.security.twofa.enabled">
+              <div x-cloak x-show="$store.vp.security.twofa.enabled">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><span class="badge badge-green">2FA active</span><span style="font-size:12px;color:var(--text-muted)">Sign-in requires a code from your authenticator app</span></div>
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Backup codes left: <strong x-text="$store.vp.security.twofa.codesLeft"></strong></div>
-                <div class="vp-d-flex" x-show="!$store.vp.security.twofa.disableConfirm && !$store.vp.security.twofa.regenConfirm" style="display:flex;gap:6px;flex-wrap:wrap">
+                <div x-cloak class="vp-d-flex" x-show="!$store.vp.security.twofa.disableConfirm && !$store.vp.security.twofa.regenConfirm" style="display:flex;gap:6px;flex-wrap:wrap">
                   <button class="btn btn-ghost btn-sm" @click="$store.vp.security.twofa.regenConfirm=true">New backup codes</button>
                   <button class="btn btn-danger btn-sm" @click="$store.vp.security.twofa.disableConfirm=true">Disable 2FA</button>
                 </div>
-                <div x-show="$store.vp.security.twofa.regenConfirm">
+                <div x-cloak x-show="$store.vp.security.twofa.regenConfirm">
                   <div style="font-size:12px;margin-bottom:6px">Enter your password. The old backup codes stop working.</div>
                   <div style="display:flex;gap:6px">
                     <input class="form-input" x-model="$store.vp.security.twofa.regenPw" type="password" placeholder="Current password" style="flex:1" @keydown.enter="regenBackupCodes()" />
@@ -10369,7 +10369,7 @@
                     <button class="btn btn-ghost btn-sm" @click="$store.vp.security.twofa.regenConfirm=false;$store.vp.security.twofa.regenPw=''">Cancel</button>
                   </div>
                 </div>
-                <div x-show="$store.vp.security.twofa.disableConfirm">
+                <div x-cloak x-show="$store.vp.security.twofa.disableConfirm">
                   <div style="font-size:12px;color:var(--red);margin-bottom:6px">Enter your password to confirm:</div>
                   <div style="display:flex;gap:6px">
                     <input class="form-input" x-model="$store.vp.security.twofa.disablePw" type="password" placeholder="Current password" style="flex:1" />
@@ -10383,7 +10383,7 @@
         </div>
 
         <!-- Change Password Modal -->
-        <div x-data="{}" x-show="$store.vp.security.showPw" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showPw=false" @keydown.escape.window="$store.vp.security.showPw=false">
+        <div x-cloak x-data="{}" x-show="$store.vp.security.showPw" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showPw=false" @keydown.escape.window="$store.vp.security.showPw=false">
           <div style="background:var(--bg-card);border-radius:12px;width:420px;max-width:92vw;box-shadow:0 25px 60px rgba(0,0,0,.5)">
             <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
               <div style="font-weight:600;font-size:14px">Change Panel Password</div>
@@ -10400,7 +10400,7 @@
         </div>
 
         <!-- IP Allowlist Modal -->
-        <div x-data="{}" x-show="$store.vp.security.showIP" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showIP=false" @keydown.escape.window="$store.vp.security.showIP=false">
+        <div x-cloak x-data="{}" x-show="$store.vp.security.showIP" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showIP=false" @keydown.escape.window="$store.vp.security.showIP=false">
           <div style="background:var(--bg-card);border-radius:12px;width:460px;max-width:92vw;box-shadow:0 25px 60px rgba(0,0,0,.5)">
             <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
               <div style="font-weight:600;font-size:14px">IP Access Allowlist</div>
@@ -10415,7 +10415,7 @@
         </div>
 
         <!-- Login Audit Log Modal -->
-        <div x-data="{}" x-show="$store.vp.security.showAudit" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showAudit=false" @keydown.escape.window="$store.vp.security.showAudit=false">
+        <div x-cloak x-data="{}" x-show="$store.vp.security.showAudit" class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:1000" @click.self="$store.vp.security.showAudit=false" @keydown.escape.window="$store.vp.security.showAudit=false">
           <div style="background:var(--bg-card);border-radius:12px;width:680px;max-width:94vw;max-height:88vh;overflow-y:auto;box-shadow:0 25px 60px rgba(0,0,0,.5)">
             <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
               <div>
@@ -10428,15 +10428,15 @@
               </div>
             </div>
             <div style="padding:18px">
-              <div x-show="$store.vp.security.auditLoading" style="padding:20px 0">
+              <div x-cloak x-show="$store.vp.security.auditLoading" style="padding:20px 0">
                 <div class="skeleton skeleton-row"></div>
                 <div class="skeleton skeleton-row"></div>
                 <div class="skeleton skeleton-row"></div>
               </div>
-              <div x-show="!$store.vp.security.auditLoading && $store.vp.security.auditLog.length===0" class="empty-state">
+              <div x-cloak x-show="!$store.vp.security.auditLoading && $store.vp.security.auditLog.length===0" class="empty-state">
                 <div class="empty-icon"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg></div><div class="empty-text">No audit entries yet</div>
               </div>
-              <div x-show="!$store.vp.security.auditLoading && $store.vp.security.auditLog.length>0" style="max-height:400px;overflow-y:auto">
+              <div x-cloak x-show="!$store.vp.security.auditLoading && $store.vp.security.auditLog.length>0" style="max-height:400px;overflow-y:auto">
                 <div class="vp-tscroll"><table class="data-table" style="font-size:11px">
                   <thead><tr><th>Time</th><th>Status</th><th>IP</th><th>User</th><th>Note</th></tr></thead>
                   <tbody>
@@ -10483,7 +10483,7 @@
       </template>
     </div>
     <div style="flex:1;overflow-y:auto;padding:6px">
-      <div x-show="$store.vp.picker.loading" style="text-align:center;padding:30px;color:var(--text-muted)">Loading...</div>
+      <div x-cloak x-show="$store.vp.picker.loading" style="text-align:center;padding:30px;color:var(--text-muted)">Loading...</div>
       <template x-for="item in $store.vp.picker.items" :key="item.path">
         <div @click="if(item.type==='dir'&&$store.vp.picker.mode==='dir'){$store.vp.picker.selected=item.path;}else if(item.type==='file'&&$store.vp.picker.mode==='file'){$store.vp.picker.selected=item.path;}"
              @dblclick="async()=>{if(item.type==='dir'){$store.vp.picker.path=item.path;$store.vp.picker.loading=true;const r=await get('/api/files/list?path='+encodeURIComponent(item.path)); if(!r.ok) toast(r.error||'Cannot open folder','error');$store.vp.picker.items=r.items||[];$store.vp.picker.loading=false;if($store.vp.picker.mode==='dir')$store.vp.picker.selected=item.path;}}"
@@ -10529,11 +10529,11 @@
         <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Project Name *</label>
         <input class="form-input" x-model="$store.vp.nodeAdd.name" placeholder="my-app" style="margin-top:4px">
       </div>
-      <div x-show="$store.vp.nodeAdd.mode==='pm2'">
+      <div x-cloak x-show="$store.vp.nodeAdd.mode==='pm2'">
         <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Startup File *</label>
         <input class="form-input" x-model="$store.vp.nodeAdd.startup_file" placeholder="app.js" style="margin-top:4px">
       </div>
-      <div x-show="$store.vp.nodeAdd.mode==='default'">
+      <div x-cloak x-show="$store.vp.nodeAdd.mode==='default'">
         <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Run Command</label>
         <input class="form-input" x-model="$store.vp.nodeAdd.run_cmd" placeholder="node server.js" style="margin-top:4px">
       </div>
@@ -10549,7 +10549,7 @@
           </select>
         </div>
       </div>
-      <div class="vp-d-grid" x-show="$store.vp.nodeAdd.mode==='pm2'" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div x-cloak class="vp-d-grid" x-show="$store.vp.nodeAdd.mode==='pm2'" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div>
           <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Cluster Instances</label>
           <input class="form-input" type="number" min="1" x-model="$store.vp.nodeAdd.clusters" style="margin-top:4px">
@@ -10559,7 +10559,7 @@
           <input class="form-input" type="number" x-model="$store.vp.nodeAdd.mem_limit" style="margin-top:4px">
         </div>
       </div>
-      <div class="vp-d-flex" x-show="$store.vp.nodeAdd.mode==='pm2'" style="display:flex;align-items:center;gap:8px">
+      <div x-cloak class="vp-d-flex" x-show="$store.vp.nodeAdd.mode==='pm2'" style="display:flex;align-items:center;gap:8px">
         <input type="checkbox" x-model="$store.vp.nodeAdd.auto_restart">
         <label style="font-size:13px">Auto Restart on crash</label>
       </div>
@@ -10573,7 +10573,7 @@
         </div>
       </div>
       <button @click="$store.vp.nodeAdd.show_more=!$store.vp.nodeAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.nodeAdd.show_more?'Hide settings':'More settings (domain, env vars)'"></button>
-      <div class="vp-d-grid" x-show="$store.vp.nodeAdd.show_more" style="display:grid;gap:14px">
+      <div x-cloak class="vp-d-grid" x-show="$store.vp.nodeAdd.show_more" style="display:grid;gap:14px">
         <div>
           <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Domain Name
             <span x-show="$store.vp.nodeAdd.wsInfo" style="font-weight:400;margin-left:6px"
@@ -10664,7 +10664,7 @@
         <textarea class="form-input" x-model="$store.vp.goAdd.domain" rows="2" style="margin-top:4px;resize:vertical" placeholder="myapp.com — leave blank for port-only"></textarea>
       </div>
       <button @click="$store.vp.goAdd.show_more=!$store.vp.goAdd.show_more" style="background:none;border:none;cursor:pointer;text-align:left;color:var(--accent);font-size:13px;padding:0" x-text="$store.vp.goAdd.show_more?'Hide':'More settings (env vars, remark)'"></button>
-      <div class="vp-d-grid" x-show="$store.vp.goAdd.show_more" style="display:grid;gap:14px">
+      <div x-cloak class="vp-d-grid" x-show="$store.vp.goAdd.show_more" style="display:grid;gap:14px">
         <div>
           <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Environment Variables</label>
           <textarea class="form-input" x-model="$store.vp.goAdd.env_vars" rows="3" style="margin-top:4px;resize:vertical;font-family:var(--font-mono);font-size:12px" placeholder="GIN_MODE=release"></textarea>
@@ -10713,7 +10713,7 @@
       <div>
         <label style="font-size:12px;font-weight:600;color:var(--text-muted)">Host Port *</label>
         <input class="form-input" x-model="$store.vp.dockerDomain.port" placeholder="8080" style="margin-top:4px">
-        <div style="font-size:11px;color:var(--text-muted);margin-top:3px" x-show="$store.vp.dockerDomain.detectedPorts" x-text="'Detected port mapping: '+$store.vp.dockerDomain.detectedPorts"></div>
+        <div x-cloak style="font-size:11px;color:var(--text-muted);margin-top:3px" x-show="$store.vp.dockerDomain.detectedPorts" x-text="'Detected port mapping: '+$store.vp.dockerDomain.detectedPorts"></div>
       </div>
     </div>
     <div style="display:flex;justify-content:space-between;gap:8px;margin-top:20px">
@@ -10762,7 +10762,7 @@
     </div>
 
     <!-- STEP 1: Select panel + upload -->
-    <div x-show="$store.vp.importWizard.step===1">
+    <div x-cloak x-show="$store.vp.importWizard.step===1">
       <div style="margin-bottom:16px">
         <label class="form-label">Source Panel</label>
         <div style="display:flex;gap:8px;margin-top:6px">
@@ -10790,14 +10790,14 @@
 
       <div style="border:2px dashed var(--border);border-radius:8px;padding:24px;text-align:center">
         <input type="file" id="import-file-input" style="display:none" @change="importUploadFile($event)" accept=".tar.gz,.tgz,.tar,.zip">
-        <div x-show="!$store.vp.importWizard.filename">
+        <div x-cloak x-show="!$store.vp.importWizard.filename">
           <div style="font-size:28px;margin-bottom:8px" x-html="vpIcon('download')"></div>
           <button class="btn btn-primary btn-sm" @click="document.getElementById('import-file-input').click()" :disabled="!!($store.vp.importWizard.uploading)">
             <span x-show="$store.vp.importWizard.uploading">Uploading...</span>
             <span x-show="!$store.vp.importWizard.uploading">Choose Backup File</span>
           </button>
         </div>
-        <div x-show="$store.vp.importWizard.filename" style="font-size:13px">
+        <div x-cloak x-show="$store.vp.importWizard.filename" style="font-size:13px">
           <div style="font-weight:600"><span x-text="$store.vp.importWizard.filename"></span></div>
           <button class="btn btn-ghost btn-xs" style="margin-top:8px" @click="document.getElementById('import-file-input').click()">Choose a different file</button>
         </div>
@@ -10812,8 +10812,8 @@
     </div>
 
     <!-- STEP 2: Review & confirm detected info -->
-    <div x-show="$store.vp.importWizard.step===2">
-      <div x-show="$store.vp.importWizard.detected?.notes?.length" style="background:var(--bg-raised);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:11px;color:var(--text-muted);line-height:1.6">
+    <div x-cloak x-show="$store.vp.importWizard.step===2">
+      <div x-cloak x-show="$store.vp.importWizard.detected?.notes?.length" style="background:var(--bg-raised);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:11px;color:var(--text-muted);line-height:1.6">
         <template x-for="note in ($store.vp.importWizard.detected?.notes||[])" :key="note">
           <div x-text="note"></div>
         </template>
@@ -10844,7 +10844,7 @@
             <label class="form-label" style="margin:0">Databases</label>
             <button class="btn btn-ghost btn-xs" @click="importAddDbRow()">+ Add database manually</button>
           </div>
-          <div x-show="$store.vp.importWizard.databases.length===0" style="font-size:12px;color:var(--text-muted)">No database dump detected — site files will still be imported.</div>
+          <div x-cloak x-show="$store.vp.importWizard.databases.length===0" style="font-size:12px;color:var(--text-muted)">No database dump detected — site files will still be imported.</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <template x-for="(db, idx) in $store.vp.importWizard.databases" :key="idx">
               <div style="display:flex;gap:8px;align-items:center;background:var(--bg-raised);padding:8px;border-radius:6px">
@@ -10860,7 +10860,7 @@
         <!-- SSL certificate -->
         <div>
           <label class="form-label">SSL certificate <span x-show="$store.vp.importWizard.sslChecking" class="loading-spinner" style="width:10px;height:10px;vertical-align:middle"></span></label>
-          <div x-show="!$store.vp.importWizard.ssl" class="imp-none">No certificate for this domain (with its private key) was found in the backup. You can issue a free Let's Encrypt certificate after the import.</div>
+          <div x-cloak x-show="!$store.vp.importWizard.ssl" class="imp-none">No certificate for this domain (with its private key) was found in the backup. You can issue a free Let's Encrypt certificate after the import.</div>
           <template x-if="$store.vp.importWizard.ssl">
             <label class="imp-item" :style="vpCss($store.vp.importWizard.ssl.expired?'opacity:.6':'')">
               <input type="checkbox" x-model="$store.vp.importWizard.importSsl" :disabled="!!($store.vp.importWizard.ssl.expired)">
@@ -10878,8 +10878,8 @@
         <!-- Cron jobs -->
         <div>
           <label class="form-label">Cron jobs</label>
-          <div x-show="!$store.vp.importWizard.cron.length" class="imp-none">No cron jobs found in the backup.</div>
-          <div x-show="$store.vp.importWizard.cron.length" class="imp-none" style="margin-bottom:6px">They will run as the web server user, not root. Old account paths were changed to the new site folder - check each command before importing.</div>
+          <div x-cloak x-show="!$store.vp.importWizard.cron.length" class="imp-none">No cron jobs found in the backup.</div>
+          <div x-cloak x-show="$store.vp.importWizard.cron.length" class="imp-none" style="margin-bottom:6px">They will run as the web server user, not root. Old account paths were changed to the new site folder - check each command before importing.</div>
           <div style="display:flex;flex-direction:column;gap:6px">
             <template x-for="(j, idx) in $store.vp.importWizard.cron" :key="idx">
               <div class="imp-item" style="align-items:flex-start">
@@ -10894,8 +10894,8 @@
         <!-- Mailboxes -->
         <div>
           <label class="form-label">Mailboxes</label>
-          <div x-show="!$store.vp.importWizard.mail.length" class="imp-none">No mailboxes found in the backup.</div>
-          <div x-show="$store.vp.importWizard.mail.length && !$store.vp.importWizard.mailReady" class="imp-none" style="color:var(--accent-warn)">The mail server is not set up on this server, so these mailboxes cannot be imported now. Set it up on the Mail Server page, then run the import again.</div>
+          <div x-cloak x-show="!$store.vp.importWizard.mail.length" class="imp-none">No mailboxes found in the backup.</div>
+          <div x-cloak x-show="$store.vp.importWizard.mail.length && !$store.vp.importWizard.mailReady" class="imp-none" style="color:var(--accent-warn)">The mail server is not set up on this server, so these mailboxes cannot be imported now. Set it up on the Mail Server page, then run the import again.</div>
           <div style="display:flex;flex-direction:column;gap:6px" :style="vpCss($store.vp.importWizard.mailReady?'':'opacity:.55')">
             <template x-for="b in $store.vp.importWizard.mail" :key="b.email">
               <label class="imp-item">
@@ -10915,7 +10915,7 @@
     </div>
 
     <!-- STEP 3: Execution log -->
-    <div x-show="$store.vp.importWizard.step===3">
+    <div x-cloak x-show="$store.vp.importWizard.step===3">
       <pre class="import-job-terminal"
            style="background:#0d1117;color:#86efac;font-family:var(--font-mono);font-size:11px;padding:14px;border-radius:6px;overflow-y:auto;max-height:360px;white-space:pre-wrap;margin:0"
            x-text="$store.vp.importWizard.jobLines.join('\n')"></pre>

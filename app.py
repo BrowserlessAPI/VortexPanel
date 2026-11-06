@@ -480,6 +480,15 @@ def create_app():
             pass
         return response
 
+    # -- Browser cache for versioned files ------------------------------------
+    # /static/...?v=<panel version>: the address changes with every release, so the
+    # browser keeps the file and does not ask again on every page load.
+    @app.after_request
+    def cache_static(response):
+        if request.path.startswith('/static/') and request.args.get('v') and response.status_code == 200:
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        return response
+
     # -- Security headers on every response -----------------------------------
     @app.after_request
     def add_security_headers(response):
