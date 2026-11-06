@@ -1940,7 +1940,9 @@ fi''',
             '  export DEBIAN_FRONTEND=noninteractive && '
             '  apt-get install -y clamav clamav-daemon clamav-freshclam && '
             '  systemctl enable clamav-freshclam 2>/dev/null; systemctl enable clamav-daemon 2>/dev/null; '
-            '  (freshclam 2>&1 || true) && '
+            # the package starts the clamav-freshclam service, which holds the log lock:
+            # stop it for the first download, start it again right after
+            '  systemctl stop clamav-freshclam 2>/dev/null; (freshclam 2>&1 || true) && '
             '  systemctl start clamav-freshclam 2>/dev/null; systemctl start clamav-daemon 2>/dev/null; '
             'else '
             # Confirmed via multiple current sources: RHEL-family package
@@ -2935,7 +2937,17 @@ def list_modules():
     except Exception:
         modupdates, updata = None, {}
     sv = _softs()
-    vx_cat = sv.load() if sv else None
+    vx_cat = None
+    if sv:
+        # first visit after the download server is configured: fetch the catalog now
+        # instead of waiting for the 6-hourly timer (cached; a failure keeps OS versions)
+        try:
+            vx_cat = sv.load()
+            meta = sv._read(os.path.join(sv.DATA, 'catalog-meta.json'), {}) or {}
+            if vx_cat is None and time.time() - int(meta.get('checked') or 0) > 300:
+                vx_cat = sv.refresh()       # at most every 5 minutes while the server is unreachable
+        except Exception:  # noqa: BLE001
+            vx_cat = None
     vx_updates = sv.updates(vx_cat) if (sv and vx_cat) else []
     for base_m in MODULES:
         m = _get_mod(base_m['id'])  # merged with any catalog override
