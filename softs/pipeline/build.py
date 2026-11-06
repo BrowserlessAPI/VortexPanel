@@ -85,6 +85,30 @@ def run_build(recipe, item, target, arch, native, work):
     return out, prefix
 
 
+def needs_glibc(root):
+    """Newest GLIBC_x.y symbol version required by any ELF file under root ('' if none/unknown)."""
+    import shutil as _sh
+    if not _sh.which('objdump'):
+        return ''
+    best = ()
+    for d, _, files in os.walk(root):
+        for fn in files:
+            p = os.path.join(d, fn)
+            try:
+                if os.path.islink(p) or not os.path.isfile(p):
+                    continue
+                with open(p, 'rb') as f:
+                    if f.read(4) != b'\x7fELF':
+                        continue
+            except OSError:
+                continue
+            r = subprocess.run(['objdump', '-T', p], capture_output=True, text=True, errors='replace')
+            for m in re.finditer(r'GLIBC_(\d+(?:\.\d+)+)', r.stdout):
+                v = tuple(int(x) for x in m.group(1).split('.'))
+                best = max(best, v)
+    return '.'.join(map(str, best))
+
+
 def pack(recipe, item, target, arch, out, prefix, dist):
     root = os.path.join(out, 'root') + prefix
     if not os.path.isdir(root) or not os.listdir(root):
@@ -100,6 +124,7 @@ def pack(recipe, item, target, arch, out, prefix, dist):
         for name in sorted(os.listdir(root)):
             t.add(os.path.join(root, name), arcname=name, filter=as_root)
     fam = (C.TARGETS['targets'].get(target) or {}).get('family', '')
+    needs = needs_glibc(root)
     detected = []
     try:
         detected = [x.strip() for x in open(os.path.join(out, 'run-deps.txt')) if x.strip()]
@@ -119,6 +144,7 @@ def pack(recipe, item, target, arch, out, prefix, dist):
                      'rpm': (recipe.get('deps') or {}).get('run', {}).get('rpm', []) + (detected if fam == 'rpm' else [])},
         'rpm_repos': recipe.get('rpm_repos', []),
         'replaces': recipe.get('replaces', {}), 'keep_on_switch': recipe.get('keep_on_switch', []), 'family': fam, 'built': int(time.time()), 'built_on': glibc,
+        'needs_glibc': needs,          # newest GLIBC_x.y symbol any program uses: older systems cannot run it
         'payload_sha256': C.sha256_file(tmp),
     }
     name = C.file_name(recipe['id'], item['version'], target, arch)

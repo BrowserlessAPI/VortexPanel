@@ -75,7 +75,8 @@ def main():
             if not C.exists(key):
                 C.upload(path, key)
             files[f'{t}-{ar}'] = {'key': key, 'sha256': sha, 'size': os.path.getsize(path),
-                                  'run_deps': len((man.get('run_deps') or {}).get(man.get('family') or 'deb', []))}
+                                  'run_deps': len((man.get('run_deps') or {}).get(man.get('family') or 'deb', [])),
+                                  'needs_glibc': man.get('needs_glibc', '')}
         still_missing = sorted((set(old_rel.get('missing') or []) - set(files)) | (set(missing) - set(files)))
         notes_path = os.path.join(a.notes, f'{app}-{ver}.md')
         notes = open(notes_path).read().strip() if os.path.exists(notes_path) else ''

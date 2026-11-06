@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa: E402
 
 PANEL = os.path.join(os.path.dirname(C.ROOT), 'panel')
+# glibc of each supported system (the oldest one is what a universal build must run on)
+TARGET_GLIBC = {'el8': (2, 28), 'el9': (2, 34), 'el10': (2, 39), 'ubuntu22': (2, 35), 'ubuntu24': (2, 39),
+                'debian12': (2, 36), 'debian13': (2, 41)}
 UNIVERSAL_TEST_TARGETS = ['el8', 'el10', 'ubuntu22', 'debian13']
 
 SCRIPT = r'''
@@ -59,6 +62,11 @@ def test(zip_path, image):
             '-e', f'ZIP={os.path.basename(zip_path)}', '-e', f'APP={man["app"]}', '-e', f'VERSION={man["version"]}',
             '-e', f'TRACK={man["track"]}', '-e', f'SMOKE={recipe.get("smoke", "")}',
             image, 'bash', '-c', SCRIPT]
+    # extra privileges a real server has and the service asks for (e.g. Pure-FTPd keeps
+    # CAP_DAC_READ_SEARCH and CAP_SYS_NICE); only names from a fixed list are accepted
+    caps = [c for c in recipe.get('test_caps') or [] if c in ('DAC_READ_SEARCH', 'SYS_NICE', 'NET_ADMIN', 'SYS_RESOURCE', 'IPC_LOCK')]
+    for c in reversed(caps):
+        args[3:3] = ['--cap-add', c]
     C.log(f'testing {os.path.basename(zip_path)} on {image}')
     name = f'vptest-{os.getpid()}-{abs(hash(image)) % 100000}'
     args = args[:3] + ['--name', name] + args[3:]
@@ -82,6 +90,10 @@ def main():
         # systems with their own build (also_targets) never get the universal one: test the
         # next system of that family instead (el8 -> el9)
         own = set(C.recipes()[man['app']].get('also_targets') or [])
+        need = tuple(int(x) for x in man['needs_glibc'].split('.')) if man.get('needs_glibc') else ()
+        # systems with their own build, or a glibc older than the build needs (they are not
+        # offered this build), are replaced by the next system of their family
+        own |= {t for t, g in TARGET_GLIBC.items() if need and g < need}
         tg = []
         for t in UNIVERSAL_TEST_TARGETS:
             if t in own:

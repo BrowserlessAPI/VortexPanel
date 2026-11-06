@@ -9,5 +9,6 @@
   "deps": {"build": {"deb": ["libssl-dev", "libpam0g-dev", "libcap-dev"], "rpm": ["openssl-devel", "pam-devel", "libcap-devel"]},
            "run": {"deb": ["openssl"], "rpm": ["openssl"]}},
   "replaces": {"deb": ["pure-ftpd", "pure-ftpd-common", "pure-ftpd-mysql", "pure-ftpd-postgresql", "pure-ftpd-ldap"], "rpm": ["pure-ftpd"]},
+  "test_caps": ["DAC_READ_SEARCH", "SYS_NICE"],
   "smoke": "smoke.sh"
 }

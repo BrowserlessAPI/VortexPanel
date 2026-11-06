@@ -306,6 +306,26 @@ def catalog_status():
             'target': t, 'arch': a, 'supported': bool(t), 'settings': settings()}
 
 
+def glibc_version():
+    """This system's glibc as a tuple, () when unknown."""
+    try:
+        v = os.confstr('CS_GNU_LIBC_VERSION') or ''
+        return tuple(int(x) for x in v.split()[-1].split('.'))
+    except (ValueError, OSError, IndexError):
+        return ()
+
+
+def runs_here(needs):
+    """A build needing glibc `needs` (e.g. '2.29') runs on this system."""
+    if not needs:
+        return True
+    have = glibc_version()
+    try:
+        return not have or have >= tuple(int(x) for x in str(needs).split('.'))
+    except ValueError:
+        return True
+
+
 def releases(app, cat=None, channel=None):
     """Releases of app this server can install on its channel, newest first."""
     cat = cat if cat is not None else (load() or {})
@@ -317,7 +337,10 @@ def releases(app, cat=None, channel=None):
             continue
         if ch == 'stable' and r.get('channel') != 'stable':
             continue
-        f = next((r['files'][k] for k in keys if k in (r.get('files') or {})), None)
+        # this system's own build first, then the universal one; a build that needs a newer
+        # glibc than this system has is not offered here (the OS packages stay in charge)
+        f = next((r['files'][k] for k in keys if k in (r.get('files') or {})
+                  and runs_here((r['files'][k] or {}).get('needs_glibc'))), None)
         if f:
             out.append(dict(r, file=f))
     out.sort(key=lambda r: vt(r['version']), reverse=True)
@@ -577,6 +600,9 @@ def install_zip(path, log=None, action='install', init=None, migrate=False):
     init = init or ('systemd' if os.path.isdir('/run/systemd/system') else 'none')
     _RUN.id = uuid.uuid4().hex      # every script of this install/update (and its restore) gets this id
     man = read_zip(path)
+    if not runs_here(man.get('needs_glibc')):
+        raise SoftError(f'{man.get("name", man["app"])} {man["version"]} needs glibc {man["needs_glibc"]} or newer; '
+                        f'this system has {".".join(map(str, glibc_version()))}. Nothing was changed.')
     t, a = target()
     if man['target'] != 'linux' and (man['target'] != t or man['arch'] != a):
         raise SoftError(f'this package is for {man["target"]}-{man["arch"]}, this server is {t or "unsupported"}-{a}')

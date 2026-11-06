@@ -70,6 +70,9 @@ the server's system, instead of using the operating system's package sources.
   and checksum per system. A system upstream publishes nothing for is marked "not
   offered" and keeps its OS packages; it is never a failed build.
 - **MariaDB on ARM** is compiled from the release's source for every system.
+- **Builds the system cannot run are never offered.** Each build records the newest
+  glibc its programs need; a server with an older glibc (for example AlmaLinux 8 on
+  ARM for OpenLiteSpeed's official ARM binaries) keeps its OS packages instead.
 - Until `panel/trust/softs.json` names the download server and key, everything
   works as before.
 
