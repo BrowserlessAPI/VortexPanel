@@ -2949,7 +2949,8 @@ def list_modules():
         except Exception:  # noqa: BLE001
             vx_cat = None
     vx_updates = sv.updates(vx_cat) if (sv and vx_cat) else []
-    for base_m in MODULES:
+    def _row(base_m):
+        # one app's row; the rows run in parallel (each checks the system with a few short commands)
         m = _get_mod(base_m['id'])  # merged with any catalog override
         vs, source = module_versions(m, live, signed)
         # A VortexPanel build exists for this server: offer only those versions
@@ -3023,7 +3024,7 @@ def list_modules():
                 has_update, latest_same_track = True, best['version']
                 update_security, update_pkgs = bool(best.get('security')), []
                 vx_info = {'migrate': best['version']}
-        result.append({
+        return ({
             'id': m['id'], 'name': m['name'], 'icon': m['icon'],
             'category': m['category'], 'desc': m['desc'],
             'installed': installed, 'svcStatus': svc_status,
@@ -3044,6 +3045,10 @@ def list_modules():
             'conflict_group': next((g for g,ms in CONFLICT_GROUPS.items() if m['id'] in ms), None),
             'blocked': '' if installed else _install_blocked(m['id']),
         })
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        result = list(ex.map(_row, MODULES))
+
     response = {'ok':True, 'modules':result}
     try:
         response['tested'] = appversions.status() if appversions else {}
@@ -3281,7 +3286,9 @@ def install_module(mod_id):
             conflict_name = next((m['name'] for m in MODULES if m['id'] == conflict_mod), conflict_mod)
             return jsonify({'ok': False, 'error': f'Cannot install: {conflict_name} is already installed.', 'conflict': conflict_mod}), 409
         job_id = _softs_job(mod, f'Installing {mod["name"]} {vx}',
-                            lambda log: sv.install(mod_id, vx, log))
+                            # installed earlier from the OS packages (same version line): taken
+                            # over, configuration and data kept, old setup back if it fails
+                            lambda log: sv.install(mod_id, vx, log, migrate=True))
         return jsonify({'ok': True, 'job_id': job_id, 'action': 'install'})
 
     versions, _src = module_versions(mod, _live_data())

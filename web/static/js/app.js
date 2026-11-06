@@ -685,7 +685,14 @@ function rootApp() {
       window.addEventListener('keydown', e => { if (e.key === 'Escape' && this.sidebarOpen) this.sidebarOpen = false; });
       // Check existing session first
       try {
-        const r = await get('/api/auth/check');
+        // Only a real answer decides: while the panel is restarting or busy (network
+        // error, proxy page, 5xx) keep asking for up to a minute instead of showing
+        // the login screen to someone who is logged in.
+        let r = await get('/api/auth/check');
+        for (let i = 0; i < 30 && !(r && r.ok); i++) {
+          await new Promise(res => setTimeout(res, 2000));
+          r = await get('/api/auth/check');
+        }
         if (r.ok && r.logged_in) {
           this.username = r.username || 'admin';
           this.role = r.role || 'admin'; this.userSites = r.sites || [];
@@ -3514,6 +3521,7 @@ function modulesPage() {
   return Object.assign({
     modules: [], cat: '',
     verModal:  {show:false, mod:null, selVer:'', action:'install'},
+    instModal: {show:false, mod:null, list:[], ver:''},
     updModal:  {show:false, mod:null},
     vxRb: {show:false, mod:null, slot:''},
     vxSw: {show:false, mod:null, ver:''},
@@ -3656,6 +3664,13 @@ function modulesPage() {
         await this.openSettings(m);
         return;
       }
+      // Versions from the VortexPanel download server: confirm in the install dialog
+      const vxList = m.id === 'php' ? this.phpAddable(m) : (m.versions || []);
+      if (vxList.some(v => String(v.value).startsWith('vx:'))) {
+        const pick = vxList.find(v => v.value === m.selVer) || vxList.find(v => v.recommended) || vxList[0];
+        this.instModal = {show:true, mod:m, list:vxList, ver:pick.value};
+        return;
+      }
       // PHP: always install directly with selected version (multi-version support)
       if (m.id === 'php') {
         if (!m.selVer) { toast('Select a PHP version first', 'error'); return; }
@@ -3670,6 +3685,11 @@ function modulesPage() {
       }
       // Use selected version directly (from dropdown or single-version)
       await this._startJob(m, 'install', m.selVer||'');
+    },
+
+    async runInstall() {
+      const {mod, ver} = this.instModal; this.instModal.show = false;
+      if (mod && ver) { mod.selVer = ver; await this._startJob(mod, 'install', ver); }
     },
 
     async installWithVer() {

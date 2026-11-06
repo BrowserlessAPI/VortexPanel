@@ -4399,6 +4399,30 @@
           </div>
         </div>
 
+        <!-- Install from the VortexPanel download server -->
+        <div class="modal-overlay" x-show="instModal.show" x-cloak @click.self="instModal.show=false">
+          <div class="modal" style="max-width:500px">
+            <div class="modal-hd"><div><div class="modal-title" x-text="'Install '+(instModal.mod?.name||'')"></div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px"
+                   x-text="instModal.mod?.id==='php' && instModal.mod?.installed ? 'Adds a PHP version next to the ones installed' : 'Tested on this server\'s system before release'"></div></div>
+              <button class="modal-close" @click="instModal.show=false">×</button></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <span style="font-size:12.5px;color:var(--text-secondary)">Version</span>
+              <select class="form-input vp-ver-sel" x-model="instModal.ver">
+                <template x-for="v in instModal.list" :key="v.value"><option :value="v.value" x-text="v.label"></option></template>
+              </select>
+            </div>
+            <ul class="vpx-list">
+              <li>Downloaded from the VortexPanel download server and checked against its signed checksum.</li>
+              <li>If this version is already installed from the operating system packages, it is taken over: configuration files, websites and data are kept.</li>
+              <li>If it does not start, the previous setup comes back.</li>
+              <li>Updates and roll back from the App Store.</li>
+            </ul>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="instModal.show=false">Cancel</button>
+              <button class="btn btn-primary" @click="runInstall()" :disabled="!instModal.ver">Install</button></div>
+          </div>
+        </div>
+
         <div class="modal-overlay" x-show="verModal.show" @click.self="verModal.show=false">
           <div class="modal" style="max-width:440px">
             <div class="modal-hd">
@@ -10433,7 +10457,7 @@
         </div>
 
 <!-- ── FILE PICKER ─────────────────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.picker.show"
+<div x-cloak x-data="{}" x-show="$store.vp.picker.show"
      class="portal-overlay" style="background:rgba(0,0,0,.6);z-index:2000"
      @vp-open-picker.window="async (e)=>{
        const p=e.detail; $store.vp.picker.mode=p.mode||'dir'; $store.vp.picker.cb=p.cb;
@@ -10480,7 +10504,7 @@
 </div>
 
 <!-- ── NODE.JS ADD PROJECT MODAL ────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.nodeAdd.show"
+<div x-cloak x-data="{}" x-show="$store.vp.nodeAdd.show"
      class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:620px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
@@ -10578,7 +10602,7 @@
 </div>
 
 <!-- ── NODE.JS LOGS MODAL ─────────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.nodeLogs.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
+<div x-cloak x-data="{}" x-show="$store.vp.nodeLogs.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
       <div style="font-weight:600">Logs — <span x-text="$store.vp.nodeLogs.name"></span></div>
@@ -10589,7 +10613,7 @@
 </div>
 
 <!-- ── GO ADD PROJECT MODAL ──────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.goAdd.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
+<div x-cloak x-data="{}" x-show="$store.vp.goAdd.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:580px;max-height:90vh;overflow-y:auto;padding:28px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
       <div style="font-size:18px;font-weight:700">Add Go Project</div>
@@ -10661,7 +10685,7 @@
 </div>
 
 <!-- ── GO LOGS MODAL ─────────────────────────────────────────────────── -->
-<div x-data="{}" x-show="$store.vp.goLogs.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
+<div x-cloak x-data="{}" x-show="$store.vp.goLogs.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:750px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
       <div style="font-weight:600">Logs — <span x-text="$store.vp.goLogs.name"></span></div>
@@ -10672,7 +10696,7 @@
 </div>
 
 <!-- DOCKER DOMAIN MODAL -->
-<div x-data="{}" x-show="$store.vp.dockerDomain.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
+<div x-cloak x-data="{}" x-show="$store.vp.dockerDomain.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">
   <div style="background:var(--bg-card);border-radius:12px;width:460px;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div style="font-size:16px;font-weight:700">Assign Domain — <span x-text="$store.vp.dockerDomain.name"></span></div>
@@ -10704,7 +10728,7 @@
 </div>
 
 <!-- FFMPEG VERSION DETAIL MODAL -->
-<div x-data="{}" x-show="$store.vp.ffmpegDetail.show" class="portal-overlay" style="background:rgba(0,0,0,.5);z-index:1100" @click.self="$store.vp.ffmpegDetail.show=false">
+<div x-cloak x-data="{}" x-show="$store.vp.ffmpegDetail.show" class="portal-overlay" style="background:rgba(0,0,0,.5);z-index:1100" @click.self="$store.vp.ffmpegDetail.show=false">
   <div style="background:var(--bg-card);border-radius:12px;width:520px;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div style="font-weight:700;font-size:15px" x-text="'ffmpeg-'+($store.vp.ffmpegDetail.version||'')+' Detail'"></div>
@@ -10721,7 +10745,7 @@
 </div>
 
 <!-- IMPORT WEBSITE WIZARD -->
-<div x-data="{}" x-show="$store.vp.importWizard.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">  <div style="background:var(--bg-card);border-radius:12px;width:640px;max-height:85vh;overflow-y:auto;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
+<div x-cloak x-data="{}" x-show="$store.vp.importWizard.show" class="portal-overlay" style="background:rgba(0,0,0,.55);z-index:1000">  <div style="background:var(--bg-card);border-radius:12px;width:640px;max-height:85vh;overflow-y:auto;padding:24px;box-shadow:0 25px 60px rgba(0,0,0,.5)">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <div>
         <div style="font-size:16px;font-weight:700">Import Website</div>
@@ -10904,7 +10928,7 @@
 </div>
 
 <!-- PANEL UPDATE MODAL -->
-<div class="modal-overlay" x-show="show" style="z-index:500"
+<div x-cloak class="modal-overlay" x-show="show" style="z-index:500"
      x-data="updateModalData()"
      @click.self="show=false">
   <div class="modal" style="max-width:600px">
@@ -11040,7 +11064,7 @@
 
 
 <!-- -- NEONCODEX AI PANEL (inside main layout) --------------------------- -->
-<div x-show="loggedIn" x-data="aiAssistant()" style="position:relative">
+<div x-cloak x-show="loggedIn" x-data="aiAssistant()" style="position:relative">
 
   <!-- AI slide-in panel — appears from right edge inside the panel -->
   <div class="vp-d-flex" x-show="open"
