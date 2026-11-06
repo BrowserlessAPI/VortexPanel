@@ -1056,6 +1056,18 @@ def _write_timers():
                f'{"RandomizedDelaySec=30min" if cmd == "daily" else ""}\n\n[Install]\nWantedBy=timers.target\n')
 
 
+def _own_mirror(u):
+    """A file on the VortexPanel download server (signed catalog, panel/trust/softs.json)."""
+    try:
+        from panel import softs
+        if not softs.configured():
+            return False
+        own = softs.trust()['base_url'].rstrip('/') + '/pinned/anubis/'
+    except Exception:  # noqa: BLE001
+        return False
+    return u.startswith(own) and '..' not in u and bool(re.fullmatch(r'[A-Za-z0-9._/+-]+\.tar\.gz', u[len(own):]))
+
+
 def install(log=print):
     if not nginx_present():
         log('[VortexPanel] Bot protection needs Nginx. Install Nginx from the App Store first.')
@@ -1070,7 +1082,8 @@ def install(log=print):
         for k in ('amd64', 'arm64'):
             u = os.environ.get(f'VP_ANUBIS_{k.upper()}_URL', '')
             h = os.environ.get(f'VP_ANUBIS_{k.upper()}_SHA', '').lower()
-            if re.fullmatch(r'https://github\.com/[A-Za-z0-9._/-]+\.tar\.gz', u) and re.fullmatch(r'[0-9a-f]{64}', h):
+            if (re.fullmatch(r'https://github\.com/[A-Za-z0-9._/-]+\.tar\.gz', u) or _own_mirror(u)) \
+                    and re.fullmatch(r'[0-9a-f]{64}', h):
                 got[k] = (u, h)
         if len(got) != 2:
             log(f'[VortexPanel] The download addresses for Anubis {ev} are not valid - not installed.')

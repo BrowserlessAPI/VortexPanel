@@ -3013,8 +3013,16 @@ def list_modules():
             vx_info = {'slots': {k: {'version': v['version'], 'track': v['track'],
                                      'prev': (v.get('prev') or {}).get('version') or ''} for k, v in vx_slots.items()},
                        'updates': ups, 'withdrawn': [u for u in mine if u.get('withdrawn')]}
-        elif installed and vx_tracks:
-            vx_info = {'switchable': True}
+        elif installed and vx_tracks and installed_ver:
+            # installed from the OS packages: a newer VortexPanel version of the same line is
+            # offered as the ordinary update (the update moves it over, config and data kept)
+            vk = lambda v: [int(x) if x.isdigit() else 0 for x in str(v).split('.')]
+            same = [r for t, r in vx_tracks.items() if installed_ver == t or installed_ver.startswith(t + '.')]
+            best = max(same, key=lambda r: vk(r['version']), default=None)
+            if best and vk(best['version']) > vk(installed_ver):
+                has_update, latest_same_track = True, best['version']
+                update_security, update_pkgs = bool(best.get('security')), []
+                vx_info = {'migrate': best['version']}
         result.append({
             'id': m['id'], 'name': m['name'], 'icon': m['icon'],
             'category': m['category'], 'desc': m['desc'],
@@ -3272,7 +3280,7 @@ def install_module(mod_id):
         if conflict_group and conflict_mod:
             conflict_name = next((m['name'] for m in MODULES if m['id'] == conflict_mod), conflict_mod)
             return jsonify({'ok': False, 'error': f'Cannot install: {conflict_name} is already installed.', 'conflict': conflict_mod}), 409
-        job_id = _softs_job(mod, f'Installing {mod["name"]} {vx} (VortexPanel build)',
+        job_id = _softs_job(mod, f'Installing {mod["name"]} {vx}',
                             lambda log: sv.install(mod_id, vx, log))
         return jsonify({'ok': True, 'job_id': job_id, 'action': 'install'})
 
@@ -3550,7 +3558,7 @@ def switch_module(mod_id):
     if not any(r['version'] == ver for r in sv.releases(mod_id)):
         return jsonify({'ok': False, 'error': 'Choose a version from the list.'}), 400
     return jsonify({'ok': True, 'action': 'install',
-                    'job_id': _softs_job(mod, f'Switching {mod["name"]} to the VortexPanel build {ver}',
+                    'job_id': _softs_job(mod, f'Updating {mod["name"]} to {ver}',
                                          lambda log: sv.install(mod_id, ver, log, action='update', migrate=True))})
 
 

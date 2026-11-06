@@ -4158,13 +4158,12 @@
                       <span class="vp-d-inline-block" x-show="m.installedVer"
                             style="font-size:11px;font-family:var(--font-mono);background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2);padding:1px 7px;border-radius:8px;font-weight:600;display:inline-block"
                             x-text="'v'+m.installedVer"></span>
-                      <span class="vpx-tag" x-show="m.vortex && m.vortex.slots" title="Installed from a VortexPanel build">VortexPanel build</span>
                       <button type="button" class="vpx-withdrawn" x-show="m.vortex && (m.vortex.withdrawn||[]).length" @click="askRollback(m)"
                               x-text="'Withdrawn - roll back'"></button>
                       <button type="button" class="vp-upd-badge" x-show="m.hasUpdate" @click="askUpdate(m)" :disabled="!!(m.loading)"
                               :class="m.updateSecurity ? 'vp-upd-sec' : ''"
-                              :title="(m.updateSecurity && !(m.vortex && m.vortex.slots)) ? 'A security build of v'+m.installedVer+' is available. Click to install it.' : ((m.updateSecurity ? 'Security update. ' : '')+'Click to update to v'+m.latestSameTrack)"
-                              x-text="(m.updateSecurity && !(m.vortex && m.vortex.slots)) ? 'Security update' : ('Update to v'+m.latestSameTrack)"></button>
+                              :title="(m.updateSecurity && !(m.vortex && (m.vortex.slots || m.vortex.migrate))) ? 'A security build of v'+m.installedVer+' is available. Click to install it.' : ((m.updateSecurity ? 'Security update. ' : '')+'Click to update to v'+m.latestSameTrack)"
+                              x-text="(m.updateSecurity && !(m.vortex && (m.vortex.slots || m.vortex.migrate))) ? 'Security update' : ('Update to v'+m.latestSameTrack)"></button>
                       <!-- Built-in module (CDN Manager): on/off and what it is connected to -->
                       <div x-show="m.builtinState" style="display:flex;align-items:center;gap:5px">
                         <span :class="'dot dot-'+((m.builtinState||{}).enabled ? 'green' : 'gray')" style="flex-shrink:0"></span>
@@ -4191,7 +4190,6 @@
                         </button>
                         <span x-show="m.builtin" class="badge badge-gray" style="font-size:10px">Built-in</span>
                         <button class="btn btn-ghost btn-xs" x-show="vxPrev(m)" @click="askRollback(m)" :title="'Go back to v'+vxPrev(m)" x-text="'Roll back'"></button>
-                        <button class="btn btn-ghost btn-xs" x-show="m.vortex && m.vortex.switchable" @click="askSwitch(m)" title="Move to the VortexPanel build of this software">Use VortexPanel build</button>
                         <button class="btn btn-danger btn-xs" @click="uninstall(m)" :disabled="!!(m.loading)" x-show="!m.builtin">
                           <span x-show="m.loading" class="loading-spinner" style="width:9px;height:9px;border-width:1px"></span>
                           <span x-text="m.loading?'…':'Uninstall'"></span>
@@ -4315,29 +4313,6 @@
           </div>
         </div>
 
-        <!-- VortexPanel builds: switch an OS-package install to the build -->
-        <div class="modal-overlay" x-show="vxSw.show" @click.self="vxSw.show=false">
-          <div class="modal" style="max-width:500px">
-            <div class="modal-hd"><div><div class="modal-title" x-text="'Use the VortexPanel build of '+(vxSw.mod?.name||'')"></div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:2px" x-text="'Installed now'+(vxSw.mod?.installedVer ? ': v'+vxSw.mod.installedVer : '')+' from the operating system packages'"></div></div>
-              <button class="modal-close" @click="vxSw.show=false">×</button></div>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-              <span style="font-size:12.5px;color:var(--text-secondary)">Version</span>
-              <select class="form-input vp-ver-sel" x-model="vxSw.ver">
-                <template x-for="v in (vxSw.mod?.versions||[])" :key="v.value"><option :value="v.value.slice(3)" x-text="v.label"></option></template>
-              </select>
-            </div>
-            <ul class="vpx-list">
-              <li>The build is downloaded and verified first.</li>
-              <li>The operating system packages are removed; configuration files and websites are kept.</li>
-              <li>If the build does not start, the packages are reinstalled and the old setup comes back.</li>
-              <li>From then on, updates come from VortexPanel.</li>
-            </ul>
-            <div class="modal-ft"><button class="btn btn-ghost" @click="vxSw.show=false">Cancel</button>
-              <button class="btn btn-primary" @click="runSwitch()" :disabled="!vxSw.ver">Switch</button></div>
-          </div>
-        </div>
-
         <!-- VortexPanel builds: update settings -->
         <div class="modal-overlay" x-show="vx.show" @click.self="vx.show=false">
           <div class="modal" style="max-width:640px">
@@ -4391,7 +4366,7 @@
             <div class="modal-hd">
               <div>
                 <div class="modal-title" x-text="'Update '+(updModal.mod?.name||'')"></div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:2px" x-text="updModal.mod?.vortex?.slots ? 'VortexPanel build, tested on this system before release' : 'From this server\'s package sources, same version track'"></div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px" x-text="(updModal.mod?.vortex?.slots || updModal.mod?.vortex?.migrate) ? 'Tested on this system before release. Configuration, websites and data are kept.' : 'From this server\'s package sources, same version track'"></div>
               </div>
               <button class="modal-close" @click="updModal.show=false">×</button>
             </div>

@@ -3640,6 +3640,8 @@ function modulesPage() {
     askUpdate(m) { this.updModal = {show: true, mod: m}; },
     async runUpdate() {
       const m = this.updModal.mod; this.updModal.show = false;
+      // installed from the OS packages: the update moves it to the VortexPanel version
+      if (m && m.vortex && m.vortex.migrate) { await this._startJob(m, 'switch', m.vortex.migrate); return; }
       if (m) await this._startJob(m, 'update', '');
     },
     async install(m) {
@@ -3690,7 +3692,7 @@ function modulesPage() {
       const verLabel  = ver ? (isChannel ? ' ('+ver+')' : ' v'+ver) : '';
       const label = action==='update' ? `Updating: ${m.name} v${m.installedVer||''}`
                   : action==='rollback' ? `Rolling back: ${m.name}`
-                  : action==='switch' ? `Switching to the VortexPanel build: ${m.name} ${ver.replace(/^vx:/,'')}`
+                  : action==='switch' ? `Updating: ${m.name} v${m.installedVer||''} to v${ver.replace(/^vx:/,'')}`
                   : `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel.replace('vx:','')}`;
       this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:'', message:''};
       this._followJob(r.job_id, (d) => {

@@ -611,7 +611,7 @@ def install_zip(path, log=None, action='install', init=None, migrate=False):
     clash = replaced_packages(man)
     if clash and not migrate:
         raise SoftError(f'{man.get("name", man["app"])} is installed from the operating system packages '
-                        f'({", ".join(clash[:4])}). Use the "Use VortexPanel build" button in the App Store to move it over.')
+                        f'({", ".join(clash[:4])}). Use Update in the App Store to move it over.')
     if clash and family() != 'deb':
         # rpm -e renames changed configuration files to .rpmsave and Remi PHP keeps its
         # pools elsewhere: a switch would lose websites. Not offered until migrated safely.
