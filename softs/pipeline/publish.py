@@ -64,6 +64,7 @@ def main():
         if not built:
             if old_rel and missing:          # a retry that failed again: count it, keep the rest
                 old_rel['retries'] = int(old_rel.get('retries') or 0) + 1
+                old_rel['recipe_rev'] = C.recipe_rev(app)
                 retried.append(f'{app} {ver}')
             continue
         for t, ar in want:
@@ -102,6 +103,7 @@ def main():
             # upstream has no file for these systems (they keep the OS packages; checked again for 14 days)
             'not_offered': sorted((set(old_rel.get('not_offered') or []) | not_offered_now) - set(files) - set(still_missing)),
             'retries': (int(old_rel.get('retries') or 0) + 1) if (old_rel and still_missing) else 0,
+            'recipe_rev': C.recipe_rev(app),     # a recipe change makes failed systems retry
         })
         a_entry['releases'].sort(key=lambda r: C.vt(r['version']), reverse=True)
         published.append(f'{app} {ver} ({"stable, security" if security else "beta"}, {len(files)} systems'

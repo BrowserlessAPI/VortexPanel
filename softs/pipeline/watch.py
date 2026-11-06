@@ -229,12 +229,17 @@ def plan(only=None, force=None, catalog=None):
                 if item is None:
                     continue
             v = item['version']
-            forced = bool(force and force.get(app) == v)
+            forced = bool(force and v in force.get(app, ()))
             rel = rels.get(v)
-            if rel and not forced:
-                # published: build again only for systems that failed (3 tries) and, for 14
-                # days, check again the systems upstream had no file for (it may be uploaded later)
-                todo = list(rel.get('missing') or []) if int(rel.get('retries') or 0) < 3 else []
+            if rel and forced and rel.get('missing'):
+                # forced, already published: build only the systems it is missing
+                item['only_targets'] = list(rel['missing'])
+            elif rel and not forced:
+                # published: build again only for systems that failed (3 tries, and again
+                # whenever the recipe changed since) and, for 14 days, check again the systems
+                # upstream had no file for (it may be uploaded later)
+                fixed = rel.get('recipe_rev') != C.recipe_rev(app)
+                todo = list(rel.get('missing') or []) if (int(rel.get('retries') or 0) < 3 or fixed) else []
                 young = time.time() - int(rel.get('released') or 0) < RECHECK_DAYS * 86400
                 recheck = [t for t in rel.get('not_offered') or [] if t not in todo] if young else []
                 if not todo and not recheck:
@@ -260,7 +265,7 @@ def plan(only=None, force=None, catalog=None):
             out.append(dict(item, app=app))
             C.log(f'{app}: {"systems to build again for " if item.get("only_targets") else "new "}{v}'
                   + (f' ({", ".join(sorted(item["resolved"]))})' if item.get('only_targets') else f' (track {item["track"]})'))
-    for app, v in (force or {}).items():
+    for app, v in ((a, x) for a, vs in (force or {}).items() for x in sorted(vs)):
         if app not in C.recipes() or not re.fullmatch(r'\d+(\.\d+){1,3}', v):
             raise SystemExit(f'force: invalid app or version: {app}={v}')
         if not any(p['app'] == app and p['version'] == v for p in out):
@@ -301,7 +306,11 @@ def main():
                     help='at most this many new versions per run (the rest come next run)')
     a = ap.parse_args()
     only = [x for x in a.only.split(',') if x]
-    force = dict(x.split('=', 1) for x in a.force.split(',') if '=' in x)
+    force = {}
+    for x in a.force.split(','):
+        if '=' in x:
+            k, v = x.strip().split('=', 1)
+            force.setdefault(k.strip(), set()).add(v.strip())
     cat = json.load(open(a.offline_catalog)) if a.offline_catalog else None
     pl = plan(only, force, cat)[:a.max]
     while pl and len(matrix(pl)) > 250:      # GitHub allows 256 jobs per matrix

@@ -59,6 +59,21 @@ def recipes(kind='build'):
     return out
 
 
+def recipe_rev(app):
+    """Short hash of everything that decides how an app is built (its recipe folder and the
+    shared build scripts). A release whose failed systems used up their retries is tried
+    again when this changes, i.e. after a fix."""
+    import hashlib
+    h = hashlib.sha256()
+    d = recipes()[app]['dir']
+    paths = sorted(os.path.join(r, f) for r, _, fs in os.walk(d) for f in fs if '__pycache__' not in r)
+    paths += [os.path.join(ROOT, 'pipeline', f) for f in ('in_container.sh', 'lib.sh')]
+    for p in paths:
+        if os.path.isfile(p):
+            h.update(os.path.relpath(p, ROOT).encode() + b'\0' + open(p, 'rb').read())
+    return h.hexdigest()[:12]
+
+
 def build_matrix(recipe):
     """[(target, arch)] a recipe is built for. universal_arches: those processors get one
     build for every Linux (an upstream binary), the others one build per system (compiled)."""
