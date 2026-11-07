@@ -52,6 +52,11 @@ def main():
         app, ver = item['app'], item['version']
         rv = review.get(f'{app}-{ver}') or {}
         approved = f'{app}={ver}' in [x.strip() for x in a.approve.split(',')]
+        if C.find_release(cat, app, ver) and rv.get('hold') and not approved:
+            # already published (reviewed or approved before): a rebuild or a test on a new
+            # system is not held again
+            C.log(f'{app} {ver}: already published, not held again by the AI review')
+            approved = True
         if rv.get('hold') and approved:
             C.log(f'{app} {ver}: held by the AI review, published because it was approved')
         if rv.get('hold') and not approved:
