@@ -21,6 +21,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa: E402
 
 
+def _tested(zip_path):
+    """Systems test.py installed and smoke-tested this build on (written next to the zip)."""
+    try:
+        return sorted(json.load(open(zip_path + '.tested')))
+    except (OSError, ValueError):
+        return []
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('dist')
@@ -77,7 +85,8 @@ def main():
                 C.upload(path, key)
             files[f'{t}-{ar}'] = {'key': key, 'sha256': sha, 'size': os.path.getsize(path),
                                   'run_deps': len((man.get('run_deps') or {}).get(man.get('family') or 'deb', [])),
-                                  'needs_glibc': man.get('needs_glibc', '')}
+                                  'needs_glibc': man.get('needs_glibc', ''),
+                                  'tested': _tested(path)}
         still_missing = sorted((set(old_rel.get('missing') or []) - set(files)) | (set(missing) - set(files)))
         notes_path = os.path.join(a.notes, f'{app}-{ver}.md')
         notes = open(notes_path).read().strip() if os.path.exists(notes_path) else ''

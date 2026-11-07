@@ -6,6 +6,7 @@
     "el10":     {"image": "almalinux:10", "family": "rpm", "covers": "AlmaLinux, Rocky Linux, RHEL, Oracle Linux, CentOS Stream 10"},
     "ubuntu22": {"image": "ubuntu:22.04", "family": "deb", "covers": "Ubuntu 22.04"},
     "ubuntu24": {"image": "ubuntu:24.04", "family": "deb", "covers": "Ubuntu 24.04"},
+    "ubuntu26": {"image": "ubuntu:26.04", "family": "deb", "covers": "Ubuntu 26.04"},
     "debian12": {"image": "debian:12",    "family": "deb", "covers": "Debian 12"},
     "debian13": {"image": "debian:13",    "family": "deb", "covers": "Debian 13"}
   },

@@ -103,7 +103,7 @@ def settings_clean(s):
 
 def target():
     """(target id or '', arch). AlmaLinux / Rocky / RHEL / Oracle / CentOS Stream /
-    CloudLinux N -> elN; Ubuntu 22.04/24.04 -> ubuntu22/24; Debian 12/13."""
+    CloudLinux N -> elN; Ubuntu 22.04/24.04/26.04 -> ubuntu22/24/26; Debian 12/13."""
     osr = {}
     try:
         for line in open('/etc/os-release'):
@@ -118,7 +118,7 @@ def target():
     arch = os.uname().machine
     arch = {'amd64': 'x86_64', 'arm64': 'aarch64'}.get(arch, arch)
     t = ''
-    if ident == 'ubuntu' and ver in ('22.04', '24.04'):
+    if ident == 'ubuntu' and ver in ('22.04', '24.04', '26.04'):
         t = 'ubuntu' + ver[:2]
     elif ident == 'debian' and major in ('12', '13'):
         t = 'debian' + major
@@ -315,6 +315,24 @@ def glibc_version():
         return ()
 
 
+# systems the first catalogs were built and tested for; a newer system (Ubuntu 26.04)
+# takes a universal build only when the catalog says it was tested there
+_FIRST_TARGETS = ('el8', 'el9', 'el10', 'ubuntu22', 'ubuntu24', 'debian12', 'debian13')
+
+
+def tested_here(rec, key):
+    """A file record may be offered on this system: its own build, or a universal build
+    tested on this system (or on one of the original systems, which every test covered)."""
+    if not key.startswith('linux-'):
+        return True
+    t = target()[0]
+    tested = (rec or {}).get('tested')
+    if tested:
+        # tested on this system, or on a system of the first seven (the old test set covered them)
+        return t in tested or t in _FIRST_TARGETS
+    return t in _FIRST_TARGETS
+
+
 def runs_here(needs):
     """A build needing glibc `needs` (e.g. '2.29') runs on this system."""
     if not needs:
@@ -340,7 +358,8 @@ def releases(app, cat=None, channel=None):
         # this system's own build first, then the universal one; a build that needs a newer
         # glibc than this system has is not offered here (the OS packages stay in charge)
         f = next((r['files'][k] for k in keys if k in (r.get('files') or {})
-                  and runs_here((r['files'][k] or {}).get('needs_glibc'))), None)
+                  and runs_here((r['files'][k] or {}).get('needs_glibc'))
+                  and tested_here(r['files'][k], k)), None)
         if f:
             out.append(dict(r, file=f))
     out.sort(key=lambda r: vt(r['version']), reverse=True)

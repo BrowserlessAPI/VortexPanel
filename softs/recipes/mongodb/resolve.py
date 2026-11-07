@@ -15,6 +15,7 @@ _INDEX = {}
 PREFER = {
     'el8': [r'rhel8\d*'], 'el9': [r'rhel9\d*'], 'el10': [r'rhel10\d*', r'rhel9\d*'],
     'ubuntu22': [r'ubuntu2204'], 'ubuntu24': [r'ubuntu2404', r'ubuntu2204'],
+    'ubuntu26': [r'ubuntu2604', r'ubuntu2404'],
     'debian12': [r'debian12'], 'debian13': [r'debian13', r'debian12'],
 }
 

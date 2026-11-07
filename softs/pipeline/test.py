@@ -18,9 +18,9 @@ import common as C  # noqa: E402
 
 PANEL = os.path.join(os.path.dirname(C.ROOT), 'panel')
 # glibc of each supported system (the oldest one is what a universal build must run on)
-TARGET_GLIBC = {'el8': (2, 28), 'el9': (2, 34), 'el10': (2, 39), 'ubuntu22': (2, 35), 'ubuntu24': (2, 39),
+TARGET_GLIBC = {'el8': (2, 28), 'el9': (2, 34), 'el10': (2, 39), 'ubuntu22': (2, 35), 'ubuntu24': (2, 39), 'ubuntu26': (2, 42),
                 'debian12': (2, 36), 'debian13': (2, 41)}
-UNIVERSAL_TEST_TARGETS = ['el8', 'el10', 'ubuntu22', 'debian13']
+UNIVERSAL_TEST_TARGETS = ['el8', 'el10', 'ubuntu22', 'ubuntu26', 'debian13']
 
 SCRIPT = r'''
 set -e
@@ -103,6 +103,7 @@ def main():
                 tg.append(t)
         images = [C.TARGETS['targets'][t]['image'] for t in tg]
     else:
+        tg = [man['target']]
         images = [C.TARGETS['targets'][man['target']]['image']]
     failed = []
     for img in images:
@@ -114,6 +115,12 @@ def main():
             failed.append(img)
     if failed:
         raise SystemExit(f'TEST FAILED on {", ".join(failed)}')
+    # the systems this build was installed and smoke-tested on: publish puts them in the
+    # catalog, and a panel takes a universal build only on a system it was tested on or
+    # one of the original seven (new systems such as Ubuntu 26.04 need their own test)
+    if not a.image:
+        with open(a.zip + '.tested', 'w') as f:
+            json.dump(tg, f)
     C.log('all tests passed')
 
 

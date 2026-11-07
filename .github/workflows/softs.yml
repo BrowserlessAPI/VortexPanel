@@ -200,7 +200,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: zip-${{ matrix.app }}-${{ matrix.version }}-${{ matrix.target }}-${{ matrix.arch }}
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.zip.tested
           retention-days: 5
 
   publish:

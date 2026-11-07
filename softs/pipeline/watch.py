@@ -240,6 +240,13 @@ def plan(only=None, force=None, catalog=None):
                 # upstream had no file for (it may be uploaded later)
                 fixed = rel.get('recipe_rev') != C.recipe_rev(app)
                 todo = list(rel.get('missing') or []) if (int(rel.get('retries') or 0) < 3 or fixed) else []
+                # systems added to targets.json since this release was published (e.g. Ubuntu 26.04)
+                known = set(rel.get('files') or {}) | set(rel.get('missing') or []) | set(rel.get('not_offered') or [])
+                todo += [f'{t}-{ar}' for t, ar in C.build_matrix(r) if f'{t}-{ar}' not in known and f'{t}-{ar}' not in todo]
+                # universal builds published before the catalog recorded where they were
+                # tested: test them again (now including Ubuntu 26.04), once
+                todo += [k for k, rec in (rel.get('files') or {}).items()
+                         if k.startswith('linux-') and 'tested' not in (rec or {}) and k not in todo]
                 young = time.time() - int(rel.get('released') or 0) < RECHECK_DAYS * 86400
                 recheck = [t for t in rel.get('not_offered') or [] if t not in todo] if young else []
                 if not todo and not recheck:
