@@ -1270,61 +1270,263 @@
                     </div>
                   </div>
                   <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid rgba(16,185,129,.2)">
-                    <button class="btn btn-success btn-sm" @click="renewSSL()" :disabled="!!(drawer.loading)">Renew SSL</button>
-                    <span x-show="drawer.sslSummary?.acme" style="font-size:11px;color:var(--text-muted);align-self:center" x-text="'Validated through '+(drawer.sslSummary?.acme?.provider||'')+(drawer.sslSummary?.acme?.wildcard?' - wildcard':'')"></span>
+                    <button class="btn btn-success btn-sm" x-show="!drawer.sslSummary?.source || drawer.sslSummary?.acme" @click="renewSSL()" :disabled="!!(drawer.loading)">Renew SSL</button>
+                    <span x-show="drawer.sslSummary?.acme" style="font-size:11px;color:var(--text-muted);align-self:center" x-text="(drawer.sslSummary?.acme?.ca||'')+', renews automatically · validated through '+(drawer.sslSummary?.acme?.provider||'')+(drawer.sslSummary?.acme?.wildcard?' - wildcard':'')"></span>
+                    <span x-show="drawer.sslSummary?.order" style="font-size:11px;color:var(--text-muted);align-self:center" x-text="'Business certificate, '+(drawer.sslSummary?.order?.provider_name||'')+' order '+(drawer.sslSummary?.order?.provider_order||'')+' · renew it before it expires'"></span>
+                    <span x-show="drawer.sslSummary?.source==='own'" style="font-size:11px;color:var(--text-muted);align-self:center">Own certificate · the panel reminds you before it expires</span>
                     <button class="btn btn-ghost btn-sm" style="color:var(--red)" @click="disableSSL()" :disabled="!!(drawer.loading)">Disable SSL</button>
                   </div>
                 </div>
                 <div x-show="drawer.sslInfo && !drawer.sslSummary" style="background:var(--bg-raised);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:20px;font-size:11px;font-family:var(--font-mono);white-space:pre-wrap" x-text="drawer.sslInfo"></div>
 
-                <!-- Let's Encrypt -->
-                <div class="card" style="margin-bottom:14px">
-                  <div class="card-hd"><div><div class="card-title">Free SSL — Let's Encrypt</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">Auto-renewal every 90 days</div></div></div>
-                  <div class="form-group"><label class="form-label">Contact Email</label><input class="form-input" x-model="drawer.sslEmail" :placeholder="'admin@'+drawer.site?.domain"></div>
-                  <button class="btn btn-success" @click="issueLetsEncrypt()" :disabled="!!(drawer.loading)" style="width:100%;justify-content:center">
-                    <span x-show="drawer.loading" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
-                    <span x-text="drawer.loading?'Issuing SSL…':(drawer.sslSummary?'Renew Certificate':'Issue Free SSL Certificate')"></span>
-                  </button>
-                  <div x-show="drawer.sslOutput" class="terminal-out" style="margin-top:10px;max-height:200px" x-text="drawer.sslOutput"></div>
-                </div>
-
-                <!-- DNS API (DNS-01): wildcard, behind a CDN, port 80 closed -->
-                <div class="card" style="margin-bottom:14px">
-                  <div class="card-hd"><div><div class="card-title">SSL through your DNS provider</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">Validates with a DNS record instead of port 80: works behind Cloudflare or a firewall, and can include all subdomains (wildcard)</div></div></div>
-                  <div class="form-group"><label class="form-label">DNS provider</label>
-                    <select class="form-input" x-model="drawer.dnsProvider" @change="dnsPickProvider()">
-                      <template x-for="p in drawer.dnsProviders" :key="p.id">
-                        <option :value="p.id" x-text="p.name + (p.id==='vortexpanel' ? (drawer.dnsLocalZone ? '' : ' - no zone for this domain') : (p.configured ? ' - saved' : ''))" :selected="p.id===drawer.dnsProvider"></option>
-                      </template>
-                    </select>
-                  </div>
-                  <div x-show="drawer.dnsProvider==='vortexpanel'" class="vp-hint-box" style="margin-bottom:10px" x-text="drawer.dnsLocalZone ? 'The validation record is added to this server\'s DNS zone and removed again afterwards. The domain must use this server as its nameserver.' : 'This server has no DNS zone for this domain. Add the zone in DNS, or choose the provider that serves the domain.'"></div>
-                  <template x-for="f in (dnsCurrent()?.fields||[])" :key="f.var">
-                    <div class="form-group"><label class="form-label" x-text="f.label"></label>
-                      <input class="form-input" :type="f.secret?'password':'text'" autocomplete="off" x-model="drawer.dnsCreds[f.var]" :placeholder="f.saved && f.secret ? 'Saved - leave empty to keep' : ''">
+                <!-- Certificate: free (Let's Encrypt, ZeroSSL), business, or own -->
+                <div x-show="drawer.sslSummary?.previous" class="card" style="margin-bottom:14px">
+                  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                    <div style="flex:1;min-width:220px">
+                      <div class="card-title" style="font-size:13px">Previous certificate</div>
+                      <div style="font-size:12px;color:var(--text-muted);margin-top:2px" x-text="(drawer.sslSummary?.previous?.issuer||'Certificate')+' · '+((drawer.sslSummary?.previous?.names||[]).slice(0,2).join(', '))+' · expires '+(drawer.sslSummary?.previous?.expires_on||'')"></div>
                     </div>
-                  </template>
-                  <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:12px;cursor:pointer">
-                    <input type="checkbox" x-model="drawer.dnsWildcard" :checked="!!drawer.dnsWildcard">
-                    <span>Include all subdomains (<span x-text="'*.'+(drawer.site?.domain||'')"></span>)</span>
-                  </label>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button class="btn btn-success" @click="issueDnsSSL()" :disabled="!!(drawer.dnsBusy || (drawer.dnsProvider==='vortexpanel' && !drawer.dnsLocalZone))">
-                      <span x-show="drawer.dnsBusy" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
-                      <span x-text="drawer.dnsBusy?'Waiting for validation…':'Issue certificate'"></span>
-                    </button>
-                    <button class="btn btn-ghost btn-sm" x-show="dnsCurrent()?.id!=='vortexpanel' && dnsCurrent()?.configured" @click="forgetDnsCreds()">Remove saved credentials</button>
+                    <button class="btn btn-ghost btn-sm" @click="sslSwitchBack()" :disabled="!!drawer.loading">Switch back</button>
                   </div>
-                  <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Credentials are stored on this server, readable by root only, and used again for renewals.</div>
-                  <div x-show="drawer.dnsOutput" class="terminal-out" style="margin-top:10px;max-height:240px" x-text="drawer.dnsOutput"></div>
                 </div>
 
-                <!-- Manual SSL -->
                 <div class="card" style="margin-bottom:14px">
-                  <div class="card-hd"><div class="card-title">Install Custom SSL</div></div>
-                  <div class="form-group"><label class="form-label">Private Key (KEY)</label><textarea class="form-input" x-model="drawer.sslKey" placeholder="-----BEGIN PRIVATE KEY-----" style="min-height:80px;font-family:monospace;font-size:11px"></textarea></div>
-                  <div class="form-group"><label class="form-label">Certificate (CRT)</label><textarea class="form-input" x-model="drawer.sslCert" placeholder="-----BEGIN CERTIFICATE-----" style="min-height:80px;font-family:monospace;font-size:11px"></textarea></div>
-                  <button class="btn btn-primary btn-sm" @click="saveManualSSL()">Install SSL</button>
+                  <div class="card-hd"><div><div class="card-title">Certificate</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">Free certificates are issued for 90 days and renewed automatically. A business certificate is bought from the certificate provider with your own account.</div></div></div>
+                  <div role="radiogroup" aria-label="Certificate type" class="vp-ssl-kinds">
+                    <template x-for="k in sslKinds()" :key="k.id">
+                      <button type="button" role="radio" :aria-checked="drawer.sslKind===k.id ? 'true' : 'false'" class="vp-ssl-kind" :class="drawer.sslKind===k.id ? 'on' : ''" @click="sslPickKind(k.id)">
+                        <span class="vp-ssl-kind-name" x-text="k.name"></span>
+                        <span class="vp-ssl-kind-line" x-text="k.line"></span>
+                        <span class="vp-ssl-kind-badge" :class="k.free ? 'free' : ''" x-text="k.badge"></span>
+                      </button>
+                    </template>
+                  </div>
+
+                  <!-- free: Let's Encrypt / ZeroSSL -->
+                  <div x-show="drawer.sslKind==='le' || drawer.sslKind==='zerossl'" style="margin-top:14px">
+                    <div x-show="drawer.sslKind==='zerossl'" class="vp-ssl-sub">
+                      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+                        <button type="button" class="btn btn-sm" :class="drawer.zsMode==='email' ? 'btn-primary' : 'btn-ghost'" @click="drawer.zsMode='email'">Connect with e-mail</button>
+                        <button type="button" class="btn btn-sm" :class="drawer.zsMode==='eab' ? 'btn-primary' : 'btn-ghost'" @click="drawer.zsMode='eab'">Enter EAB keys</button>
+                        <span x-show="drawer.sslAccounts?.zerossl?.email || drawer.sslAccounts?.zerossl?.eab_kid" class="badge badge-green" style="align-self:center">Saved for all websites</span>
+                      </div>
+                      <div x-show="drawer.zsMode==='email'" class="form-group"><label class="form-label">ZeroSSL account e-mail</label>
+                        <input class="form-input" type="email" x-model="drawer.zsEmail" :placeholder="drawer.sslAccounts?.zerossl?.email || ('admin@'+(drawer.site?.domain||''))">
+                        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">ZeroSSL issues the account keys for this address. A free ZeroSSL account is created if there is none.</div>
+                      </div>
+                      <div x-show="drawer.zsMode==='eab'"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+                        <div class="form-group"><label class="form-label">EAB Key ID</label><input class="form-input" autocomplete="off" x-model="drawer.zsKid" :placeholder="drawer.sslAccounts?.zerossl?.eab_kid || ''"></div>
+                        <div class="form-group"><label class="form-label">EAB HMAC Key</label><input class="form-input" type="password" autocomplete="off" x-model="drawer.zsHmac" :placeholder="drawer.sslAccounts?.zerossl?.eab_hmac_saved ? 'Saved - leave empty to keep' : ''"></div>
+                        <div style="font-size:11px;color:var(--text-muted);grid-column:1/-1">ZeroSSL dashboard &gt; Developer &gt; EAB Credentials.</div>
+                      </div></div>
+                    </div>
+
+                    <div class="form-label" style="margin-top:4px">How to prove you own the domain</div>
+                    <div role="radiogroup" aria-label="Validation method" class="vp-ssl-methods">
+                      <button type="button" role="radio" :aria-checked="drawer.sslMethod==='http' ? 'true' : 'false'" class="vp-ssl-kind" :class="drawer.sslMethod==='http' ? 'on' : ''" @click="drawer.sslMethod='http'">
+                        <span class="vp-ssl-kind-name">File check (port 80)</span><span class="vp-ssl-kind-line">Automatic. The domain must point to this server.</span>
+                      </button>
+                      <button type="button" role="radio" :aria-checked="drawer.sslMethod==='dns' ? 'true' : 'false'" class="vp-ssl-kind" :class="drawer.sslMethod==='dns' ? 'on' : ''" @click="drawer.sslMethod='dns'">
+                        <span class="vp-ssl-kind-name">DNS record</span><span class="vp-ssl-kind-line">Works behind Cloudflare or a firewall. Allows wildcards.</span>
+                      </button>
+                    </div>
+
+                    <div x-show="drawer.sslMethod==='http'">
+                      <div class="form-group" x-show="drawer.sslKind==='le'"><label class="form-label">Contact e-mail</label><input class="form-input" x-model="drawer.sslEmail" :placeholder="'admin@'+drawer.site?.domain"></div>
+                      <button class="btn btn-success" @click="sslIssueFree()" :disabled="!!(drawer.loading || drawer.dnsBusy)" style="width:100%;justify-content:center">
+                        <span x-show="drawer.loading || drawer.dnsBusy" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                        <span x-text="(drawer.loading || drawer.dnsBusy) ? 'Issuing…' : ('Issue and install with '+(drawer.sslKind==='zerossl' ? 'ZeroSSL' : 'Let\'s Encrypt'))"></span>
+                      </button>
+                    </div>
+
+                    <div x-show="drawer.sslMethod==='dns'">
+                      <div class="form-group"><label class="form-label">DNS provider</label>
+                        <select class="form-input" x-model="drawer.dnsProvider" @change="dnsPickProvider()">
+                          <template x-for="p in drawer.dnsProviders" :key="p.id">
+                            <option :value="p.id" x-text="p.name + (p.id==='vortexpanel' ? (drawer.dnsLocalZone ? '' : ' - no zone for this domain') : (p.configured ? ' - saved' : ''))" :selected="p.id===drawer.dnsProvider"></option>
+                          </template>
+                        </select>
+                      </div>
+                      <div x-show="drawer.dnsProvider==='vortexpanel'" class="vp-hint-box" style="margin-bottom:10px" x-text="drawer.dnsLocalZone ? 'The validation record is added to this server\'s DNS zone and removed again afterwards. The domain must use this server as its nameserver.' : 'This server has no DNS zone for this domain. Add the zone in DNS, or choose the provider that serves the domain.'"></div>
+                      <template x-for="f in (dnsCurrent()?.fields||[])" :key="f.var">
+                        <div class="form-group"><label class="form-label" x-text="f.label"></label>
+                          <input class="form-input" :type="f.secret?'password':'text'" autocomplete="off" x-model="drawer.dnsCreds[f.var]" :placeholder="f.saved && f.secret ? 'Saved - leave empty to keep' : ''">
+                        </div>
+                      </template>
+                      <div class="form-group" x-show="drawer.sslKind==='le'"><label class="form-label">Contact e-mail (optional)</label><input class="form-input" x-model="drawer.sslEmail" :placeholder="'admin@'+drawer.site?.domain"></div>
+                      <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:12px;cursor:pointer">
+                        <input type="checkbox" x-model="drawer.dnsWildcard" :checked="!!drawer.dnsWildcard">
+                        <span>Include all subdomains (<span x-text="'*.'+(drawer.site?.domain||'')"></span>)</span>
+                      </label>
+                      <div style="display:flex;gap:8px;flex-wrap:wrap">
+                        <button class="btn btn-success" @click="issueDnsSSL()" :disabled="!!(drawer.dnsBusy || (drawer.dnsProvider==='vortexpanel' && !drawer.dnsLocalZone))">
+                          <span x-show="drawer.dnsBusy" class="loading-spinner" style="width:12px;height:12px;border-width:2px"></span>
+                          <span x-text="drawer.dnsBusy?'Waiting for validation…':('Issue and install with '+(drawer.sslKind==='zerossl' ? 'ZeroSSL' : 'Let\'s Encrypt'))"></span>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" x-show="dnsCurrent()?.id!=='vortexpanel' && dnsCurrent()?.configured" @click="forgetDnsCreds()">Remove saved credentials</button>
+                      </div>
+                      <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Credentials are stored on this server, readable by root only, and used again for renewals.</div>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">The current certificate stays active until the new one is issued and installed. If issuing fails, nothing changes.</div>
+                    <div x-show="drawer.sslOutput" class="terminal-out" style="margin-top:10px;max-height:200px" x-text="drawer.sslOutput"></div>
+                    <div x-show="drawer.dnsOutput" class="terminal-out" style="margin-top:10px;max-height:240px" x-text="drawer.dnsOutput"></div>
+                  </div>
+
+                  <!-- business certificate -->
+                  <div x-show="drawer.sslKind==='business'" style="margin-top:14px">
+                    <div role="note" class="vp-ssl-note" x-text="drawer.sslDisclaimer"></div>
+
+                    <div class="form-label" style="margin-top:12px">Provider</div>
+                    <div role="radiogroup" aria-label="Certificate provider" class="vp-ssl-kinds">
+                      <template x-for="b in sslBrands()" :key="b.id">
+                        <button type="button" role="radio" :aria-checked="drawer.bizBrand===b.id ? 'true' : 'false'" class="vp-ssl-kind" :class="drawer.bizBrand===b.id ? 'on' : ''" @click="bizPickBrand(b.id)">
+                          <span class="vp-ssl-kind-name" x-text="b.name"></span>
+                          <span class="vp-ssl-kind-line" :style="b.connected ? 'color:var(--green)' : ''" x-text="b.status"></span>
+                        </button>
+                      </template>
+                    </div>
+
+                    <!-- Sectigo: bought on its website, CSR from here -->
+                    <div x-show="drawer.bizBrand==='sectigo'" class="vp-ssl-sub" style="margin-top:12px">
+                      <p style="margin:0 0 10px;font-size:12.5px;color:var(--text-secondary)">Sectigo sells to customers through its own website and resellers only, so the order is placed there. Create the CSR here and paste it into the order; when Sectigo e-mails the certificate, install it under <b>Own certificate</b> without a private key: the key made here is matched automatically.</p>
+                      <button class="btn btn-primary btn-sm" @click="bizMakeCsr()" :disabled="!!drawer.bizBusy">Create CSR</button>
+                      <textarea x-show="drawer.bizCsr" class="form-input" readonly x-model="drawer.bizCsr" style="margin-top:10px;min-height:120px;font-family:monospace;font-size:11px" aria-label="CSR"></textarea>
+                    </div>
+
+                    <!-- connect account -->
+                    <div x-show="drawer.bizBrand!=='sectigo' && !bizConnected()" class="vp-ssl-sub" style="margin-top:12px">
+                      <div class="card-title" style="font-size:13px;margin-bottom:6px" x-text="'Connect your '+bizProviderName()+' account'"></div>
+                      <ol class="vpx-list" style="margin-bottom:10px">
+                        <template x-for="step in bizConnectSteps()" :key="step"><li x-text="step"></li></template>
+                      </ol>
+                      <div class="form-group"><label class="form-label" x-text="bizProviderName()+' API key'"></label>
+                        <input class="form-input" type="password" autocomplete="off" x-model="drawer.bizKey" placeholder="Paste the API key"></div>
+                      <button class="btn btn-primary btn-sm" @click="bizConnect()" :disabled="!!drawer.bizBusy || !drawer.bizKey">Connect</button>
+                      <div style="font-size:11px;color:var(--text-muted);margin-top:8px">The panel never asks for the password of your certificate account. The key is stored on this server, readable by root only; delete it at the provider to disconnect.</div>
+                    </div>
+
+                    <!-- order -->
+                    <div x-show="drawer.bizBrand!=='sectigo' && bizConnected()" style="margin-top:12px">
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+                        <span class="badge badge-green" x-text="'Connected: '+(drawer.sslAccounts?.[bizProvider()]?.account_name || bizProviderName())"></span>
+                        <span x-show="drawer.bizCatalog?.balance" style="font-size:12px;color:var(--text-muted)" x-text="'Balance: '+drawer.bizCatalog?.balance"></span>
+                        <button class="btn btn-ghost btn-sm" @click="bizDisconnect()">Disconnect</button>
+                      </div>
+                      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+                        <div class="form-group"><label class="form-label">Product</label>
+                          <select class="form-input" x-model="drawer.bizProduct">
+                            <template x-for="pr in bizProducts()" :key="pr.id"><option :value="pr.id" x-text="pr.name+' ('+pr.level+')'"></option></template>
+                          </select>
+                          <div x-show="!bizProducts().length && drawer.bizCatalog" style="font-size:11px;color:var(--text-muted);margin-top:4px">This account offers no product of this brand.</div>
+                        </div>
+                        <div class="form-group"><label class="form-label">Covers</label>
+                          <select class="form-input" x-model="drawer.bizKind">
+                            <option value="single" x-text="'Single: '+(drawer.site?.domain||'')+((drawer.site?.domain||'').split('.').length===2?' and www':'')"></option>
+                            <option value="wildcard" x-text="'Wildcard: *.'+(drawer.site?.domain||'')"></option>
+                            <option value="multi">Multi-domain</option>
+                          </select>
+                        </div>
+                        <div class="form-group"><label class="form-label">Term</label>
+                          <select class="form-input" x-model.number="drawer.bizYears"><option :value="1">1 year</option><option :value="2">2 years</option><option :value="3">3 years</option></select>
+                        </div>
+                      </div>
+                      <div class="form-group" x-show="drawer.bizKind==='multi'"><label class="form-label">Other domains (one per line)</label>
+                        <textarea class="form-input" x-model="drawer.bizExtra" style="min-height:60px"></textarea></div>
+
+                      <div x-show="bizNeedsOrg()" class="vp-ssl-sub" style="margin-bottom:10px">
+                        <div class="card-title" style="font-size:13px;margin-bottom:6px">Organization (company check)</div>
+                        <div class="form-group" x-show="(drawer.bizCatalog?.organizations||[]).length"><label class="form-label">Organization in your account</label>
+                          <select class="form-input" x-model="drawer.bizOrgId">
+                            <option value="">New organization (details below)</option>
+                            <template x-for="og in (drawer.bizCatalog?.organizations||[])" :key="og.id"><option :value="String(og.id)" x-text="og.name+(og.status?' ('+og.status+')':'')"></option></template>
+                          </select>
+                        </div>
+                        <div x-show="!drawer.bizOrgId"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
+                          <template x-for="f in bizOrgFields()" :key="f[0]">
+                            <div class="form-group"><label class="form-label" x-text="f[1]"></label><input class="form-input" x-model="drawer.bizOrg[f[0]]"></div>
+                          </template>
+                        </div></div>
+                      </div>
+
+                      <div class="form-label">Domain proof</div>
+                      <div role="radiogroup" aria-label="Domain proof" class="vp-ssl-methods" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+                        <template x-for="m in bizDcvOptions()" :key="m.id">
+                          <button type="button" role="radio" :aria-checked="drawer.bizDcv===m.id ? 'true' : 'false'" class="vp-ssl-kind" :class="drawer.bizDcv===m.id ? 'on' : ''" @click="drawer.bizDcv=m.id" :disabled="m.disabled">
+                            <span class="vp-ssl-kind-name" x-text="m.name"></span><span class="vp-ssl-kind-line" x-text="m.line"></span>
+                          </button>
+                        </template>
+                      </div>
+                      <div class="form-group" x-show="bizProvider()==='digicert'"><label class="form-label">Pay with</label>
+                        <select class="form-input" x-model="drawer.bizPayment"><option value="balance">Account balance</option><option value="profile">Card saved in the account</option></select>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                        <button class="btn btn-success" @click="bizPlaceOrder()" :disabled="!!drawer.bizBusy || !drawer.bizProduct" x-text="drawer.bizBusy ? 'Placing the order…' : ('Place order with '+bizProviderName())"></button>
+                        <span style="font-size:11px;color:var(--text-muted);flex:1;min-width:200px" x-text="'Charged to your '+bizProviderName()+' account at '+bizProviderName()+'\'s price. The private key is created on this server and never leaves it.'"></span>
+                      </div>
+
+                      <details style="margin-top:12px">
+                        <summary style="cursor:pointer;font-size:12.5px;font-weight:600">Already ordered on the provider's website?</summary>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:10px">
+                          <div class="form-group"><label class="form-label">Order number</label><input class="form-input" x-model="drawer.bizImportNo"></div>
+                          <div class="form-group"><label class="form-label">Private key (only if the CSR was not made here)</label><textarea class="form-input" x-model="drawer.bizImportKey" style="min-height:38px;font-family:monospace;font-size:11px"></textarea></div>
+                        </div>
+                        <button class="btn btn-primary btn-sm" @click="bizImport()" :disabled="!!drawer.bizBusy || !drawer.bizImportNo">Import and install</button>
+                      </details>
+                    </div>
+
+                    <!-- orders of this website -->
+                    <div x-show="(drawer.bizOrders||[]).length" style="margin-top:14px">
+                      <div class="card-title" style="font-size:13px;margin-bottom:6px">Orders for this website</div>
+                      <template x-for="o in drawer.bizOrders" :key="o.id">
+                        <div class="vp-ssl-sub" style="margin-bottom:8px">
+                          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                            <b style="font-size:13px" x-text="o.provider_name+(o.provider_order?' · order '+o.provider_order:'')"></b>
+                            <span class="badge" :class="o.status==='installed' ? 'badge-green' : (o.status==='failed' ? 'badge-red' : 'badge-gray')" x-text="bizStatusLabel(o.status)"></span>
+                            <span style="flex:1"></span>
+                            <button x-show="o.status==='validating' || o.status==='issued'" class="btn btn-ghost btn-sm" @click="bizCheck(o)">Check now</button>
+                          </div>
+                          <div x-show="o.error" style="font-size:12px;color:var(--red);margin-top:4px" x-text="o.error"></div>
+                          <template x-for="r in (o.records||[])" :key="r.name+r.type">
+                            <div style="font-size:11.5px;font-family:var(--font-mono);margin-top:4px;word-break:break-all">
+                              <span x-text="r.type+'  '+r.name+'  '+(r.type==='FILE' ? '(placed in the website)' : r.value)"></span>
+                              <span x-show="r.type!=='FILE'" :style="r.auto ? 'color:var(--green)' : 'color:var(--amber, #b45309)'" x-text="r.auto ? ' - added automatically' : ' - add this record at your DNS provider'"></span>
+                            </div>
+                          </template>
+                          <div x-show="o.status==='validating'" style="font-size:11.5px;color:var(--text-muted);margin-top:4px">You can close this window: the panel checks the order every 10 minutes and installs the certificate when it is issued.</div>
+                          <details style="margin-top:4px"><summary style="cursor:pointer;font-size:11.5px;color:var(--text-muted)">Activity</summary>
+                            <template x-for="l in (o.log||[])" :key="l.t+l.m"><div style="font-size:11.5px;color:var(--text-secondary)" x-text="new Date(l.t*1000).toLocaleString()+'  '+l.m"></div></template>
+                          </details>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+
+                  <!-- own certificate -->
+                  <div x-show="drawer.sslKind==='own'" style="margin-top:14px">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
+                      <div class="form-group"><label class="form-label">Certificate (.crt / .pem)</label><textarea class="form-input" x-model="drawer.sslCert" placeholder="-----BEGIN CERTIFICATE-----" style="min-height:100px;font-family:monospace;font-size:11px"></textarea></div>
+                      <div class="form-group"><label class="form-label">Private key (.key)</label><textarea class="form-input" x-model="drawer.sslKey" placeholder="-----BEGIN PRIVATE KEY----- (leave empty if the CSR was made here)" style="min-height:100px;font-family:monospace;font-size:11px"></textarea></div>
+                    </div>
+                    <div class="form-group"><label class="form-label">CA bundle / intermediate certificates (optional)</label><textarea class="form-input" x-model="drawer.sslChain" placeholder="If left empty, the panel downloads the missing intermediates." style="min-height:50px;font-family:monospace;font-size:11px"></textarea></div>
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+                      <label class="btn btn-ghost btn-sm" style="cursor:pointer">Upload files (.crt, .key, .ca-bundle, .pfx)
+                        <input type="file" multiple accept=".crt,.cer,.pem,.key,.ca-bundle,.pfx,.p12,.txt" style="display:none" @change="sslLoadFiles($event)"></label>
+                      <span x-show="drawer.sslPfx" style="font-size:12px" x-text="'.pfx file: '+drawer.sslPfxName"></span>
+                      <input x-show="drawer.sslPfx" class="form-input" type="password" x-model="drawer.sslPfxPass" placeholder=".pfx password" style="max-width:200px" aria-label=".pfx password">
+                    </div>
+                    <ul x-show="drawer.sslCheck" class="vp-ssl-check" aria-label="Certificate check">
+                      <li :class="drawer.sslCheck?.key_matches ? 'ok' : 'bad'" x-text="drawer.sslCheck?.key_matches ? 'Private key matches the certificate' : 'Private key does not match'"></li>
+                      <li :class="(drawer.sslCheck?.missing||[]).length ? 'warn' : 'ok'" x-text="'Covers '+((drawer.sslCheck?.covers||[]).join(', ')||'-')+((drawer.sslCheck?.missing||[]).length ? ' (not '+drawer.sslCheck.missing.join(', ')+')' : '')"></li>
+                      <li :class="drawer.sslCheck?.chain_complete ? 'ok' : 'warn'" x-text="drawer.sslCheck?.chain_complete ? ('Chain complete: issued by '+(drawer.sslCheck?.issuer_cn||drawer.sslCheck?.issuer||'')) : 'Chain incomplete: some older devices may not trust it - add the CA bundle'"></li>
+                      <li :class="(drawer.sslCheck?.days_left||0) > 14 ? 'ok' : 'warn'" x-text="'Valid until '+(drawer.sslCheck?.expires_on||'')+' ('+drawer.sslCheck?.days_left+' days)'"></li>
+                    </ul>
+                    <div x-show="drawer.sslCheckErr" style="font-size:12px;color:var(--red);margin-bottom:8px" x-text="drawer.sslCheckErr"></div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap">
+                      <button class="btn btn-ghost btn-sm" @click="sslOwn(true)" :disabled="!!drawer.loading">Check</button>
+                      <button class="btn btn-primary btn-sm" @click="sslOwn(false)" :disabled="!!drawer.loading">Check and install certificate</button>
+                    </div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Installed only if the key matches and the certificate covers this website. The private key is stored only on this server, readable by root. The panel sends an alert before the certificate expires.</div>
+                  </div>
                 </div>
 
                 <!-- HTTP/3 (QUIC) -->

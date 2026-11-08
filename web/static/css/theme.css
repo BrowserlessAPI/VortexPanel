@@ -1041,3 +1041,21 @@ textarea.form-input { min-height: 0; }
 .mx-kv span{color:var(--text-muted)}
 .mx-bar{flex:0 0 120px;height:4px;border-radius:3px;background:var(--bg-hover);overflow:hidden}
 .mx-bar>div{height:100%}
+
+/* Website SSL: certificate type / provider / method choice */
+.vp-ssl-kinds{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.vp-ssl-methods{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:6px 0 12px}
+.vp-ssl-kind{display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-align:left;padding:12px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg-surface);color:var(--text-primary);font:inherit;cursor:pointer;min-height:44px}
+.vp-ssl-kind:hover{border-color:var(--accent)}
+.vp-ssl-kind.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--bg-raised)}
+.vp-ssl-kind:disabled{opacity:.5;cursor:not-allowed}
+.vp-ssl-kind-name{font-size:13.5px;font-weight:700}
+.vp-ssl-kind-line{font-size:12px;color:var(--text-secondary);line-height:1.4}
+.vp-ssl-kind-badge{margin-top:auto;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;background:var(--bg-raised);color:var(--text-secondary);border:1px solid var(--border)}
+.vp-ssl-kind-badge.free{color:var(--green);border-color:var(--green)}
+.vp-ssl-sub{background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
+.vp-ssl-note{font-size:12px;line-height:1.55;color:var(--text-secondary);background:var(--bg-surface);border:1px solid var(--border);border-left:3px solid #d97706;border-radius:var(--radius);padding:9px 12px}
+.vp-ssl-check{list-style:none;margin:0 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:6px 14px;font-size:12.5px}
+.vp-ssl-check li.ok{color:var(--green)}
+.vp-ssl-check li.warn{color:#b45309}
+.vp-ssl-check li.bad{color:var(--red)}

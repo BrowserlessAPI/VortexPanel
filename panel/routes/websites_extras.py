@@ -62,7 +62,9 @@ def _read_state(content):
     st = json.loads(m.group(1)) if m else {}
     has_ssl = SSL_BEGIN in content or bool(re.search(r'listen[^;]*\b443\b', content))
     st['ssl'] = has_ssl
-    st['force_https'] = has_ssl and bool(re.search(r'^[ \t]*return 301 https://[^\n]*' + re.escape(SSL_REDIRECT_TAG), content, re.M))
+    # the redirect line: `return 301 https://...` or, since 3.11.1, the same inside
+    # `if ($request_uri !~ validation paths) { ... }`
+    st['force_https'] = has_ssl and bool(re.search(r'^[ \t]*(?:return 301 https://|if \(\$request_uri)[^\n]*' + re.escape(SSL_REDIRECT_TAG), content, re.M))
     st['http2'] = bool(re.search(r'^[ \t]*http2\s+on;|listen[^;]*\b443\b[^;]*\bhttp2\b', content, re.M))
     return st
 
@@ -166,9 +168,9 @@ def set_extras(domain):
         # commenting it, so turning SSL off later still removes it cleanly.
         if has_ssl:
             if force:
-                content = re.sub(r'^([ \t]*)' + re.escape(_OFF) + r'(return 301 https://)', r'\1\2', content, flags=re.M)
+                content = re.sub(r'^([ \t]*)' + re.escape(_OFF) + r'(return 301 https://|if \(\$request_uri)', r'\1\2', content, flags=re.M)
             else:
-                content = re.sub(r'^([ \t]*)(return 301 https://[^\n]*' + re.escape(SSL_REDIRECT_TAG) + ')',
+                content = re.sub(r'^([ \t]*)((?:return 301 https://|if \(\$request_uri)[^\n]*' + re.escape(SSL_REDIRECT_TAG) + ')',
                                  r'\1' + _OFF + r'\2', content, flags=re.M)
         # HTTP/2 on the HTTPS server blocks.
         content = re.sub(r'^[ \t]*http2\s+on;[^\n]*\n', '', content, flags=re.M)

@@ -198,10 +198,16 @@ def ensure_acme(log=print):
     return ''
 
 
+def _server_url(server):
+    """acme.sh --server value. VP_ACME_URL_<NAME> points a CA at a test CA (Pebble) in the
+    panel's own tests; it is never set on a real server."""
+    return os.environ.get('VP_ACME_URL_' + server.upper().replace('-', '_'), server)
+
+
 def _base(server=None):
     s = _settings()
     cmd = (f'{ACME_HOME}/acme.sh --home {ACME_HOME} --config-home {ACME_CONF} --cert-home {ACME_CERTS} '
-           f'--server {shlex.quote(server or s["server"])}')
+           f'--server {shlex.quote(_server_url(server or s["server"]))}')
     if s['ca_bundle']:
         cmd += f' --ca-bundle {shlex.quote(s["ca_bundle"])}'
     return cmd
@@ -366,17 +372,44 @@ def _cert_dir_conf(domain):
     return ''
 
 
+CA_NAMES = {'letsencrypt': "Let's Encrypt", 'zerossl': 'ZeroSSL'}
+
+
+def _conf_value(txt, key):
+    m = re.search(rf"^{key}='([^']*)'", txt, re.M)
+    return m.group(1) if m else ''
+
+
+def cert_server(domain):
+    """The CA a site's acme.sh certificate came from: 'zerossl', or the directory URL it
+    was issued by (renewals must use the same CA), or the panel's default CA."""
+    conf = _cert_dir_conf(domain)
+    api = _conf_value(open(conf).read(), 'Le_API') if conf else ''
+    if 'zerossl' in api or (os.environ.get('VP_ACME_URL_ZEROSSL') and api == os.environ['VP_ACME_URL_ZEROSSL']):
+        return 'zerossl'
+    return api or _settings()['server']
+
+
+def ca_name(server):
+    if server in CA_NAMES:
+        return CA_NAMES[server]
+    if 'letsencrypt' in server or server == os.environ.get('VP_ACME_URL_LETSENCRYPT'):
+        return "Let's Encrypt"
+    return server
+
+
 def acme_info(domain):
-    """{'provider': name, 'wildcard': bool} when acme.sh manages this site's certificate."""
+    """{'provider', 'ca', 'method', 'wildcard'} when acme.sh manages this site's certificate."""
     conf = _cert_dir_conf(domain)
     if not conf:
         return None
     txt = open(conf).read()
-    hook = re.search(r"^Le_Webroot='([^']*)'", txt, re.M)
-    alt = re.search(r"^Le_Alt='([^']*)'", txt, re.M)
-    hook = hook.group(1) if hook else ''
-    name = next((n for n, h, f in PROVIDERS.values() if h == hook), hook)
-    return {'provider': name, 'wildcard': bool(alt and f'*.{domain}' in alt.group(1))}
+    hook = _conf_value(txt, 'Le_Webroot')
+    alt = _conf_value(txt, 'Le_Alt')
+    http = hook.startswith('/')
+    name = 'file check (port 80)' if http else next((n for n, h, f in PROVIDERS.values() if h == hook), hook)
+    return {'provider': name, 'method': 'http' if http else 'dns', 'ca': ca_name(cert_server(domain)),
+            'wildcard': f'*.{domain}' in alt}
 
 
 def remove_site_cert(domain):
@@ -393,26 +426,64 @@ def _reload_cmd(ws):
     return 'systemctl reload nginx'
 
 
-def _issue_site(app, jid, domain, pid, creds, wildcard, email, renew=False):
+def register_account(server, email='', eab_kid='', eab_hmac='', log=print):
+    """Make sure acme.sh has an account at `server` (ZeroSSL needs one before the first
+    order: an e-mail address, from which acme.sh gets the EAB keys, or the EAB keys from
+    the ZeroSSL dashboard). Returns '' or an error."""
+    if server != 'zerossl':
+        return ''
+    if eab_kid and eab_hmac:
+        args = f'--eab-kid {shlex.quote(eab_kid)} --eab-hmac-key {shlex.quote(eab_hmac)}'
+        if email:
+            args += f' -m {shlex.quote(email)}'
+    elif email:
+        args = f'-m {shlex.quote(email)}'
+    else:
+        return 'ZeroSSL needs an e-mail address or EAB keys for its account.'
+    log('[VortexPanel] Checking the ZeroSSL account...')
+    secret = {'EAB': eab_hmac} if eab_hmac else {}
+    rc, out = _run_logged(f'{_base("zerossl")} --register-account {args}', log, env=secret, t=120)
+    if rc != 0:
+        return ('ZeroSSL did not accept the account. Check the e-mail address or the EAB keys '
+                '(ZeroSSL dashboard > Developer > EAB Credentials).')
+    return ''
+
+
+def _issue_site(app, jid, domain, pid, creds, wildcard, email, renew=False, server=None, webroot=None,
+                eab=None, names=None):
+    """Issue (or renew) a site certificate with acme.sh and install it.
+    server: 'letsencrypt' (default) or 'zerossl'. webroot: validate with a file under
+    this folder (HTTP) instead of the DNS provider `pid`."""
     log = _JobLog(jid)
     try:
         from panel.routes.websites_ssl import install_manual_cert, _find_site_config
         err = ensure_acme(log)
         if err:
             log('[VortexPanel] ' + err); log.finish(False); return
-        name, hook, _ = PROVIDERS[pid]
+        server = server or (cert_server(domain) if renew else _settings()['server'])
+        ca = ca_name(server)
         ws = _find_site_config(domain)[1] or 'nginx'
-        names = [domain] + ([f'*.{domain}'] if wildcard else ([f'www.{domain}'] if domain.count('.') == 1 else []))
+        if not names:
+            names = [domain] + ([f'*.{domain}'] if wildcard else ([f'www.{domain}'] if domain.count('.') == 1 else []))
         s = _settings()
         if renew:
-            log(f'[VortexPanel] Renewing the certificate for {domain}...')
-            cmd = f'{_base()} --renew --force --ecc -d {shlex.quote(domain)}'
+            log(f'[VortexPanel] Renewing the {ca} certificate for {domain}...')
+            cmd = f'{_base(server)} --renew --force --ecc -d {shlex.quote(domain)}'
         else:
-            log(f'[VortexPanel] Requesting a certificate for {", ".join(names)} through {name} (DNS validation)...')
-            cmd = (f'{_base()} --issue --force --keylength ec-256 --dns {hook} '
-                   + ' '.join(f'-d {shlex.quote(n)}' for n in names))
-            if s['dnssleep']:
-                cmd += f' --dnssleep {s["dnssleep"]}'
+            err = register_account(server, email, *(eab or ('', '')), log=log)
+            if err:
+                log('[VortexPanel] ' + err); log.finish(False); return
+            if webroot:
+                log(f'[VortexPanel] Requesting a {ca} certificate for {", ".join(names)} (file check on port 80)...')
+                cmd = (f'{_base(server)} --issue --force --keylength ec-256 --webroot {shlex.quote(webroot)} '
+                       + ' '.join(f'-d {shlex.quote(n)}' for n in names))
+            else:
+                name, hook, _ = PROVIDERS[pid]
+                log(f'[VortexPanel] Requesting a {ca} certificate for {", ".join(names)} through {name} (DNS validation)...')
+                cmd = (f'{_base(server)} --issue --force --keylength ec-256 --dns {hook} '
+                       + ' '.join(f'-d {shlex.quote(n)}' for n in names))
+                if s['dnssleep']:
+                    cmd += f' --dnssleep {s["dnssleep"]}'
             if email:
                 cmd += f' -m {shlex.quote(email)}'
         prev = os.path.dirname(_cert_dir_conf(domain))
@@ -421,7 +492,7 @@ def _issue_site(app, jid, domain, pid, creds, wildcard, email, renew=False):
         if rc != 0:
             if not had_cert and not renew:
                 # nothing was issued: leave no entry the renewal timer would retry every day
-                _sh(f'{_base()} --remove -d {shlex.quote(domain)} --ecc', 60)
+                _sh(f'{_base(server)} --remove -d {shlex.quote(domain)} --ecc', 60)
                 shutil.rmtree(f'{ACME_CERTS}/{domain}_ecc', ignore_errors=True)
             log('[VortexPanel] The certificate was not issued. The reason is in the lines above.')
             log.finish(False); return
@@ -437,14 +508,14 @@ def _issue_site(app, jid, domain, pid, creds, wildcard, email, renew=False):
             log('[VortexPanel] The certificate was issued but could not be installed: ' + str(res.get('error')))
             log.finish(False); return
         # register the installed files so every renewal copies them and reloads the web server
-        rc, out = _run_logged(f'{_base()} --install-cert --ecc -d {shlex.quote(domain)} '
+        rc, out = _run_logged(f'{_base(server)} --install-cert --ecc -d {shlex.quote(domain)} '
                               f'--fullchain-file {shlex.quote(res["cert_path"])} --key-file {shlex.quote(res["key_path"])} '
                               f'--reloadcmd {shlex.quote(_reload_cmd(ws))}', lambda l: None, t=120)
         if rc != 0:
             log('[VortexPanel] Installed, but automatic renewal could not be set up: ' + out[-300:])
             log.finish(False); return
-        log(f'[VortexPanel] HTTPS is on for {domain}' + (f' and *.{domain}' if wildcard else '') +
-            '. The certificate renews automatically.')
+        log(f'[VortexPanel] HTTPS is on for {", ".join(n for n in names)} with a {ca} certificate. '
+            f'It renews automatically with {ca}.')
         log.finish(True)
     except Exception as e:
         log(f'[VortexPanel] Failed: {e}')
@@ -475,13 +546,159 @@ def issue_dns(domain):
     if pid != 'vortexpanel' and d.get('save', True):
         data = _load_providers(); data[pid] = creds; _save_providers(data)
     email = (d.get('email') or '').strip()
-    if email and not re.fullmatch(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', email):
+    if email and not _EMAIL.fullmatch(email):
         return jsonify({'ok': False, 'error': 'Enter a valid e-mail address'}), 400
+    server, eab, err = _ca_choice(d, email)
+    if err:
+        return jsonify({'ok': False, 'error': err}), 400
     jid = _new_job()
     threading.Thread(target=_issue_site, daemon=True,
                      args=(current_app._get_current_object(), jid, domain, pid, creds,
-                           bool(d.get('wildcard')), email)).start()
+                           bool(d.get('wildcard')), email),
+                     kwargs={'server': server, 'eab': eab}).start()
     return jsonify({'ok': True, 'job_id': jid})
+
+
+_EMAIL = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')
+
+
+def _ca_choice(d, email):
+    """CA from a request: ('letsencrypt'|'zerossl', (eab_kid, eab_hmac), error).
+    ZeroSSL account details are kept (root only) for the next certificate."""
+    server = d.get('ca') or 'letsencrypt'
+    if server not in CA_NAMES:
+        return '', None, 'Unknown certificate provider'
+    if server != 'zerossl':
+        return None, None, ''          # the panel's default CA (Settings; Let's Encrypt unless changed)
+    from panel import ssl_accounts as A
+    acct = A.get('zerossl')
+    kid = str(d.get('eab_kid') or '').strip() or acct.get('eab_kid', '')
+    hmac = str(d.get('eab_hmac') or '').strip() or acct.get('eab_hmac', '')
+    mail = email or acct.get('email', '')
+    for v in (kid, hmac):
+        if v and not re.fullmatch(r'[A-Za-z0-9_=-]{3,200}', v):
+            return '', None, 'The EAB keys contain characters that are not allowed'
+    if not (kid and hmac) and not mail:
+        return '', None, 'ZeroSSL needs the e-mail address of your ZeroSSL account, or its EAB keys'
+    A.save('zerossl', {**acct, 'email': mail, 'eab_kid': kid, 'eab_hmac': hmac})
+    return server, (kid, hmac) if kid and hmac else ('', ''), ''
+
+
+def _nginx_root(domain):
+    """The `root` of the site's port-80 server block (nginx), or ''."""
+    from panel.routes.websites_core import _find_site_config, nginx_server_blocks
+    fp, ws = _find_site_config(domain)
+    if ws == 'apache':
+        m = re.search(r'^\s*DocumentRoot\s+"?([^"\s]+)', open(fp).read(), re.M)
+        return m.group(1) if m else ''
+    if ws != 'nginx':
+        return ''
+    content = open(fp).read()
+    try:
+        blocks = [content[a:b] for a, b in nginx_server_blocks(content)]
+    except Exception:
+        blocks = [content]
+    # the block that answers port 80 first, then any other
+    blocks.sort(key=lambda t: 0 if re.search(r'listen\s+(\[::\]:)?80\b', t) else 1)
+    for text in blocks:
+        m = re.search(r'^[ \t]*root\s+([^;\s]+)\s*;', text, re.M)
+        if m:
+            return m.group(1)
+    return ''
+
+
+def _resolves(name):
+    try:
+        import socket
+        return bool(socket.getaddrinfo(name, 80))
+    except Exception:
+        return False
+
+
+def http_preflight(domain):
+    """Before asking a CA, prove that http://<name>/.well-known/acme-challenge/ is served
+    from a folder on this server. Returns (webroot, names, error)."""
+    from panel.routes.websites_core import _get_site_path
+    names = [domain]
+    note = ''
+    if domain.count('.') == 1:
+        if _resolves(f'www.{domain}'):
+            names.append(f'www.{domain}')
+        else:
+            note = f' (www.{domain} has no DNS record, so it is left out)'
+    roots = []
+    for r in (_nginx_root(domain), _get_site_path(domain)):
+        if r and os.path.isdir(r) and r not in roots:
+            roots.append(r)
+    if not roots:
+        return '', names, f'The folder of {domain} was not found on this server.'
+    token = uuid.uuid4().hex
+    for root in roots:
+        wk = f'{root}/.well-known/acme-challenge'
+        made = [p for p in (f'{root}/.well-known', wk) if not os.path.isdir(p)]
+        try:
+            os.makedirs(wk, exist_ok=True)
+            for p in made:
+                os.chmod(p, 0o755)
+            with open(f'{wk}/vp-check-{token}', 'w') as f:
+                f.write(token)
+            os.chmod(f'{wk}/vp-check-{token}', 0o644)
+            ok = True
+            for n in names:
+                for attempt in range(3):          # a web server reloaded a moment ago may still answer the old way
+                    rc, out = _sh(f'curl -s -L -k --max-time 10 --resolve {shlex.quote(n)}:80:127.0.0.1 '
+                                  f'--resolve {shlex.quote(n)}:443:127.0.0.1 '
+                                  f'http://{shlex.quote(n)}/.well-known/acme-challenge/vp-check-{token}', 20)
+                    if out.strip() == token:
+                        break
+                    time.sleep(1)
+                if out.strip() != token:
+                    ok = False
+                    break
+        finally:
+            try:
+                os.remove(f'{wk}/vp-check-{token}')
+            except OSError:
+                pass
+            for p in reversed(made):
+                try:
+                    os.rmdir(p)
+                except OSError:
+                    pass
+        if ok:
+            return root, names, note
+    return '', names, (f'http://{domain}/.well-known/acme-challenge/ is not served from the website folder '
+                       '(for example a reverse proxy, an app server or a redirect to another host answers it). '
+                       'Use the DNS record method instead.')
+
+
+@acme_bp.route('/api/websites/<domain>/ssl/acme-http', methods=['POST'])
+def issue_http(domain):
+    """Certificate from Let's Encrypt or ZeroSSL validated with a file (port 80)."""
+    if not req(): return jsonify({'ok': False}), 401
+    from panel.routes.websites_core import is_valid_domain, _find_site_config
+    if not is_valid_domain(domain):
+        return jsonify({'ok': False, 'error': 'Invalid domain'}), 400
+    fp, ws = _find_site_config(domain)
+    if not fp:
+        return jsonify({'ok': False, 'error': 'Website not found'}), 404
+    if ws not in ('nginx', 'apache'):
+        return jsonify({'ok': False, 'error': f'This is available for nginx and Apache websites ({domain} is served by {ws}).'}), 400
+    d = request.get_json() or {}
+    email = (d.get('email') or '').strip()
+    if email and not _EMAIL.fullmatch(email):
+        return jsonify({'ok': False, 'error': 'Enter a valid e-mail address'}), 400
+    server, eab, err = _ca_choice(d, email)
+    if err:
+        return jsonify({'ok': False, 'error': err}), 400
+    webroot, names, msg = http_preflight(domain)
+    if not webroot:
+        return jsonify({'ok': False, 'error': msg}), 400
+    jid = _new_job()
+    threading.Thread(target=_issue_site, daemon=True,
+                     args=(current_app._get_current_object(), jid, domain, 'vortexpanel', {}, False, email),
+                     kwargs={'server': server, 'webroot': webroot, 'eab': eab, 'names': names}).start()
+    return jsonify({'ok': True, 'job_id': jid, 'note': msg})
 
 
 @acme_bp.route('/api/websites/<domain>/ssl/acme-renew', methods=['POST'])
@@ -489,7 +706,7 @@ def renew_dns(domain):
     if not req(): return jsonify({'ok': False}), 401
     info = acme_info(domain)
     if not info:
-        return jsonify({'ok': False, 'error': 'This certificate is not managed through a DNS provider'}), 400
+        return jsonify({'ok': False, 'error': 'This certificate is not managed by the panel\'s ACME client'}), 400
     conf = open(_cert_dir_conf(domain)).read()
     hook = (re.search(r"^Le_Webroot='([^']*)'", conf, re.M) or [None, ''])[1]
     pid = next((k for k, v in PROVIDERS.items() if v[1] == hook), 'vortexpanel')

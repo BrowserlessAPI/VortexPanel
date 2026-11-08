@@ -63,6 +63,7 @@ from panel.routes.nodejs_projects import nodejs_bp
 from panel.routes.go_projects import go_bp
 from panel.routes.import_website import import_bp
 from panel.routes.acme import acme_bp
+from panel.routes.ssl_business import ssl_business_bp
 from panel.routes.migration import migration_bp
 from panel.routes.bot_protection import botprot_bp
 from panel.routes.licence_routes import licence_bp
@@ -244,7 +245,7 @@ def create_app():
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
                caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
                logs_bp, wp_bp, nodejs_bp, go_bp, import_bp, livepatch_bp,
-               onboarding_bp, disk_bp, users_bp, storage_bp, alerts_bp, plugins_bp, python_bp, acme_bp, migration_bp, botprot_bp, licence_bp, apps_bp]:
+               onboarding_bp, disk_bp, users_bp, storage_bp, alerts_bp, plugins_bp, python_bp, acme_bp, ssl_business_bp, migration_bp, botprot_bp, licence_bp, apps_bp]:
         app.register_blueprint(bp)
     # Add-on modules from /opt/vortexpanel/plugins. Each is loaded inside its
     # own try/except: a broken or incompatible plugin is skipped and reported,

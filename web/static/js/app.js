@@ -1197,6 +1197,7 @@ function websitesPage() {
     drawer:{
       show:false,site:null,tab:'config',
       confContent:'',confPath:'',
+      sslKind:'le',sslMethod:'http',zsMode:'email',zsEmail:'',zsKid:'',zsHmac:'',sslAccounts:{},sslDisclaimer:'',sslChain:'',sslPfx:'',sslPfxName:'',sslPfxPass:'',sslCheck:null,sslCheckErr:'',bizBrand:'digicert',bizKey:'',bizBusy:false,bizCatalog:null,bizProduct:'',bizKind:'single',bizYears:1,bizExtra:'',bizOrgId:'',bizOrg:{},bizDcv:'http',bizPayment:'balance',bizOrders:[],bizCsr:'',bizImportNo:'',bizImportKey:'',
       sslTab:'le',sslEmail:'',dnsProviders:[],dnsLocalZone:false,dnsProvider:'',dnsCreds:{},dnsWildcard:false,dnsBusy:false,dnsOutput:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',sslSummary:null,
       http3Enabled:false, http3Capable:false, http3NginxVersion:'',
       http3Webserver:'nginx', http3Support:'manual', http3Message:'',
@@ -1440,6 +1441,7 @@ function websitesPage() {
         nodejsEnabled:false,nodejsForm:{app_path:s.path||'',startup:'index.js',port:'3000',runtime:'node'},
         maintEnabled:false,maintMessage:'We are performing scheduled maintenance.',
         sslEmail:'',sslKey:'',sslCert:'',sslOutput:'',sslInfo:'',sslSummary:null,
+        sslKind:'le',sslMethod:'http',zsMode:'email',zsEmail:'',zsKid:'',zsHmac:'',sslAccounts:{},sslDisclaimer:'',sslChain:'',sslPfx:'',sslPfxName:'',sslPfxPass:'',sslCheck:null,sslCheckErr:'',bizBrand:'digicert',bizKey:'',bizBusy:false,bizCatalog:null,bizProduct:'',bizKind:'single',bizYears:1,bizExtra:'',bizOrgId:'',bizOrg:{},bizDcv:'http',bizPayment:'balance',bizOrders:[],bizCsr:'',bizImportNo:'',bizImportKey:'',
         dnsProviders:[],dnsLocalZone:false,dnsProvider:'',dnsCreds:{},dnsWildcard:false,dnsBusy:false,dnsOutput:'',
         bp:null, bpForm:null, bpBusy:false, bpMsg:'', bpErr:'', bpNeedRealip:false, bpRules:null,
         directory: {path:'', antixss:false, accesslog:false},
@@ -1476,11 +1478,17 @@ function websitesPage() {
         const r=await get('/api/websites/'+domain+'/ssl/info');
         if(r.ok){
           d.sslInfo=r.info;
-          d.sslSummary={brand:r.brand,expiresOn:r.expires_on,daysLeft:r.days_left,acme:r.acme||null};
+          d.sslSummary={brand:r.brand,expiresOn:r.expires_on,daysLeft:r.days_left,acme:r.acme||null,
+                        source:r.source||(r.order?'business':''),order:r.order||null,previous:r.previous||null};
+          // open on the kind of certificate the site has now
+          d.sslKind = r.order ? 'business' : (r.source==='own' ? 'own' : (r.acme?.ca==='ZeroSSL' ? 'zerossl' : 'le'));
+          if(r.acme) d.sslMethod = r.acme.method || 'dns';
         } else {
           d.sslInfo=''; d.sslSummary=null;
         }
         this.loadDnsProviders(domain);
+        this.sslLoadAccounts();
+        this.bizLoadOrders();
         const r2=await get('/api/websites/'+domain+'/http3');
         if(r2.ok){
           d.http3Enabled        = r2.enabled;
@@ -1602,12 +1610,200 @@ function websitesPage() {
       }
       return false;
     },
+    // --- Website SSL: certificate kind, ZeroSSL, business orders, own certificate -------
+    sslKinds(){
+      return [
+        {id:'le', name:"Let's Encrypt", line:'Free. No account needed.', badge:'Free, automatic', free:true},
+        {id:'zerossl', name:'ZeroSSL', line:'Free 90-day certificate with a ZeroSSL account.', badge:'Free, automatic', free:true},
+        {id:'business', name:'Business certificate', line:'DV, OV or EV from DigiCert, GeoTrust, ZeroSSL or Sectigo.', badge:'Paid, your own account', free:false},
+        {id:'own', name:'Own certificate', line:'Already bought one? Paste or upload the certificate.', badge:'Paid / existing', free:false},
+      ];
+    },
+    sslPickKind(k){ const d=this.drawer; d.sslKind=k; d.sslOutput=''; d.dnsOutput=''; if(k==='business') this.bizLoadCatalog(); },
+    sslCaArgs(){
+      const d=this.drawer;
+      if(d.sslKind!=='zerossl') return {ca:'letsencrypt'};
+      return d.zsMode==='eab' ? {ca:'zerossl', eab_kid:d.zsKid, eab_hmac:d.zsHmac} : {ca:'zerossl', email:d.zsEmail};
+    },
+    async sslLoadAccounts(){
+      const r=await get('/api/ssl/accounts'); if(!r.ok) return;
+      const d=this.drawer; d.sslAccounts=r.accounts||{}; d.sslDisclaimer=r.disclaimer||'';
+      if(!d.zsEmail && d.sslAccounts.zerossl?.email) d.zsEmail=d.sslAccounts.zerossl.email;
+      if(d.sslAccounts.zerossl?.eab_kid && !d.sslAccounts.zerossl?.email) d.zsMode='eab';
+      if(d.sslKind==='business') this.bizLoadCatalog();
+    },
+    async sslIssueFree(){
+      const d=this.drawer, domain=d.site?.domain; if(!domain) return;
+      if(d.sslKind==='le') return this.issueLetsEncrypt();
+      const args=this.sslCaArgs();
+      if(d.zsMode==='eab' && !(d.zsKid||d.sslAccounts.zerossl?.eab_kid)){ toast('Enter the EAB keys from the ZeroSSL dashboard','error'); return; }
+      d.dnsBusy=true; d.dnsOutput='Checking that the website answers on port 80…'; d.sslOutput='';
+      const r=await post('/api/websites/'+domain+'/ssl/acme-http',{...args, email:args.email||d.sslEmail});
+      if(!r.ok){ d.dnsBusy=false; d.dnsOutput=r.error||'Failed'; toast(r.error||'Failed','error'); return; }
+      if(r.note) d.dnsOutput='Note:'+r.note;
+      const ok=await this.pollAcmeJob(r.job_id,'dnsOutput');
+      d.dnsBusy=false;
+      toast(ok?'Certificate installed':'The certificate was not issued - see the output',ok?'success':'error');
+      if(ok){ this.loadDrawerTab(); this.load(); }
+    },
+    async sslSwitchBack(){
+      const d=this.drawer, domain=d.site?.domain, p=d.sslSummary?.previous; if(!domain||!p) return;
+      if(!confirm('Switch '+domain+' back to the '+(p.issuer||'previous')+' certificate (expires '+p.expires_on+')?')) return;
+      d.loading=true;
+      const r=await post('/api/websites/'+domain+'/ssl/switch-back',{});
+      d.loading=false;
+      toast(r.ok?(r.message||'Switched back'):(r.error||'Failed'), r.ok?'success':'error');
+      if(r.ok){ this.loadDrawerTab(); this.load(); }
+    },
+    async sslLoadFiles(ev){
+      const d=this.drawer;
+      for(const f of [...(ev.target.files||[])]){
+        const name=f.name.toLowerCase();
+        if(name.endsWith('.pfx')||name.endsWith('.p12')){
+          const buf=new Uint8Array(await f.arrayBuffer()); let bin='';
+          for(let i=0;i<buf.length;i+=8192) bin+=String.fromCharCode.apply(null, buf.subarray(i,i+8192));
+          d.sslPfx=btoa(bin); d.sslPfxName=f.name; continue;
+        }
+        const text=await f.text();
+        if(/PRIVATE KEY-----/.test(text)) d.sslKey=text.trim();
+        else if(/ca-bundle|chain|intermediate/.test(name)) d.sslChain=text.trim();
+        else if(/BEGIN CERTIFICATE/.test(text)){
+          // a file with several certificates: the first is the website's, the rest the chain
+          const blocks=text.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g)||[];
+          if(!d.sslCert){ d.sslCert=blocks[0]||text.trim(); if(blocks.length>1) d.sslChain=blocks.slice(1).join('\n'); }
+          else d.sslChain=(d.sslChain?d.sslChain+'\n':'')+blocks.join('\n');
+        }
+      }
+      ev.target.value='';
+    },
+    async sslOwn(checkOnly){
+      const d=this.drawer, domain=d.site?.domain; if(!domain) return;
+      if(!d.sslPfx && !d.sslCert){ toast('Paste or upload the certificate','error'); return; }
+      d.loading=true; d.sslCheckErr='';
+      const body=d.sslPfx ? {pfx:d.sslPfx, pfx_password:d.sslPfxPass, chain:d.sslChain} : {cert:d.sslCert, key:d.sslKey, chain:d.sslChain};
+      const r=await post('/api/websites/'+domain+'/ssl/manual',{...body, check_only:!!checkOnly});
+      d.loading=false;
+      d.sslCheck=r.check||null;
+      if(!r.ok){ d.sslCheckErr=r.error||'Failed'; toast(r.error||'Failed','error'); return; }
+      if(checkOnly){ toast('The certificate can be installed','success'); return; }
+      toast('Certificate installed','success');
+      d.sslPfx=''; d.sslPfxPass=''; d.sslKey=''; d.sslCert=''; d.sslChain='';
+      this.loadDrawerTab(); this.load();
+    },
+    sslBrands(){
+      const a=this.drawer.sslAccounts||{};
+      const dc=!!a.digicert?.api_key_saved, zs=!!a.zerossl?.api_key_saved;
+      return [
+        {id:'digicert', name:'DigiCert', connected:dc, status:dc?'Connected':'Connect CertCentral'},
+        {id:'geotrust', name:'GeoTrust', connected:dc, status:dc?'Through your DigiCert account':'Ordered through a DigiCert account'},
+        {id:'zerossl', name:'ZeroSSL', connected:zs, status:zs?'Connected':'Connect ZeroSSL'},
+        {id:'sectigo', name:'Sectigo', connected:false, status:'Buy on its website, install here'},
+      ];
+    },
+    bizProvider(){ const b=this.drawer.bizBrand; return (b==='digicert'||b==='geotrust') ? 'digicert' : (b==='zerossl' ? 'zerossl' : ''); },
+    bizProviderName(){ return {digicert:'DigiCert', zerossl:'ZeroSSL'}[this.bizProvider()] || 'Sectigo'; },
+    bizConnected(){ const p=this.bizProvider(); return !!(p && this.drawer.sslAccounts?.[p]?.api_key_saved); },
+    bizConnectSteps(){
+      if(this.bizProvider()==='zerossl') return ['Sign in at zerossl.com with your own e-mail and password (create an account and choose a paid plan if you have none).',
+        'Open Developer and copy your API access key.', 'Paste it below.'];
+      return ['No DigiCert account yet? Create one at digicert.com and add funds or a payment card. This is done once, on DigiCert\'s website.',
+        'Sign in at digicert.com and open CertCentral > Automation > API keys.', 'Add an API key named "VortexPanel", allowed to place and read orders, and copy it.', 'Paste it below.'];
+    },
+    bizPickBrand(b){ const d=this.drawer; d.bizBrand=b; d.bizCatalog=null; d.bizProduct=''; d.bizCsr=''; this.bizLoadCatalog(); },
+    async bizLoadCatalog(){
+      const d=this.drawer, p=this.bizProvider(); if(!p || !this.bizConnected()) return;
+      const r=await get('/api/ssl/business/catalog?provider='+p);
+      if(!r.ok){ toast(r.error||'Could not read the products of the account','error'); return; }
+      d.bizCatalog=r;
+      const list=this.bizProducts(); if(!list.find(x=>x.id===d.bizProduct)) d.bizProduct=(list[0]||{}).id||'';
+    },
+    bizProducts(){
+      const d=this.drawer, list=d.bizCatalog?.products||[];
+      if(d.bizBrand==='geotrust') return list.filter(p=>p.brand==='GeoTrust');
+      if(d.bizBrand==='digicert') return list.filter(p=>p.brand!=='GeoTrust');
+      return list;
+    },
+    bizNeedsOrg(){ const p=this.bizProducts().find(x=>x.id===this.drawer.bizProduct); return !!p && p.level!=='DV'; },
+    bizOrgFields(){ return [['name','Legal company name'],['address','Street address'],['city','City'],['state','State'],['zip','Postal code'],['country','Country (2 letters)'],['phone','Phone'],['first_name','Contact first name'],['last_name','Contact last name'],['email','Contact e-mail']]; },
+    bizDcvOptions(){
+      const wild=this.drawer.bizKind==='wildcard';
+      return [
+        {id:'http', name:'File on the website', line:'Placed for you in /.well-known/pki-validation/.', disabled:wild},
+        {id:'dns', name:'DNS record', line:'Added for you on Cloudflare or this server\'s DNS; otherwise shown to add.', disabled:false},
+        {id:'email', name:'E-mail approval', line:'The provider e-mails admin@ of the domain to approve.', disabled:false},
+      ];
+    },
+    async bizConnect(){
+      const d=this.drawer, p=this.bizProvider(); if(!p) return;
+      d.bizBusy=true;
+      const r=await post('/api/ssl/accounts/'+p,{api_key:d.bizKey});
+      d.bizBusy=false;
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      d.bizKey=''; toast('Account connected','success');
+      await this.sslLoadAccounts(); this.bizLoadCatalog();
+    },
+    async bizDisconnect(){
+      const p=this.bizProvider(); if(!p) return;
+      if(!confirm('Remove the '+this.bizProviderName()+' API key from this server?\n\nOrders already placed keep their status, but the panel can no longer check or install them until you connect again.')) return;
+      const r=await del('/api/ssl/accounts/'+p);
+      toast(r.ok?'Disconnected':(r.error||'Failed'), r.ok?'success':'error');
+      this.drawer.bizCatalog=null; this.sslLoadAccounts();
+    },
+    async bizLoadOrders(){
+      const d=this.drawer, domain=d.site?.domain; if(!domain) return;
+      const r=await get('/api/websites/'+domain+'/ssl/business/orders');
+      if(r.ok){ d.bizOrders=(r.orders||[]).filter(o=>o.kind!=='csr'); if(!d.sslDisclaimer) d.sslDisclaimer=r.disclaimer||''; }
+    },
+    bizStatusLabel(s){ return {placing:'Placing', validating:'Waiting for the provider', issued:'Issued, installing', installed:'Issued and installed', failed:'Failed', cancelled:'Cancelled'}[s]||s; },
+    async bizPlaceOrder(){
+      const d=this.drawer, domain=d.site?.domain, p=this.bizProvider(); if(!domain||!p) return;
+      if(d.bizKind==='wildcard' && d.bizDcv==='http'){ toast('A wildcard certificate needs the DNS record or e-mail method','error'); return; }
+      let org=null;
+      if(this.bizNeedsOrg()){
+        if(d.bizOrgId) org={id:d.bizOrgId};
+        else { org={...d.bizOrg}; if(!org.name||!org.country||!org.phone||!org.email){ toast('Fill in the company name, country, phone and contact e-mail','error'); return; } }
+      }
+      const prod=this.bizProducts().find(x=>x.id===d.bizProduct);
+      if(!confirm('Place this order with '+this.bizProviderName()+'?\n\n'+(prod?.name||d.bizProduct)+', '+d.bizYears+' year(s), for '+domain+'.\nIt is charged to your '+this.bizProviderName()+' account at its price.')) return;
+      d.bizBusy=true;
+      const r=await post('/api/websites/'+domain+'/ssl/business/orders',{provider:p, product:d.bizProduct, kind:d.bizKind,
+        extra_names:(d.bizExtra||'').split(/\s+/).filter(Boolean), years:d.bizYears, dcv:d.bizDcv, organization:org, payment:d.bizPayment});
+      d.bizBusy=false;
+      if(!r.ok){ toast(r.error||'The order was not placed','error'); this.bizLoadOrders(); return; }
+      toast('Order placed. The panel installs the certificate when it is issued.','success');
+      this.bizLoadOrders();
+    },
+    async bizCheck(o){
+      const r=await post('/api/ssl/business/orders/'+o.id+'/check',{});
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      toast(r.order.status==='installed'?'Certificate installed':'Still waiting for the provider', r.order.status==='installed'?'success':'info');
+      this.bizLoadOrders(); if(r.order.status==='installed'){ this.loadDrawerTab(); this.load(); }
+    },
+    async bizImport(){
+      const d=this.drawer, domain=d.site?.domain, p=this.bizProvider(); if(!domain||!p) return;
+      d.bizBusy=true;
+      const r=await post('/api/websites/'+domain+'/ssl/business/import',{provider:p, order:d.bizImportNo, key:d.bizImportKey});
+      d.bizBusy=false;
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      d.bizImportNo=''; d.bizImportKey='';
+      toast('Certificate imported and installed','success'); this.loadDrawerTab(); this.load();
+    },
+    async bizMakeCsr(){
+      const d=this.drawer, domain=d.site?.domain; if(!domain) return;
+      d.bizBusy=true;
+      const r=await post('/api/websites/'+domain+'/ssl/csr',{kind:d.bizKind, extra_names:(d.bizExtra||'').split(/\s+/).filter(Boolean)});
+      d.bizBusy=false;
+      if(!r.ok){ toast(r.error||'Failed','error'); return; }
+      d.bizCsr=r.csr;
+      try{ await navigator.clipboard.writeText(r.csr); toast('CSR created and copied','success'); }catch(e){ toast('CSR created','success'); }
+    },
     async issueDnsSSL(){
       const d=this.drawer, domain=d.site?.domain; if(!domain) return;
       const p=this.dnsCurrent(); if(!p){ toast('Choose a DNS provider','error'); return; }
       for(const f of p.fields){ if(f.required && !f.saved && !(d.dnsCreds[f.var]||'').trim()){ toast(f.label+' is required','error'); return; } }
       d.dnsBusy=true; d.dnsOutput='Starting…';
-      const r=await post('/api/websites/'+domain+'/ssl/dns',{provider:p.id,creds:d.dnsCreds,wildcard:d.dnsWildcard,email:d.sslEmail});
+      const ca=this.sslCaArgs();
+      const r=await post('/api/websites/'+domain+'/ssl/dns',{provider:p.id,creds:d.dnsCreds,wildcard:d.dnsWildcard,...ca,email:ca.email||d.sslEmail});
       if(!r.ok){ d.dnsBusy=false; d.dnsOutput=r.error||'Failed'; toast(r.error||'Failed','error'); return; }
       const ok=await this.pollAcmeJob(r.job_id,'dnsOutput');
       d.dnsBusy=false;

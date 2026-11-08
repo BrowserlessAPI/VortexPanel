@@ -141,6 +141,26 @@ def _nginx_conf_path(domain):
     return os.path.join(avail, f'{domain}.conf')
 
 
+# http -> https, except the certificate validation paths: providers that check a file over
+# plain HTTP (DigiCert, ZeroSSL, Sectigo) may not follow a redirect to https
+NGINX_REDIRECT = ('if ($request_uri !~ "^/\\.well-known/(acme-challenge|pki-validation)/") '
+                  '{ return 301 https://$host$request_uri; }')
+
+
+def nginx_exempt_validation(content):
+    """Older VortexPanel redirects sent validation files to https too: keep them on http."""
+    return re.sub(r'^([ \t]*)return 301 https://\$host\$request_uri;\s*' + re.escape(SSL_REDIRECT_TAG) + r'[^\n]*',
+                  lambda m: f'{m.group(1)}{NGINX_REDIRECT} {SSL_REDIRECT_TAG}', content, flags=re.M)
+
+
+def apache_exempt_validation(content):
+    if A_REDIR_BEGIN not in content or 'pki-validation' in content:
+        return content
+    return re.sub(r'^([ \t]*)RewriteCond %\{HTTPS\} off\n',
+                  lambda m: m.group(0) + f'{m.group(1)}RewriteCond %{{REQUEST_URI}} !^/\\.well-known/(acme-challenge|pki-validation)/\n',
+                  content, count=1, flags=re.M)
+
+
 def nginx_add_ssl(content, domain, cert_path, key_path):
     """Return content with HTTPS enabled: the site's port-80 server block is
     cloned into a `listen 443 ssl` block (keeping PHP/locations/rewrites, so
@@ -175,7 +195,7 @@ def nginx_add_ssl(content, domain, cert_path, key_path):
     redirect_block = block
     if m:
         m2 = re.search(r'\n([ \t]*)server_name[^;]*;[^\n]*', block)
-        redirect_block = (block[:m2.end()] + f'\n{m2.group(1)}return 301 https://$host$request_uri; {SSL_REDIRECT_TAG}'
+        redirect_block = (block[:m2.end()] + f'\n{m2.group(1)}{NGINX_REDIRECT} {SSL_REDIRECT_TAG}'
                           + block[m2.end():])
     return (content[:s_] + redirect_block + content[e_:].rstrip('\n') +
             f'\n\n{SSL_BEGIN}\n{ssl}\n{SSL_END}\n')
@@ -302,6 +322,7 @@ def apache_add_ssl(content, cert_path, key_path):
     pos = sn.end() if sn else ssl.index('>') + 1
     ssl = ssl[:pos] + ssl_lines + ssl[pos:]
     redirect = (f'\n{ind}{A_REDIR_BEGIN}\n{ind}RewriteEngine On\n{ind}RewriteCond %{{HTTPS}} off\n'
+                f'{ind}RewriteCond %{{REQUEST_URI}} !^/\\.well-known/(acme-challenge|pki-validation)/\n'
                 f'{ind}RewriteRule ^ https://%{{HTTP_HOST}}%{{REQUEST_URI}} [R=301,L]\n{ind}{A_REDIR_END}')
     sn80 = re.search(r'\n[ \t]*ServerName[^\n]*', block)
     p80 = sn80.end() if sn80 else block.index('>') + 1
@@ -329,6 +350,7 @@ def _apache_inject_ssl(domain, cert_path, key_path):
         # its certbot companion at the given files
         def repoint(c):
             c = re.sub(r'(^[ \t]*SSLCertificateFile\s+)\S+', lambda m: m.group(1) + cert_path, c, flags=re.M)
+            c = apache_exempt_validation(c)
             return re.sub(r'(^[ \t]*SSLCertificateKeyFile\s+)\S+', lambda m: m.group(1) + key_path, c, flags=re.M)
         return apache_edit_site(fp, repoint)
     _apache_enable_ssl_module()
@@ -511,14 +533,240 @@ def letsencrypt_ssl(domain):
 
 @websites_bp.route('/api/websites/<domain>/ssl/manual', methods=['POST'])
 def manual_ssl(domain):
+    """Own certificate: certificate + private key (+ CA bundle), or a .pfx/.p12 file.
+    Checked first (key matches, covers the website, chain, expiry); installed in its
+    own folder so the previous certificate stays available for Switch back."""
     if not req(): return jsonify({'ok':False}), 401
-    d    = request.get_json() or {}
-    return install_manual_cert(domain, d.get('cert',''), d.get('key',''))
+    if not is_valid_domain(domain):
+        return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    ws = _find_site_config(domain)[1]
+    if ws not in ('nginx', 'apache'):
+        return jsonify({'ok': False, 'error': f'Installing your own certificate is available for nginx and Apache websites '
+                                              f'({domain} is served by {ws or "an unknown web server"}).'}), 400
+    d = request.get_json() or {}
+    cert, key = d.get('cert', ''), d.get('key', '')
+    if d.get('pfx'):
+        cert, key, err = pfx_to_pem(d.get('pfx', ''), d.get('pfx_password', ''))
+        if err:
+            return jsonify({'ok': False, 'error': err}), 400
+    if cert and not (key or '').strip():
+        # bought elsewhere with a CSR made by this panel: its key is on this server
+        try:
+            from panel import ssl_orders as _so
+            key = _so.key_for_cert(cert)
+        except Exception:
+            key = ''
+    cert, chk = prepare_cert(domain, cert, key, d.get('chain', ''))
+    if chk.get('error'):
+        return jsonify({'ok': False, 'error': chk['error'], 'check': chk}), 400
+    if d.get('check_only'):
+        return jsonify({'ok': True, 'check': chk})
+    resp = install_manual_cert(domain, cert, key, subdir='own', source='own')
+    body = resp[0] if isinstance(resp, tuple) else resp
+    data = body.get_json() or {}
+    data['check'] = chk
+    return jsonify(data), (resp[1] if isinstance(resp, tuple) else 200)
 
 
-def install_manual_cert(domain, cert, key):
+def _openssl(args, data=None, t=20):
+    try:
+        r = subprocess.run(['openssl'] + args, input=data, capture_output=True, timeout=t)
+        return r.returncode, r.stdout, r.stderr
+    except Exception as e:
+        return 1, b'', str(e).encode()
+
+
+def pfx_to_pem(b64, password):
+    """A .pfx / .p12 file (base64) -> (certificate chain PEM, key PEM, error)."""
+    import base64
+    try:
+        raw = base64.b64decode(b64, validate=False)
+    except Exception:
+        return '', '', 'The .pfx file could not be read'
+    if not raw or len(raw) > 200_000:
+        return '', '', 'The .pfx file is empty or too large'
+    tmpdir = tempfile.mkdtemp(prefix='vp-pfx-')
+    try:
+        pf, pw = os.path.join(tmpdir, 'in.pfx'), os.path.join(tmpdir, 'pw')
+        _write_secret(pf, '', 0o600)
+        with open(pf, 'wb') as f:
+            f.write(raw)
+        _write_secret(pw, password or '', 0o600)
+        out = {}
+        for what, extra in (('cert', ['-nokeys']), ('key', ['-nocerts', '-nodes'])):
+            for legacy in ([], ['-legacy']):     # old .pfx files use RC2/3DES (OpenSSL 3: -legacy)
+                rc, o, e = _openssl(['pkcs12', '-in', pf, '-passin', f'file:{pw}'] + extra + legacy)
+                if rc == 0:
+                    out[what] = o.decode(errors='replace')
+                    break
+            if what not in out:
+                return '', '', 'The .pfx password is wrong, or the file is damaged'
+        # keep only the PEM blocks (drop "Bag Attributes" lines)
+        certs = re.findall(r'-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----', out['cert'], re.S)
+        keym = re.search(r'-----BEGIN (?:RSA |EC )?PRIVATE KEY-----.+?-----END (?:RSA |EC )?PRIVATE KEY-----', out['key'], re.S)
+        if not certs or not keym:
+            return '', '', 'The .pfx file holds no certificate or no private key'
+        return '\n'.join(certs), keym.group(0), ''
+    finally:
+        import shutil as _shu
+        _shu.rmtree(tmpdir, ignore_errors=True)
+
+
+def cert_details(pem):
+    """Names, issuer and expiry of the first certificate in `pem`."""
+    rc, o, e = _openssl(['x509', '-noout', '-subject', '-issuer', '-enddate', '-ext', 'subjectAltName',
+                         '-nameopt', 'utf8,sep_comma_plus'], pem.encode())
+    if rc != 0:
+        rc, o, e = _openssl(['x509', '-noout', '-subject', '-issuer', '-enddate', '-text'], pem.encode())
+    txt = o.decode(errors='replace')
+    names = re.findall(r'DNS:([^,\s]+)', txt)
+    cn = re.search(r'subject=.*?CN\s*=\s*([^,\n]+)', txt)
+    if cn and cn.group(1).strip() not in names:
+        names.insert(0, cn.group(1).strip())
+    org = re.search(r'issuer=.*?O\s*=\s*([^,\n]+)', txt)
+    icn = re.search(r'issuer=.*?CN\s*=\s*([^,\n]+)', txt)
+    end = re.search(r'notAfter=(.+)', txt)
+    not_after, days = '', None
+    if end:
+        try:
+            dt = datetime.strptime(end.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
+            not_after, days = dt.strftime('%Y-%m-%d'), (dt - datetime.utcnow()).days
+        except ValueError:
+            pass
+    return {'names': names, 'issuer': (org.group(1).strip() if org else ''),
+            'issuer_cn': (icn.group(1).strip() if icn else ''), 'expires_on': not_after, 'days_left': days}
+
+
+def covers(names, host):
+    host = host.lower()
+    for n in names:
+        n = n.lower()
+        if n == host or (n.startswith('*.') and host.count('.') == n.count('.') and host.endswith(n[1:])):
+            return True
+    return False
+
+
+def _complete_chain(leaf_and_chain):
+    """(pem, complete): the certificate plus any intermediates fetched from the address
+    in the certificate (Authority Information Access) when they are missing."""
+    def verify(pem):
+        tmpdir = tempfile.mkdtemp(prefix='vp-chain-')
+        try:
+            blocks = re.findall(r'-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----', pem, re.S)
+            lf, ch = os.path.join(tmpdir, 'leaf.pem'), os.path.join(tmpdir, 'chain.pem')
+            with open(lf, 'w') as f: f.write(blocks[0] + '\n')
+            args = ['verify', '-purpose', 'sslserver']
+            if len(blocks) > 1:
+                with open(ch, 'w') as f: f.write('\n'.join(blocks[1:]) + '\n')
+                args += ['-untrusted', ch]
+            rc, o, e = _openssl(args + [lf])
+            return rc == 0
+        finally:
+            import shutil as _shu
+            _shu.rmtree(tmpdir, ignore_errors=True)
+    pem = leaf_and_chain
+    if verify(pem):
+        return pem, True
+    for _ in range(3):              # follow at most three missing links
+        last = re.findall(r'-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----', pem, re.S)[-1]
+        rc, o, e = _openssl(['x509', '-noout', '-text'], last.encode())
+        m = re.search(r'CA Issuers - URI:(http://\S+)', o.decode(errors='replace'))
+        if not m:
+            break
+        try:
+            r = subprocess.run(['curl', '-fsSL', '--max-time', '10', m.group(1)], capture_output=True, timeout=15)
+        except Exception:
+            break
+        if r.returncode != 0 or not r.stdout:
+            break
+        data = r.stdout
+        if b'-----BEGIN CERTIFICATE-----' not in data:
+            rc, o, e = _openssl(['x509', '-inform', 'DER', '-outform', 'PEM'], data)
+            if rc != 0:
+                break
+            data = o
+        pem = pem.rstrip() + '\n' + data.decode(errors='replace').strip()
+        if verify(pem):
+            return pem, True
+    return leaf_and_chain, False
+
+
+def prepare_cert(domain, cert, key, chain=''):
+    """Check an own certificate before anything changes.
+    Returns (certificate with chain, check dict); check['error'] blocks the install."""
+    cert = (cert or '').strip()
+    chain = (chain or '').strip()
+    if chain and chain not in cert:
+        cert = cert + '\n' + chain
+    chk = {'key_matches': False, 'covers': [], 'missing': [], 'chain_complete': False}
+    if not cert or not (key or '').strip():
+        chk['error'] = 'The certificate and the private key are both needed'
+        return cert, chk
+    err = _validate_cert_pair(cert, (key or '').strip())
+    if err:
+        chk['error'] = err
+        return cert, chk
+    chk['key_matches'] = True
+    det = cert_details(cert)
+    chk.update(det)
+    hosts = [domain] + ([f'www.{domain}'] if domain.count('.') == 1 else [])
+    chk['covers'] = [h for h in hosts if covers(det['names'], h)]
+    chk['missing'] = [h for h in hosts if h not in chk['covers']]
+    if domain not in chk['covers']:
+        chk['error'] = (f'This certificate is for {", ".join(det["names"][:4]) or "other names"}, not for {domain}. '
+                        'Installing it would show a security warning to every visitor.')
+        return cert, chk
+    cert, chk['chain_complete'] = _complete_chain(cert)
+    return cert, chk
+
+
+def _vhost_cert_paths(domain):
+    """(cert, key) the website uses now, or ('', '')."""
+    fp, ws = _find_site_config(domain)
+    if not fp or not os.path.exists(fp):
+        return '', ''
+    content = open(fp).read()
+    if ws == 'apache':
+        companion = fp[:-5] + '-le-ssl.conf'
+        if os.path.exists(companion):
+            content += open(companion).read()
+        c = re.search(r'^\s*SSLCertificateFile\s+"?([^"\s]+)', content, re.M)
+        k = re.search(r'^\s*SSLCertificateKeyFile\s+"?([^"\s]+)', content, re.M)
+    else:
+        c = re.search(r'^[ \t]*ssl_certificate\s+([^;\s]+)\s*;', content, re.M)
+        k = re.search(r'^[ \t]*ssl_certificate_key\s+([^;\s]+)\s*;', content, re.M)
+    return (c.group(1) if c else ''), (k.group(1) if k else '')
+
+
+def _ssl_dir(domain, ws=None):
+    ws = ws or _find_site_config(domain)[1] or 'nginx'
+    # nginx keeps its historical location; other servers must not get an
+    # /etc/nginx tree created on a server without nginx.
+    return f'/etc/nginx/ssl/{domain}' if ws == 'nginx' else f'/etc/ssl/vortexpanel/{domain}'
+
+
+def _remember_previous(domain, new_cert_path):
+    """Keep a note of the certificate the website used until now (Switch back)."""
+    cur, curkey = _vhost_cert_paths(domain)
+    if not cur or cur == new_cert_path or not os.path.exists(cur) or not os.path.exists(curkey):
+        return
+    try:
+        det = cert_details(open(cur).read())
+    except OSError:
+        return
+    meta = {'cert': cur, 'key': curkey, 'issuer': det.get('issuer') or det.get('issuer_cn'),
+            'names': det.get('names', [])[:6], 'expires_on': det.get('expires_on'), 'saved': int(datetime.utcnow().timestamp())}
+    d = _ssl_dir(domain)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    with open(f'{d}/previous.json', 'w') as f:
+        json.dump(meta, f)
+
+
+def install_manual_cert(domain, cert, key, subdir='', source=''):
     """Validate and install a certificate + key for a site (Upload SSL, and
-    the SSL step of Website Import). Returns a Flask response tuple/object."""
+    the SSL step of Website Import). Returns a Flask response tuple/object.
+    subdir: a folder of its own under the site's SSL folder ('own', 'business'), so a
+    certificate renewed automatically into the main folder does not overwrite it."""
     key  = (key or '').strip()
     cert = (cert or '').strip()
     if not key or not cert:
@@ -526,53 +774,99 @@ def install_manual_cert(domain, cert, key):
 
     if not is_valid_domain(domain):
         return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    if subdir and not re.fullmatch(r'[a-z]{1,16}', subdir):
+        return jsonify({'ok':False,'error':'Invalid folder'}), 400
     verr = _validate_cert_pair(cert, key)
     if verr:
         return jsonify({'ok':False,'error':verr}), 400
     site_ws = _find_site_config(domain)[1] or 'nginx'
-    # nginx keeps its historical location; other servers must not get an
-    # /etc/nginx tree created on a server without nginx.
-    ssl_dir = f'/etc/nginx/ssl/{domain}' if site_ws == 'nginx' else f'/etc/ssl/vortexpanel/{domain}'
+    ssl_dir = _ssl_dir(domain, site_ws) + (f'/{subdir}' if subdir else '')
     os.makedirs(ssl_dir, mode=0o700, exist_ok=True)
 
     key_path  = f'{ssl_dir}/privkey.pem'
     cert_path = f'{ssl_dir}/fullchain.pem'
+    _remember_previous(domain, cert_path)
+    # write next to the live files first, swap only after the web server accepted them
     _write_secret(key_path, key + '\n', 0o600)
     _write_secret(cert_path, cert + '\n', 0o644)
+    if source:
+        with open(f'{ssl_dir}/source.json', 'w') as f:
+            json.dump({'source': source, 'installed': int(datetime.utcnow().timestamp())}, f)
 
+    ok, err = point_site_to(domain, cert_path, key_path)
+    if not ok:
+        return jsonify({'ok': False, 'error': err}), 400
+    return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
+
+
+def point_site_to(domain, cert_path, key_path):
+    """Make the website use these certificate files (web server config checked before the
+    reload, restored when refused). Returns (ok, error)."""
     ws = _find_site_config(domain)[1]
     if ws == 'apache':
-        ok, err = _apache_inject_ssl(domain, cert_path, key_path)
-        if not ok:
-            return jsonify({'ok':False,'error':err}), 400
-        return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
+        return _apache_inject_ssl(domain, cert_path, key_path)
     if ws in ('openlitespeed', 'caddy'):
-        return jsonify({'ok':False,'error':f'Uploading a certificate is supported for nginx and Apache sites. For this {ws} site, '
-                                          f'the files were saved to {cert_path} and {key_path} -- reference them in the Config tab.'}), 400
-
+        return False, (f'Installing a certificate here is supported for nginx and Apache sites. For this {ws} site, '
+                       f'the files were saved to {cert_path} and {key_path} -- reference them in the Config tab.')
     # Update nginx config to add SSL (validated with nginx -t, restored on failure)
     conf_path = _nginx_conf_path(domain)
-    if os.path.exists(conf_path):
-        with open(conf_path) as f: content = f.read()
-        fixed = nginx_dedupe_ssl(content)
-        if fixed != content:
-            ok, err = _nginx_apply(conf_path, fixed)
-            if ok:
-                content = fixed
-        new = nginx_add_ssl(content, domain, cert_path, key_path)
-        if new is None:
-            # SSL already configured (possibly with a Let's Encrypt path):
-            # point it at the uploaded files -- previously the upload was
-            # reported as installed while the old certificate kept being served
-            new = re.sub(r'(^[ \t]*ssl_certificate\s+)[^;]+;', lambda m: m.group(1) + cert_path + ';', content, flags=re.M)
-            new = re.sub(r'(^[ \t]*ssl_certificate_key\s+)[^;]+;', lambda m: m.group(1) + key_path + ';', new, flags=re.M)
-            if new == content:
-                reload_nginx()
-                return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
-        ok, err = _nginx_apply(conf_path, new)
-        if not ok:
-            return jsonify({'ok':False,'error':err}), 400
-    return jsonify({'ok':True, 'key_path':key_path, 'cert_path':cert_path})
+    if not os.path.exists(conf_path):
+        return True, ''
+    with open(conf_path) as f: content = f.read()
+    fixed = nginx_exempt_validation(nginx_dedupe_ssl(content))
+    if fixed != content:
+        ok, err = _nginx_apply(conf_path, fixed)
+        if ok:
+            content = fixed
+    new = nginx_add_ssl(content, domain, cert_path, key_path)
+    if new is None:
+        # SSL already configured (possibly with a Let's Encrypt path):
+        # point it at the new files -- previously the upload was
+        # reported as installed while the old certificate kept being served
+        new = re.sub(r'(^[ \t]*ssl_certificate\s+)[^;]+;', lambda m: m.group(1) + cert_path + ';', content, flags=re.M)
+        new = re.sub(r'(^[ \t]*ssl_certificate_key\s+)[^;]+;', lambda m: m.group(1) + key_path + ';', new, flags=re.M)
+        if new == content:
+            reload_nginx()
+            return True, ''
+    return _nginx_apply(conf_path, new)
+
+
+def previous_cert(domain):
+    """The certificate the website used before the current one, if its files are still valid."""
+    try:
+        meta = json.load(open(f'{_ssl_dir(domain)}/previous.json'))
+    except (OSError, ValueError):
+        return None
+    cur, _ = _vhost_cert_paths(domain)
+    if meta.get('cert') == cur or not os.path.exists(meta.get('cert', '')) or not os.path.exists(meta.get('key', '')):
+        return None
+    try:
+        det = cert_details(open(meta['cert']).read())
+    except OSError:
+        return None
+    if det.get('days_left') is not None and det['days_left'] < 0:
+        return None
+    meta.update(expires_on=det.get('expires_on'), days_left=det.get('days_left'))
+    return meta
+
+
+@websites_bp.route('/api/websites/<domain>/ssl/switch-back', methods=['POST'])
+def ssl_switch_back(domain):
+    if not req(): return jsonify({'ok':False}), 401
+    if not is_valid_domain(domain):
+        return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    prev = previous_cert(domain)
+    if not prev:
+        return jsonify({'ok': False, 'error': 'There is no earlier certificate to switch back to'}), 400
+    err = _validate_cert_pair(open(prev['cert']).read(), open(prev['key']).read())
+    if err:
+        return jsonify({'ok': False, 'error': 'The earlier certificate can no longer be used: ' + err}), 400
+    cur_cert, _ = _vhost_cert_paths(domain)
+    _remember_previous(domain, prev['cert'])     # the current one becomes the "previous"
+    ok, err = point_site_to(domain, prev['cert'], prev['key'])
+    if not ok:
+        return jsonify({'ok': False, 'error': err}), 400
+    return jsonify({'ok': True, 'message': f'Switched back to the {prev.get("issuer") or "earlier"} certificate'})
 
 
 @websites_bp.route('/api/websites/<domain>/ssl/info')
@@ -628,8 +922,19 @@ def ssl_info(domain):
                 acme = acme_info(domain)
             except Exception:
                 acme = None
+            src = ''
+            try:
+                src = json.load(open(os.path.join(os.path.dirname(p), 'source.json'))).get('source', '')
+            except (OSError, ValueError):
+                pass
+            try:
+                from panel import ssl_orders as _so
+                order = _so.installed_order(domain, p)
+            except Exception:
+                order = None
             return jsonify({
                 'ok': True, 'info': info, 'expiry': expiry, 'path': p, 'acme': acme,
+                'source': src, 'previous': previous_cert(domain), 'order': order,
                 'brand': brand, 'domain': domain,
                 'expires_on': not_after.strftime('%Y-%m-%d') if not_after else '',
                 'days_left': days_left,
