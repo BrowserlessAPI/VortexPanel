@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://img.shields.io/badge/VortexPanel-v3.10.0-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.10.0">
+<img src="https://img.shields.io/badge/VortexPanel-v3.11.1-6c7fff?style=for-the-badge&logo=lightning&logoColor=white" alt="VortexPanel v3.11.1">
 <img src="https://img.shields.io/badge/Python-3.8+-3776ab?style=for-the-badge&logo=python&logoColor=white">
 <img src="https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask">
 <img src="https://img.shields.io/badge/Alpine.js-3.15-8bc0d0?style=for-the-badge">
@@ -196,7 +196,7 @@ curl -fsSL https://raw.githubusercontent.com/BrowserlessAPI/VortexPanel/main/ins
 The installer installs the newest signed release and prints everything you need, for example:
 
 ```
-VortexPanel v3.7.0  (active)
+VortexPanel v3.11.1  (active)
   Address:   https://203.0.113.10:23817/k4m9q2xd
   Username:  hq7tmc2e
   Password:  ...
@@ -230,7 +230,7 @@ Viewer keys can read monitoring and status; administrator keys can call every `/
 
 | Distro | Versions |
 |---|---|
-| **Ubuntu** | 20.04, 22.04, 24.04 |
+| **Ubuntu** | 20.04, 22.04, 24.04, 26.04 |
 | **Debian** | 11, 12 |
 | **AlmaLinux** | 8, 9, 10 |
 | **Rocky Linux** | 8, 9, 10 |
