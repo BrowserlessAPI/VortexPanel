@@ -20,13 +20,13 @@ import common as C  # noqa: E402
 
 # --------------------------------------------------------------- upstream sources
 
-def _gh_paged(url, pages=4):
+def _gh_paged(url, pages=4, per_page=100):
     out = []
     for p in range(1, pages + 1):
         sep = '&' if '?' in url else '?'
-        chunk = C.http_json(f'{url}{sep}per_page=100&page={p}')
+        chunk = C.http_json(f'{url}{sep}per_page={per_page}&page={p}')
         out += chunk
-        if len(chunk) < 100:
+        if len(chunk) < per_page:
             break
     return out
 
@@ -90,7 +90,8 @@ def src_python_standalone(w):
     """astral-sh/python-build-standalone: relocatable CPython builds (any glibc >= 2.17)."""
     rx = re.compile(r'cpython-(3\.\d+\.\d+)\+(\d+)-(x86_64|aarch64)-unknown-linux-gnu-install_only\.tar\.gz$')
     best = {}
-    for r in _gh_paged('https://api.github.com/repos/astral-sh/python-build-standalone/releases', 2):
+    # each release lists ~1000 files: 100 releases per page made GitHub time out (504)
+    for r in _gh_paged('https://api.github.com/repos/astral-sh/python-build-standalone/releases', 6, per_page=5):
         for a in r.get('assets', []):
             m = rx.match(a['name'])
             if not m:
