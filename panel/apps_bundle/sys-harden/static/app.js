@@ -11,9 +11,11 @@ function vpaSysHarden() {
     ev: {items: [], total: 0, page: 1, size: 50}, evf: {severity: '', area: '', q: ''},
     sf: {scan_minutes: 5, notify: true, auto_kill: false}, ops: [],
     fm: {show: false, area: null, label: '', items: [], total: 0, q: ''},
+    ig: {}, igMore: {}, igTimer: null,
     tabs: [
       {id: 'overview', label: 'Overview', icon: 'grid'}, {id: 'protection', label: 'Protection', icon: 'shield'},
-      {id: 'process', label: 'Process guard', icon: 'cpu'}, {id: 'compliance', label: 'Compliance', icon: 'check'},
+      {id: 'process', label: 'Process guard', icon: 'cpu'}, {id: 'integrity', label: 'Integrity', icon: 'search'},
+      {id: 'compliance', label: 'Compliance', icon: 'check'},
       {id: 'audit', label: 'Log audit', icon: 'file-text'}, {id: 'events', label: 'Events', icon: 'activity'},
       {id: 'settings', label: 'Settings', icon: 'settings'},
     ],
@@ -31,18 +33,65 @@ function vpaSysHarden() {
       this.ov = r; this.areas = r.areas; this.svc = r.service; this.loaded = true;
       this.sf = {scan_minutes: r.config.scan_minutes, notify: r.config.notify, auto_kill: r.config.auto_kill};
       this.pg.auto_kill = r.config.auto_kill;
+      this.loadInteg();
     },
     setTab(t) {
       this.tab = t;
       if (t === 'overview' || t === 'protection') this.load(true);
       if (t === 'process') this.loadProcs();
+      if (t === 'integrity') this.loadInteg();
       if (t === 'compliance' && !this.comp.checks.length) this.loadComp();
       if (t === 'audit') { this.loadAudit(); get(API + '/audit/summary').then(r => { if (r.ok) this.au = r; }); }
       if (t === 'events') this.loadEvents(1);
       if (t === 'settings') get(API + '/oplog').then(r => { if (r.ok) this.ops = r.items; });
     },
+    async loadInteg() {
+      const r = await get(API + '/integrity');
+      if (!r.ok) return;
+      this.ig = r;
+      clearTimeout(this.igTimer);
+      if (this.integRunning()) this.igTimer = setTimeout(() => this.loadInteg(), 4000);
+    },
+    integRunning() { return !!(this.ig.running || this.ig.pending || this.busy === 'integ'); },
+    integTone(st) { return {ok: 'pass', warn: 'warn', bad: 'fail', unknown: 'na'}[st] || 'na'; },
+    integIcon(st) { return {ok: 'check', warn: 'alert', bad: 'x-circle'}[st] || 'circle'; },
+    integHeadline() {
+      if (this.integRunning() && !this.ig.t) return 'Checking...';
+      return {ok: 'Everything matches its trusted source', warn: 'Some parts could not be checked or need a look',
+              bad: 'Files differ from their trusted source'}[this.ig.status] || 'Not checked yet';
+    },
+    integFixable(s) { return (s.items || []).filter(i => ['restore', 'remove'].includes(i.fix)).map(i => i.path); },
+    integAdvice(s) {
+      if (s.status !== 'bad') return '';
+      return {
+        panel: 'A changed panel file can be a backdoor. Restore puts back the signed release files and moves foreign code to quarantine (data/apps/sys-harden/quarantine), then restarts the panel. Then change the admin password and check who has SSH access.',
+        apps: 'Uninstall the App in the App Store (its settings and history are kept) and install it again to put back the published files.',
+        venv: 'Reinstall the panel packages: /opt/vortexpanel/venv/bin/pip install --force-reinstall -r /opt/vortexpanel/requirements.txt, then restart the panel.',
+        builds: 'Reinstall the software from the App Store (or Roll back to the previous version) to put back the VortexPanel build, then restart its service.',
+        packages: 'Reinstall the package shown next to each file. A changed sshd, sudo or PAM module usually means the server was taken over: change all passwords and SSH keys after cleaning, and consider rebuilding the server.',
+        backdoors: 'Treat the server as compromised: disconnect it from other servers, back up your data, change every password and SSH key, and rebuild it from a clean system if you can.',
+      }[s.id] || '';
+    },
+    async runInteg() {
+      this.busy = 'integ';
+      const r = await post(API + '/integrity', {});
+      this.busy = '';
+      toast(r.ok ? r.message : (r.error || 'Failed'), r.ok ? 'success' : 'error');
+      this.ig.pending = true;
+      this.loadInteg();
+    },
+    async repairInteg(s) {
+      const paths = this.integFixable(s);
+      if (!confirm(paths.length + ' file(s) will be restored from the signed release or moved to quarantine, and the panel will restart.\n\nContinue?')) return;
+      this.busy = 'repair';
+      const r = await post(API + '/integrity/repair', {paths});
+      this.busy = '';
+      if (!r.ok) { toast(r.error || 'Failed', 'error', 8000); return; }
+      toast(r.message + (r.errors && r.errors.length ? ' Refused: ' + r.errors.join('; ') : ''), 'success', 9000);
+      if (r.restarting) setTimeout(() => location.reload(), 9000); else this.loadInteg();
+    },
     sevTone(s) { return {critical: 'red', high: 'red', medium: 'amber', low: 'blue'}[s] || ''; },
-    areaLabel(id) { if (id === 'process') return 'Process guard'; const a = this.areas.find(x => x.id === id); return a ? a.label : id; },
+    areaLabel(id) { if (id === 'process') return 'Process guard'; if (id === 'integrity') return 'Integrity check'; const a = this.areas.find(x => x.id === id); return a ? a.label : id; },
     scoreTone() { const s = this.ov.score; return s == null ? 'blue' : (s >= 85 ? 'green' : (s >= 60 ? 'amber' : 'red')); },
     scoreColor() { const s = this.comp.score || 0; return s >= 85 ? 'var(--green)' : (s >= 60 ? 'var(--yellow)' : 'var(--red)'); },
 

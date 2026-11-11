@@ -31,3 +31,9 @@
 .vpsh-st.fail { background: var(--tint-red); color: var(--red); }
 .vpsh-st.na { background: var(--bg-raised); color: var(--text-dim); }
 .vpsh-new td:first-child { box-shadow: inset 3px 0 0 var(--vpa-c); }
+.vpsh-integ-h { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.vpsh-st-lg { width: 40px; height: 40px; }
+.vpsh-st-lg .vp-ic { width: 20px; height: 20px; }
+.vpsh-integ-items { margin-top: 10px; border-top: 1px solid var(--border); }
+.vpsh-integ-card.s-bad { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+@media (max-width: 640px) { .vpsh-path { max-width: 220px; } .vpsh-integ-h .btn { width: 100%; } }

@@ -5,7 +5,7 @@ import time
 from flask import jsonify, request
 
 from panel import appkit
-from vpapp_sys_harden import audit, compliance, guard, procguard
+from vpapp_sys_harden import audit, compliance, guard, integrity, procguard
 
 APP = guard.APP
 SERVICE = appkit.unit_name(APP)
@@ -126,6 +126,55 @@ def rebaseline():
 def scan_now():
     open(os.path.join(appkit.data_dir(APP), '.scan-now'), 'w').close()
     return jsonify({'ok': True, 'message': 'A scan starts within a few seconds.'})
+
+
+@bp.route('/integrity', methods=['GET', 'POST'])
+def integrity_route():
+    if request.method == 'POST':
+        res = appkit.read_json(APP, 'integrity.json', {})
+        if res.get('running') and time.time() - (res.get('started') or 0) < 3600:
+            return jsonify({'ok': True, 'message': 'The integrity check is already running.'})
+        if appkit.service_state(SERVICE) == 'active':
+            open(os.path.join(appkit.data_dir(APP), '.integrity-now'), 'w').close()
+        else:
+            import threading
+            from vpapp_sys_harden import worker
+            threading.Thread(target=worker.run_integrity, daemon=True).start()
+        appkit.oplog(APP, 'integrity check', 'started')
+        return jsonify({'ok': True, 'message': 'The integrity check has started. It takes a few minutes.'})
+    res = appkit.read_json(APP, 'integrity.json', {})
+    if res.get('running') and time.time() - (res.get('started') or 0) > 3600:
+        res['running'] = False          # a run that died with the service
+    res['pending'] = os.path.exists(os.path.join(appkit.data_dir(APP), '.integrity-now'))
+    res['sections_info'] = [{'id': i, 'label': l, 'desc': d} for i, l, d in integrity.SECTIONS]
+    return jsonify(dict(res, ok=True))
+
+
+@bp.route('/integrity/repair', methods=['POST'])
+def integrity_repair():
+    paths = [str(p) for p in (appkit.body().get('paths') or []) if isinstance(p, str)][:500]
+    if not paths:
+        return _err('Nothing selected')
+    try:
+        fixed, errors = integrity.repair_panel(paths)
+    except ValueError as e:
+        return _err(str(e))
+    appkit.oplog(APP, 'integrity repair', f'{len(fixed)} restored or quarantined' + (f'; {len(errors)} refused' if errors else ''))
+    try:
+        integrity.run(only={'panel', 'apps'})
+    except Exception:  # noqa: BLE001
+        pass
+    restart = bool(fixed)
+    if restart:
+        # the running panel still has the old code in memory: restart it once this reply is sent
+        rc, _, _ = appkit.run(['systemd-run', '--on-active=3', '--unit', f'vp-integrity-restart-{int(time.time())}',
+                               'systemctl', 'restart', 'vortexpanel'], timeout=30)
+        restart = rc == 0
+    return jsonify({'ok': True, 'fixed': fixed, 'errors': errors, 'restarting': restart,
+                    'message': f'{len(fixed)} file(s) restored from the signed release or moved to quarantine.'
+                               + (' The panel restarts in a few seconds to load the clean code.' if restart else
+                                  ' Restart the panel service (systemctl restart vortexpanel) to load the clean code.'
+                                  if fixed else '')})
 
 
 @bp.route('/files')

@@ -592,6 +592,25 @@ def _unpack(path, man, stage):
                 os.chmod(dst, 0o755)
         with open(os.path.join(files, '.vortex', 'manifest.json'), 'w') as f:
             json.dump(man, f, indent=1)
+        # sha256 of every file as it came out of the verified package: the System Hardening
+        # integrity check compares the installed build with it when the download server no
+        # longer offers this version
+        ref = {}
+        for d, dirs, fs in os.walk(files):
+            dirs[:] = [x for x in dirs if not (d == files and x == '.vortex')]
+            for n in fs:
+                p = os.path.join(d, n)
+                rel = os.path.relpath(p, files)
+                if os.path.islink(p):
+                    ref[rel] = 'link:' + os.readlink(p)
+                elif os.path.isfile(p):
+                    h = hashlib.sha256()
+                    with open(p, 'rb') as f:
+                        for b in iter(lambda: f.read(1 << 20), b''):
+                            h.update(b)
+                    ref[rel] = h.hexdigest()
+        with open(os.path.join(files, '.vortex', 'files.json'), 'w') as f:
+            json.dump(ref, f)
     # whatever the archive says, every file belongs to root and nobody else can write it
     for d, dirs, fs in os.walk(files):
         for n in [d] + [os.path.join(d, x) for x in dirs + fs]:

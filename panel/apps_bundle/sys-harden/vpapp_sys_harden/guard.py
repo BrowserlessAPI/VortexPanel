@@ -1,7 +1,11 @@
 """Protection areas: what each one watches, and monitor / lock.
 
-Monitor: a baseline (size, mtime, mode, owner, inode and sha256 of small files)
-is compared every scan; additions, removals and changes become events.
+Monitor: a baseline (size, mtime, ctime, mode, owner, inode and sha256 of every
+regular file) is compared every scan; additions, removals and changes become
+events. A file is hashed again whenever its ctime changes: ctime cannot be set
+back by a program (unlike mtime, which backdoor installers restore with touch -r),
+so a file rewritten in place with the same size and the old timestamps is still
+hashed and reported.
 Lock: chattr +i on the area's files. The App records exactly which files it
 locked and only ever unlocks those, so files someone made immutable by hand
 are left alone. A lock can be paused (all locks lifted) for N minutes for
@@ -17,7 +21,7 @@ from panel import appkit
 
 APP = 'sys-harden'
 MAX_FILES = 25000
-HASH_MAX = 2 * 1024 * 1024
+HASH_MAX = 512 * 1024 * 1024     # larger files: size, mtime and ctime only
 
 # id -> definition. 'lock_warn' explains what a lock blocks; lockable False = monitor only
 AREAS = {
@@ -60,12 +64,22 @@ AREAS = {
     'binaries': {
         'label': 'System binaries', 'icon': 'cpu', 'severity': 'medium',
         'desc': 'Programs in /bin, /sbin, /usr/bin and /usr/sbin. A replaced ls, ps or sshd hides an intruder.',
-        'paths': ['/bin', '/sbin', '/usr/bin', '/usr/sbin'],
+        'paths': ['/bin', '/sbin', '/usr/bin', '/usr/sbin', '/usr/local/bin', '/usr/local/sbin', '/usr/libexec/openssh',
+                  '/usr/lib/openssh'],
+        'lockable': False},
+    'libs': {
+        'label': 'Login libraries', 'icon': 'shield', 'severity': 'high',
+        'desc': 'PAM modules and the libraries SSH and logins load. Ebury and PAM backdoors replace these to steal passwords.',
+        'paths': ['/lib/*-linux-gnu/security', '/usr/lib/*-linux-gnu/security', '/lib64/security', '/usr/lib64/security',
+                  '/lib/*-linux-gnu/libkeyutils.so*', '/usr/lib/*-linux-gnu/libkeyutils.so*', '/lib64/libkeyutils.so*',
+                  '/usr/lib64/libkeyutils.so*', '/usr/lib/*-linux-gnu/libpam.so*', '/usr/lib/*-linux-gnu/libpam_misc.so*',
+                  '/lib/*-linux-gnu/libpam.so*', '/usr/lib64/libpam.so*', '/lib64/libpam.so*',
+                  '/usr/lib/*-linux-gnu/libcrypt.so*', '/usr/lib64/libcrypt.so*', '/etc/pam.d', '/etc/nsswitch.conf'],
         'lockable': False},
 }
 MODES = ('off', 'monitor', 'lock')
 DEFAULT_MODES = {'users': 'monitor', 'ssh': 'monitor', 'cron': 'monitor', 'services': 'monitor', 'env': 'monitor',
-                 'binaries': 'monitor'}
+                 'binaries': 'monitor', 'libs': 'monitor'}
 
 
 # ----------------------------------------------------------------- settings
@@ -94,11 +108,16 @@ def area_paths(aid, cfg=None):
         cfg = cfg or config()
         p = aid[7:]
         return [p] if os.path.exists(p) else []
-    out = []
+    out, seen = [], set()
     for p in AREAS[aid]['paths']:
-        for q in (glob.glob(p) if any(c in p for c in '*?[') else [p]):
-            if os.path.exists(q) or os.path.islink(q):
-                out.append(q)
+        for q in sorted(glob.glob(p)) if any(c in p for c in '*?[') else [p]:
+            if not (os.path.exists(q) or os.path.islink(q)):
+                continue
+            real = os.path.realpath(q) if not os.path.islink(q) else q
+            if real in seen:          # /lib and /usr/lib are one folder on merged-/usr systems
+                continue
+            seen.add(real)
+            out.append(q)
     return out
 
 
@@ -153,8 +172,9 @@ def _sha(p, st):
 
 
 def snapshot(aid, prev=None, cfg=None):
-    """{path: [size, mtime_ns, mode, uid, gid, ino, sha]}. Files whose stat is unchanged
-    against prev keep their stored hash (cheap rescans of /usr/bin)."""
+    """{path: [size, mtime_ns, mode, uid, gid, ino, sha, ctime_ns]}. A file keeps its stored
+    hash only when its stat AND ctime are unchanged (cheap rescans of /usr/bin); any write,
+    even one that restores size and mtime, changes ctime and makes it hashed again."""
     prev = prev or {}
     out = {}
     n = 0
@@ -168,11 +188,24 @@ def snapshot(aid, prev=None, cfg=None):
             continue
         key = [st.st_size, st.st_mtime_ns, st.st_mode, st.st_uid, st.st_gid, st.st_ino]
         old = prev.get(p)
-        if old and old[:6] == key:
+        if old and old[:6] == key and len(old) > 7 and old[7] == st.st_ctime_ns:
             out[p] = old
         else:
-            out[p] = key + [_sha(p, st)]
+            out[p] = key + [_sha(p, st), st.st_ctime_ns]
     return out
+
+
+def _content_changed(a, b):
+    if a[6] and b[6]:
+        return a[6] != b[6]
+    if a[0] != b[0]:
+        return True
+    if not stat.S_ISREG(b[2]):
+        return False
+    if a[1] != b[1]:
+        return True
+    # too large to hash: a new ctime without a permission change means the content was rewritten
+    return len(a) > 7 and len(b) > 7 and a[7] != b[7] and not b[6] and a[2:5] == b[2:5]
 
 
 def diff(old, new):
@@ -184,8 +217,10 @@ def diff(old, new):
         out.append(('removed', p, ''))
     for p in sorted(set(old) & set(new)):
         a, b = old[p], new[p]
-        if a[6] != b[6] or (a[0] != b[0]) or (not b[6] and a[1] != b[1] and stat.S_ISREG(b[2])):
-            out.append(('modified', p, f'size {a[0]} -> {b[0]}'))
+        if _content_changed(a, b):
+            same = a[0] == b[0] and a[1] == b[1]
+            out.append(('modified', p, 'content changed, size and date kept' if same
+                        else f'size {a[0]} -> {b[0]}'))
         elif a[2] != b[2] or a[3] != b[3] or a[4] != b[4]:
             out.append(('permissions', p, f'mode {oct(a[2] & 0o7777)} -> {oct(b[2] & 0o7777)}, owner {a[3]}:{a[4]} -> {b[3]}:{b[4]}'))
     return out

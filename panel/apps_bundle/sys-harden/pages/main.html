@@ -3,7 +3,7 @@
     <div class="vpa-logo" x-html="vpIcon('lock')"></div>
     <div>
       <div class="vpa-title">System Hardening</div>
-      <div class="vpa-sub">Tamper protection for accounts, SSH, cron, services and system files, plus a process guard and compliance check</div>
+      <div class="vpa-sub">Tamper protection for accounts, SSH, cron, services and system files, an integrity check against trusted sources, a process guard and a compliance check</div>
     </div>
     <div class="vpa-head-r">
       <span class="vpa-pill" :class="svc==='active'?'ok':'bad'"><i></i><span x-text="svc==='active'?'Protection running':'Service '+(svc||'unknown')"></span></span>
@@ -53,6 +53,14 @@
               </div>
             </div>
           </template>
+        </div>
+        <div class="vpa-card vpsh-integ-card" style="margin-top:14px" :class="'s-'+(ig.status||'none')">
+          <div class="vpsh-check" style="border-bottom:0;padding:0">
+            <span class="vpsh-st" :class="integTone(ig.status)" x-html="vpIcon(integIcon(ig.status))"></span>
+            <div style="flex:1;min-width:0"><div class="vpsh-check-t" x-text="'Integrity check: '+integHeadline()"></div>
+              <div class="vpa-card-s" x-text="ig.t?('Panel, Apps, software builds and system packages compared with trusted sources '+vpaAgo(ig.t)):'Compares installed files with trusted sources to catch replaced programs and backdoors.'"></div></div>
+            <button class="btn btn-ghost btn-xs" @click="setTab('integrity')">Open</button>
+          </div>
         </div>
         <div class="vpa-card" style="margin-top:14px">
           <div class="vpa-card-h"><div><div class="vpa-card-t">Latest changes</div><div class="vpa-card-s">What changed in the protected areas and what the process guard found</div></div>
@@ -175,6 +183,42 @@
             </template>
           </div>
         </template>
+      </div>
+
+      <!-- INTEGRITY -->
+      <div x-show="tab==='integrity'">
+        <div class="vpa-card">
+          <div class="vpsh-integ-h">
+            <span class="vpsh-st vpsh-st-lg" :class="integTone(ig.status)" x-html="vpIcon(integIcon(ig.status))"></span>
+            <div style="flex:1;min-width:0">
+              <div class="vpa-card-t" style="font-size:16px" x-text="integHeadline()"></div>
+              <div class="vpa-card-s" style="margin-top:4px">Compares the panel, its Apps, its Python packages, VortexPanel software builds and key system packages with trusted sources (the signed release, the download server, the package manager), and looks for known backdoors such as CWPdoor and Ebury. Runs every day by itself.</div>
+              <div class="vpa-card-s" style="margin-top:6px" x-show="ig.t" x-text="'Last check '+vpaAgo(ig.t)+(ig.seconds?' ('+ig.seconds+' s)':'')"></div>
+            </div>
+            <button class="btn btn-primary btn-sm" @click="runInteg()" :disabled="integRunning()" x-text="integRunning()?'Checking...':'Run check now'"></button>
+          </div>
+        </div>
+        <template x-for="s in ig.sections||[]" :key="s.id">
+          <div class="vpa-card">
+            <div class="vpsh-check" style="border-bottom:0;padding:0">
+              <span class="vpsh-st" :class="integTone(s.status)" x-html="vpIcon(integIcon(s.status))"></span>
+              <div style="flex:1;min-width:0"><div class="vpsh-check-t" x-text="s.label"></div>
+                <div class="vpa-card-s" x-text="s.summary"></div></div>
+              <button class="btn btn-primary btn-xs" x-show="s.id==='panel' && integFixable(s).length" @click="repairInteg(s)" :disabled="busy==='repair'" x-text="busy==='repair'?'Restoring...':'Restore from the signed release'"></button>
+            </div>
+            <div class="vpsh-integ-items" x-show="(s.items||[]).length">
+              <template x-for="(i,k) in (s.items||[]).slice(0, igMore[s.id]?300:8)" :key="k">
+                <div class="vpsh-ev">
+                  <span class="vpa-tag" :class="sevTone(i.severity)" x-text="i.severity"></span>
+                  <div style="min-width:0;flex:1"><div class="mono vpsh-path" :title="i.path" x-text="i.path"></div><div class="vpa-card-s" x-text="i.detail"></div></div>
+                </div>
+              </template>
+              <a href="#" class="vpsh-more" x-show="(s.items||[]).length>8 && !igMore[s.id]" @click.prevent="igMore[s.id]=true" x-text="'Show all '+s.items.length"></a>
+              <div class="vpa-card-s" style="margin-top:8px" x-show="integAdvice(s)" x-text="integAdvice(s)"></div>
+            </div>
+          </div>
+        </template>
+        <div class="vpa-empty" x-show="!(ig.sections||[]).length && !integRunning()"><span x-html="vpIcon('search')"></span>No integrity check has run yet. Run one now; it takes a few minutes.</div>
       </div>
 
       <!-- LOG AUDIT -->

@@ -2,20 +2,49 @@
   "id": "sys-harden",
   "kind": "app",
   "name": "System Hardening",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "order": 30,
   "category": "Security",
   "icon": "lock",
   "color": "#7c3aed",
-  "summary": "Tamper protection for users, SSH, cron, services and system files, a malware process guard, and a security compliance check.",
-  "description": "Watches the places attackers use to keep access to a server: user accounts, SSH keys, cron jobs, systemd services, shell start-up files, the dynamic linker and system binaries. Each area can be monitored (alert on any change) or locked against changes. A process guard finds miners and programs running from temporary folders, a compliance check scores the server against hardening best practice with one-click fixes, and the log audit lists sign-ins, sudo use and account changes.",
-  "features": ["User, SSH, cron, service and start-up file protection", "Monitor or lock mode per area", "Pause a lock for maintenance", "Process guard (miners, temp-folder binaries, reverse shells)", "Compliance check with one-click fixes", "Sign-in, sudo and account audit", "Alerts through the panel's alert channels"],
-  "engines": ["chattr", "/proc", "auth log"],
+  "summary": "Tamper protection for users, SSH, cron, services and system files, an integrity check against trusted sources, a malware process guard, and a security compliance check.",
+  "description": "Watches the places attackers use to keep access to a server: user accounts, SSH keys, cron jobs, systemd services, shell start-up files, the dynamic linker, login libraries and system binaries. Each area can be monitored (alert on any change, also a replacement that keeps the old size and date) or locked against changes. A daily integrity check compares the panel with its signed release, Apps and VortexPanel software builds with the download server, and SSH, sudo, PAM and every running program with the package manager, and looks for known backdoors such as CWPdoor and Ebury. A process guard finds miners and programs running from temporary folders, a compliance check scores the server against hardening best practice with one-click fixes, and the log audit lists sign-ins, sudo use and account changes.",
+  "features": [
+    "User, SSH, cron, service, login library and start-up file protection",
+    "Monitor or lock mode per area",
+    "Pause a lock for maintenance",
+    "Integrity check against the signed release, the download server and the package manager",
+    "Known backdoor checks (CWPdoor, Ebury, forced preloading)",
+    "Restore changed panel files from the signed release",
+    "Process guard (miners, temp-folder binaries, reverse shells)",
+    "Compliance check with one-click fixes",
+    "Sign-in, sudo and account audit",
+    "Alerts through the panel's alert channels"
+  ],
+  "engines": [
+    "chattr",
+    "/proc",
+    "auth log",
+    "dpkg / rpm",
+    "signed release"
+  ],
   "requires_core": ">=3.10.0,<4.0.0",
   "entry": "plugin.py",
   "hooks": "vpapp_sys_harden.hooks",
   "conflicts": [],
-  "pages": [{"id": "app-sys-harden", "label": "System Hardening", "icon": "lock", "group": "Security", "fragment": "pages/main.html"}],
-  "scripts": ["static/app.js"],
-  "styles": ["static/app.css"]
+  "pages": [
+    {
+      "id": "app-sys-harden",
+      "label": "System Hardening",
+      "icon": "lock",
+      "group": "Security",
+      "fragment": "pages/main.html"
+    }
+  ],
+  "scripts": [
+    "static/app.js"
+  ],
+  "styles": [
+    "static/app.css"
+  ]
 }
