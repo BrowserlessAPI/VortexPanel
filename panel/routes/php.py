@@ -170,12 +170,24 @@ def php_svc_status(lay):
         out = ''
     return out.strip().splitlines()[0] if out.strip() else 'inactive'
 
+FPM_CONF = {'vortex': '/etc/php/{ver}/fpm/php-fpm.conf', 'debian': '/etc/php/{ver}/fpm/php-fpm.conf',
+            'remi': '/etc/opt/remi/php{vn}/php-fpm.conf', 'rhel': '/etc/php-fpm.conf'}
+
+
 def php_fpm_test(lay):
-    """php-fpm -t for this version. Returns (ok, output)."""
+    """php-fpm -t for this version, with the configuration its service uses (the
+    VortexPanel build's compiled-in default, <build>/etc/php-fpm.conf, does not exist).
+    Returns (ok, output)."""
     b = lay.get('fpm_bin')
     if not b or not os.path.exists(b):
         return True, ''
-    rc, out = _run([b, '-t'], t=30)
+    argv = [b, '-t']
+    conf = FPM_CONF.get(lay.get('flavor'), '').format(ver=lay['ver'], vn=lay['ver'].replace('.', ''))
+    if conf and os.path.exists(conf):
+        argv += ['-y', conf]
+    if lay.get('ini') and os.path.exists(lay['ini']) and lay.get('flavor') != 'rhel':
+        argv += ['-c', lay['ini']]
+    rc, out = _run(argv, t=30)
     return rc == 0, out
 
 def php_ini_test(lay, ini_path):
@@ -382,6 +394,7 @@ def _install_ioncube(lay):
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, 'w') as f:
             f.write(ini)
+        os.chmod(p, 0o644)      # PHP run by site users reads it (the panel's own umask is 0077)
     if lay['flavor'] == 'debian' and shutil_which('phpenmod'):
         _run(['phpenmod', '-v', ver, 'ioncube'], t=30)
     if lay['flavor'] == 'vortex':
@@ -581,6 +594,28 @@ def extensions(version):
         is_inst = (name in installed or name.replace('_','') in installed)
         result.append({**ext, 'installed': is_inst})
     return jsonify({'ok':True, 'extensions': result})
+
+@php_bp.route('/api/php/php2shell', methods=['GET', 'POST'])
+def php2shell_route():
+    """PHP2Shell (CVE-2026-109618/109619): which PHP on this server carries the fix, and the
+    upload-progress protection (on by default)."""
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import php2shell
+    if request.method == 'POST':
+        on = bool((request.get_json(silent=True) or {}).get('enabled'))
+        logs = []
+        try:
+            changed, msgs = (php2shell.protect if on else php2shell.unprotect)(logs.append)
+        except Exception as e:  # noqa: BLE001
+            return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+        try:
+            from panel.routes.auth import audit_event
+            audit_event('php2shell', 'PHP2Shell protection ' + ('on' if on else 'off'))
+        except Exception:  # noqa: BLE001
+            pass
+        return jsonify({'ok': True, 'changed': changed, 'warnings': msgs, **php2shell.status()})
+    return jsonify({'ok': True, **php2shell.status()})
+
 
 @php_bp.route('/api/php/<version>/extensions/<ext>/install', methods=['POST'])
 def install_ext(version, ext):

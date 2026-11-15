@@ -4552,6 +4552,22 @@ function modulesPage() {
       this.bpAppLoad();
     },
     bpListAge(t){ if(!t) return 'Bundled with the panel'; const h=Math.round((Date.now()/1000-t)/3600); return h<1?'Updated less than an hour ago':(h<48?'Updated '+h+' hours ago':'Updated '+Math.round(h/24)+' days ago'); },
+    async p2sLoad() {
+      this.settingsModal.p2s = Object.assign({}, this.settingsModal.p2s || {}, {loading: true});
+      const r = await get('/api/php/php2shell');
+      this.settingsModal.p2s = r.ok ? Object.assign(r, {loading: false}) : {loading: false, error: r.error || 'Could not read the PHP status'};
+    },
+    async p2sToggle(on) {
+      if (!on && !confirm('Turn the PHP2Shell protection off?\n\nPHP2Shell is exploited in the wild and CVE-2026-115560 has no fix yet. Only turn it off if a website needs upload progress bars.')) return;
+      this.settingsModal.p2s.busy = true;
+      const r = await post('/api/php/php2shell', {enabled: on});
+      if (!r.ok) { this.settingsModal.p2s.busy = false; toast(r.error || 'Failed', 'error', 8000); return; }
+      this.settingsModal.p2s = Object.assign(r, {loading: false, busy: false});
+      toast((on ? 'Protection on' : 'Protection off') + (r.changed && r.changed.length ? ' (' + r.changed.length + ' file(s) changed, PHP reloaded)' : ''), 'success');
+      if (r.warnings && r.warnings.length) toast(r.warnings.join(' '), 'error', 10000);
+    },
+    p2sTone(st) { return {fixed: 'ok', check: 'warn', vulnerable: 'bad', nofix: 'bad'}[st] || 'warn'; },
+    p2sLabel(st) { return {fixed: 'Fixed', check: 'Check updates', vulnerable: 'Vulnerable', nofix: 'No fix exists'}[st] || st; },
     settingsTabs(modId) {
       const tabs = {
         nginx:      ['service','config','optimization','switch_version','logs'],
@@ -4566,7 +4582,7 @@ function modulesPage() {
         redis:      ['service','switch_version','optimization','config','current_status','persistence','logs'],
         memcached:  ['service','config','switch_version','current_status','optimization'],
         ffmpeg:     ['ffmpeg_versions'],
-        php:        ['service','extensions','config','ini','fpm','upload_limit','timeout_limit','disabled_functions','load_average','session_config','slow_log','logs','phpinfo'],
+        php:        ['service','php2shell','extensions','config','ini','fpm','upload_limit','timeout_limit','disabled_functions','load_average','session_config','slow_log','logs','phpinfo'],
         'pure-ftpd':['service','switch_version','users','port','config','logs'],
         fail2ban:   ['service','website_protection','server_protection','black_ip','white_ip','logs'],
         supervisor: ['service','config','logs'],
@@ -4587,7 +4603,7 @@ function modulesPage() {
         switch_version:'Switch Version', persistence:'Set Persistence',
         ffmpeg_versions:'Versions',
         extensions:'Install Extensions', ini:'Configuration File',
-        fpm:'FPM Profile', phpinfo:'phpinfo',
+        fpm:'FPM Profile', phpinfo:'phpinfo', php2shell:'PHP2Shell',
         caddyfile:'Caddyfile', global_opts:'Global Options', auto_https:'Auto HTTPS',
         ddns_domains:'Domain List', ddns_server:'DDNS Server', ddns_log:'Log',
         dns_zones:'Zone List', dns_records:'DNS Records', dns_config:'Config', dns_private:'Private DNS',
@@ -4610,7 +4626,7 @@ function modulesPage() {
         dns_zones:'folder', dns_records:'edit', dns_config:'settings', dns_private:'lock',
         upload_limit:'upload', timeout_limit:'clock', disabled_functions:'ban',
         load_average:'trending-up', session_config:'key', users:'users', rc_overview:'globe', rc_config:'mail', rc_php:'database', rc_logs:'clipboard',
-        website_protection:'shield', server_protection:'shield',
+        website_protection:'shield', server_protection:'shield', php2shell:'shield',
         black_ip:'ban', white_ip:'check', modsec_status:'', bp_overview:'shield', bp_sites:'globe', bp_lists:'search', bp_defaults:'sliders', bp_log:'clipboard',
       };
       return (tabs[modId]||['service']).map(t => ({id:t, label:labels[t]||t, icon:icons[t]||'settings'}));

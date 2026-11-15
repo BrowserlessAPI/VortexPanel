@@ -69,6 +69,7 @@ function vpaSysHarden() {
         venv: 'Reinstall the panel packages: /opt/vortexpanel/venv/bin/pip install --force-reinstall -r /opt/vortexpanel/requirements.txt, then restart the panel.',
         builds: 'Reinstall the software from the App Store (or Roll back to the previous version) to put back the VortexPanel build, then restart its service.',
         packages: 'Reinstall the package shown next to each file. A changed sshd, sudo or PAM module usually means the server was taken over: change all passwords and SSH keys after cleaning, and consider rebuilding the server.',
+        webservers: 'Update the web server in the App Store (VortexPanel builds) or install the operating system updates (system packages). For a flaw without a fix, apply the setting shown next to it until the vendor releases one.',
         backdoors: 'Treat the server as compromised: disconnect it from other servers, back up your data, change every password and SSH key, and rebuild it from a clean system if you can.',
       }[s.id] || '';
     },

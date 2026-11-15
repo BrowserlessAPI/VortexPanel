@@ -1059,3 +1059,14 @@ textarea.form-input { min-height: 0; }
 .vp-ssl-check li.ok{color:var(--green)}
 .vp-ssl-check li.warn{color:#b45309}
 .vp-ssl-check li.bad{color:var(--red)}
+
+/* PHP settings: PHP2Shell tab */
+.vp-p2s-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+.vp-p2s-tag { flex: none; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; margin-top: 1px; }
+.vp-p2s-row.ok .vp-p2s-tag { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
+.vp-p2s-row.warn .vp-p2s-tag { background: color-mix(in srgb, var(--yellow) 16%, transparent); color: var(--yellow); }
+.vp-p2s-row.bad { border-color: color-mix(in srgb, var(--red) 40%, var(--border)); }
+.vp-p2s-row.bad .vp-p2s-tag { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+.vp-p2s-card { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-base); }
+.vp-p2s-muted { font-size: 12px; color: var(--text-muted); padding: 8px 0; }
+@media (max-width: 640px) { .vp-p2s-row { flex-direction: column; gap: 6px; } }

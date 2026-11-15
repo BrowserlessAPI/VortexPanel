@@ -196,12 +196,21 @@ def _http(url, timeout=60, limit=16 << 20):
     return data
 
 
+# The panel service runs with UMask=0077 (its own files are private). Install scripts and
+# package managers must not inherit that: they would create programs, folders and config
+# files that the service users (mysql, redis, www-data, ...) cannot read (issue #36).
+SCRIPT_UMASK = 0o022
+_UMASK_KW = ({'umask': SCRIPT_UMASK} if sys.version_info >= (3, 9)
+             else {'preexec_fn': lambda: os.umask(SCRIPT_UMASK)})
+
+
 def _run(cmd, log=None, env=None, timeout=3600, cwd=None):
     """Run a command, streaming its output to log. A watchdog stops the whole
-    process group after `timeout` seconds even when it prints nothing."""
+    process group after `timeout` seconds even when it prints nothing.
+    The command runs with the usual 022 umask, whatever the panel's own umask is."""
     import signal
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace',
-                         env=env, cwd=cwd, stdin=subprocess.DEVNULL, start_new_session=True)
+                         env=env, cwd=cwd, stdin=subprocess.DEVNULL, start_new_session=True, **_UMASK_KW)
     timed_out = []
 
     def kill():
@@ -576,11 +585,15 @@ def _unpack(path, man, stage):
             raise SoftError('the package contents do not match its manifest')
         files = os.path.join(stage, 'files')
         os.mkdir(files)
+        os.chmod(files, 0o755)          # becomes the build folder: service users must reach it
+        member_dirs = set()
         with tarfile.open(os.path.join(stage, 'payload.tar.xz')) as tf:
             for m in tf.getmembers():
                 n = os.path.normpath(m.name)
                 if n.startswith(('/', '..')) or m.isdev() or (m.islnk() and os.path.normpath(m.linkname).startswith(('/', '..'))):
                     raise SoftError(f'unsafe path in the package: {m.name}')
+                if m.isdir():
+                    member_dirs.add(n)
             tf.extractall(files, filter='tar') if hasattr(tarfile, 'data_filter') else tf.extractall(files)
         sd = os.path.join(files, '.vortex', 'scripts')
         os.makedirs(sd)
@@ -611,13 +624,23 @@ def _unpack(path, man, stage):
                     ref[rel] = h.hexdigest()
         with open(os.path.join(files, '.vortex', 'files.json'), 'w') as f:
             json.dump(ref, f)
-    # whatever the archive says, every file belongs to root and nobody else can write it
+    # whatever the archive says, every file belongs to root and nobody else can write it.
+    # Folders the archive does not list (parents tar creates on its own) get 0755: tar
+    # creates them with the process umask, 0700 in the panel service, and then the
+    # service users cannot reach their own programs (issue #36). .vortex (manifest,
+    # scripts, file list) is the panel's own and stays root-only.
+    meta = os.path.join(files, '.vortex')
     for d, dirs, fs in os.walk(files):
         for n in [d] + [os.path.join(d, x) for x in dirs + fs]:
             os.lchown(n, 0, 0)
-            if not os.path.islink(n):
-                mode = os.lstat(n).st_mode & 0o7777
-                os.chmod(n, mode & ~0o022 & ~0o6000)
+            if os.path.islink(n):
+                continue
+            mode = os.lstat(n).st_mode & 0o7777
+            if n == meta or n.startswith(meta + os.sep):
+                mode = 0o700 if os.path.isdir(n) or n.startswith(os.path.join(meta, 'scripts') + os.sep) else 0o600
+            elif os.path.isdir(n) and n != files and os.path.relpath(n, files) not in member_dirs:
+                mode = 0o755
+            os.chmod(n, mode & ~0o022 & ~0o6000)
     return files
 
 
@@ -696,6 +719,8 @@ def install_zip(path, log=None, action='install', init=None, migrate=False):
         except OSError:
             pass
         raise SoftError(f'{man.get("name", man["app"])} {man["version"]}: a required condition is not met (see above). Nothing was changed.')
+    if man['app'] in ('mysql', 'mariadb') and not prev and not clash:
+        _db_leftovers_aside(man['app'], log)
     # runtime packages: a missing library would only show up at activate
     try:
         ensure_packages((man.get('run_deps') or {}).get(family(), []), man.get('rpm_repos') or [], log)
@@ -773,11 +798,175 @@ def install_zip(path, log=None, action='install', init=None, migrate=False):
     _save_state(st)
     _prune(man['app'], st)
     _say(log, f'{man.get("name", man["app"])} {man["version"]} is installed and running.')
+    if man['app'] in ('php', 'openlitespeed', 'apache2') and _IN_PANEL:
+        # a new PHP version (or web server) gets the PHP2Shell protection like the others
+        try:
+            from panel import php2shell
+            php2shell.protect_if_enabled(lambda m: _say(log, m))
+        except Exception as e:  # noqa: BLE001
+            _say(log, f'PHP2Shell protection not applied: {e}')
     return man
 
 
-def _ensure_dir(p):
-    os.makedirs(p, mode=0o755, exist_ok=True)
+# --------------------------------------------------- repair after issue #36 (UMask=0077)
+# Panels 3.11.0-3.11.3 installed builds with the panel's 0077 umask: the build folders and
+# the files the install scripts wrote came out readable by root only. The service users
+# (www-data, nobody, clamav, bind, mysql, ...) need to read these places.
+REPAIR_ROOTS = {
+    'php': ['/etc/php'], 'clamav': ['/etc/clamav'], 'bind9': ['/etc/bind'],
+    'openlitespeed': ['/usr/local/lsws'], 'mysql': ['/etc/mysql'], 'mariadb': ['/etc/mysql', '/etc/my.cnf.d'],
+    'postgresql': ['/etc/postgresql'], 'mongodb': ['/etc/mongod.conf'], 'memcached': ['/etc/memcached.conf'],
+    'caddy': ['/etc/caddy'], 'caddy-waf': ['/etc/caddy'], 'redis': ['/etc/redis'], 'fail2ban': ['/etc/fail2ban'],
+    'pure-ftpd': ['/etc/pure-ftpd'], 'supervisor': ['/etc/supervisor'],
+}
+# never opened up, whatever their mode: secrets, keys, certificates, logs, caches, sockets
+_PRIVATE_RE = re.compile(r'(key|secret|passw|token|credential|htpasswd|shadow|\.pem$|\.p12$|\.pfx$|\.crt$|/ssl/|'
+                         r'/private/|/certs?/|debian\.cnf|\.my\.cnf|/admin/conf|/cachedata|/logs?(/|$)|/cgid|/tmp(/|$))',
+                         re.I)
+REPAIR_MARK = 'permissions-repaired-1.json'
+
+
+def repair_permissions(log=None, dry_run=False):
+    """Give back the read/traverse rights the 0077 umask took away. Only paths owned by
+    root that nobody but root can use (no group or other bits at all) and that changed
+    after the first VortexPanel build was installed; secrets are never touched.
+    Returns [(path, old_mode, new_mode)]."""
+    changed = []
+
+    def fix(p, st, new):
+        if new != stat_mode(st):
+            changed.append((p, oct(stat_mode(st)), oct(new)))
+            if not dry_run:
+                os.chmod(p, new)
+
+    def stat_mode(st):
+        return st.st_mode & 0o7777
+
+    if not os.path.isdir(BASE):
+        return changed
+    import stat as _st
+    # 1. the build folders themselves: /usr/local/vortex, <app>, <app>/<version>
+    mans = []
+    levels = [BASE]
+    for app in sorted(os.listdir(BASE)):
+        a = os.path.join(BASE, app)
+        if not os.path.isdir(a) or os.path.islink(a) or app.startswith('.'):
+            continue
+        levels.append(a)
+        for v in sorted(os.listdir(a)):
+            d = os.path.join(a, v)
+            if v.startswith('.') or os.path.islink(d) or not os.path.isdir(d):
+                continue
+            levels.append(d)
+            m = os.path.join(d, '.vortex', 'manifest.json')
+            if os.path.exists(m):
+                mans.append((app, os.path.getmtime(m)))
+    for d in levels:
+        st = os.lstat(d)
+        if st.st_uid == 0 and stat_mode(st) & 0o077 == 0:
+            fix(d, st, stat_mode(st) | 0o055)
+    if not mans:
+        return changed
+    # 2. what the install scripts wrote, in the places the service users read
+    since = min(t for _, t in mans) - 3600
+    # also software that is not installed: a failed install keeps its configuration, and
+    # damaged files there would make the next attempt fail the same way
+    roots = sorted({r for rs in REPAIR_ROOTS.values() for r in rs})
+    for root in roots:
+        if not os.path.lexists(root):
+            continue
+        walk = [(os.path.dirname(root), [], [os.path.basename(root)])] if not os.path.isdir(root) else os.walk(root)
+        for d, dirs, fs in walk:
+            dirs[:] = [x for x in dirs if not _PRIVATE_RE.search(os.path.join(d, x))]
+            for p in ([d] if os.path.isdir(root) else []) + [os.path.join(d, x) for x in fs]:
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                if _st.S_ISLNK(st.st_mode) or st.st_uid != 0 or stat_mode(st) & 0o077 or st.st_ctime < since:
+                    continue
+                if _PRIVATE_RE.search(p) or not (_st.S_ISDIR(st.st_mode) or _st.S_ISREG(st.st_mode)):
+                    continue
+                m = stat_mode(st)
+                if _st.S_ISDIR(st.st_mode):
+                    fix(p, st, m | 0o055)
+                else:
+                    fix(p, st, m | 0o044 | (0o011 if m & 0o100 else 0))
+    for p, old, new in changed[:400]:
+        _say(log, f'permissions {old} -> {new}: {p}')
+    return changed
+
+
+def repair_permissions_once(log=None):
+    """Run the repair one time per server (panel start after the update); the list of
+    changes is kept in the panel data folder."""
+    mark = os.path.join(DATA, REPAIR_MARK)
+    if os.path.exists(mark):
+        return None
+    changed = repair_permissions(log)
+    try:
+        _ensure_dir(DATA, 0o700)
+        with open(mark, 'w') as f:
+            json.dump({'t': int(time.time()), 'changed': changed}, f, indent=1)
+    except OSError:
+        pass
+    return changed
+
+
+_DB_CNF_HEADER = {'mysql': '# MySQL (VortexPanel build)', 'mariadb': '# MariaDB (VortexPanel build)'}
+
+
+def _db_leftovers_aside(app, log=None):
+    """Before a fresh MySQL or MariaDB install, when no database server is installed or
+    running: move aside what an earlier attempt left that the new server cannot use
+    (issue #36). Nothing is deleted.
+      - the other server's configuration written by VortexPanel (MariaDB stops at
+        MySQL-only settings such as mysqlx-bind-address)
+      - a data folder holding only a failed first start (no system database)"""
+    other = 'mariadb' if app == 'mysql' else 'mysql'
+    if installed(other) or installed(app):
+        return
+    if any(shutil.which(b) for b in ('mysqld', 'mariadbd')) or \
+            subprocess.run(['pgrep', '-x', 'mysqld|mariadbd'], capture_output=True).returncode == 0:
+        return
+    ts = time.strftime('%Y%m%d-%H%M%S')
+    for cnf in ('/etc/mysql/my.cnf', '/etc/my.cnf'):
+        try:
+            with open(cnf) as f:
+                head = f.readline()
+        except OSError:
+            continue
+        if head.startswith(_DB_CNF_HEADER[other]):
+            dst = f'{cnf}.vortex-{other}-{ts}'
+            os.rename(cnf, dst)
+            _say(log, f'{cnf} was written for {other.capitalize() if other == "mariadb" else "MySQL"}, '
+                      f'which is not installed; kept as {dst}')
+    d = '/var/lib/mysql'
+    try:
+        names = [n for n in os.listdir(d) if n != 'lost+found']
+    except OSError:
+        return
+    if names and not os.path.exists(os.path.join(d, 'mysql.ibd')) and not os.path.isdir(os.path.join(d, 'mysql')):
+        dst = f'{d}.failed-start-{ts}'
+        os.rename(d, dst)
+        _say(log, f'{d} held only the files of a failed first start (no system database); kept as {dst}')
+
+
+def _ensure_dir(p, mode=0o755):
+    """Create p and any missing parents with exactly `mode` (os.makedirs applies the
+    process umask, which is 0077 in the panel service). Existing folders are left alone."""
+    p = os.path.abspath(p)
+    missing = []
+    q = p
+    while q and q != '/' and not os.path.isdir(q):
+        missing.append(q)
+        q = os.path.dirname(q)
+    for d in reversed(missing):
+        try:
+            os.mkdir(d)
+        except FileExistsError:
+            continue
+        os.chmod(d, mode)
     return p
 
 
@@ -796,7 +985,7 @@ def _keep_copy(man, log):
             paths.append(p)
     if not paths:
         return []
-    base = _ensure_dir(os.path.join(KEEP_DIR, getattr(_RUN, 'id', '') or uuid.uuid4().hex))
+    base = _ensure_dir(os.path.join(KEEP_DIR, getattr(_RUN, 'id', '') or uuid.uuid4().hex), 0o700)  # data copies: root only
     need = 0
     for p in paths:
         r = subprocess.run(['du', '-sk', p], capture_output=True, text=True, timeout=600)
@@ -831,7 +1020,7 @@ def _keep_put_back(kept, log):
             continue
         tmp = f'{p}.vortex-restore'
         try:
-            os.makedirs(os.path.dirname(p), mode=0o755, exist_ok=True)   # the removal may have taken the parent too
+            _ensure_dir(os.path.dirname(p))   # the removal may have taken the parent too
             subprocess.run(['rm', '-rf', tmp], timeout=600, check=True)
             subprocess.run(['cp', '-a', copy, tmp], capture_output=True, text=True, timeout=3600, check=True)
             if os.path.lexists(p):
@@ -905,7 +1094,7 @@ def _fetch(f, log=None):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/+-]{0,300}', f.get('key', '')) or '..' in f['key']:
         raise SoftError('invalid file name in the catalog')
     url = trust()['base_url'].rstrip('/') + '/' + f['key'].lstrip('/')
-    d = _ensure_dir(os.path.join(DATA, 'downloads'))
+    d = _ensure_dir(os.path.join(DATA, 'downloads'), 0o700)
     dest = os.path.join(d, os.path.basename(f['key']))
     _say(log, f'Downloading {os.path.basename(f["key"])} ({int(f.get("size", 0)) // 1024 // 1024} MB)')
     h = hashlib.sha256()

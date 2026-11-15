@@ -2,19 +2,21 @@
   "id": "sys-harden",
   "kind": "app",
   "name": "System Hardening",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "order": 30,
   "category": "Security",
   "icon": "lock",
   "color": "#7c3aed",
   "summary": "Tamper protection for users, SSH, cron, services and system files, an integrity check against trusted sources, a malware process guard, and a security compliance check.",
-  "description": "Watches the places attackers use to keep access to a server: user accounts, SSH keys, cron jobs, systemd services, shell start-up files, the dynamic linker, login libraries and system binaries. Each area can be monitored (alert on any change, also a replacement that keeps the old size and date) or locked against changes. A daily integrity check compares the panel with its signed release, Apps and VortexPanel software builds with the download server, and SSH, sudo, PAM and every running program with the package manager, and looks for known backdoors such as CWPdoor and Ebury. A process guard finds miners and programs running from temporary folders, a compliance check scores the server against hardening best practice with one-click fixes, and the log audit lists sign-ins, sudo use and account changes.",
+  "description": "Watches the places attackers use to keep access to a server: user accounts, SSH keys, cron jobs, systemd services, shell start-up files, the dynamic linker, login libraries and system binaries. Each area can be monitored (alert on any change, also a replacement that keeps the old size and date) or locked against changes. A daily integrity check compares the panel with its signed release, Apps and VortexPanel software builds with the download server, and SSH, sudo, PAM and every running program with the package manager, and looks for known backdoors such as CWPdoor and Ebury, for PHP versions without the PHP2Shell fix and traces of that attack, and for Apache, nginx, OpenLiteSpeed and Caddy versions that miss a security fix. A process guard finds miners and programs running from temporary folders, a compliance check scores the server against hardening best practice with one-click fixes, and the log audit lists sign-ins, sudo use and account changes.",
   "features": [
     "User, SSH, cron, service, login library and start-up file protection",
     "Monitor or lock mode per area",
     "Pause a lock for maintenance",
     "Integrity check against the signed release, the download server and the package manager",
     "Known backdoor checks (CWPdoor, Ebury, forced preloading)",
+    "PHP2Shell check: unpatched PHP versions and attack traces",
+    "Web server check: Apache, nginx, OpenLiteSpeed and Caddy behind a security fix, and known flaws without a fix",
     "Restore changed panel files from the signed release",
     "Process guard (miners, temp-folder binaries, reverse shells)",
     "Compliance check with one-click fixes",
@@ -46,5 +48,6 @@
   ],
   "styles": [
     "static/app.css"
-  ]
+  ],
+  "changes": "PHP2Shell (CVE-2026-109618/109619): the Integrity check reports PHP versions without the fix and the published traces of the attack. New Web servers section: Apache (CVE-2026-119618, HTTP/2), nginx, OpenLiteSpeed (CVE-2026-119559, no fix yet) and Caddy versions behind a security fix, for VortexPanel builds and operating system packages."
 }

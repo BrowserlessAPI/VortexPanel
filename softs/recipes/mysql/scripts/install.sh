@@ -71,6 +71,7 @@ fi
 if [ "$VP_ACTION" = migrate ] && [ -d "$DATADIR" ]; then data_backup "$DATADIR" mysql; fi
 
 if [ ! -e "$DATADIR/mysql.ibd" ] && [ ! -d "$DATADIR/mysql" ]; then
+  NEWDIR=""; [ -e "$DATADIR" ] || NEWDIR=1
   install -d -m 0750 -o mysql -g mysql "$DATADIR"
   [ -z "$(ls -A "$DATADIR" 2>/dev/null | grep -v '^lost+found$')" ] || fail "$DATADIR is not empty but holds no MySQL data; nothing was changed"
   say "initializing a new data folder in $DATADIR"
@@ -82,7 +83,7 @@ SQL
   chmod 0644 "$INIT"
   "$VP_PREFIX/bin/mysqld" --initialize-insecure --user=mysql --basedir="$VP_PREFIX" --datadir="$DATADIR" \
       --lc-messages-dir="$VP_PREFIX/share" --plugin-dir="$VP_PREFIX/lib/plugin" --init-file="$INIT" \
-      --log-error-verbosity=2 || { rm -f "$INIT"; fail "initializing the data folder failed"; }
+      --log-error-verbosity=2 || { rm -f "$INIT"; [ -n "$NEWDIR" ] && rm -rf "$DATADIR"; fail "initializing the data folder failed"; }
   rm -f "$INIT"
   say "root signs in over the local socket (auth_socket); no password is set"
 fi

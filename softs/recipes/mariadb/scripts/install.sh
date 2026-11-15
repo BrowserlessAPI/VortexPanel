@@ -52,6 +52,7 @@ fi
 if [ "$VP_ACTION" = migrate ] && [ -d "$DATADIR" ]; then data_backup "$DATADIR" mariadb; fi
 
 if [ ! -d "$DATADIR/mysql" ]; then
+  NEWDIR=""; [ -e "$DATADIR" ] || NEWDIR=1
   install -d -m 0750 -o mysql -g mysql "$DATADIR"
   [ -z "$(ls -A "$DATADIR" 2>/dev/null | grep -v '^lost+found$')" ] || fail "$DATADIR is not empty but holds no MariaDB data; nothing was changed"
   say "initializing a new data folder in $DATADIR"
@@ -60,7 +61,8 @@ if [ ! -d "$DATADIR/mysql" ]; then
   [ -n "$INSTALL_DB" ] || fail "mariadb-install-db is missing from this build"
   # root@localhost signs in over the socket (unix_socket); no password is set
   "$INSTALL_DB" --user=mysql --basedir="$VP_PREFIX" --datadir="$DATADIR" --auth-root-authentication-method=socket \
-      --skip-test-db >/dev/null || fail "initializing the data folder failed"
+      --skip-test-db >/dev/null || { [ -n "$NEWDIR" ] && rm -rf "$DATADIR"; \
+        fail "initializing the data folder failed (see $(opt mysqld log-error))"; }
 fi
 
 for f in "$VP_PREFIX"/bin/*; do

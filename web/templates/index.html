@@ -4902,6 +4902,35 @@
                 </div>
 
                 <!-- PHP VERSION tab (phpMyAdmin) -->
+                <!-- PHP2SHELL tab (PHP): CVE-2026-109618/109619 status and protection -->
+                <div x-show="settingsModal.tab==='php2shell'" x-effect="if(settingsModal.show && settingsModal.tab==='php2shell' && !(settingsModal.p2s && (settingsModal.p2s.versions || settingsModal.p2s.loading))) p2sLoad()">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:6px">PHP2Shell (CVE-2026-109618, CVE-2026-109619)</div>
+                  <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:14px">Remote code execution in PHP itself, exploited since October 2026. Any website on an affected PHP can be taken over without a password, whatever the application. Fixed in PHP 8.5.12, 8.4.27, 8.3.36 and 8.2.35; PHP 8.1 and older have no official fix.</div>
+                  <div x-show="settingsModal.p2s?.loading" class="vp-p2s-muted">Checking the PHP versions on this server...</div>
+                  <div x-show="settingsModal.p2s?.error" class="vp-p2s-row bad" x-text="settingsModal.p2s?.error"></div>
+                  <template x-for="v in (settingsModal.p2s?.versions || [])" :key="v.name">
+                    <div class="vp-p2s-row" :class="p2sTone(v.status)">
+                      <span class="vp-p2s-tag" x-text="p2sLabel(v.status)"></span>
+                      <div style="min-width:0;flex:1">
+                        <div style="font-weight:600;font-size:13px"><span x-text="v.name"></span> <span class="mono" style="font-weight:400;color:var(--text-muted)" x-text="v.version"></span></div>
+                        <div style="font-size:12px;color:var(--text-secondary)" x-text="v.detail"></div>
+                      </div>
+                    </div>
+                  </template>
+                  <div x-show="settingsModal.p2s && settingsModal.p2s.versions && !settingsModal.p2s.versions.length" class="vp-p2s-muted">No PHP is installed.</div>
+                  <div class="vp-p2s-card" x-show="settingsModal.p2s && settingsModal.p2s.versions">
+                    <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+                      <div style="flex:1;min-width:220px">
+                        <div style="font-weight:600;font-size:13px">Protection: upload progress off</div>
+                        <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-top:4px">Turns off <span class="mono">session.upload_progress</span> in every PHP version and PHP-FPM pool (also hosting accounts), where websites cannot turn it back on. PHP recommends this while patching and after it: CVE-2026-115560 has no fix yet. Only upload progress bars stop working.</div>
+                        <div style="font-size:12px;margin-top:6px" :style="vpCss(settingsModal.p2s?.enabled && settingsModal.p2s?.t ? 'color:var(--green)' : 'color:var(--yellow)')" x-text="settingsModal.p2s?.enabled ? (settingsModal.p2s?.t ? 'On, applied ' + vpaAgo(settingsModal.p2s.t) : 'On, applies when the panel restarts') : 'Off'"></div>
+                      </div>
+                      <button class="btn btn-sm" :class="settingsModal.p2s?.enabled ? 'btn-ghost' : 'btn-primary'" :disabled="!!(settingsModal.p2s && settingsModal.p2s.busy)" @click="p2sToggle(!settingsModal.p2s?.enabled)" x-text="settingsModal.p2s?.busy ? 'Applying...' : (settingsModal.p2s?.enabled ? 'Turn off' : 'Turn on')"></button>
+                    </div>
+                  </div>
+                  <div style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-top:12px">Updating PHP does not remove a web shell an attacker may already have planted. Run System Hardening &gt; Integrity to look for PHP2Shell traces.</div>
+                </div>
+
                 <div x-show="settingsModal.tab==='php_version'">
                   <div style="font-weight:600;font-size:13px;margin-bottom:16px">PHP Version</div>
                   <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">

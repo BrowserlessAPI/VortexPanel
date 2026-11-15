@@ -61,10 +61,11 @@ After=network-online.target
 [Service]
 ExecStart=$VP_CURRENT/vp-bin/freshclam -d --foreground=true
 StandardOutput=journal
-RuntimeDirectory=clamav
-RuntimeDirectoryPreserve=yes
-# systemd hands /run/clamav to root on start; clamd and freshclam drop to the clamav user
-ExecStartPre=/bin/chown clamav:clamav /run/clamav
+# /run/clamav belongs to clamav: clamd and freshclam drop to that user before they create
+# their socket and pid files. Not RuntimeDirectory=: with two services sharing it, systemd
+# hands the folder back to root each time either one starts (also after an ExecStartPre
+# chown), and clamd then cannot create its socket.
+ExecStartPre=/usr/bin/install -d -m 0755 -o clamav -g clamav /run/clamav
 Restart=on-failure
 RestartSec=60
 
@@ -84,10 +85,11 @@ ConditionPathExistsGlob=/var/lib/clamav/daily.{c[vl]d,inc}
 [Service]
 ExecStart=$VP_CURRENT/vp-bin/clamd --foreground=true
 ExecReload=/bin/kill -USR2 \$MAINPID
-RuntimeDirectory=clamav
-RuntimeDirectoryPreserve=yes
-# systemd hands /run/clamav to root on start; clamd and freshclam drop to the clamav user
-ExecStartPre=/bin/chown clamav:clamav /run/clamav
+# /run/clamav belongs to clamav: clamd and freshclam drop to that user before they create
+# their socket and pid files. Not RuntimeDirectory=: with two services sharing it, systemd
+# hands the folder back to root each time either one starts (also after an ExecStartPre
+# chown), and clamd then cannot create its socket.
+ExecStartPre=/usr/bin/install -d -m 0755 -o clamav -g clamav /run/clamav
 TimeoutStartSec=420
 Restart=on-failure
 

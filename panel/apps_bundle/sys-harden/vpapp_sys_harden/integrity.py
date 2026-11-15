@@ -13,6 +13,12 @@ simply re-baseline.
             program, against the package manager's checksums
   backdoors known backdoor traces: CWPdoor (Control Web Panel), Ebury, forced
             library preloading in running programs
+  webservers Apache, nginx, OpenLiteSpeed and Caddy behind a security fix (VortexPanel
+            builds: the signed catalog and a minimum-version table; operating system
+            packages: pending security updates), and known flaws without a fix
+  php2shell PHP versions without the PHP2Shell fix (CVE-2026-109618/109619) and the
+            published traces of the attack: log patterns, markers, dropped files,
+            SSH keys of the web user, a hidden sshd in web server log folders
 
 Results go to integrity.json; new problems become events and alerts.
 """
@@ -39,6 +45,7 @@ PANEL_DIR = os.environ.get('VP_INSTALL_DIR', '/opt/vortexpanel')
 CODE_ITEMS = ['panel', 'web', 'app.py', 'requirements.txt', 'install.sh', 'VERSION']
 SOFT_BASE = os.environ.get('VP_SOFT_BASE', '/usr/local/vortex')
 REF_MAX_AGE = 30 * 86400          # download-server references are fetched again after 30 days
+REF_FMT = 2                       # 2: hard links in a package are counted (1.1.0 missed them)
 SECTIONS = [
     ('panel', 'VortexPanel files', 'The panel code compared with the signed release it was installed from.'),
     ('apps', 'Installed Apps', 'App code compared with the signed release or the published package.'),
@@ -46,6 +53,8 @@ SECTIONS = [
     ('builds', 'VortexPanel software builds', 'Web server, PHP, database and other builds compared with the download server.'),
     ('packages', 'System packages', 'SSH, sudo, PAM, core tools and every running program compared with the package manager.'),
     ('backdoors', 'Known backdoors', 'Traces of CWPdoor (Control Web Panel), Ebury and forced library preloading.'),
+    ('php2shell', 'PHP2Shell', 'PHP versions without the PHP2Shell fix, and traces of the attack (October 2026 onwards).'),
+    ('webservers', 'Web servers', 'Apache, nginx, OpenLiteSpeed and Caddy versions without the latest security fixes, and known flaws that have no fix yet.'),
 ]
 
 DEB_CORE = ['openssh-server', 'openssh-client', 'openssh-sftp-server', 'sudo', 'passwd', 'login', 'util-linux',
@@ -417,6 +426,10 @@ def _payload_hashes(zpath):
                     out[rel] = h.hexdigest()
                 elif m.issym():
                     out[rel] = 'link:' + m.linkname
+                elif m.islnk():                 # a hard link: the same content as the file it names
+                    tgt = out.get(os.path.normpath(m.linkname))
+                    if tgt and not tgt.startswith('link:'):
+                        out[rel] = tgt
     return out
 
 
@@ -438,7 +451,7 @@ def build_reference(app, version, prefix, target='', arch=''):
     cached for REF_MAX_AGE; the list recorded at install time when the server no longer has it."""
     cache = f'ref-build-{app}-{version}.json'
     ref = appkit.read_json(APP, cache, {})
-    if ref.get('files') and time.time() - ref.get('t', 0) < REF_MAX_AGE:
+    if ref.get('fmt') == REF_FMT and ref.get('files') and time.time() - ref.get('t', 0) < REF_MAX_AGE:
         return ref['files'], ref.get('source', 'the download server')
     try:
         path = _fetch_build(app, version, target, arch)
@@ -449,7 +462,7 @@ def build_reference(app, version, prefix, target='', arch=''):
                 os.remove(path)
             except OSError:
                 pass
-        appkit.write_json(APP, cache, {'t': int(time.time()), 'files': files, 'source': 'the download server'})
+        appkit.write_json(APP, cache, {'t': int(time.time()), 'fmt': REF_FMT, 'files': files, 'source': 'the download server'})
         return files, 'the download server'
     except Exception as e:  # noqa: BLE001
         local = os.path.join(prefix, '.vortex', 'files.json')
@@ -807,7 +820,378 @@ def check_backdoors():
 
 # -------------------------------------------------------------------- run
 
-CHECKS = {'panel': check_panel, 'apps': check_apps, 'venv': check_venv, 'builds': check_builds,
+
+# --------------------------------------------------------------- PHP2Shell
+
+P2S_FIXED = {'8.5': (8, 5, 12), '8.4': (8, 4, 27), '8.3': (8, 3, 36), '8.2': (8, 2, 35)}
+P2S_MARKERS = ('PHP2SHELL_CONFIRMED', 'JACKALPOC', 'B7kQpoc618', 'sess_p2sopchain')
+P2S_LOG_PATTERNS = [
+    (re.compile(r'Allowed memory size of \d+ bytes exhausted.* in Unknown on line 0'), 'medium',
+     'PHP ran out of memory before any script ran (the first step of PHP2Shell)'),
+    (re.compile(r'Session ID is too long or contains illegal characters'), 'medium',
+     'oversized session cookie (the memory-leak step of PHP2Shell)'),
+    (re.compile(r'zend_mm_heap corrupted'), 'medium', 'PHP memory corruption (PHP2Shell crashes workers)'),
+]
+P2S_LOG_GLOBS = ['/var/log/apache2/*error*.log*', '/var/log/httpd/*error*log*', '/var/log/nginx/*error*.log*',
+                 '/usr/local/lsws/logs/error.log*', '/usr/local/lsws/logs/stderr.log*', '/var/log/php*-fpm.log*',
+                 '/var/log/apache2/*access*.log*', '/var/log/httpd/*access*log*', '/var/log/nginx/*access*.log*',
+                 '/usr/local/lsws/logs/access.log*', '/home/*/logs/*.log', '/www/wwwlogs/*.log']
+P2S_DROPPED = ['/tmp/nfs', '/tmp/collect.sh', '/var/tmp/nfs', '/var/tmp/collect.sh', '/dev/shm/nfs', '/dev/shm/collect.sh']
+WEB_USERS = ('www-data', 'apache', 'nginx', 'nobody', 'lsadm', 'http')
+
+
+def _tail_lines(path, limit=64 << 20):
+    """Lines of the last `limit` bytes of a text log (gzip logs are skipped)."""
+    if path.endswith(('.gz', '.xz', '.bz2', '.zst')):
+        return []
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - limit))
+            data = f.read()
+    except OSError:
+        return []
+    return data.decode(errors='replace').splitlines()
+
+
+def _php_binaries():
+    """[(name, binary, flavor)] when the panel's own module is not there (panels before 3.11.4)."""
+    out, seen = [], set()
+    for b in sorted(glob.glob(os.path.join(SOFT_BASE, 'php', '*', 'bin', 'php'))):
+        d = os.path.dirname(os.path.dirname(b))
+        if not os.path.islink(d):
+            name = 'PHP ' + '.'.join(os.path.basename(d).split('.')[:2])
+            seen.add(name)
+            out.append((name, b, 'vortex'))
+    for b in sorted(glob.glob('/usr/bin/php[0-9]*.[0-9]*')):
+        if re.search(r'/php\d+\.\d+$', b) and f'PHP {b[12:]}' not in seen:   # not a VortexPanel build's wrapper
+            out.append((f'PHP {b[12:]}', b, 'os'))
+    for b in sorted(glob.glob('/usr/local/lsws/lsphp*/bin/lsphp')):
+        out.append((os.path.basename(os.path.dirname(os.path.dirname(b))), b, 'os'))
+    return out
+
+
+def _php_status_items():
+    items, note = [], ''
+    try:
+        from panel import php2shell as P          # panel 3.11.4 and newer
+        st = P.status()
+        rows = st['versions']
+        if not st['enabled']:
+            items.append(_item('medium', 'PHP2Shell protection', 'turned off on the PHP page '
+                               '(session.upload_progress stays on; CVE-2026-115560 has no fix yet)'))
+        elif not st['t']:
+            note = ' Protection not applied yet.'
+    except Exception:  # noqa: BLE001
+        rows = []
+        for name, b, flavor in _php_binaries():
+            rc, out, err = _sh([b, '-n', '-v'], 20)
+            m = re.search(r'PHP (\d+)\.(\d+)\.(\d+)(\S*)', out)
+            if not m:
+                continue
+            ver = tuple(int(x) for x in m.groups()[:3])
+            branch = f'{ver[0]}.{ver[1]}'
+            fixed = P2S_FIXED.get(branch)
+            if fixed and ver >= fixed:
+                stt = 'fixed'
+            elif flavor == 'os' or m.group(4):
+                stt = 'check'
+            elif not fixed and ver < (8, 2):
+                stt = 'nofix'
+            else:
+                stt = 'vulnerable'
+            rows.append({'name': name, 'version': '.'.join(map(str, ver)) + m.group(4), 'status': stt,
+                         'detail': ''})
+    for r in rows:
+        if r['status'] == 'vulnerable':
+            items.append(_item('critical', f"{r['name']} {r['version']}", 'affected by PHP2Shell: update PHP '
+                               '(App Store, or the operating system updates)'))
+        elif r['status'] == 'nofix':
+            items.append(_item('high', f"{r['name']} {r['version']}", 'PHP 8.1 and older have no official PHP2Shell '
+                               'fix: move the websites to PHP 8.2 or newer'))
+        elif r['status'] == 'check':
+            items.append(_item('low', f"{r['name']} {r['version']}", 'operating system package: make sure the '
+                               "distribution's PHP2Shell update is installed"))
+    return items, rows, note
+
+
+def check_php2shell():
+    items, rows, note = _php_status_items()
+    # dropped files and persistence seen in the attacks
+    for p in P2S_DROPPED + glob.glob('/tmp/.c1*') + glob.glob('/var/tmp/.c1*') + glob.glob('/dev/shm/.c1*'):
+        if os.path.isfile(p) and not os.path.islink(p):
+            items.append(_item('critical', p, 'file name dropped by PHP2Shell attackers (bot / collection script)'))
+    import pwd
+    for u in WEB_USERS:
+        try:
+            home = pwd.getpwnam(u).pw_dir
+        except KeyError:
+            continue
+        ak = os.path.join(home, '.ssh', 'authorized_keys')
+        if os.path.isfile(ak) and os.path.getsize(ak) > 0:
+            items.append(_item('critical', ak, f'SSH keys for the web user {u}: attackers add these after PHP2Shell'))
+    for d in ('/var/log/apache2', '/var/log/httpd', '/var/log/nginx', '/usr/local/lsws/logs'):
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            p = os.path.join(d, n)
+            if n.startswith('.') and n not in ('.', '..'):
+                items.append(_item('high', p, 'hidden entry in a web server log folder (PHP2Shell attackers hide an sshd in .j/)'))
+            elif os.path.isfile(p) and not n.endswith(('.gz', '.xz')):
+                try:
+                    with open(p, 'rb') as f:
+                        if f.read(4) == b'\x7fELF':
+                            items.append(_item('critical', p, 'a program inside a web server log folder'))
+                except OSError:
+                    pass
+    for d in ('/var/lib/php/sessions', '/var/lib/php/session', '/tmp'):
+        for p in glob.glob(os.path.join(d, 'sess_p2sopchain*')):
+            items.append(_item('critical', p, 'session file named by the PHP2Shell exploit chain'))
+    # log patterns and markers (the current and the previous log)
+    hits = {}
+    for pat in P2S_LOG_GLOBS:
+        for p in sorted(glob.glob(pat)):
+            if not re.search(r'(\.log|log|\.\d)$', p):
+                continue
+            for line in _tail_lines(p):
+                for m in P2S_MARKERS:
+                    if m in line:
+                        hits.setdefault((p, m), [0, 'high', f'PHP2Shell exploit marker {m}'])[0] += 1
+                for rx, sev, why in P2S_LOG_PATTERNS:
+                    if rx.search(line):
+                        hits.setdefault((p, rx.pattern), [0, sev, why])[0] += 1
+    for (p, _), (n, sev, why) in sorted(hits.items()):
+        items.append(_item(sev, p, f'{why}: {n} time(s)'))
+    # the root exploit chained after PHP2Shell (Fragnesia, CVE-2026-46300) needs these modules
+    try:
+        mods = {l.split()[0] for l in open('/proc/modules')}
+    except OSError:
+        mods = set()
+    ipsec = any(_have(x) for x in ('ipsec', 'charon', 'strongswan', 'pluto'))
+    loaded = sorted(mods & {'esp4', 'esp6', 'rxrpc'})
+    if loaded and not ipsec:
+        items.append(_item('medium', ', '.join(loaded), 'kernel modules loaded without IPsec software: the root exploit '
+                           'used after PHP2Shell (CVE-2026-46300) relies on them; install the kernel update'))
+    bad = any(i['severity'] in ('critical', 'high') for i in items)
+    traces = [i for i in items if i['severity'] in ('critical', 'high') and not i['path'].startswith(('PHP ', 'lsphp'))]
+    fixed = sum(1 for r in rows if r['status'] == 'fixed')
+    summary = (f'{fixed} of {len(rows)} PHP version(s) carry the fix' if rows else 'No PHP found') + \
+              (f'; {len(traces)} trace(s) of the attack found.' if traces else '; no traces of the attack found.') + note
+    return _section('php2shell', 'bad' if bad else ('warn' if items else 'ok'), summary, items)
+
+
+# ------------------------------------------------------------- web servers
+
+def _vt3(v):
+    return tuple(int(x) for x in re.findall(r'\d+', v or '')[:3])
+
+
+# Minimum version per track that carries the fixes for serious, published flaws. The catalog
+# keeps only the newest release of a track, so its "security" flag alone can miss a server two
+# releases behind (nginx 1.31.6 -> 1.31.8, where 1.31.7 was the fix). Updated with this App.
+WEB_MIN_SAFE = {
+    'apache2': {'2.4': ((2, 4, 71), 'CVE-2026-119618, HTTP/2 remote code execution without a login (critical, 9.8), '
+                                    'and two more')},
+    'nginx': {'1.31': ((1, 31, 7), 'CVE-2026-15176 and four more fixed in October 2026'),
+              '1.30': ((1, 30, 6), 'CVE-2026-15176 and four more fixed in October 2026')},
+}
+# tracks upstream no longer fixes
+WEB_EOL = {'nginx': {'1.29', '1.28', '1.27', '1.26'}, 'apache2': {'2.2'}}
+WEB_APPS = {'apache2': 'Apache', 'nginx': 'nginx', 'openlitespeed': 'OpenLiteSpeed', 'caddy': 'Caddy',
+            'caddy-waf': 'Caddy (WAF build)'}
+
+
+def _web_builds():
+    """[(app, version)] of the VortexPanel web server builds in use (not the copies kept for rollback)."""
+    out = []
+    try:
+        from panel import softs
+        for app in WEB_APPS:
+            for slot, rec in (softs.installed(app) or {}).items():
+                if rec.get('version'):
+                    out.append((app, rec['version']))
+        return out
+    except Exception:  # noqa: BLE001 - panels without the engine: follow the current links
+        for app in WEB_APPS:
+            for link in glob.glob(os.path.join(SOFT_BASE, app, '*')):
+                if os.path.islink(link):
+                    out.append((app, os.path.basename(os.path.realpath(link))))
+        return sorted(set(out))
+
+
+def _catalog_releases(app):
+    try:
+        from panel import softs
+        return ((softs.load() or {}).get('apps') or {}).get(app, {}).get('releases') or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _apache_conf_dirs():
+    return [d for d in ('/etc/apache2', '/etc/httpd') if os.path.isdir(d)]
+
+
+def _apache_h2():
+    """True when Apache serves HTTP/2: the module is loaded and a Protocols line offers h2/h2c."""
+    loaded = False
+    for ctl in ('apache2ctl', 'apachectl', 'httpd'):
+        if _have(ctl):
+            rc, out, err = _sh([ctl, '-M'], 30)
+            if 'http2_module' in out + err:
+                loaded = True
+                break
+    if not loaded:
+        return False
+    for d in _apache_conf_dirs():
+        for dp, dns, fns in os.walk(d):
+            dns[:] = [x for x in dns if not x.endswith('-available')]      # only what Apache loads
+            for fn in fns:
+                if not fn.endswith(('.conf', '.load')) and fn != 'apache2.conf':
+                    continue
+                try:
+                    text = open(os.path.join(dp, fn), errors='replace').read()
+                except OSError:
+                    continue
+                if re.search(r'^\s*Protocols\s+[^\n#]*\bh2c?\b', text, re.M | re.I):
+                    return True
+    return False
+
+
+def _ols_conf():
+    texts = []
+    for p in ['/usr/local/lsws/conf/httpd_config.conf'] + glob.glob('/usr/local/lsws/conf/vhosts/*/vhconf.conf'):
+        try:
+            texts.append(open(p, errors='replace').read())
+        except OSError:
+            pass
+    return '\n'.join(texts)
+
+
+def _ols_open_issue(ver):
+    """CVE-2026-119559 (no fix yet, all versions to 1.9.4): sites that require client
+    certificates can be reached without one over HTTP/3."""
+    if _vt3(ver) > (1, 9, 4):
+        return None
+    conf = _ols_conf()
+    m = re.search(r'^\s*quicEnable\s+(\d)', conf, re.M)
+    quic = (m.group(1) != '0') if m else True             # HTTP/3 is on unless switched off
+    mtls = re.search(r'^\s*clientVerify\s+[123]\b', conf, re.M)
+    if quic and mtls:
+        return _item('high', f'OpenLiteSpeed {ver}', 'CVE-2026-119559 (no fix yet): a site that requires client '
+                     'certificates can be reached without one over HTTP/3. Turn HTTP/3 off (quicEnable 0) until '
+                     'LiteSpeed releases a fix.')
+    return _item('low', f'OpenLiteSpeed {ver}', 'CVE-2026-119559 has no fix yet, but this server is not exposed: '
+                 + ('no site requires client certificates' if quic else 'HTTP/3 is off'))
+
+
+def _pending_security(pkgs):
+    """{package: new version} of operating system security updates waiting to be installed,
+    as of the last package list refresh."""
+    out = {}
+    if _have('apt-get'):
+        rc, txt, err = _sh(['apt-get', '-s', '-o', 'Debug::NoLocking=1', 'upgrade'], 120)
+        for m in re.finditer(r'^Inst (\S+) (?:\[[^\]]*\] )?\((\S+) ([^)]*)\)', txt, re.M):
+            if m.group(1) in pkgs and 'security' in m.group(3).lower():
+                out[m.group(1)] = m.group(2)
+    elif _have('dnf'):
+        rc, txt, err = _sh(['dnf', '-q', '--cacheonly', 'updateinfo', 'list', '--security', '--available'] + list(pkgs), 120)
+        for line in txt.splitlines():
+            f = line.split()
+            if len(f) >= 3:
+                name = re.sub(r'-\d.*$', '', f[-1])
+                if name in pkgs:
+                    out[name] = f[-1]
+    return out
+
+
+def _os_web():
+    """[(app, binary, package, version)] of web servers from operating system packages."""
+    fam = _family()
+    if not fam:
+        return []
+    cands = {'apache2': ['/usr/sbin/apache2', '/usr/sbin/httpd'], 'nginx': ['/usr/sbin/nginx'],
+             'openlitespeed': ['/usr/local/lsws/bin/openlitespeed'], 'caddy': ['/usr/bin/caddy']}
+    out = []
+    for app, bins in cands.items():
+        for b in bins:
+            if not os.path.exists(b) or os.path.realpath(b).startswith(SOFT_BASE + '/'):
+                continue
+            owners = _owners([b], fam)
+            if not owners:
+                continue
+            pkg = sorted(owners)[0]
+            argv = {'apache2': [b, '-v'], 'nginx': [b, '-v'], 'openlitespeed': [b, '-v'], 'caddy': [b, 'version']}[app]
+            rc, o, e = _sh(argv, 20)
+            m = re.search(r'(\d+\.\d+\.\d+)', o + e)
+            out.append((app, b, pkg, m.group(1) if m else ''))
+            break
+    return out
+
+
+def check_webservers():
+    items, seen = [], []
+    h2 = None
+    for app, ver in _web_builds():
+        name = WEB_APPS[app]
+        seen.append(f'{name} {ver}')
+        vt = _vt3(ver)
+        track = '.'.join(ver.split('.')[:2]) if app not in ('caddy', 'caddy-waf') else ver.split('.')[0]
+        rels = _catalog_releases(app)
+        newer_sec = [r for r in rels if (r.get('track') == track or not r.get('track')) and _vt3(r['version']) > vt
+                     and r.get('security') and r.get('status', 'active') == 'active']
+        safe = WEB_MIN_SAFE.get(app, {}).get(track)
+        target = max([r['version'] for r in newer_sec] or [''], key=_vt3) or (
+            max([r['version'] for r in rels if r.get('track') == track] or [''], key=_vt3))
+        if safe and vt < safe[0]:
+            if app == 'apache2':
+                h2 = _apache_h2() if h2 is None else h2
+            sev = 'critical' if app == 'apache2' and h2 else 'high'
+            items.append(_item(sev, f'{name} {ver}', f'missing the fix for {safe[1]}'
+                               + (' -- HTTP/2 is on, so it is exposed' if app == 'apache2' and h2 else '')
+                               + f'. Update to {target or ".".join(map(str, safe[0]))} in the App Store.', 'update'))
+        elif newer_sec:
+            cves = sorted({c for r in newer_sec for c in (r.get('cves') or [])})
+            items.append(_item('high', f'{name} {ver}', f'{target} is a security update'
+                               + (f' ({", ".join(cves[:4])}{" and more" if len(cves) > 4 else ""})' if cves else '')
+                               + ': update it in the App Store.', 'update'))
+        elif track in WEB_EOL.get(app, set()):
+            items.append(_item('medium', f'{name} {ver}', f'{name} {track} no longer receives security fixes: '
+                               'move to a supported version in the App Store.', 'update'))
+        if app == 'openlitespeed':
+            it = _ols_open_issue(ver)
+            if it:
+                items.append(it)
+    os_web = _os_web()
+    if os_web:
+        pending = _pending_security({p for _, _, p, _ in os_web})
+        for app, b, pkg, ver in os_web:
+            name = WEB_APPS[app]
+            seen.append(f'{name} {ver} (system package)')
+            if pkg in pending:
+                items.append(_item('high', f'{name} {ver} ({pkg})', f'a security update ({pending[pkg]}) is waiting: '
+                                   'install the operating system updates', 'package'))
+            if app == 'apache2' and _vt3(ver) < (2, 4, 71) and _vt3(ver) >= (2, 4, 55):
+                h2 = _apache_h2() if h2 is None else h2
+                if h2:
+                    items.append(_item('medium', f'{name} {ver} ({pkg})', 'CVE-2026-119618 (HTTP/2 remote code execution) '
+                                       'is fixed upstream in 2.4.71. Distributions backport the fix under their own '
+                                       'version numbers: install the operating system updates, and if your distribution '
+                                       'has no fix yet, set "Protocols http/1.1" to turn HTTP/2 off.', 'package'))
+            if app == 'openlitespeed':
+                it = _ols_open_issue(ver)
+                if it:
+                    items.append(it)
+    if not seen:
+        return _section('webservers', 'ok', 'No Apache, nginx, OpenLiteSpeed or Caddy on this server.')
+    bad = any(i['severity'] in ('critical', 'high') for i in items)
+    flagged = [i for i in items if i['severity'] in ('critical', 'high', 'medium')]
+    summary = ', '.join(seen) + (f': {len(flagged)} problem(s).' if flagged else ': up to date.')
+    return _section('webservers', 'bad' if bad else ('warn' if flagged else 'ok'), summary, items)
+
+CHECKS = {'php2shell': check_php2shell, 'webservers': check_webservers, 'panel': check_panel, 'apps': check_apps, 'venv': check_venv, 'builds': check_builds,
           'packages': check_packages, 'backdoors': check_backdoors}
 
 

@@ -270,6 +270,21 @@ def create_app():
                 from panel.tasks import install_timers
                 for p in install_timers():
                     print('[VortexPanel] task timers:', p)
+                # one time after the update: builds installed under the 0077 umask (issue #36)
+                try:
+                    from panel import softs as _softs
+                    fixed = _softs.repair_permissions_once()
+                    if fixed:
+                        print(f'[VortexPanel] permissions repaired on {len(fixed)} build files and folders')
+                except Exception as e:  # noqa: BLE001
+                    print('[VortexPanel] permission repair failed:', e)
+                # PHP2Shell: keep upload progress off in every PHP and pool (idempotent:
+                # changes and reloads only what is missing, e.g. a pool added since)
+                try:
+                    from panel import php2shell as _p2s
+                    _changed, _msgs = _p2s.protect_if_enabled(lambda m: print('[VortexPanel]', m))
+                except Exception as e:  # noqa: BLE001
+                    print('[VortexPanel] PHP2Shell protection not applied:', e)
         except OSError:
             pass  # another worker is doing it
         except Exception as e:
