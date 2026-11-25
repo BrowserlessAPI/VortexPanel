@@ -40,6 +40,13 @@ SYSTEMD=""; [ -e /usr/include/systemd/sd-daemon.h ] && SYSTEMD=--with-fpm-system
 # EL8's linker (binutils 2.30) cannot link mbstring's CPU-specific functions (IFUNC) into
 # a non-PIE program ("recompile with -fPIE and relink with -pie"): build PIE there
 if [ "$TARGET" = el8 ]; then export CFLAGS="${CFLAGS:-} -O2 -g -fPIE" LDFLAGS="${LDFLAGS:-} -pie"; fi
+# PHP 8.6's bundled GD (synced with upstream libgd) includes FreeType through <ft2build.h> only when
+# HAVE_FT2BUILD_H is defined, which PHP's configure never does; the fallback <freetype/freetype.h>
+# is refused by FreeType older than 2.10 (EL8's 2.9.1: "ft2build.h hasn't been included yet")
+if grep -q HAVE_FT2BUILD_H ext/gd/libgd/gdft.c 2>/dev/null \
+   && pkg-config --cflags freetype2 >/dev/null 2>&1; then
+  export CPPFLAGS="${CPPFLAGS:-} -DHAVE_FT2BUILD_H"
+fi
 ./configure \
   --prefix="$PREFIX" \
   --with-config-file-path="$ETC/fpm" \
