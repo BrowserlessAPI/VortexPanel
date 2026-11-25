@@ -68,7 +68,9 @@ def _say(log, msg):
 # --------------------------------------------------------------------- config
 
 def trust():
-    """{"base_url": "...", "keys": ["base64 Ed25519 public key", ...]}"""
+    """{"base_url": "...", "keys": ["base64 Ed25519 public key", ...], "apps_keys": [...]}
+
+    keys sign the software catalog and the App index; apps_keys sign only the App index."""
     try:
         d = json.load(open(TRUST))
     except (OSError, ValueError):
@@ -81,6 +83,7 @@ def trust():
     d.setdefault('base_url', '')
     d.setdefault('apps_url', '')
     d.setdefault('keys', [])
+    d['apps_keys'] = [k for k in d.get('apps_keys') or [] if isinstance(k, str) and k]
     d['mirrors'] = [m.rstrip('/') for m in d.get('mirrors') or [] if isinstance(m, str) and m.startswith('https://')]
     return d
 
@@ -1463,7 +1466,8 @@ def apps_index(force=False, log=None):
         return {}
     meta['checked'] = int(time.time())
     try:
-        keys = trust()['keys']
+        t = trust()
+        keys = t['keys'] + t['apps_keys']      # the App index may also be signed with an Apps-only key
         if not keys:
             raise SoftError('no catalog key in panel/trust/softs.json')
         sources = _apps_sources('index.json')
@@ -1637,7 +1641,7 @@ def import_bundle(path, log=None):
             if not (os.path.isfile(j) and os.path.isfile(sg)):
                 continue
             raw, sig = open(j, 'rb').read(), open(sg).read()
-            if not _verify(raw, sig, keys):
+            if not _verify(raw, sig, keys if base_name == 'catalog.json' else keys + trust()['apps_keys']):
                 raise SoftError(f'the bundle {base_name} signature does not verify')
             obj = json.loads(raw)
             want.update(loader(obj))

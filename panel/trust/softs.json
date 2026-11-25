@@ -1,5 +1,5 @@
 {
-  "comment": "VortexPanel software builds and VortexPanel's own Apps. base_url: public address of the software R2 bucket (custom domain). mirrors: GitHub Releases copies of the software, used when base_url fails or when chosen in Software updates > Download source. apps_url: public address of the separate R2 bucket that holds VortexPanel's own Apps (index.json + packages); the Apps are never on GitHub. keys: Ed25519 public keys allowed to sign catalog.json and the App index. While base_url or keys is empty, the App Store installs from the OS package sources.",
+  "comment": "VortexPanel software builds and VortexPanel's own Apps. base_url: public address of the software R2 bucket (custom domain). mirrors: GitHub Releases copies of the software, used when base_url fails or when chosen in Software updates > Download source. apps_url: public address of the separate R2 bucket that holds VortexPanel's own Apps (index.json + packages); the Apps are never on GitHub. keys: Ed25519 public keys allowed to sign catalog.json and the App index. apps_keys: keys allowed to sign only the App index. While base_url or keys is empty, the App Store installs from the OS package sources.",
   "base_url": "https://dl.vortexpanel.dev",
   "apps_url": "https://apps.vortexpanel.dev",
   "mirrors": [
@@ -7,5 +7,6 @@
   ],
   "keys": [
     "d6qcVK2tZLu76g0r4cZ3h3JxRuy1OMGS+3DsPCsq3x4="
-  ]
+  ],
+  "apps_keys": ["JzdamDmlcPXuNU5yi4+kp3n9CtnpIya17U5uFtiDmmo="]
 }
