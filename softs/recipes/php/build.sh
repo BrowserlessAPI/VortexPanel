@@ -29,8 +29,11 @@ LIBDIR=lib
 if [ "$FAMILY" = rpm ]; then LIBDIR=lib64
 elif MA="$(gcc -print-multiarch 2>/dev/null)" && [ -n "$MA" ]; then LIBDIR="lib/$MA"; fi
 EXTRA="$(opt '--with-password-argon2' '--with-password-argon2')"
-# AVIF images only where this system offers libavif 0.8.2+ (Debian/Ubuntu; EPEL where it has it)
-pkg-config --exists 'libavif >= 0.8.2' 2>/dev/null && EXTRA="$EXTRA $(opt '--with-avif' '--with-avif')"
+# AVIF images only where this system offers the libavif this PHP needs (read from PHP's own
+# ext/gd/config.m4: 0.8.2 up to PHP 8.5, 1.0.0 for 8.6, whose configure stops on an older one,
+# e.g. Ubuntu 22.04's 0.9.3, Debian 12's 0.11.1 and EL8's EPEL build)
+AVIF_MIN="$(grep -oE 'libavif >= [0-9][0-9.]*' ext/gd/config.m4 2>/dev/null | head -1 | awk '{print $3}')"
+pkg-config --exists "libavif >= ${AVIF_MIN:-0.8.2}" 2>/dev/null && EXTRA="$EXTRA $(opt '--with-avif' '--with-avif')"
 FREETYPE=--with-freetype
 SYSTEMD=""; [ -e /usr/include/systemd/sd-daemon.h ] && SYSTEMD=--with-fpm-systemd
 

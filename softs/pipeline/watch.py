@@ -300,6 +300,18 @@ def plan(only=None, force=None, catalog=None):
         if not any(p['app'] == app and p['version'] == v for p in out):
             r = C.recipes()[app]
             fi = {'app': app, 'version': v, 'track': C.track_of(v, r['watch'].get('track_depth', 2))}
+            rel = C.find_release(cat, app, v)
+            if rel and not rel.get('missing') and len(v.split('.')) == 3 \
+                    and rel.get('recipe_rev') != C.recipe_rev(app):
+                # an older published version (not the newest of its track, so the loop above did
+                # not see it) whose recipe changed since: also a build bump, never a rebuild that
+                # republishes the same version number
+                bumps = [int(x['version'].split('.')[3]) for x in C.releases(cat, app)
+                         if '.'.join(x['version'].split('.')[:3]) == v and len(x['version'].split('.')) > 3]
+                fi = dict(fi, version=f'{v}.{(max(bumps) + 1) if bumps else 1}', upstream=v)
+                C.log(f'{app}: recipe fixed since {v} was published; building bump {fi["version"]}')
+                if any(p['app'] == app and p['version'] == fi['version'] for p in out):
+                    continue
             try:
                 fi = availability(r, fi)
             except Exception as e:  # noqa: BLE001 - one app's upstream must not stop the others
