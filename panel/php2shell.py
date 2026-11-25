@@ -94,25 +94,53 @@ def _version(b):
     return m.group(1) if m else ''
 
 
-def _verdict(ver, flavor):
+# Branches first released after the fix (PHP 8.6.0, 19 November 2026) carry it from their
+# first release, from php.net and from every distribution.
+FIRST_FIXED_BRANCH = (8, 6)
+PATCH_NAME = 'php2shell-CVE-2026-109618-109619'
+
+
+def _patched_build(lay):
+    """True when this is a VortexPanel build that carries PHP's official backport (8.1.34.1):
+    the version string still says 8.1.34, the build records the patch it applied."""
+    if not lay or lay.get('flavor') != 'vortex':
+        return False
+    try:
+        prefix = os.path.realpath(f'/usr/local/vortex/php/{lay["ver"]}')
+        with open(os.path.join(prefix, 'share', 'conf', 'vp-patches.txt')) as f:
+            return PATCH_NAME in f.read().split()
+    except (OSError, KeyError):
+        return False
+
+
+def _verdict(ver, flavor, patched=False):
     """('fixed' | 'vulnerable' | 'nofix' | 'check', explanation)."""
     if not ver:
         return 'check', 'the version could not be read'
     base = _vt(ver)
-    branch = f'{base[0]}.{base[1]}' if len(base) >= 2 else ''
+    if len(base) < 2:
+        return 'check', f'the version "{ver}" could not be read'
+    branch = f'{base[0]}.{base[1]}'
+    if base[:2] >= FIRST_FIXED_BRANCH:
+        return 'fixed', f'{ver}: PHP {branch} was released after the fix and carries it'
+    if patched:
+        return 'fixed', (f'{ver} with PHP\'s official backport of the fix (VortexPanel build '
+                         f'{ver}.1). PHP {branch} is end of life: plan the move to PHP 8.2 or newer.')
     distro = '-' in ver or '+' in ver or flavor in ('debian', 'rhel')
     fixed = FIXED.get(branch)
     if fixed and base >= fixed:
         return 'fixed', f'{ver} carries the fix ({".".join(map(str, fixed))} or newer)'
     if not fixed and base < (8, 2):
         if distro:
-            return 'check', (f'PHP {branch} has no official fix; your distribution may have backported it. '
+            return 'check', (f'PHP {branch} gets no fixed release from php.net; your distribution may have backported it. '
                              'Install the operating system updates and check its security notice.')
-        return 'nofix', (f'PHP {branch} has no official fix. Move the websites to PHP 8.2 or newer; '
-                         'the protection setting below reduces the risk meanwhile.')
+        return 'nofix', (f'PHP {branch} gets no fixed release (php.net published only a source backport). '
+                         'Move the websites to PHP 8.2 or newer; the protection setting below reduces the risk meanwhile.')
     if distro:
         return 'check', (f'{ver} is an operating system package: distributions backport the fix under their '
                          'own version numbers. Install the operating system updates.')
+    if not fixed:
+        return 'check', f'PHP {branch} is not a branch this check knows; compare it with php.net/security'
     return 'vulnerable', f'{ver} is affected; {".".join(map(str, fixed))} has the fix'
 
 
@@ -141,12 +169,15 @@ def status():
         seen.add(label)
         ver = _version(b)
         flavor = (lay or {}).get('flavor', 'lsphp')
-        verdict, why = _verdict(ver, flavor)
+        verdict, why = _verdict(ver, flavor, _patched_build(lay))
         pkg = _package_version(lay) if flavor in ('debian', 'remi', 'rhel') else ''
         if pkg:
             why += f' Installed package: {pkg}.'
         if flavor == 'vortex' and verdict == 'vulnerable':
             why += ': update it in the App Store.'
+        elif flavor == 'vortex' and verdict == 'nofix' and lay and lay.get('ver') == '8.1':
+            why += (' Update PHP 8.1 in the App Store: the VortexPanel build 8.1.34.1 carries '
+                    'PHP\'s official backport of the fix.')
         rows.append({'name': label, 'kind': kind, 'version': ver, 'flavor': flavor, 'status': verdict,
                      'detail': why})
     s = settings()

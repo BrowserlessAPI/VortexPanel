@@ -57,6 +57,8 @@ Description=ClamAV virus database updater (VortexPanel build)
 Documentation=man:freshclam(1) man:freshclam.conf(5)
 Wants=network-online.target
 After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 ExecStart=$VP_CURRENT/vp-bin/freshclam -d --foreground=true
@@ -81,6 +83,10 @@ After=network-online.target clamav-freshclam.service
 # clamd refuses to start without signatures; freshclam starts it once they are there
 ConditionPathExistsGlob=/var/lib/clamav/main.{c[vl]d,inc}
 ConditionPathExistsGlob=/var/lib/clamav/daily.{c[vl]d,inc}
+# if clamd cannot start 5 times in 5 minutes (e.g. it cannot bind its socket), stop retrying
+# and mark the service failed instead of reloading the signatures at 100% CPU forever
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 ExecStart=$VP_CURRENT/vp-bin/clamd --foreground=true
@@ -92,6 +98,7 @@ ExecReload=/bin/kill -USR2 \$MAINPID
 ExecStartPre=/usr/bin/install -d -m 0755 -o clamav -g clamav /run/clamav
 TimeoutStartSec=420
 Restart=on-failure
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target

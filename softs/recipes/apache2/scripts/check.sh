@@ -1,7 +1,7 @@
 #!/bin/bash
 . "$(dirname "$0")/lib.sh"
 v="$("$VP_CURRENT/bin/httpd" -v | sed -n 's|.*Apache/\([0-9.]*\).*|\1|p')"
-[ "$v" = "$VP_VERSION" ] || fail "expected Apache $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected Apache $(vp_upstream), found '$v'"
 if [ "$VP_FAMILY" = deb ]; then PID=/run/apache2/apache2.pid; else PID=/run/httpd/httpd.pid; fi
 up=""
 for i in $(seq 1 15); do

@@ -1,7 +1,7 @@
 #!/bin/bash
 . "$(dirname "$0")/lib.sh"
 v="$("$VP_CURRENT/bin/redis-server" --version | sed -n 's/.*v=\([0-9.]*\).*/\1/p')"
-[ "$v" = "$VP_VERSION" ] || fail "expected Redis $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected Redis $(vp_upstream), found '$v'"
 # the server's own port and password (requirepass is a normal panel setting)
 PORT="$(awk '$1=="port"{print $2}' /etc/redis/redis.conf 2>/dev/null | tail -1)"; PORT="${PORT:-6379}"
 export REDISCLI_AUTH="$(awk '$1=="requirepass"{print $2}' /etc/redis/redis.conf 2>/dev/null | tail -1 | tr -d '"')"

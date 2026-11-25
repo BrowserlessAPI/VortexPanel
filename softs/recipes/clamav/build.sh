@@ -4,6 +4,10 @@
 # support is loaded from LD_LIBRARY_PATH), its signing certificates, the server's
 # configuration files and the signature folder /var/lib/clamav.
 [ -n "${SOURCE_FILE:-}" ] || { echo "no release file for $TARGET-$ARCH"; exit 3; }
+# VERSION is the published build (e.g. 1.5.4.1 for a recipe-fix rebuild); UPSTREAM is the real
+# ClamAV release it is built from (1.5.4). Install paths use VERSION; the source tarball and the
+# reported version are UPSTREAM.
+UPSTREAM="${VP_UPSTREAM:-$VERSION}"
 cd "$SRC"; P="$DEST$PREFIX"
 install -d "$P" "$P/etc"
 if [ "$TARGET" = linux ]; then
@@ -14,7 +18,7 @@ if [ "$TARGET" = linux ]; then
   cp "$L/etc/clamd.conf.sample" "$L/etc/freshclam.conf.sample" "$P/etc/" 2>/dev/null || true
 else
   tar -xzf "$SOURCE_FILE" --no-same-owner
-  S="$SRC/clamav-$VERSION"; mkdir build; cd build
+  S="$SRC/clamav-$UPSTREAM"; mkdir build; cd build
   cmake "$S" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR=lib \
     -DAPP_CONFIG_DIRECTORY=/etc/clamav -DDATABASE_DIRECTORY=/var/lib/clamav \
     -DENABLE_TESTS=OFF -DENABLE_MILTER=OFF -DENABLE_SYSTEMD=OFF -DENABLE_MAN_PAGES=OFF -DENABLE_DOXYGEN=OFF \
@@ -52,4 +56,4 @@ exec "\$D/$d/$n" "\$@"
 WRAP
   chmod 0755 "$P/vp-bin/$n"
 done
-"$P/vp-bin/clamscan" --version | grep -q "ClamAV $VERSION" || { echo "clamscan reports the wrong version"; exit 3; }
+"$P/vp-bin/clamscan" --version | grep -q "ClamAV $UPSTREAM" || { echo "clamscan reports the wrong version"; exit 3; }

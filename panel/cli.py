@@ -493,6 +493,46 @@ def cmd_app_test(a):
     sys.exit(apptest.main(a.rest or ['status']))
 
 
+def cmd_offline(a):
+    from panel import softs
+    if a.action == 'import':
+        if not a.file:
+            sys.exit('usage: vortexpanel offline import <bundle.tar | package.zip>')
+        try:
+            import tarfile
+            if tarfile.is_tarfile(a.file):
+                r = softs.import_bundle(a.file, log=print)
+            else:
+                r = softs.import_package(a.file, log=print)
+            print('Imported:', r)
+        except softs.SoftError as e:
+            sys.exit(f'import failed: {e}')
+    elif a.action == 'clear':
+        softs.offline_clear()
+        print('Offline store cleared.')
+    else:
+        st = softs.offline_status()
+        print(f"Offline store: {st['files']} file(s); catalog serial {st['catalog_serial']}, "
+              f"App index serial {st['apps_index_serial']}; offline mode {'on' if st['offline'] else 'off'}")
+
+
+def cmd_mirror(a):
+    from panel import softs
+    s = softs.settings()
+    which = 'apps_mirrors' if a.apps else 'mirrors'
+    cur = list(s[which])
+    if a.action == 'add' and a.url:
+        if a.url.rstrip('/') not in cur:
+            cur.append(a.url.rstrip('/'))
+        softs.save_settings({which: cur})
+    elif a.action == 'remove' and a.url:
+        cur = [u for u in cur if u != a.url.rstrip('/')]
+        softs.save_settings({which: cur})
+    s = softs.settings()
+    print('Software mirrors:', ', '.join(s['mirrors']) or '(none)')
+    print('App mirrors:     ', ', '.join(s['apps_mirrors']) or '(none)')
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog='vortexpanel', description='Manage VortexPanel from the shell.')
     sp = p.add_subparsers(dest='command')
@@ -542,12 +582,21 @@ def main(argv=None):
     x.add_argument('action', nargs='?', choices=['list', 'enable', 'disable', 'safe-mode'], default='list')
     x.add_argument('id', nargs='?')
     x.set_defaults(fn=cmd_plugins)
-    x = sp.add_parser('app-versions', help='tested App Store versions from the licence server: status or refresh')
+    x = sp.add_parser('app-versions', help='tested App Store versions from Cloudflare R2: status or refresh')
     x.add_argument('action', nargs='?', choices=['status', 'refresh'], default='status')
     x.set_defaults(fn=cmd_app_versions)
     x = sp.add_parser('app-test', help='App Store test runner (test servers only): setup | run | status')
     x.add_argument('rest', nargs=argparse.REMAINDER)
     x.set_defaults(fn=cmd_app_test)
+    x = sp.add_parser('offline', help='offline bundles: status | import <file> | clear')
+    x.add_argument('action', nargs='?', choices=['status', 'import', 'clear'], default='status')
+    x.add_argument('file', nargs='?', help='bundle .tar or package .zip to import')
+    x.set_defaults(fn=cmd_offline)
+    x = sp.add_parser('mirror', help='self-hosted download mirrors: list | add <url> | remove <url> (--apps for App mirrors)')
+    x.add_argument('action', nargs='?', choices=['list', 'add', 'remove'], default='list')
+    x.add_argument('url', nargs='?')
+    x.add_argument('--apps', action='store_true', help='operate on App mirrors instead of software mirrors')
+    x.set_defaults(fn=cmd_mirror)
     a = p.parse_args(argv)
     if not getattr(a, 'fn', None):
         a = p.parse_args(['info'])

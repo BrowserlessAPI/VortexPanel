@@ -2,7 +2,7 @@
 . "$(dirname "$0")/lib.sh"
 V="$VP_TRACK"
 got="$("/usr/bin/php$V" -r 'echo PHP_VERSION;' 2>/dev/null)"
-[ "$got" = "$VP_VERSION" ] || fail "expected PHP $VP_VERSION, found '$got'"
+[ "$got" = "$(vp_upstream)" ] || fail "expected PHP $(vp_upstream), found '$got'"
 for i in $(seq 1 15); do [ -S "/run/php/php$V-fpm.sock" ] && break; sleep 1; done
 [ -S "/run/php/php$V-fpm.sock" ] || fail "php$V-fpm socket is missing"
 "/usr/bin/php$V" -m | grep -qi '^mysqli$' || fail "mysqli extension does not load"

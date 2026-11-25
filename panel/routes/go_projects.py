@@ -621,7 +621,8 @@ def _build_unit_file(p):
     user     = p.get('user') or _default_svc_user()
     # A bare executable path with spaces must be quoted for ExecStart=.
     cmd      = _unit_val(p.get('exec_cmd') or (f'"{p["exec_file"]}"' if ' ' in p['exec_file'] else p['exec_file']))
-    run_dir  = _unit_val(os.path.dirname(p['exec_file']))
+    # an imported program keeps the folder it ran from (Scan & import); new ones run next to the binary
+    run_dir  = _unit_val(p.get('work_dir') or os.path.dirname(p['exec_file']))
     port     = p.get('port', '')
     env      = p.get('env') or {}
     mem_limit = str(p.get('mem_limit') or '').strip()

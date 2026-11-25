@@ -3,7 +3,7 @@
 . "$(dirname "$0")/my_common.sh"
 v="$("$VP_CURRENT/bin/$SERVER_BIN" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-MariaDB' | head -1)"
 v="${v%-MariaDB}"
-[ "$v" = "$VP_VERSION" ] || fail "expected MariaDB $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected MariaDB $(vp_upstream), found '$v'"
 for i in $(seq 1 600); do
   r="$(sql -e 'SELECT VERSION()' 2>/dev/null)"
   case "$r" in

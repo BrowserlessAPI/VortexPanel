@@ -574,6 +574,10 @@ def pm2_list_raw():
     try: return json.loads(out)
     except: return []
 
+def _pm2_name(p):
+    """The PM2 app of a project: its id, or the app's own name when it was imported."""
+    return p.get('pm2_name') or p['id']
+
 def pm2_status(name):
     procs = pm2_list_raw()
     for p in procs:
@@ -736,7 +740,7 @@ def list_projects():
     projects = load_projects()
     for p in projects:
         if p.get('pm2'):
-            st = pm2_status(p['id'])
+            st = pm2_status(_pm2_name(p))
         else:
             out, _, _ = sh(f'systemctl is-active {svc_name(p["id"])} 2>/dev/null')
             pid_out, _, _ = sh(f'systemctl show {svc_name(p["id"])} --property=MainPID 2>/dev/null')
@@ -858,8 +862,8 @@ def control_project(pid):
     if action not in ('start','stop','restart'):
         return jsonify({'ok':False,'error':'Invalid action'})
     if p.get('pm2'):
-        out, err, rc = pm2_cmd(f'{action} {pid}')
-        status = pm2_status(pid)['status']
+        out, err, rc = pm2_cmd(f'{action} {shlex.quote(_pm2_name(p))}')
+        status = pm2_status(_pm2_name(p))['status']
         want = 'stopped' if action == 'stop' else 'online'
     else:
         out, err, rc = sh(f'systemctl {action} {svc_name(pid)} 2>&1')
@@ -876,7 +880,9 @@ def delete_project(pid):
     projects = load_projects()
     p = next((x for x in projects if x['id']==pid), None)
     if not p: return jsonify({'ok':False,'error':'Not found'})
-    if p.get('pm2'):
+    if p.get('pm2') and p.get('imported'):
+        pass        # imported from PM2 (Scan & import): removed from the panel only, the app keeps running in PM2
+    elif p.get('pm2'):
         pm2_cmd(f'stop {pid}'); pm2_cmd(f'delete {pid}'); pm2_cmd('save')
     else:
         sh(f'systemctl stop {svc_name(pid)} 2>/dev/null')
@@ -894,7 +900,7 @@ def project_logs(pid):
     p = next((x for x in projects if x['id']==pid), None)
     if not p: return jsonify({'ok':False,'error':'Not found'})
     if p.get('pm2'):
-        out, _, _ = pm2_cmd(f'logs {pid} --lines 100 --nostream 2>&1')
+        out, _, _ = pm2_cmd(f'logs {shlex.quote(_pm2_name(p))} --lines 100 --nostream 2>&1')
     else:
         out, _, _ = sh(f'journalctl -u {svc_name(pid)} -n 100 --no-pager 2>/dev/null')
     return jsonify({'ok':True,'logs':out or 'No logs yet'})

@@ -133,7 +133,7 @@ Full WordPress lifecycle management — install, manage, secure, stage, back up 
 - **Safe database version policy** — databases (MariaDB/MySQL/PostgreSQL/MongoDB) require uninstall-first to prevent data corruption; version switching kept for non-data modules
 
 ### 🧩 Panel Apps *(new in 3.10)*
-Optional modules installed from the App Store, each with its own page. Every App runs separately from the panel core (own data folder, own firewall table, own service), so installing, updating or removing one never touches your websites or other Apps.
+Optional modules installed from the App Store, each with its own page. The Apps are free for every VortexPanel server and are delivered by VortexPanel (they are proprietary and not part of this repository; see License below). Every App runs separately from the panel core (own data folder, own firewall table, own service), so installing, updating or removing one never touches your websites or other Apps.
 - **Website Statistics** — page views, unique visitors, IPs, traffic, spiders and AI crawlers, regions, pages, referrers, status codes, browsers and devices per site, with hourly trends, comparison and a live requests-per-minute view, read from the server's own access logs (no tracking script)
 - **Network Scan Detection** — counts probes to closed ports in the kernel (nftables) and blocks port scanners automatically, with block records, real-time probe log and whitelist
 - **Network Threat Detection** — live threat-intelligence lists (FireHOL/Spamhaus, blocklist.de, Emerging Threats, GreenSnow, abuse.ch Feodo) in monitor or block mode, plus outbound botnet detection and optional Suricata IDS
@@ -141,7 +141,7 @@ Optional modules installed from the App Store, each with its own page. Every App
 - **PHP Security** — Snuffleupagus runtime protection per PHP version: blocks webshells in upload folders, command injection, PHP uploads and remote inclusion, with log-only testing and trusted folders
 
 ### VortexPanel software builds *(new in 3.11)*
-Every App Store module (web servers, databases, PHP, Node.js, Python, Docker, Redis, Memcached, Supervisor, Fail2ban, ClamAV, BIND9, ddclient, Pure-FTPd, Caddy WAF) is built, tested and signed by VortexPanel and installed from the VortexPanel download server instead of the OS package sources. Tools installed from a released file (phpMyAdmin, Adminer, Roundcube, Anubis, ffmpeg, OWASP CRS) are mirrored there, and VortexPanel Apps are published there too.
+Every App Store module (web servers, databases, PHP, Node.js, Python, Docker, Redis, Memcached, Supervisor, Fail2ban, ClamAV, BIND9, ddclient, Pure-FTPd, Caddy WAF) is built, tested and signed by VortexPanel and installed from the VortexPanel download server instead of the OS package sources. Tools installed from a released file (phpMyAdmin, Adminer, Roundcube, Anubis, ffmpeg, OWASP CRS) are mirrored there. Every build is also copied to GitHub Releases ([vortexpanel-softs](https://github.com/BrowserlessAPI/vortexpanel-softs)) as a second download source; the panel checks every file against the signed catalog, whichever source it comes from.
 - **Automated every 24 hours** — new upstream releases are found, reviewed by AI (security fixes, CVEs, breaking changes), built for EL 8/9/10, Ubuntu 22.04/24.04 and Debian 12/13 on x86_64 and ARM, installed and smoke-tested on a fresh system, then published
 - **Signed catalog** — panels accept only catalogs signed with the VortexPanel key, never an older one, and check every download's SHA-256
 - **One-click update and rollback** — each version gets its own folder; an update that does not start falls back to the previous version automatically
@@ -342,7 +342,9 @@ python3 app.py   # development server on :8888
 
 ## 📄 License
 
-MIT License — free to use, modify, and distribute, including commercially.
+The VortexPanel core in this repository is MIT licensed — free to use, modify, and distribute, including commercially. See [LICENSE](LICENSE).
+
+The VortexPanel Apps (System Hardening, PHP Security, Website Statistics, Network Scan Detection, Network Threat Detection) are not part of this repository and not covered by the MIT licence. They are proprietary, free to use on any VortexPanel server, and installed only from the VortexPanel App Store.
 
 ---
 

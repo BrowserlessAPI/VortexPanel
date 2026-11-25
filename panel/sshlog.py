@@ -49,32 +49,73 @@ def _journal(since):
     return rows
 
 
-def _logfile(since):
+def _lines_reverse(path, block=1 << 16, max_bytes=256 << 20):
+    """Lines of a text log from the newest to the oldest, read backwards in blocks, so a
+    caller that only needs the last minutes reads a few KB instead of the whole file
+    (auth.log on a server under SSH brute force reaches hundreds of MB)."""
+    with open(path, 'rb') as f:
+        f.seek(0, 2)
+        pos, done, buf = f.tell(), 0, b''
+        while pos > 0 and done < max_bytes:
+            n = min(block, pos)
+            pos -= n
+            f.seek(pos)
+            buf = f.read(n) + buf
+            done += n
+            parts = buf.split(b'\n')
+            buf = parts[0]                      # may continue in the previous block
+            for line in reversed(parts[1:]):
+                yield line
+        if pos == 0 and buf:
+            yield buf
+
+
+_ISO = re.compile(r'^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)')
+_SYSLOG = re.compile(r'^([A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d)')
+
+
+def _line_time(line, year, now):
+    m = _ISO.match(line)
+    if m:
+        try:
+            return datetime.fromisoformat(m.group(1)).timestamp()
+        except ValueError:
+            return None
+    m = _SYSLOG.match(line)
+    if m:
+        try:
+            ts = datetime.strptime(f'{year} {m.group(1)}', '%Y %b %d %H:%M:%S').timestamp()
+        except ValueError:
+            return None
+        if ts > now + 86400:                     # syslog lines carry no year: December, read in January
+            ts = datetime.strptime(f'{year - 1} {m.group(1)}', '%Y %b %d %H:%M:%S').timestamp()
+        return ts
+    return None
+
+
+def _logfile(since, max_lines=20000):
+    """sshd lines newer than `since` from /var/log/auth.log or /var/log/secure, oldest first.
+    Reads from the end and stops at the first line older than `since` (any program's line
+    counts, so a quiet sshd does not make it read the whole file)."""
+    now = time.time()
+    year = datetime.now().year
     for path in ('/var/log/auth.log', '/var/log/secure'):
         if not os.path.exists(path):
             continue
         rows = []
-        year = datetime.now().year
         try:
-            with open(path, errors='replace') as f:
-                for line in f.readlines()[-20000:]:
-                    if 'sshd' not in line:
-                        continue
-                    ts = None
-                    m = re.match(r'^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)', line)
-                    if m:
-                        ts = datetime.fromisoformat(m.group(1)).timestamp()
-                    else:
-                        m = re.match(r'^([A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d)', line)
-                        if m:
-                            try:
-                                ts = datetime.strptime(f'{year} {m.group(1)}', '%Y %b %d %H:%M:%S').timestamp()
-                            except ValueError:
-                                ts = None
-                    if ts and ts >= since:
-                        rows.append((ts, line))
+            for raw in _lines_reverse(path):
+                line = raw.decode('utf-8', 'replace')
+                ts = _line_time(line, year, now)
+                if ts is not None and ts < since - 5:
+                    break                       # older than the window: everything before is too
+                if 'sshd' in line and ts is not None and ts >= since:
+                    rows.append((ts, line))
+                    if len(rows) >= max_lines:
+                        break
         except OSError:
             continue
+        rows.reverse()
         return rows
     return []
 

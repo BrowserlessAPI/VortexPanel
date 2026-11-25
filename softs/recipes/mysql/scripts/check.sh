@@ -2,7 +2,7 @@
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/my_common.sh"
 v="$("$VP_CURRENT/bin/mysqld" --version 2>&1 | sed -n 's/.*Ver \([0-9.]*\).*/\1/p')"
-[ "$v" = "$VP_VERSION" ] || fail "expected MySQL $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected MySQL $(vp_upstream), found '$v'"
 # a data upgrade after a version change can take a while on a big server
 for i in $(seq 1 600); do
   r="$(sql -e 'SELECT VERSION()' 2>/dev/null)"

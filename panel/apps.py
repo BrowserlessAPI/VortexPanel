@@ -1,21 +1,26 @@
-"""VortexPanel Apps: first-party add-on modules that ship with the panel and are
-installed on demand from the App Store (like aaPanel's App Store plugins).
+"""VortexPanel Apps: VortexPanel's own add-on modules (System Hardening, PHP Security,
+...), installed on demand from the App Store (like aaPanel's App Store plugins).
 
-Source (shipped with the panel, updated with it):  panel/apps_bundle/<id>/
-Installed copy (what the panel loads):             /opt/vortexpanel/plugins/<id>/
-Data (survives update and uninstall):              /opt/vortexpanel/data/apps/<id>/
+The Apps are proprietary and are not part of the open-source panel. Since 3.12.0 they come
+only from their own Cloudflare R2 bucket (panel/softs.py apps_index / fetch_panel_app),
+signed with the software catalog key; every VortexPanel server receives them for free.
+
+Source:                                  Cloudflare R2 (signed index + packages, apps_url)
+                                         or VP_APPS_BUNDLE (a local folder, development)
+Installed copy (what the panel loads):   /opt/vortexpanel/plugins/<id>/
+Data (survives update and uninstall):    /opt/vortexpanel/data/apps/<id>/
 
 An App is an ordinary plugin (panel/plugins.py loads it) whose plugin.json has
 "kind": "app". Panel updates never touch plugins/, so an installed App only
-changes when the admin clicks Update in the App Store (offered when the bundled
-copy is newer).
+changes when the admin clicks Update in the App Store (offered when a newer
+release is published).
 
 Install, update and uninstall run in their own systemd unit
 (`python -m panel.apps <action> <id>`), because they end by restarting the
 panel. Every step can be rolled back:
 
   1. checks: compatible with this panel, no conflicting App, nothing else running
-  2. copy the bundle to plugins/<id>.new (regular files only)
+  2. download and verify the package, copy it to plugins/<id>.new (regular files only)
   3. the App must import and register in a separate Python process
   4. swap folders (previous copy kept in data/apps/_backups)
   5. run the App's hooks.install() (packages, services, firewall tables)
@@ -33,6 +38,7 @@ import time
 
 PANEL_DIR = '/opt/vortexpanel'
 HERE = os.path.dirname(os.path.abspath(__file__))
+# development only: a folder of App sources used instead of the Cloudflare R2 releases
 BUNDLE_DIR = os.environ.get('VP_APPS_BUNDLE', os.path.join(HERE, 'apps_bundle'))
 PLUGINS_DIR = os.environ.get('VP_PLUGINS_DIR', os.path.join(PANEL_DIR, 'plugins'))
 APPS_DATA = os.environ.get('VP_APPS_DATA', os.path.join(PANEL_DIR, 'data', 'apps'))
@@ -73,19 +79,18 @@ def bundled():
 
 
 def cloud():
-    """Apps published on the VortexPanel download server: {id: release} (cached catalog)."""
+    """Apps published by VortexPanel: {id: release} (signed index from Cloudflare R2,
+    cached for 6 hours)."""
     try:
         from panel import softs
-        if not softs.configured():
-            return {}
         return softs.panel_apps()
     except Exception:  # noqa: BLE001
         return {}
 
 
 def best(aid, b=None, c=None):
-    """(manifest, source) of the newest available copy: 'bundle' (shipped with the
-    panel) or 'cloud' (published since). None when neither has the App."""
+    """(manifest, source) of the newest available copy: 'cloud' (published by VortexPanel)
+    or 'bundle' (a local development folder). None when neither has the App."""
     b = bundled() if b is None else b
     c = cloud() if c is None else c
     bm, cr = b.get(aid), c.get(aid)
@@ -194,8 +199,9 @@ def start(action, aid, purge=False):
         return False, 'Unknown action'
     if not ID_RE.match(aid or ''):
         return False, 'Unknown App'
-    if action in ('install', 'update') and aid not in bundled():
-        return False, 'This App is not available in this panel version.'
+    if action in ('install', 'update') and best(aid)[0] is None:
+        return False, ('This App is not available right now: the VortexPanel App download server (Cloudflare '
+                       'R2) could not be reached. Try again in a few minutes.')
     if action in ('update', 'uninstall') and aid not in installed():
         return False, 'This App is not installed.'
     if action == 'install':

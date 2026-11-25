@@ -1,7 +1,7 @@
 #!/bin/bash
 . "$(dirname "$0")/lib.sh"
 v="$("$VP_CURRENT/bin/memcached" -V 2>/dev/null | awk '{print $2}')"
-[ "$v" = "$VP_VERSION" ] || fail "expected Memcached $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected Memcached $(vp_upstream), found '$v'"
 PORT=11211
 if [ -f /etc/memcached.conf ]; then
   p="$(sed -n 's/^[[:space:]]*-p[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' /etc/memcached.conf | tail -1)"; PORT="${p:-11211}"

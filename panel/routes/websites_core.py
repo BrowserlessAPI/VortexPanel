@@ -823,10 +823,69 @@ def get_php_versions():
     return jsonify({'ok':True,'versions':versions})
 
 
+SITE_NAMES_FILE = '/opt/vortexpanel/data/site_names.json'
+
+
+def site_names():
+    """{domain: custom name} set in Websites (a label only: the domain, folders,
+    certificates and configuration keep the domain)."""
+    try:
+        with open(SITE_NAMES_FILE) as f:
+            d = json.load(f)
+        return {k: v['name'] for k, v in d.items() if isinstance(v, dict) and v.get('name')}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _site_names_write(update):
+    import fcntl
+    os.makedirs(os.path.dirname(SITE_NAMES_FILE), exist_ok=True)
+    with open(SITE_NAMES_FILE + '.lock', 'w') as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            with open(SITE_NAMES_FILE) as f:
+                d = json.load(f)
+            if not isinstance(d, dict):
+                d = {}
+        except (OSError, ValueError):
+            d = {}
+        update(d)
+        tmp = SITE_NAMES_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(d, f, indent=1)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, SITE_NAMES_FILE)
+
+
 @websites_bp.route('/api/websites')
 def get_sites():
     if not req(): return jsonify({'ok':False}), 401
-    return jsonify({'ok':True, 'sites':list_sites(), 'webroot':get_webroot()})
+    sites = list_sites()
+    names = site_names()
+    for st in sites:
+        st['name'] = names.get(st.get('domain'), '')
+    return jsonify({'ok':True, 'sites':sites, 'webroot':get_webroot()})
+
+
+@websites_bp.route('/api/websites/<domain>/name', methods=['PUT'])
+def set_site_name(domain):
+    """Give a site its own name in the Websites list (empty = show the domain). Only the
+    label changes: the domain, folders, certificates and configuration stay as they are."""
+    if not req(): return jsonify({'ok':False}), 401
+    if not is_valid_domain(domain):
+        return jsonify({'ok':False,'error':'Invalid domain'}), 400
+    if not _find_site_config(domain)[0]:
+        return jsonify({'ok':False,'error':f'No site {domain}'}), 404
+    name = str((request.get_json(silent=True) or {}).get('name') or '').strip()
+    if len(name) > 80 or re.search(r'[\x00-\x1f<>]', name):
+        return jsonify({'ok':False,'error':'Name: up to 80 characters, no < or >'}), 400
+    def upd(d):
+        if name:
+            d[domain] = {'name': name, 't': int(time.time())}
+        else:
+            d.pop(domain, None)
+    _site_names_write(upd)
+    return jsonify({'ok':True, 'name': name})
 
 
 @websites_bp.route('/api/websites/<domain>/status', methods=['POST'])
@@ -1023,6 +1082,10 @@ def delete_site(domain):
     ok, res = delete_site_core(domain)
     if not ok:
         return jsonify({'ok':False,'error':res}), 404
+    try:
+        _site_names_write(lambda d: d.pop(domain, None))     # a new site with this domain starts unnamed
+    except Exception:
+        pass
     return jsonify(dict(res, ok=True))
 
 

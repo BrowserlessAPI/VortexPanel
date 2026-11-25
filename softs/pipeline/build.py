@@ -40,7 +40,12 @@ def plan_item(path, app, version):
 
 def env_for(recipe, item, target, arch, prefix, dest):
     fam = (C.TARGETS['targets'].get(target) or {}).get('family', 'deb')
-    e = {'APP': recipe['id'], 'VERSION': item['version'], 'TRACK': item.get('track') or C.track_of(item['version']),
+    # VERSION names the published build (paths, keys): for a recipe-fix bump it is 1.5.4.1.
+    # VP_UPSTREAM is the real upstream version it is built from (1.5.4) -- build.sh uses it to
+    # fetch/validate upstream while keeping VERSION for install paths.
+    up = item.get('upstream') or item['version']
+    e = {'APP': recipe['id'], 'VERSION': item['version'], 'VP_UPSTREAM': up,
+         'TRACK': item.get('track') or C.track_of(item['version']),
          'PREFIX': prefix, 'DEST': dest, 'TARGET': target, 'ARCH': arch, 'FAMILY': fam,
          'JOBS': str(os.cpu_count() or 2)}
     for k in ('url', 'sha256', 'tag', 'build', 'plugin'):
@@ -55,7 +60,7 @@ def env_for(recipe, item, target, arch, prefix, dest):
     if item.get('assets') and recipe.get('asset_pattern'):
         # pick the asset for this architecture by pattern, e.g. caddy_{version}_linux_{goarch}.tar.gz
         goarch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(arch, arch)
-        name = recipe['asset_pattern'].format(version=item['version'], goarch=goarch, arch=arch)
+        name = recipe['asset_pattern'].format(version=(item.get('upstream') or item['version']), goarch=goarch, arch=arch)
         if name in item['assets']:
             e['VP_URL'] = item['assets'][name]
     return e
@@ -138,6 +143,7 @@ def pack(recipe, item, target, arch, out, prefix, dist):
     man = {
         'format': 1, 'app': recipe['id'], 'panel_id': recipe.get('panel_id', recipe['id']), 'name': recipe.get('name', recipe['id']),
         'version': item['version'], 'track': item.get('track') or C.track_of(item['version']),
+        'upstream': item.get('upstream') or item['version'],   # 8.1.34 for the build bump 8.1.34.1
         'target': target, 'arch': arch, 'prefix': prefix, 'base': BASE,
         'coexist': bool(recipe.get('coexist')), 'service': recipe.get('service', ''),
         'run_deps': {'deb': (recipe.get('deps') or {}).get('run', {}).get('deb', []) + (detected if fam == 'deb' else []),

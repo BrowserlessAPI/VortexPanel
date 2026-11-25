@@ -58,20 +58,24 @@ fetch() {   # fetch URL [sha256]
   out="$SRC/$(basename "${url%%\?*}")"
   say "download $url"
   curl -fsSL --retry 4 --retry-delay 3 -o "$out" "$url"
-  if [ -n "$sum" ]; then echo "$sum  $out" | sha256sum -c - >/dev/null || { echo "[build] checksum mismatch: $url"; exit 3; }; fi
+  if [ -n "$sum" ]; then echo "$sum  $out" | sha256sum -c - >/dev/null || { echo "[build] checksum mismatch: $url" >&2; exit 3; }; fi
   echo "$out"
 }
 export -f fetch say
 
 SOURCE_TPL="$(json source)"
+# (assigned first, exported after: `export X="$(fetch ...)"` hides a failed download or
+#  checksum from set -e, and the error text then went on as if it were the file name)
 if [ -n "${VP_SOURCE_FILE:-}" ]; then          # local tests: a source archive already on disk
-  export SOURCE_FILE="$VP_SOURCE_FILE"
+  SOURCE_FILE="$VP_SOURCE_FILE"; export SOURCE_FILE
 elif [ -n "${VP_URL:-}" ]; then
-  export SOURCE_FILE="$(fetch "$VP_URL" "${VP_SHA256:-}")"
+  SOURCE_FILE="$(fetch "$VP_URL" "${VP_SHA256:-}")"; export SOURCE_FILE
 elif [ -n "$SOURCE_TPL" ]; then
-  U="${SOURCE_TPL//\{version\}/$VERSION}"; U="${U//\{track\}/$TRACK}"; U="${U//\{tag\}/${VP_TAG:-}}"
-  U="${U//\{arch\}/$ARCH}"; U="${U//\{under\}/${VERSION//./_}}"
-  export SOURCE_FILE="$(fetch "$U")"
+  # a build bump (8.1.34.1) is built from the upstream release it bumps (8.1.34)
+  UPV="${VP_UPSTREAM:-$VERSION}"
+  U="${SOURCE_TPL//\{version\}/$UPV}"; U="${U//\{track\}/$TRACK}"; U="${U//\{tag\}/${VP_TAG:-}}"
+  U="${U//\{arch\}/$ARCH}"; U="${U//\{under\}/${UPV//./_}}"
+  SOURCE_FILE="$(fetch "$U")"; export SOURCE_FILE
 fi
 
 # --- build -------------------------------------------------------------------------

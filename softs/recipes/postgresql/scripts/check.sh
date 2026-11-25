@@ -2,7 +2,7 @@
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/pg_common.sh"
 v="$("$VP_CURRENT/bin/postgres" --version | awk '{print $NF}')"
-[ "$v" = "$VP_VERSION" ] || fail "expected PostgreSQL $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected PostgreSQL $(vp_upstream), found '$v'"
 cd /tmp
 PORT="$(pgval port)"; PORT="${PORT:-5432}"
 SOCK="$(pgval unix_socket_directories | cut -d, -f1 | tr -d " '")"; SOCK="${SOCK:-/run/postgresql}"

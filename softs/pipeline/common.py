@@ -100,7 +100,10 @@ def resolve(recipe, item, target, arch):
     spec = importlib.util.spec_from_file_location(f'resolve_{recipe["id"].replace("-", "_")}', path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.resolve(item, target, arch)
+    # a build-bumped release (recipe fix: 1.5.4 -> 1.5.4.1) is published under the bumped
+    # version but fetched from the real upstream version, so resolve.py sees the upstream one
+    up = item.get('upstream')
+    return mod.resolve(dict(item, version=up) if up and up != item.get('version') else item, target, arch)
 
 
 def file_name(app, version, target, arch):
@@ -111,6 +114,28 @@ def key_for(app, version, target, arch, sha256):
     """Content-addressed: a rebuilt zip gets a new key, so a cached or published file
     can never disagree with the checksum in the catalog."""
     return f'{app}/{version}/{sha256[:16]}/{file_name(app, version, target, arch)}'
+
+
+def gh_location(key):
+    """Where a catalog file lives in the GitHub Releases mirror: (tag, asset name).
+    'nginx/1.31.8/<sha16>/nginx-1.31.8-el9-x86_64.zip' -> ('nginx-1.31.8', '<sha16>-nginx-1.31.8-el9-x86_64.zip').
+    The panel computes the same (panel/softs.py gh_location); keep both in step."""
+    parts = key.strip('/').split('/')
+    clean = lambda s: re.sub(r'[^A-Za-z0-9._-]', '.', s)  # noqa: E731 - GitHub renames other characters
+    return clean('-'.join(parts[:-2])), clean(f'{parts[-2]}-{parts[-1]}')
+
+
+def catalog_files(cat):
+    """Every file of the server software in the catalog: [(key, sha256, size)]. VortexPanel's
+    own Apps are never in it (they come from their own Cloudflare R2 bucket)."""
+    out = {}
+    for section in ('apps', 'pinned'):
+        for entry in (cat.get(section) or {}).values():
+            for r in entry.get('releases') or []:
+                for f in (r.get('files') or {}).values():
+                    if isinstance(f, dict) and f.get('key') and f.get('sha256') and not f['key'].startswith('panel-apps/'):
+                        out[f['key']] = (f['key'], f['sha256'], int(f.get('size') or 0))
+    return sorted(out.values())
 
 
 # ---------------------------------------------------------------------- http
@@ -243,6 +268,12 @@ def save_catalog(cat):
     # panels refuse an expired catalog (someone serving a stale copy); the daily
     # maintain job re-signs it, so it never expires while the pipeline runs
     cat['expires'] = int(time.time()) + int(os.environ.get('SOFTS_CATALOG_DAYS', '7')) * 86400
+    # VortexPanel's own Apps live in their own Cloudflare R2 bucket, never in this catalog
+    cat.pop('panel_apps', None)
+    # second download source: GitHub Releases (github_mirror.py); panels fall back to it
+    repo = os.environ.get('SOFTS_GITHUB_REPO', '').strip()
+    if re.fullmatch(r'[A-Za-z0-9-]+/[A-Za-z0-9._-]+', repo):
+        cat['mirrors'] = [{'name': 'GitHub', 'url': f'https://github.com/{repo}/releases/download'}]
     data = canonical(cat)
     sig = sign(data)
     c = r2()

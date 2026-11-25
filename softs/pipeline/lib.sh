@@ -17,6 +17,13 @@ set -u
 
 say()  { echo "[$VP_APP] $*"; }
 fail() { echo "[$VP_APP] ERROR: $*" >&2; exit 1; }
+# The upstream release this build is, what the program itself reports: 2.4.66 for the build
+# bump 2.4.66.1 (a recipe fix published for the same upstream release). Newer panels pass
+# VP_UPSTREAM; for older ones a fourth number on a three-part version is the build bump.
+vp_upstream() {
+  if [ -n "${VP_UPSTREAM:-}" ]; then echo "$VP_UPSTREAM"; return; fi
+  case "$VP_VERSION" in *.*.*.*) echo "${VP_VERSION%.*}" ;; *) echo "$VP_VERSION" ;; esac
+}
 # refuse() in uninstall.sh: the removal is not safe now; the panel stops and changes nothing
 refuse() { echo "[$VP_APP] REFUSED: $*" >&2; exit 3; }
 

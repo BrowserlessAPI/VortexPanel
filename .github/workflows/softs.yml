@@ -3,13 +3,12 @@ name: Software builds
 # Every 24 hours: find new upstream releases, review them with AI, build them for
 # every supported OS and CPU, test each build on a fresh system, upload to R2 and
 # publish them in the signed catalog that every VortexPanel reads.
-# Setup: softs/README.md (repository secrets R2_*, SOFTS_SIGNING_KEY, AI key).
+# Every run also copies the server software to GitHub Releases (second download source).
+# VortexPanel's own Apps are not built here: they live in the private repository
+# BrowserlessAPI/vortexpanel-apps and are published to their own Cloudflare R2 bucket.
+# Setup: softs/README.md (repository secrets R2_*, SOFTS_SIGNING_KEY, SOFTS_MIRROR_TOKEN, AI key).
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'panel/apps_bundle/**'
   schedule:
     - cron: '17 2 * * *'        # 02:17 UTC daily
   workflow_dispatch:
@@ -50,27 +49,11 @@ env:
   SOFTS_PROMOTE_HOURS: ${{ vars.SOFTS_PROMOTE_HOURS || '24' }}
   SOFTS_KEEP_PER_TRACK: ${{ vars.SOFTS_KEEP_PER_TRACK || '3' }}
   SOFTS_MAX_BUILDS: ${{ vars.SOFTS_MAX_BUILDS || '12' }}
+  SOFTS_GITHUB_REPO: ${{ vars.SOFTS_GITHUB_REPO || 'BrowserlessAPI/vortexpanel-softs' }}
 
 jobs:
-  panel-apps:
-    # VortexPanel Apps: published when their plugin.json version changes
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - run: pip install --quiet --break-system-packages boto3 cryptography
-      - name: Check and publish changed Apps
-        env:
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          SOFTS_SIGNING_KEY: ${{ secrets.SOFTS_SIGNING_KEY }}
-        run: python3 softs/pipeline/panel_apps.py
-
   mirror:
     # phpMyAdmin, Adminer, Roundcube, Anubis, ffmpeg: upstream release files stored in R2
-    if: always() && github.event_name != 'push'
-    needs: panel-apps
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -88,8 +71,8 @@ jobs:
 
   plan:
     # server software runs on schedule/dispatch only, even when an earlier step failed
-    if: always() && github.event_name != 'push'
-    needs: [panel-apps, mirror]
+    if: always()
+    needs: mirror
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -238,7 +221,7 @@ jobs:
 
   maintain:
     needs: [plan, publish]
-    if: always() && github.event_name != 'push'
+    if: always()
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -254,3 +237,22 @@ jobs:
           IN_RESTORE: ${{ inputs.restore }}
           IN_PROMOTE: ${{ inputs.promote_now }}
         run: python3 softs/pipeline/promote.py --withdraw "$IN_WITHDRAW" --restore "$IN_RESTORE" --promote-now "$IN_PROMOTE"
+
+  github-mirror:
+    # copy the server software and the signed catalog to GitHub Releases; the first copy
+    # (about 22 GB) takes a few runs because GitHub limits how fast files may be added
+    needs: maintain
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet --break-system-packages boto3 cryptography
+      - name: Copy to GitHub Releases
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          SOFTS_MIRROR_TOKEN: ${{ secrets.SOFTS_MIRROR_TOKEN }}
+        run: python3 softs/pipeline/github_mirror.py --minutes 320

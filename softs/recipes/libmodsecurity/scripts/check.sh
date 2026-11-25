@@ -1,7 +1,7 @@
 #!/bin/bash
 . "$(dirname "$0")/lib.sh"
 v="$(cat "$VP_CURRENT/share/VERSION" 2>/dev/null)"
-[ "$v" = "$VP_VERSION" ] || fail "expected libmodsecurity $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected libmodsecurity $(vp_upstream), found '$v'"
 T="$(mktemp)"; printf 'SecRuleEngine DetectionOnly\n' > "$T"
 "$VP_CURRENT/bin/modsec-rules-check" "$T" >/dev/null 2>&1 || { rm -f "$T"; fail "modsec-rules-check cannot load a rule file"; }
 rm -f "$T"

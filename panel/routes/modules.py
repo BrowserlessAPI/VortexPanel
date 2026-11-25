@@ -237,6 +237,67 @@ def _job_owner_alive(pid):
     except Exception:
         return False
 
+def _jobs_list(max_done_age=600):
+    """Active App Store jobs, plus ones that finished in the last few minutes,
+    so the running-jobs indicator can reattach to a job whose window was hidden
+    or lost to a page reload. The title is the job's first output line (every
+    job writes '[VortexPanel] <what>...' first), so no call site has to change."""
+    out = []
+    now = time.time()
+    try:
+        names = os.listdir(_JOBS_DIR)
+    except Exception:
+        return out
+    for name in names:
+        if not name.endswith('.jsonl'):
+            continue
+        jid = name[:-6]
+        if not _JOB_ID_RE.match(jid):
+            continue
+        path = os.path.join(_JOBS_DIR, name)
+        try:
+            mtime = os.path.getmtime(path)
+        except Exception:
+            continue
+        title, started, pid, nlines = '', 0.0, 0, 0
+        done, success = False, False
+        try:
+            with open(path) as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if 'line' in obj:
+                        nlines += 1
+                        if not title:
+                            t = str(obj['line'])
+                            if t.startswith('[VortexPanel] '):
+                                t = t[len('[VortexPanel] '):]
+                            title = t.rstrip('.').strip()
+                    elif 'meta' in obj:
+                        meta = obj.get('meta') or {}
+                        started = meta.get('started') or 0.0
+                        pid = meta.get('pid') or 0
+                    elif obj.get('done'):
+                        done, success = True, obj.get('success', False)
+        except Exception:
+            continue
+        # a job the panel was restarted under is finished even if its file was
+        # never marked done; it must not show as "running" forever
+        if not done and pid and not _job_owner_alive(pid):
+            done, success = True, False
+        if done and (now - mtime) > max_done_age:
+            continue
+        out.append({'job_id': jid, 'title': title or 'Working', 'lines': nlines,
+                    'done': done, 'success': success, 'started': started or mtime})
+    out.sort(key=lambda j: j['started'], reverse=True)
+    return out
+
+
 # Shim so existing _jobs[job_id] reads still work (used nowhere new, but safe)
 class _JobsShim:
     def get(self, job_id, default=None): return _job_get(job_id) or default
@@ -611,7 +672,7 @@ def get_version(mod_id, ver=None):
         # one specifically; only fall back to the priority list when it
         # isn't known (e.g. refreshing the general module list).
         'php':          (f"php{ver} --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1" if ver else
-                          "for v in 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if which php$v >/dev/null 2>&1; then php$v --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1; break; fi; done"),
+                          "for v in 8.6 8.5 8.4 8.3 8.2 8.1 8.0 7.4; do if which php$v >/dev/null 2>&1; then php$v --version 2>/dev/null | grep -oP '[0-9]+[.][0-9]+[.][0-9]+' | head -1; break; fi; done"),
         'postgresql':   (f"psql --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+' | head -1" if not ver else
                           f"(psql -V 2>/dev/null | grep -q '{ver}' && psql --version | grep -oP '[0-9]+\\.[0-9]+' | head -1) || (which psql{ver} >/dev/null 2>&1 && echo {ver}) || (test -d /usr/lib/postgresql/{ver} && echo {ver})"),
         'python':       "python3 --version 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+\\.[0-9]+'",
@@ -1403,17 +1464,18 @@ systemctl enable --now mariadb''',
         # Debian/sury phpX.Y, RHEL Remi SCL /opt/remi/phpXY and the RHEL
         # module-stream system PHP (/usr/sbin/php-fpm) -- the old check only
         # knew phpX.Y, so every RHEL PHP install was reported as failed.
-        'check':('{ which php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 php7.4 2>/dev/null; '
+        'check':('{ which php8.6 php8.5 php8.4 php8.3 php8.2 php8.1 php8.0 php7.4 2>/dev/null; '
                  'ls /opt/remi/php*/root/usr/bin/php 2>/dev/null; '
                  'test -x /usr/sbin/php-fpm && echo /usr/sbin/php-fpm; } | head -1'),
         'verify_tpl':('command -v php{ver} 2>/dev/null || '
                       '(test -x /opt/remi/php$(echo {ver} | tr -d .)/root/usr/bin/php && echo found) || '
                       '(php -r "echo PHP_MAJOR_VERSION.chr(46).PHP_MINOR_VERSION;" 2>/dev/null | grep -x "{ver}")'),
         'versions':[
-            {'label':'8.5.12 (latest)', 'value':'8.5'},
-            {'label':'8.4.27 (active support)', 'value':'8.4', 'recommended':True},
-            {'label':'8.3.36 (security fixes only)', 'value':'8.3'},
-            {'label':'8.2.35 (security fixes only, end of life 31 Dec 2026)', 'value':'8.2'},
+            {'label':'8.6.0 (latest)', 'value':'8.6'},
+            {'label':'8.5.13 (active support)', 'value':'8.5'},
+            {'label':'8.4.28 (active support)', 'value':'8.4', 'recommended':True},
+            {'label':'8.3.37 (security fixes only)', 'value':'8.3'},
+            {'label':'8.2.36 (security fixes only, end of life 31 Dec 2026)', 'value':'8.2'},
             {'label':'8.1.34 (end of life)', 'value':'8.1'},
             {'label':'7.4 (end of life)', 'value':'7.4'},
         ],
@@ -1463,7 +1525,7 @@ else
   echo "[VortexPanel] PHP {ver} is not installed from a package this panel manages."
 fi
 fi''',
-        'uninstall':'''for ver in 7.4 8.0 8.1 8.2 8.3 8.4 8.5; do
+        'uninstall':'''for ver in 7.4 8.0 8.1 8.2 8.3 8.4 8.5 8.6; do
   systemctl stop php$ver-fpm 2>/dev/null || true
   apt-get remove -y --purge -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold php$ver php$ver-* 2>/dev/null || true
 done
@@ -3592,9 +3654,52 @@ def softs_settings():
     if not req(): return jsonify({'ok': False}), 401
     from panel import softs
     d = request.get_json(silent=True) or {}
-    s = softs.save_settings({k: d[k] for k in ('channel', 'auto', 'notify') if k in d})
+    s = softs.save_settings({k: d[k] for k in ('channel', 'auto', 'notify', 'source', 'mirrors', 'apps_mirrors', 'offline') if k in d})
     panel_cache.invalidate('modules_list')
     return jsonify({'ok': True, 'settings': s})
+
+
+@modules_bp.route('/api/softs/offline/import', methods=['POST'])
+def softs_offline_import():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import softs
+    import tempfile
+    import tarfile
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+    suffix = '.tar' if re.search(r'\.tar(\.gz)?$|\.tgz$', f.filename, re.I) else '.zip'
+    fd, tmp = tempfile.mkstemp(prefix='vp-offline-', suffix=suffix)
+    os.close(fd)
+    try:
+        f.save(tmp)
+        # a tar is an offline bundle; a single .zip is one already-downloaded package
+        if tarfile.is_tarfile(tmp):
+            res = softs.import_bundle(tmp)
+            msg = (f'Imported {res["files"]} file(s)'
+                   + (f', catalog serial {res["catalog"]}' if res.get('catalog') else '')
+                   + (f', App index serial {res["apps_index"]}' if res.get('apps_index') else '')
+                   + (f'. {res["skipped"]} file(s) ignored (not in the signed catalog).' if res.get('skipped') else '.'))
+            return jsonify({'ok': True, 'kind': 'bundle', 'summary': res, 'message': msg})
+        res = softs.import_package(tmp)
+        return jsonify({'ok': True, 'kind': 'package', 'summary': res,
+                        'message': f'Imported {os.path.basename(res["key"])} into the offline store.'})
+    except softs.SoftError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+@modules_bp.route('/api/softs/offline/clear', methods=['POST'])
+def softs_offline_clear():
+    if not req(): return jsonify({'ok': False}), 401
+    from panel import softs
+    softs.offline_clear()
+    panel_cache.invalidate('modules_list')
+    return jsonify({'ok': True, 'offline': softs.offline_status()})
 
 
 @modules_bp.route('/api/softs/refresh', methods=['POST'])
@@ -3758,6 +3863,14 @@ def python_installed_versions():
             found.append({'value': v, 'label': f'Python {v}' + (' (system -- cannot be removed)' if v == sysv else ''),
                           'system': v == sysv})
     return jsonify({'ok': True, 'versions': found, 'system': sysv})
+
+@modules_bp.route('/api/modules/jobs')
+def jobs_list():
+    """Running (and recently finished) App Store jobs, so the running-jobs
+    indicator can show them and reattach after the window was hidden or the
+    page reloaded."""
+    if not req(): return jsonify({'ok': False}), 401
+    return jsonify({'ok': True, 'jobs': _jobs_list()})
 
 @modules_bp.route('/api/modules/job/<job_id>/status')
 def job_status(job_id):

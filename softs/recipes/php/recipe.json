@@ -13,7 +13,8 @@
       "8.2",
       "8.3",
       "8.4",
-      "8.5"
+      "8.5",
+      "8.6"
     ]
   },
   "changelog": "https://www.php.net/ChangeLog-{major}.php",
@@ -56,7 +57,9 @@
         "libedit-dev",
         "libmagickwand-dev",
         "libmemcached-dev",
-        "zlib1g-dev"
+        "zlib1g-dev",
+        "patch",
+        "git"
       ],
       "rpm": [
         "autoconf",
@@ -89,7 +92,9 @@
         "libmemcached-awesome-devel",
         "libmemcached-devel",
         "zlib-devel",
-        "libavif-devel"
+        "libavif-devel",
+        "patch",
+        "git"
       ]
     },
     "run": {

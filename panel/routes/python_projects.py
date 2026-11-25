@@ -191,8 +191,13 @@ def _resolve_user(u):
     return u, None
 
 
+def _venv_dir(p):
+    """The project's virtualenv: its own .venv, or the one an imported app already used."""
+    return p.get('venv') or os.path.join(p['path'], '.venv')
+
+
 def _venv_bin(p, name):
-    return os.path.join(p['path'], '.venv', 'bin', name)
+    return os.path.join(_venv_dir(p), 'bin', name)
 
 
 def _exec_start(p):
@@ -219,8 +224,9 @@ def _unit_text(p):
     if p.get('port'):
         env.setdefault('PORT', str(p['port']))
     env.setdefault('PYTHONUNBUFFERED', '1')
-    env['PATH'] = os.path.join(p['path'], '.venv', 'bin') + ':/usr/local/bin:/usr/bin:/bin'
-    env['VIRTUAL_ENV'] = os.path.join(p['path'], '.venv')
+    env['PATH'] = os.path.join(_venv_dir(p), 'bin') + ':/usr/local/bin:/usr/bin:/bin'
+    if os.path.isdir(_venv_dir(p)) or not p.get('imported'):
+        env['VIRTUAL_ENV'] = _venv_dir(p)
 
     def q(v):
         return _go._unit_val(v).replace('\\', '\\\\').replace('"', '\\"')
@@ -255,8 +261,9 @@ WantedBy=multi-user.target
 """
 
 
-def _validate(d, creating):
-    """Clean the request body into a project dict. Returns (project, error)."""
+def _validate(d, creating, old=None):
+    """Clean the request body into a project dict. Returns (project, error).
+    `old`: the project being edited (an imported one keeps the Python it already runs on)."""
     p = {}
     name = str(d.get('name') or '').strip()
     if not name or len(name) > 60 or re.search(r'[\x00-\x1f]', name):
@@ -274,12 +281,15 @@ def _validate(d, creating):
             return None, 'Working folder must be inside the project folder'
         p['workdir'] = wd
     ver = str(d.get('python') or '').strip()
-    rt = _runtime(ver)
-    if not rt:
-        return None, f'Python {ver or "?"} is not installed (install it from the Python versions tab)'
-    if not rt['venv']:
-        return None, f'Python {ver} has no venv module; install python{ver}-venv'
-    p['python'] = ver
+    if old and old.get('imported'):
+        p['python'] = ver or old.get('python', '')       # runs on its own environment (Scan & import)
+    else:
+        rt = _runtime(ver)
+        if not rt:
+            return None, f'Python {ver or "?"} is not installed (install it from the Python versions tab)'
+        if not rt['venv']:
+            return None, f'Python {ver} has no venv module; install python{ver}-venv'
+        p['python'] = ver
     mode = str(d.get('mode') or 'gunicorn')
     if mode not in ('gunicorn', 'uvicorn', 'command'):
         return None, 'Start mode must be gunicorn, uvicorn or command'
@@ -388,9 +398,28 @@ def _deploy_job(p, fresh_clone):
             if rc != 0:
                 return fail('git clone failed')
         os.makedirs(p['path'], exist_ok=True)
+        if p.get('imported'):
+            # an app taken over by Scan & import keeps its own environment and file owners:
+            # no new virtualenv, no pip, no chown -R of a tree the panel did not create
+            note('Imported project: dependencies and file owners are left as they are.')
+            _write_unit(p)
+            sh(['systemctl', 'enable', svc_name(p['id'])])
+            sh(['systemctl', 'restart', svc_name(p['id'])])
+            time.sleep(3)
+            rc, state = sh(['systemctl', 'is-active', svc_name(p['id'])])
+            note(f'service {svc_name(p["id"])}: {state}')
+            if p.get('domain') and p.get('port'):
+                ok, res = _go.write_proxy(p, prefix='vortex-py')
+                note(('reverse proxy written for ' + res) if ok else ('reverse proxy NOT written: ' + res))
+            if state.strip() != 'active':
+                _, logs = sh(['journalctl', '-u', svc_name(p['id']), '-n', '30', '--no-pager'])
+                note(logs)
+                return fail('the service did not stay running (see the log above)')
+            save_job(jid, {'running': False, 'done': True, 'success': True, 'output': '\n'.join(log)[-12000:]})
+            return
         uid, gid = pwd.getpwnam(p['user']).pw_uid, pwd.getpwnam(p['user']).pw_gid
         sh(['chown', '-R', f'{uid}:{gid}', p['path']])
-        venv = os.path.join(p['path'], '.venv')
+        venv = _venv_dir(p)
         if not os.path.exists(os.path.join(venv, 'bin', 'python')):
             rc, out = sh([rt['path'], '-m', 'venv', venv], timeout=300, user=p['user'])
             note(f'$ python{p["python"]} -m venv .venv\n' + out[-2000:])
@@ -487,12 +516,15 @@ def update_project(pid):
         return jsonify({'ok': False, 'error': 'Project not found'}), 404
     d = request.get_json() or {}
     d.setdefault('path', old['path'])
-    p, err = _validate(d, creating=False)
+    p, err = _validate(d, creating=False, old=old)
     if err:
         return jsonify({'ok': False, 'error': err}), 400
     p['path'] = old['path']                 # the folder never moves
     p['id'] = pid
     p['created'] = old.get('created')
+    for k in ('venv', 'imported'):          # set by Scan & import, not editable
+        if old.get(k):
+            p[k] = old[k]
     clash = _port_clash(p['port'], pid)
     if clash:
         return jsonify({'ok': False, 'error': f'Port {p["port"]} is already used by {clash}'}), 400

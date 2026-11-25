@@ -72,7 +72,7 @@ PHP_EXTENSIONS = [
 #   unit phpXY-php-fpm, binary /opt/remi/phpXY/root/usr/bin/php, packages phpXY-php-<ext>.
 # RHEL module stream (what the App Store installs there): /etc/php.ini,
 #   /etc/php-fpm.d/www.conf, unit php-fpm, binary /usr/bin/php, packages php-<ext>.
-PHP_VERSIONS = ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4', '7.3', '7.2']
+PHP_VERSIONS = ['8.6', '8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4', '7.3', '7.2']
 
 def valid_php_ver(v):
     return isinstance(v, str) and v in PHP_VERSIONS

@@ -6,6 +6,11 @@ the VortexPanel download server (Cloudflare R2), not from the OS package sources
               its serial is lower than the one already accepted (replay).
     files     <base_url>/<app>/<version>/<app>-<version>-<target>-<arch>.zip,
               checked against the SHA-256 in the signed catalog before use.
+    mirror    the same files on GitHub Releases (BrowserlessAPI/vortexpanel-softs):
+              used when the download server fails, or first when chosen in
+              Software updates > Download source. Checked the same way.
+    own Apps  System Hardening, PHP Security, ...: from their own Cloudflare R2 bucket
+              (apps_url: apps_index, fetch_panel_app), never mirrored to GitHub.
     on disk   /usr/local/vortex/<app>/<version>/        one folder per version
               /usr/local/vortex/<app>/current  (or /<track> for PHP, Python)
                                                          -> the version in use
@@ -38,6 +43,7 @@ import uuid
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -70,21 +76,142 @@ def trust():
     env = os.environ.get('VP_SOFTS_BASE_URL')
     if env:
         d['base_url'] = env
+    if os.environ.get('VP_APPS_URL'):
+        d['apps_url'] = os.environ['VP_APPS_URL']
     d.setdefault('base_url', '')
+    d.setdefault('apps_url', '')
     d.setdefault('keys', [])
+    d['mirrors'] = [m.rstrip('/') for m in d.get('mirrors') or [] if isinstance(m, str) and m.startswith('https://')]
     return d
 
 
+SOURCES = ('r2', 'github')
+
+
+def gh_location(key):
+    """Where a catalog file lives in the GitHub Releases copy: (tag, asset name).
+    Same rule as softs/pipeline/common.py gh_location (keep both in step)."""
+    parts = key.strip('/').split('/')
+    clean = lambda x: re.sub(r'[^A-Za-z0-9._-]', '.', x)  # noqa: E731
+    return clean('-'.join(parts[:-2])), clean(f'{parts[-2]}-{parts[-1]}')
+
+
+def _mirrors(cat=None):
+    """GitHub Releases base URLs: from the signed catalog, else the ones shipped with the panel."""
+    out = []
+    for m in ((cat or {}).get('mirrors') or []):
+        u = str((m or {}).get('url') or '').rstrip('/')
+        if re.fullmatch(r'https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/releases/download', u) and u not in out:
+            out.append(u)
+    for u in trust()['mirrors']:
+        if u not in out:
+            out.append(u)
+    return out
+
+
+def _sources(key, cat=None, catalog=False):
+    """[(label, url)] to try for one software file, best first. Admin-added mirrors (settings)
+    come first, then the VortexPanel download server and GitHub (ordered by the download-source
+    setting); in offline mode only admin mirrors are used. Every file is checked against the
+    signed catalog whatever the source, so a mirror can only serve copies of the signed files."""
+    s = settings()
+    admin = [(f'mirror ({_host(u)})', f'{u}/{key}') for u in s['mirrors']]
+    if s['offline']:
+        return admin
+    base = trust()['base_url'].rstrip('/')
+    r2 = [('VortexPanel download server', f'{base}/{key}')] if base else []
+    gh = []
+    for m in _mirrors(cat):
+        tag, name = ('catalog', key) if catalog else gh_location(key)
+        gh.append(('GitHub', f'{m}/{tag}/{name}'))
+    net = (gh + r2) if s['source'] == 'github' else (r2 + gh)
+    return admin + net
+
+
+def _apps_sources(key):
+    """[(label, url)] to try for one App file (index.json or a package), best first:
+    admin App mirrors, then the Apps R2 bucket; offline mode uses only admin mirrors."""
+    s = settings()
+    admin = [(f'mirror ({_host(u)})', f'{u}/{key}') for u in s['apps_mirrors']]
+    if s['offline']:
+        return admin
+    base = _apps_base()
+    return admin + ([('Cloudflare R2', f'{base}/{key}')] if base else [])
+
+
+def _host(url):
+    m = re.match(r'https?://([^/]+)', url or '')
+    return m.group(1) if m else url
+
+
+def _offline_dir():
+    return os.path.join(DATA, 'offline')
+
+
+def _offline_file(key):
+    """Path of an imported file in the offline store, or None. `key` is a catalog/index file
+    key (software or App) or 'catalog.json' / 'index.json' / their '.sig'."""
+    p = os.path.normpath(os.path.join(_offline_dir(), key))
+    return p if p.startswith(_offline_dir() + os.sep) and os.path.isfile(p) else None
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 20), b''):
+            h.update(b)
+    return h.hexdigest()
+
+
+def _signed_candidates(url_sources, offline_name):
+    """Yield (label, getter -> (raw_bytes, sig_text), allow_expired) for a signed JSON (the
+    software catalog or the App index): every URL source, then the imported offline bundle.
+    allow_expired is true for the offline bundle and whenever the admin set offline mode."""
+    offline = settings()['offline']
+    for label, url in url_sources:
+        def getter(url=url, label=label):
+            bust = f'?t={int(time.time()) // 300}' if 'GitHub' not in label else ''
+            return _http(url + bust), _http(url + '.sig' + bust).decode()
+        yield (label, getter, offline)
+    oc, osig = _offline_file(offline_name), _offline_file(offline_name + '.sig')
+    if oc and osig:
+        yield ('Offline bundle', lambda oc=oc, osig=osig: (open(oc, 'rb').read(), open(osig).read()), True)
+
+
+def _catalog_candidates(key, old, catalog=True):
+    return _signed_candidates(_sources(key, old, catalog=catalog), 'catalog.json')
+
+
 def configured():
+    """True when the App Store can get the catalog from somewhere it can verify: the download
+    server, an admin mirror, or an imported offline bundle (a signing key is always required)."""
     t = trust()
-    return bool(t['base_url'] and t['keys'])
+    if not t['keys']:
+        return False
+    return bool(t['base_url'] or settings()['mirrors'] or _offline_file('catalog.json'))
+
+
+def _clean_mirrors(v):
+    """Admin-added mirror base URLs (http/https, no trailing slash, de-duplicated, up to 8).
+    A mirror only serves bytes: every file is still checked against the signed catalog, so a
+    mirror can host copies of the signed files but never its own modified ones."""
+    out = []
+    for u in (v or [])[:20]:
+        u = str(u).strip().rstrip('/')
+        if re.fullmatch(r'https?://[A-Za-z0-9._~:/?#@!$&()*+,;=%-]{1,300}', u) and u not in out:
+            out.append(u)
+    return out[:8]
 
 
 def settings():
     s = _read(os.path.join(DATA, 'settings.json'), {})
     return {'channel': s.get('channel') if s.get('channel') in ('stable', 'beta') else 'stable',
             'auto': s.get('auto') if s.get('auto') in ('off', 'security', 'all') else 'security',
-            'notify': bool(s.get('notify', True))}
+            'notify': bool(s.get('notify', True)),
+            'source': s.get('source') if s.get('source') in SOURCES else 'r2',
+            'mirrors': _clean_mirrors(s.get('mirrors')),
+            'apps_mirrors': _clean_mirrors(s.get('apps_mirrors')),
+            'offline': bool(s.get('offline', False))}
 
 
 def save_settings(new):
@@ -96,7 +223,11 @@ def save_settings(new):
 
 def settings_clean(s):
     return {'channel': s['channel'] if s['channel'] in ('stable', 'beta') else 'stable',
-            'auto': s['auto'] if s['auto'] in ('off', 'security', 'all') else 'security', 'notify': bool(s['notify'])}
+            'auto': s['auto'] if s['auto'] in ('off', 'security', 'all') else 'security', 'notify': bool(s['notify']),
+            'source': s.get('source') if s.get('source') in SOURCES else 'r2',
+            'mirrors': _clean_mirrors(s.get('mirrors')),
+            'apps_mirrors': _clean_mirrors(s.get('apps_mirrors')),
+            'offline': bool(s.get('offline', False))}
 
 
 # ---------------------------------------------------------------------- target
@@ -266,23 +397,38 @@ def refresh(force=False, log=None):
     if not force and time.time() - meta.get('checked', 0) < CATALOG_MAX_AGE and os.path.exists(path):
         return load()
     t = trust()
-    if not (t['base_url'] and t['keys']):
-        raise SoftError('The VortexPanel download server is not configured (panel/trust/softs.json).')
-    base = t['base_url'].rstrip('/')
+    if not t['keys']:
+        raise SoftError('No catalog signing key is configured (panel/trust/softs.json).')
     meta['checked'] = int(time.time())
     try:
-        raw = _http(f'{base}/catalog.json?t={int(time.time()) // 300}')
-        sig = _http(f'{base}/catalog.json.sig?t={int(time.time()) // 300}').decode()
-        if not _verify(raw, sig, t['keys']):
-            raise SoftError('the catalog signature does not verify')
-        cat = json.loads(raw)
         old = load() or {}
-        if int(cat.get('serial') or 0) < int(old.get('serial') or 0):
-            raise SoftError(f'the catalog is older than the one already in use ({cat.get("serial")} < {old.get("serial")})')
-        # the pipeline re-signs the catalog every day; an expired one means someone is
-        # holding this server on an old catalog (no security updates, no withdrawals)
-        if int(cat.get('expires') or 0) and int(cat['expires']) < time.time():
-            raise SoftError('the catalog has expired (the download server may be serving a stale copy)')
+        cat = raw = None
+        problems = []
+        for label, getter, allow_expired in _catalog_candidates('catalog.json', old, catalog=True):
+            try:
+                r, sig = getter()
+                if not _verify(r, sig, t['keys']):
+                    raise SoftError('the catalog signature does not verify')
+                c = json.loads(r)
+                if int(c.get('serial') or 0) < int(old.get('serial') or 0):
+                    raise SoftError(f'the catalog is older than the one already in use ({c.get("serial")} < {old.get("serial")})')
+                # the pipeline re-signs the catalog every day; an expired one means someone is
+                # holding this server on an old catalog (no security updates, no withdrawals).
+                # An imported offline bundle, or offline mode, accepts an older copy on purpose.
+                exp = int(c.get('expires') or 0)
+                if exp and exp < time.time():
+                    if not allow_expired:
+                        raise SoftError('the catalog has expired (the download server may be serving a stale copy)')
+                    _say(log, f'catalog from {label} is {(time.time() - exp) // 86400 + 1:.0f} day(s) past its refresh date')
+                cat, raw = c, r
+                meta['source'] = label
+                break
+            except Exception as e:  # noqa: BLE001
+                problems.append(f'{label}: {e}')
+        if cat is None:
+            raise SoftError('; '.join(problems) or 'no download source is configured (add a mirror, import an offline bundle, or set the download server)')
+        if problems:
+            _say(log, 'catalog: ' + '; '.join(problems))
         os.makedirs(DATA, mode=0o700, exist_ok=True)
         tmp = f'{path}.{os.getpid()}.{threading.get_ident()}.tmp'
         with open(tmp, 'wb') as f:
@@ -312,7 +458,9 @@ def catalog_status():
     t, a = target()
     return {'configured': configured(), 'serial': c.get('serial'), 'generated': c.get('generated', ''),
             'checked': m.get('checked', 0), 'ok': m.get('ok', 0), 'error': m.get('error', ''),
-            'target': t, 'arch': a, 'supported': bool(t), 'settings': settings()}
+            'target': t, 'arch': a, 'supported': bool(t), 'settings': settings(),
+            'source': m.get('source', ''), 'mirrors': _mirrors(c), 'apps_index': apps_index_status(),
+            'offline': offline_status()}
 
 
 def glibc_version():
@@ -544,6 +692,10 @@ _RUN = threading.local()       # VP_RUN_ID: data copies are only restored by the
 def _script_env(man, prefix, current, prev, action, init):
     env = dict(os.environ)
     env['VP_RUN_ID'] = getattr(_RUN, 'id', '') or uuid.uuid4().hex
+    # VP_UPSTREAM: the upstream release a build bump (8.1.34.1) is built from (8.1.34), what
+    # the program reports; the scripts' vp_upstream (lib.sh) falls back to it for older zips
+    up = str(man.get('upstream') or '')
+    env['VP_UPSTREAM'] = up if re.fullmatch(r'[0-9][0-9A-Za-z.+-]{0,40}', up) else ''
     env.update(VP_APP=man['app'], VP_VERSION=man['version'], VP_TRACK=man['track'], VP_PREFIX=prefix,
                VP_CURRENT=current, VP_PREV=prev or '', VP_ACTION=action, VP_INIT=init, VP_FAMILY=family(),
                PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin')
@@ -1086,38 +1238,80 @@ def download(app, version, log=None, cat=None):
     r = next((x for x in releases(app, cat, channel='beta') if x['version'] == version), None)
     if not r:
         raise SoftError(f'{app} {version} is not available for this server')
-    return _fetch(r['file'], log), r
+    return _fetch(r['file'], log, cat), r
 
 
-def _fetch(f, log=None):
-    """Download one catalog file entry {key, sha256, size}; checked against the signed catalog."""
-    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/+-]{0,300}', f.get('key', '')) or '..' in f['key']:
-        raise SoftError('invalid file name in the catalog')
-    url = trust()['base_url'].rstrip('/') + '/' + f['key'].lstrip('/')
-    d = _ensure_dir(os.path.join(DATA, 'downloads'), 0o700)
-    dest = os.path.join(d, os.path.basename(f['key']))
-    _say(log, f'Downloading {os.path.basename(f["key"])} ({int(f.get("size", 0)) // 1024 // 1024} MB)')
+def _download_to(url, dest, f, headers=None, method='GET', body=None, timeout=120):
+    """Stream url into dest + '.part', checking size and SHA-256 against the signed entry f."""
     h = hashlib.sha256()
-    req = urllib.request.Request(url, headers={'User-Agent': UA})
+    req = urllib.request.Request(url, data=body, method=method, headers=dict({'User-Agent': UA}, **(headers or {})))
     cap = int(f.get('size') or 0) + (1 << 20)
     got = 0
-    with urllib.request.urlopen(req, timeout=120) as resp, open(dest + '.part', 'wb') as out:
-        while True:
-            b = resp.read(1 << 20)
-            if not b:
-                break
-            got += len(b)
-            if got > cap:
-                out.close()
-                os.remove(dest + '.part')
-                raise SoftError('the download is larger than the signed catalog says -- not installed')
-            h.update(b)
-            out.write(b)
-    if h.hexdigest() != f['sha256']:
-        os.remove(dest + '.part')
-        raise SoftError('the download does not match the signed catalog (checksum) -- not installed')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp, open(dest + '.part', 'wb') as out:
+            while True:
+                b = resp.read(1 << 20)
+                if not b:
+                    break
+                got += len(b)
+                if got > cap:
+                    raise SoftError('the download is larger than the signed catalog says')
+                h.update(b)
+                out.write(b)
+        if h.hexdigest() != f['sha256']:
+            raise SoftError('the download does not match the signed catalog (checksum)')
+    except BaseException:
+        try:
+            os.remove(dest + '.part')
+        except OSError:
+            pass
+        raise
     os.replace(dest + '.part', dest)
     return dest
+
+
+def _fetch(f, log=None, cat=None):
+    """Download one catalog file entry {key, sha256, size}; checked against the signed catalog.
+    Tries the chosen download source first, then the other one (Software updates > Download source)."""
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/+-]{0,300}', f.get('key', '')) or '..' in f['key']:
+        raise SoftError('invalid file name in the catalog')
+    d = _ensure_dir(os.path.join(DATA, 'downloads'), 0o700)
+    dest = os.path.join(d, os.path.basename(f['key']))
+    key = f['key'].lstrip('/')
+    problems = []
+    # an imported offline bundle, if it holds this file, is used before any download
+    off = _offline_file(os.path.join('files', key))
+    if off and _copy_offline(off, dest, f, log):
+        return dest
+    sources = _sources(key, cat if cat is not None else load())
+    if not sources and not off:
+        raise SoftError('no download source is configured (add a mirror, import an offline bundle, or set the download server)')
+    for i, (label, url) in enumerate(sources):
+        _say(log, f'Downloading {os.path.basename(f["key"])} ({int(f.get("size", 0)) // 1024 // 1024} MB) from {label}')
+        try:
+            return _download_to(url, dest, f)
+        except Exception as e:  # noqa: BLE001
+            problems.append(f'{label}: {e}')
+            if i + 1 < len(sources):
+                _say(log, f'{label} failed ({e}); trying {sources[i + 1][0]}')
+    raise SoftError('download failed -- not installed (' + '; '.join(problems) + ')')
+
+
+def _copy_offline(src, dest, f, log=None):
+    """Copy a file from the offline store to dest if it matches the signed entry f. False on
+    mismatch (so the caller falls through to a download) rather than raising."""
+    try:
+        if os.path.getsize(src) != int(f.get('size') or os.path.getsize(src)) and f.get('size'):
+            return False
+        if _sha256_file(src) != f['sha256']:
+            _say(log, f'offline copy of {os.path.basename(f["key"])} does not match the signed catalog; ignoring it')
+            return False
+        shutil.copyfile(src, dest + '.part')
+        os.replace(dest + '.part', dest)
+        _say(log, f'Using {os.path.basename(f["key"])} from the imported offline bundle')
+        return True
+    except OSError:
+        return False
 
 
 def install(app, version, log=None, action='install', migrate=False):
@@ -1227,40 +1421,299 @@ def pinned(app, cat=None):
             key = str(f.get('key') or '')
             if re.fullmatch(r'pinned/[A-Za-z0-9._/+-]{1,300}', key) and '..' not in key and \
                     re.fullmatch(r'[0-9a-f]{64}', str(f.get('sha256') or '')):
-                files[name] = {'url': f'{base}/{key}', 'sha256': f['sha256'], 'size': int(f.get('size') or 0)}
+                # the chosen download source first (Software updates > Download source)
+                urls = [u for _label, u in _sources(key, cat)] or [f'{base}/{key}']
+                files[name] = {'url': urls[0], 'urls': urls, 'sha256': f['sha256'], 'size': int(f.get('size') or 0)}
         if files:
             out.append({'version': r['version'], 'track': r.get('track', ''), 'files': files})
     out.sort(key=lambda r: vt(r['version']), reverse=True)
     return out
 
 
-# ------------------------------------------------------------ panel Apps (cloud)
+# ------------------------------------------------------------ panel Apps (Cloudflare R2)
+#
+# VortexPanel's own Apps (System Hardening, PHP Security, ...) are proprietary and kept out of
+# the public GitHub repository. They live in their own Cloudflare R2 bucket (panel/trust/
+# softs.json "apps_url") as a signed index.json plus the App packages, published by the private
+# vortexpanel-apps repository. The index is signed with a software catalog key (panel/trust/
+# softs.json "keys") and every package must match the SHA-256 in it, so R2 only stores the
+# files, it never has to be trusted. They are not mirrored to GitHub.
 
-def panel_apps(cat=None, channel=None):
-    """{app id: newest installable release} of VortexPanel Apps published in the catalog.
-    A release: version, channel, status, requires_core, manifest (listing fields), file."""
-    cat = cat if cat is not None else (load() or {})
+APPS_INDEX_MAX_AGE = 6 * 3600
+APPS_INDEX_RETRY = 600
+
+
+def _apps_base():
+    """The Cloudflare R2 address VortexPanel's own Apps are downloaded from (their own bucket,
+    separate from the public software bucket); panel/trust/softs.json "apps_url"."""
+    return (trust().get('apps_url') or '').rstrip('/')
+
+
+def apps_index(force=False, log=None):
+    """The verified index of VortexPanel's own Apps ({} when none loaded yet). Fetched from
+    Cloudflare R2 (panel/trust/softs.json "apps_url") at most every 6 hours, retried after 10
+    minutes on failure. Signed with the catalog key, so R2 only stores it, never vouches for it."""
+    path = os.path.join(DATA, 'apps-index.json')
+    meta = _read(os.path.join(DATA, 'apps-index-meta.json'), {})
+    cur = _read(path, None)
+    age = time.time() - meta.get('checked', 0)
+    if not force and cur is not None and (age < APPS_INDEX_MAX_AGE or (meta.get('error') and age < APPS_INDEX_RETRY)):
+        return cur
+    if not force and cur is None and meta.get('error') and age < APPS_INDEX_RETRY:
+        return {}
+    meta['checked'] = int(time.time())
+    try:
+        keys = trust()['keys']
+        if not keys:
+            raise SoftError('no catalog key in panel/trust/softs.json')
+        sources = _apps_sources('index.json')
+        if not sources and not _offline_file('apps-index.json'):
+            raise SoftError('no App download address (panel/trust/softs.json apps_url), mirror or offline bundle')
+        idx = raw = None
+        problems = []
+        for label, getter, allow_expired in _signed_candidates(sources, 'apps-index.json'):
+            try:
+                r, sig = getter()
+                if not _verify(r, sig, keys):
+                    raise SoftError('the App index signature does not verify')
+                c = json.loads(r)
+                if int(c.get('serial') or 0) < int((cur or {}).get('serial') or 0):
+                    raise SoftError(f'the App index is older than the one in use ({c.get("serial")} < {(cur or {}).get("serial")})')
+                exp = int(c.get('expires') or 0)
+                if exp and exp < time.time() and not allow_expired:
+                    raise SoftError('the App index has expired')
+                idx, raw = c, r
+                meta['source'] = label
+                break
+            except Exception as e:  # noqa: BLE001
+                problems.append(f'{label}: {e}')
+        if idx is None:
+            raise SoftError('; '.join(problems) or 'no App source available')
+        _ensure_dir(DATA, 0o700)
+        tmp = f'{path}.{os.getpid()}.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(raw)
+        os.replace(tmp, path)
+        meta.update(serial=idx.get('serial'), error='', ok=int(time.time()))
+        _write(os.path.join(DATA, 'apps-index-meta.json'), meta)
+        _say(log, f'App index {idx.get("serial")} verified')
+        return idx
+    except Exception as e:  # noqa: BLE001
+        meta['error'] = str(e)[:300]
+        _write(os.path.join(DATA, 'apps-index-meta.json'), meta)
+        _say(log, f'App index not updated: {e}')
+        if cur is not None and int(cur.get('expires') or 0) and int(cur['expires']) < time.time():
+            return {}                      # an expired index is not used (no withdrawals would reach us)
+        return cur or {}
+
+
+def apps_index_status():
+    m = _read(os.path.join(DATA, 'apps-index-meta.json'), {})
+    return {'serial': m.get('serial'), 'checked': m.get('checked', 0), 'ok': m.get('ok', 0), 'error': m.get('error', '')}
+
+
+def _app_releases(idx, aid):
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{1,40}', aid or ''):
+        return []
+    rels = ((idx.get('apps') or {}).get(aid) or {}).get('releases') or []
+    return sorted((r for r in rels if isinstance(r.get('file'), dict) and re.fullmatch(r'[0-9a-f]{64}', str(r['file'].get('sha256') or ''))),
+                  key=lambda r: vt(r.get('version', '0')), reverse=True)
+
+
+def panel_apps(cat=None, channel=None, force=False):
+    """{app id: newest installable release} of VortexPanel's own Apps (from Cloudflare R2).
+    A release: version, channel, status, requires_core, manifest (listing fields), file.
+    `cat` is accepted for older callers and not used."""
+    idx = apps_index(force=force)
     ch = channel or settings()['channel']
     out = {}
-    for aid, entry in (cat.get('panel_apps') or {}).items():
-        if not re.fullmatch(r'[a-z0-9][a-z0-9-]{1,40}', aid):
-            continue
-        for r in sorted(entry.get('releases') or [], key=lambda r: vt(r.get('version', '0')), reverse=True):
+    for aid in (idx.get('apps') or {}):
+        for r in _app_releases(idx, aid):
             if r.get('status', 'active') != 'active' or (ch == 'stable' and r.get('channel') != 'stable'):
                 continue
-            if isinstance(r.get('file'), dict) and r['file'].get('sha256'):
-                out[aid] = r
-                break
+            out[aid] = r
+            break
     return out
 
 
+def _fetch_app_package(aid, r, log=None):
+    """Get one App package: the offline bundle first, then admin App mirrors, then Cloudflare
+    R2; checked against the signed index whatever the source."""
+    key = str(r['file'].get('key') or '')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/+-]{0,300}', key) or '..' in key:
+        raise SoftError('invalid file name in the App index')
+    d = _ensure_dir(os.path.join(DATA, 'downloads'), 0o700)
+    dest = os.path.join(d, f'app-{aid}-{r["version"]}.zip')
+    off = _offline_file(os.path.join('files', key))
+    if off and _copy_offline(off, dest, r['file'], log):
+        return dest
+    sources = _apps_sources(key)
+    if not sources and not off:
+        raise SoftError('no App download address (panel/trust/softs.json apps_url), mirror or offline bundle')
+    problems = []
+    for i, (label, url) in enumerate(sources):
+        _say(log, f'Downloading {aid} {r["version"]} from {label}')
+        try:
+            return _download_to(url, dest, r['file'])
+        except Exception as e:  # noqa: BLE001
+            problems.append(f'{label}: {e}')
+    raise SoftError('download failed (' + '; '.join(problems) + ')')
+
+
+# ------------------------------------------------- offline bundles & signed upload (air-gapped)
+#
+# An admin on a server with no internet can still install and update: on a connected machine
+# (or in CI) build a bundle with softs/pipeline/bundle.py, transfer it, and import it here. The
+# bundle carries the signed catalog / App index and the chosen package files; import verifies
+# every signature and checksum, so an offline install is exactly as trusted as an online one.
+# A single already-downloaded package can also be uploaded if its checksum is in a catalog the
+# panel already has. Admin-added mirrors (settings) work the same way for a LAN mirror.
+
+def _catalog_file_index(cat):
+    """{key: file-entry} for every software file in the catalog."""
+    out = {}
+    for sect in ('apps', 'pinned'):
+        for e in (cat.get(sect) or {}).values():
+            for r in e.get('releases') or []:
+                for f in (r.get('files') or {}).values():
+                    if isinstance(f, dict) and f.get('key') and re.fullmatch(r'[0-9a-f]{64}', str(f.get('sha256') or '')):
+                        out[str(f['key']).lstrip('/')] = f
+    return out
+
+
+def _apps_file_index(idx):
+    """{key: file-entry} for every App package in the index."""
+    out = {}
+    for e in (idx.get('apps') or {}).values():
+        for r in e.get('releases') or []:
+            f = r.get('file')
+            if isinstance(f, dict) and f.get('key') and re.fullmatch(r'[0-9a-f]{64}', str(f.get('sha256') or '')):
+                out[str(f['key']).lstrip('/')] = f
+    return out
+
+
+def _safe_members(tf, dest):
+    """Yield (member, output path) for regular-file members with safe paths only."""
+    base = os.path.realpath(dest)
+    for m in tf.getmembers():
+        if not m.isfile():
+            continue
+        name = m.name.lstrip('./').replace('\\', '/')
+        if name.startswith('/') or '..' in name.split('/'):
+            raise SoftError(f'unsafe path in the bundle: {m.name}')
+        out = os.path.realpath(os.path.join(dest, name))
+        if out != base and not out.startswith(base + os.sep):
+            raise SoftError(f'unsafe path in the bundle: {m.name}')
+        yield m, name, out
+
+
+def import_bundle(path, log=None):
+    """Import an offline bundle (softs/pipeline/bundle.py) into the offline store. Verifies the
+    catalog/index signatures and every file's checksum; files that do not match are ignored."""
+    keys = trust()['keys']
+    if not keys:
+        raise SoftError('No catalog signing key is configured (panel/trust/softs.json).')
+    tmp = tempfile.mkdtemp(prefix='vp-bundle-')
+    try:
+        try:
+            tf = tarfile.open(path)
+        except tarfile.TarError as e:
+            raise SoftError(f'not a readable bundle archive: {e}') from None
+        with tf:
+            total = 0
+            for m, name, out in _safe_members(tf, tmp):
+                total += int(m.size or 0)
+                if total > (40 << 30):
+                    raise SoftError('the bundle is larger than expected (over 40 GB)')
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                with tf.extractfile(m) as srcf, open(out, 'wb') as f:
+                    shutil.copyfileobj(srcf, f)
+        store = _ensure_dir(_offline_dir(), 0o700)
+        summary = {'catalog': None, 'apps_index': None, 'files': 0, 'skipped': 0}
+        want = {}
+        for base_name, store_name, loader in (('catalog.json', 'catalog.json', _catalog_file_index),
+                                              ('apps-index.json', 'apps-index.json', _apps_file_index)):
+            j, sg = os.path.join(tmp, base_name), os.path.join(tmp, base_name + '.sig')
+            if not (os.path.isfile(j) and os.path.isfile(sg)):
+                continue
+            raw, sig = open(j, 'rb').read(), open(sg).read()
+            if not _verify(raw, sig, keys):
+                raise SoftError(f'the bundle {base_name} signature does not verify')
+            obj = json.loads(raw)
+            want.update(loader(obj))
+            shutil.copyfile(j, os.path.join(store, store_name))
+            shutil.copyfile(sg, os.path.join(store, store_name + '.sig'))
+            summary['catalog' if base_name == 'catalog.json' else 'apps_index'] = obj.get('serial')
+        if summary['catalog'] is None and summary['apps_index'] is None:
+            raise SoftError('the bundle has no signed catalog or App index')
+        dest_files = _ensure_dir(os.path.join(store, 'files'), 0o700)
+        fdir = os.path.join(tmp, 'files')
+        for root, _ds, fns in os.walk(fdir):
+            for fn in fns:
+                p = os.path.join(root, fn)
+                key = os.path.relpath(p, fdir).replace('\\', '/')
+                f = want.get(key)
+                if not f or _sha256_file(p) != f['sha256']:
+                    summary['skipped'] += 1
+                    continue
+                dp = os.path.join(dest_files, key)
+                _ensure_dir(os.path.dirname(dp), 0o700)
+                shutil.copyfile(p, dp)
+                summary['files'] += 1
+        _say(log, f'Imported offline bundle: catalog serial {summary["catalog"]}, App index serial '
+                  f'{summary["apps_index"]}, {summary["files"]} file(s)'
+                  + (f', {summary["skipped"]} ignored (not in the signed catalog)' if summary['skipped'] else ''))
+        return summary
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def import_package(path, log=None):
+    """Import one already-downloaded package (an App zip or a software build zip) into the
+    offline store. It is kept only if its checksum is in a catalog/index the panel already has."""
+    sha = _sha256_file(path)
+    want = _catalog_file_index(load() or {})
+    want.update(_apps_file_index(apps_index() or {}))
+    match = next((f for f in want.values() if f['sha256'] == sha), None)
+    if not match:
+        raise SoftError('this file is not in the signed catalog or App index. It may be modified, be for '
+                        'a different version, or the catalog may not be loaded yet -- import an offline bundle instead.')
+    key = str(match['key']).lstrip('/')
+    dp = os.path.join(_ensure_dir(os.path.join(_offline_dir(), 'files'), 0o700), key)
+    _ensure_dir(os.path.dirname(dp), 0o700)
+    shutil.copyfile(path, dp)
+    _say(log, f'Imported {os.path.basename(key)} into the offline store')
+    return {'key': key, 'size': os.path.getsize(path)}
+
+
+def offline_status():
+    d = _offline_dir()
+    cat = _read(os.path.join(d, 'catalog.json'))
+    idx = _read(os.path.join(d, 'apps-index.json'))
+    n = sum(len(fns) for _r, _ds, fns in os.walk(os.path.join(d, 'files')))
+    return {'offline': settings()['offline'], 'files': n,
+            'catalog_serial': (cat or {}).get('serial'), 'catalog_expires': (cat or {}).get('expires'),
+            'apps_index_serial': (idx or {}).get('serial')}
+
+
+def offline_clear():
+    """Remove the imported offline bundle (not the admin's settings)."""
+    shutil.rmtree(_offline_dir(), ignore_errors=True)
+    return True
+
+
 def fetch_panel_app(aid, version, dest, log=None):
-    """Download a published App and unpack it into dest (plugin.json at the top).
-    Regular files only; the zip's sha256 comes from the signed catalog."""
-    r = panel_apps(refresh(log=log), channel='beta').get(aid)
-    if not r or r['version'] != version:
-        raise SoftError(f'App {aid} {version} is not in the catalog')
-    path = _fetch(r['file'], log)
+    """Download a released App and unpack it into dest (plugin.json at the top). Any
+    version still in the signed index (also the reference copy of an older install).
+    Regular files only; the zip's sha256 comes from the signed App index."""
+    idx = apps_index(log=log)
+    r = next((x for x in _app_releases(idx, aid) if x.get('version') == version), None)
+    if not r:
+        idx = apps_index(force=True, log=log)
+        r = next((x for x in _app_releases(idx, aid) if x.get('version') == version), None)
+    if not r:
+        raise SoftError(f'App {aid} {version} is not available from VortexPanel')
+    path = _fetch_app_package(aid, r, log)
     try:
         shutil.rmtree(dest, ignore_errors=True)
         os.makedirs(dest, mode=0o755)
@@ -1283,7 +1736,7 @@ def fetch_panel_app(aid, version, dest, log=None):
                 os.chmod(out, 0o644)
         man = _read(os.path.join(dest, 'plugin.json'), {})
         if man.get('id') != aid or man.get('version') != version or man.get('kind') != 'app':
-            raise SoftError('the App package does not match the catalog (id/version)')
+            raise SoftError('the App package does not match the App index (id/version)')
         return dest
     finally:
         try:
@@ -1295,7 +1748,11 @@ def fetch_panel_app(aid, version, dest, log=None):
 # ------------------------------------------------------------- periodic check
 
 def periodic(log=None):
-    """Every 6 hours (systemd timer): new catalog, notifications, automatic updates."""
+    """Every 6 hours (systemd timer): new catalog and App index, notifications, automatic updates."""
+    try:
+        apps_index(force=True, log=log)
+    except Exception as e:  # noqa: BLE001
+        _say(log, f'App index: {e}')
     if not configured():
         return 'not configured'
     cat = refresh(force=True, log=log)

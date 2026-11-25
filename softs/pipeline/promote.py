@@ -31,10 +31,7 @@ def main():
         return [x.split('=', 1) for x in s.split(',') if '=' in x]
 
     def find(app, ver):
-        # "app:site-stats=1.1.0" names a VortexPanel App, anything else server software
-        if app.startswith('app:'):
-            return next((r for r in ((cat.get('panel_apps') or {}).get(app[4:]) or {}).get('releases') or []
-                         if r['version'] == ver), None)
+        # VortexPanel's own Apps are withdrawn in the private vortexpanel-apps repository
         return C.find_release(cat, app, ver)
 
     for app, ver in pairs(a.withdraw):
@@ -79,13 +76,9 @@ def main():
                     changed.append(f'pruned {app} {r["version"]}')
         entry['releases'] = sorted(kept, key=lambda r: C.vt(r['version']), reverse=True)
 
-    for aid, entry in (cat.get('panel_apps') or {}).items():
-        for r in entry.get('releases') or []:
-            if r.get('channel') == 'beta' and r.get('status') == 'active' and now - r.get('released', now) >= hours * 3600:
-                r.update(channel='stable', promoted=int(now))
-                changed.append(f'promoted App {aid} {r["version"]} to stable')
-
-    if cat.get('apps') or cat.get('panel_apps'):
+    if cat.get('panel_apps'):
+        changed.append('VortexPanel Apps removed from the public catalog (they have their own R2 bucket)')
+    if cat.get('apps'):
         C.save_catalog(cat)          # daily re-sign: new serial and expiry even when nothing changed
     print('\n'.join(changed) or 'nothing changed; catalog re-signed')
 

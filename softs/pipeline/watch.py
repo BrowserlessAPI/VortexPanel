@@ -181,10 +181,10 @@ def plugin_version(item, plugin, rels):
     if newest.get('plugin') is None:
         return None
     if newest['plugin'] == plugin:
-        return dict(item, version=newest['version'], plugin=plugin)
+        return dict(item, version=newest['version'], plugin=plugin, upstream=base)
     parts = newest['version'].split('.')
     n = int(parts[3]) + 1 if len(parts) > 3 else 1
-    return dict(item, version=f'{base}.{n}', plugin=plugin)
+    return dict(item, version=f'{base}.{n}', plugin=plugin, upstream=base)
 
 def availability(recipe, item):
     """Ask the recipe which systems upstream really offers this version for.
@@ -205,6 +205,7 @@ def availability(recipe, item):
 def plan(only=None, force=None, catalog=None):
     cat = catalog if catalog is not None else C.load_catalog()
     out = []
+    forced_bump = set()   # (app, requested_version) satisfied by a build bump (1.5.4 -> 1.5.4.1)
     for app, r in C.recipes().items():
         if only and app not in only:
             continue
@@ -232,7 +233,25 @@ def plan(only=None, force=None, catalog=None):
             v = item['version']
             forced = bool(force and v in force.get(app, ()))
             rel = rels.get(v)
-            if rel and forced and rel.get('missing'):
+            if rel and forced and not rel.get('missing') and len(v.split('.')) == 3 \
+                    and rel.get('recipe_rev') != C.recipe_rev(app):
+                # this version is fully published but the recipe changed since (a fix). Publish
+                # the fix as a build bump (1.5.4 -> 1.5.4.1) built from the same upstream source,
+                # so panels on 1.5.4 are offered it as an update. Rebuild every system.
+                builds = [int(x['version'].split('.')[3]) for x in rels.values()
+                          if '.'.join(x['version'].split('.')[:3]) == v and len(x['version'].split('.')) > 3]
+                item = dict(item, version=f'{v}.{(max(builds) + 1) if builds else 1}', upstream=v)
+                forced_bump.add((app, v))
+                C.log(f'{app}: recipe fixed since {v} was published; building bump {item["version"]}')
+                v, rel = item['version'], None
+            elif rel and forced and not rel.get('missing') and len(v.split('.')) != 3 \
+                    and rel.get('recipe_rev') != C.recipe_rev(app):
+                # a build bump is a fourth number on a three-part version: on a two-part one
+                # (PostgreSQL 17.6) it would read as a real upstream release (17.6.1)
+                C.log(f'{app}: {v} is published; a recipe fix for a {len(v.split("."))}-part version cannot be '
+                      f'published as a build bump, it ships with the next upstream release')
+                continue
+            elif rel and forced and rel.get('missing'):
                 # forced, already published: build only the systems it is missing
                 item['only_targets'] = list(rel['missing'])
             elif rel and not forced:
@@ -276,6 +295,8 @@ def plan(only=None, force=None, catalog=None):
     for app, v in ((a, x) for a, vs in (force or {}).items() for x in sorted(vs)):
         if app not in C.recipes() or not re.fullmatch(r'\d+(\.\d+){1,3}', v):
             raise SystemExit(f'force: invalid app or version: {app}={v}')
+        if (app, v) in forced_bump:
+            continue   # already shipped as a build bump (1.5.4 -> 1.5.4.1)
         if not any(p['app'] == app and p['version'] == v for p in out):
             r = C.recipes()[app]
             fi = {'app': app, 'version': v, 'track': C.track_of(v, r['watch'].get('track_depth', 2))}

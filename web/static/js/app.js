@@ -585,6 +585,14 @@ function fmtDate(ts) {
   return new Date(ts*1000).toLocaleString();
 }
 function fmtSize(bytes) { return fmtBytes(bytes); }
+// "5 min ago" for a Unix time in seconds
+function vpAgo(t) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - (t || 0)));
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + ' min ago';
+  if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+  return Math.floor(s / 86400) + ' days ago';
+}
 
 // --- ROOT APP (single Alpine scope — handles auth + panel) ----------------------
 // Applies a theme mode to <html data-theme> and recolours any live charts so
@@ -636,7 +644,7 @@ function rootApp() {
     // dashboard first; _onLoggedIn checks it against the user's role
     username: '', page: (['websites','databases','files','modules','services','firewall','terminal','backups','mail','ftp',
                           'cron','monitoring','bandwidth','security','docker','caddy','cdn','logs','settings','node-projects',
-                          'go-projects','python-projects','wp','waf','disk','users','alerts','migration']
+                          'go-projects','python-projects','wp','waf','disk','users','alerts','migration','all-projects']
                          .includes(location.hash.replace('#', '')) ? location.hash.replace('#', '') : 'dashboard'),
     sidebarOpen: false,
     themeMode: (function(){ try { return localStorage.getItem('vp-theme') || 'system'; } catch(e) { return 'system'; } })(),
@@ -652,6 +660,7 @@ function rootApp() {
       { group: 'Overview', items: [
         { id:'dashboard',    icon:'grid', label:'Dashboard',        color:'#2563eb', colorBg:'#dbeafe' },
         { id:'websites',     icon:'globe', label:'Websites',        color:'#16a34a', colorBg:'#dcfce7' },
+        { id:'all-projects', icon:'layers', label:'All Projects',   color:'#4f46e5', colorBg:'#e0e7ff' },
         { id:'wp',           icon:'layers', label:'WP Toolkit',      color:'#2563eb', colorBg:'#dbeafe' },
         { id:'node-projects',icon:'code', label:'Node.js Projects',color:'#16a34a', colorBg:'#dcfce7' },
         { id:'go-projects',  icon:'wind', label:'Go Projects',     color:'#0369a1', colorBg:'#e0f2fe' },
@@ -1007,6 +1016,8 @@ function dashboardPage() {
     ],
     loading: true,
     sslAlerts: [],
+    php2shell: {worst:'fixed', rows:[], enabled:true},
+    diskCats: {data:null, measuring:false},
     securityUpdates: {total:0, critical:0, packages:[], checked:false},
     _prevNet: null,
 
@@ -1020,13 +1031,42 @@ function dashboardPage() {
       }
       this._waitForChartJs();
       this.loadSecurityUpdates();  // non-blocking -- runs real apt/dnf commands, don't hold up the page for it
+      this.loadPhp2shell();        // non-blocking -- reads every PHP's version (cached on the server)
+      this.loadDiskCats();         // non-blocking -- last measurement at once, a new one in the background
       if (!vpOnce(this, 'init')) return;
       // Poll only while the dashboard is the visible page (all pages stay
       // mounted, so an unconditional timer kept polling on every page).
       setInterval(()=>{ if (vpActivePage()==='dashboard' && !document.hidden) this.loadStats(); },5000);
       setInterval(()=>{ if (vpActivePage()==='dashboard' && !document.hidden) this.loadSslAlerts(); },60000); // recheck every minute, not every 5s
       document.addEventListener("vortex-logged-in", () => { this.init(); });
-      window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); this.loadSslAlerts(); this.loadSecurityUpdates(); } });
+      window.addEventListener("vp:page", (e) => { if(e.detail==="dashboard") { this.loadStats(); this.loadServices(); this.loadSslAlerts(); this.loadSecurityUpdates(); this.loadPhp2shell(); } });
+    },
+    // PHP2Shell (CVE-2026-109618/109619): warn on the dashboard when any PHP on this server is
+    // affected or has no fixed release, and open the PHP2Shell tab from there
+    async loadPhp2shell() {
+      if (typeof _vpRole !== 'undefined' && _vpRole && _vpRole !== 'admin') return;   // only an admin can act on it
+      const r = await get('/api/dashboard/php2shell').catch(()=>({ok:false}));
+      if (r.ok) this.php2shell = {worst: r.worst || 'fixed', rows: r.rows || [], enabled: r.enabled !== false};
+    },
+    async loadDiskCats(refresh) {
+      if (typeof _vpRole !== 'undefined' && _vpRole && _vpRole !== 'admin') return;
+      const r = await get('/api/dashboard/disk-categories'+(refresh?'?refresh=1':'')).catch(()=>({ok:false}));
+      if (!r.ok) return;
+      const before = this.diskCats.data && this.diskCats.data.t;
+      this.diskCats = {data: r.data || this.diskCats.data, measuring: !!r.measuring};
+      // while a measurement runs, look again shortly (not on the 5 s stats timer)
+      if (r.measuring && (this._dcTries = (refresh ? 0 : (this._dcTries||0)) + 1) <= 40) {
+        clearTimeout(this._dcTimer);
+        this._dcTimer = setTimeout(async () => {
+          const q = await get('/api/dashboard/disk-categories').catch(()=>({ok:false}));
+          if (q.ok && q.data && q.data.t !== before) { this.diskCats = {data: q.data, measuring: false}; }
+          else if (vpActivePage()==='dashboard') this.loadDiskCats();
+        }, 15000);
+      }
+    },
+    openPhp2shell() {
+      this.go('modules');
+      setTimeout(() => window.dispatchEvent(new CustomEvent('vp:open-app', {detail: {id: 'php', tab: 'php2shell'}})), 600);
     },
     async loadSslAlerts() {
       const r = await get('/api/dashboard/ssl-alerts').catch(()=>({ok:false}));
@@ -1168,6 +1208,17 @@ function dashboardPage() {
 function websitesPage() {
   return {
     sites:[], phpVersions:[], showAdd:false, addTab:'create', webroot:'/www/wwwroot',
+    // site name: a label in this list (the domain, folder and configuration do not change)
+    nameModal:{show:false, domain:'', name:'', saving:false},
+    openName(s) { this.nameModal = {show:true, domain:s.domain, name:s.name||'', saving:false}; },
+    async saveName() {
+      const m = this.nameModal; m.saving = true;
+      const r = await put('/api/websites/'+encodeURIComponent(m.domain)+'/name', {name: m.name.trim()});
+      m.saving = false;
+      if (!r.ok) { toast(r.error||'Could not save the name','error'); return; }
+      const st = this.sites.find(x => x.domain === m.domain); if (st) st.name = r.name;
+      m.show = false; toast(r.name ? 'Site name saved' : 'Site name removed','success');
+    },
     backupCounts:{}, requestCounts:{}, bpBadges:{},
     form:{domain:'',path:'',php:'8.3',type:'PHP',createDb:false,createFtp:false,path_edited:false},
     batchDomains:'', batchLog:[], batchRunning:false, deployApps:[], deployApp:'', deployDomain:'', deployDb:true,
@@ -3770,18 +3821,21 @@ function modulesPage() {
     updModal:  {show:false, mod:null},
     vxRb: {show:false, mod:null, slot:''},
     vxSw: {show:false, mod:null, ver:''},
-    vx: {show:false, busy:false, status:null, updates:[], events:[], form:{channel:'stable', auto:'security', notify:true}},
+    vx: {show:false, busy:false, status:null, updates:[], events:[], form:{channel:'stable', auto:'security', notify:true, source:'r2'}},
     phpUninstallModal: {show:false, versions:[], selVer:''},
     jobModal:  {show:false, title:'', lines:[], done:false, success:false, action:'install', installedVer:''},
+    runningJobs: [], _jobsPoll: null,
     installingStream: false,
     f2bWebsiteJails: [], f2bServerJails: [], f2bServerPresets: [], websitesForF2b: [],
     f2bWebsiteForm: {show:false, saving:false, site:'', mode:'anti-cc', port:'80,443', maxretry:120, findtime:60, bantime:600},
     f2bServerForm:  {show:false, saving:false, server:'sshd', port:'22', maxretry:30, findtime:300, bantime:600},
     async init() {
       window.addEventListener('vp:open-app', async (e) => {
+        // detail: an App id, or {id, tab} to open a given tab (the dashboard's PHP2Shell warning)
+        const d = (e.detail && typeof e.detail === 'object') ? e.detail : {id: e.detail};
         if (!this.modules.length) await this.load();
-        const m = this.modules.find(x => x.id === e.detail);
-        if (m && m.installed) this.openSettings(m);
+        const m = this.modules.find(x => x.id === d.id);
+        if (m && m.installed) this.openSettings(m, d.tab);
       }); await this.load(); if (!vpOnce(this, 'init')) return; document.addEventListener("vortex-logged-in", () => { this.init(); }); window.addEventListener("vp:page", (e) => { if(e.detail==="modules") this.load(); }); },
 
     catalogRefreshing: false, tested: null,
@@ -3801,6 +3855,7 @@ function modulesPage() {
     async load() {
       this.loadApps();
       this.loadVx();
+      this.loadRunningJobs();
       const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
       if (!this.modules.length) {
         // first paint: the last list the panel built shows at once, the fresh one follows
@@ -3891,12 +3946,35 @@ function modulesPage() {
     async loadVx() {
       const r = await get('/api/softs/status');
       if (r.ok) { this.vx.status = r.status; this.vx.updates = r.updates || []; this.vx.events = r.events || [];
-        this.vx.form = Object.assign({}, r.status.settings || this.vx.form); }
+        this.vx.form = Object.assign({}, r.status.settings || this.vx.form);
+        this.vx.form.mirrorsText = (this.vx.form.mirrors || []).join('\n');
+        this.vx.form.appsMirrorsText = (this.vx.form.apps_mirrors || []).join('\n'); }
     },
     async openVx() { await this.loadVx(); this.vx.show = true; },
     async vxSave() {
+      const split = t => String(t || '').split(/\n/).map(s => s.trim()).filter(Boolean);
+      this.vx.form.mirrors = split(this.vx.form.mirrorsText);
+      this.vx.form.apps_mirrors = split(this.vx.form.appsMirrorsText);
       const r = await post('/api/softs/settings', this.vx.form);
       if (r.ok) { toast('Saved', 'success'); this.vx.show = false; } else toast(r.error || 'Failed', 'error');
+    },
+    async vxImport(ev) {
+      const f = ev.target.files && ev.target.files[0]; if (!f) return;
+      this.vx.busy = true;
+      const fd = new FormData(); fd.append('file', f);
+      let r;
+      try { r = await (await fetch('/api/softs/offline/import', {method:'POST', body: fd, cache:'no-store'})).json(); }
+      catch (e) { r = {ok:false, error:String(e)}; }
+      this.vx.busy = false; ev.target.value = '';
+      if (r.ok) { toast(r.message || 'Imported', 'success'); await this.loadVx(); await this.load(); }
+      else toast(r.error || 'Import failed', 'error');
+    },
+    async vxClearOffline() {
+      if (!confirm('Remove the imported offline bundle? Installed software is not affected.')) return;
+      this.vx.busy = true;
+      const r = await post('/api/softs/offline/clear', {});
+      this.vx.busy = false;
+      if (r.ok) { toast('Offline bundle removed', 'success'); await this.loadVx(); } else toast(r.error || 'Failed', 'error');
     },
     async vxCheck() {
       this.vx.busy = true;
@@ -3975,6 +4053,7 @@ function modulesPage() {
                   : action==='switch' ? `Updating: ${m.name} v${m.installedVer||''} to v${ver.replace(/^vx:/,'')}`
                   : `${action==='install'?'Installing':'Removing'}: ${m.name}${verLabel.replace('vx:','')}`;
       this.jobModal = {show:true, title:label, lines:[], done:false, success:false, action, installedVer:'', message:''};
+      this.loadRunningJobs();
       this._followJob(r.job_id, (d) => {
         m.loading=false; m.installed=d.installed;
         if (d.installedVer) m.installedVer=d.installedVer;
@@ -3997,6 +4076,7 @@ function modulesPage() {
         jm.installedVer = d.installedVer || '';
         jm.message = d.message || '';
         try { onDone && onDone(d); } catch(e) {}
+        this.loadRunningJobs();
         scroll();
       };
       const poll = async () => {
@@ -4029,6 +4109,32 @@ function modulesPage() {
         if (d.error) { es.close(); poll(); }
       };
       es.onerror = () => { if (finished) return; es.close(); poll(); };
+    },
+
+    // --- Running-jobs indicator -------------------------------------------
+    // An App Store operation keeps running on the server after its window is
+    // hidden with "Hide (keeps running)" or the page is reloaded. The panel
+    // lists active jobs, so the header can show them and the user can reopen
+    // the live log at any time instead of losing it.
+    async loadRunningJobs() {
+      let r = null;
+      try { r = await get('/api/modules/jobs'); } catch(e) { r = null; }
+      this.runningJobs = (r && r.ok ? (r.jobs || []) : []);
+      const anyRunning = this.runningJobs.some(j => !j.done);
+      if (anyRunning && !this._jobsPoll) {
+        // keep the pill fresh while something runs, even with no window open
+        this._jobsPoll = setInterval(() => this.loadRunningJobs(), 4000);
+      } else if (!anyRunning && this._jobsPoll) {
+        clearInterval(this._jobsPoll); this._jobsPoll = null;
+      }
+    },
+    runningCount() { return this.runningJobs.filter(j => !j.done).length; },
+    // Reopen the live window for a job still running (or just finished) on the
+    // server. A fresh EventSource replays the whole log from the start.
+    reopenJob(j) {
+      if (!j || !j.job_id) return;
+      this.jobModal = {show:true, title:j.title||'App Store operation', lines:[], done:false, success:false, action:'install', installedVer:'', message:''};
+      this._followJob(j.job_id, () => { this.loadRunningJobs(); setTimeout(()=>this.load(), 1200); });
     },
 
     async control(m, action) {
@@ -4158,12 +4264,13 @@ function modulesPage() {
       toast(on ? 'CDN Manager is on' : 'CDN Manager is off: its page is hidden and its API is closed', 'success');
       this.load();
     },
-    async openSettings(m) {
+    async openSettings(m, tab) {
       if (m.id === 'cdn') return this.openCdnModule(m);
       // For pages that have dedicated full pages, navigate there
 
       // For all other apps — show the settings modal
-      const defaultTab = {'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status','anubis':'bp_overview'}[m.id] || 'service';
+      const defaultTab = (typeof tab === 'string' && /^[a-z0-9_]{1,40}$/.test(tab)) ? tab
+        : ({'ddns':'ddns_domains','bind9':'dns_zones','phpmyadmin':'php_version','roundcube':'rc_overview','ffmpeg':'ffmpeg_versions','modsecurity':'modsec_status','anubis':'bp_overview'}[m.id] || 'service');
       this.settingsModal = {
         ...this.settingsModal,
         show: true, mod: m, tab: defaultTab, rcData: {},
@@ -7877,6 +7984,93 @@ function logsPage() {
 // ============================================================
 // Node.js Project Manager
 // ============================================================
+// Scan & import: find apps already running on the server (PM2 apps, Go programs, Python
+// apps) and take them over as panel projects. One component, used on the Node.js, Go and
+// Python project pages (index.html macro project_import).
+function projectImport(kind) {
+  const PAGE = {pm2: 'node-projects', go: 'go-projects', python: 'python-projects'}[kind];
+  return {
+    kind, show: false, loading: false, error: '', cands: [], other: [], sel: null, busy: false, result: '',
+    form: {name: '', port: '', domain: '', user: ''},
+    intro() {
+      return kind === 'pm2'
+        ? 'Apps in the server\'s PM2 that are not a Node.js project yet. Importing adds them to this page; they keep running in PM2 as they are.'
+        : (kind === 'go'
+          ? 'Programs built with Go that run on this server but are not managed by the panel. Programs from the operating system packages, containers and panel services are not listed.'
+          : 'Python web apps (gunicorn, uvicorn, hypercorn, python app.py) running on this server but not managed by the panel. System programs, containers and panel services are not listed.');
+    },
+    how(c) {
+      if (kind === 'pm2') return 'PM2: ' + (c.status || '?');
+      return c.how && c.how.unit ? 'Service: ' + c.how.unit : 'Started by hand';
+    },
+    note() {
+      if (kind === 'pm2') return 'The PM2 app is not restarted. Removing the project later only removes it from the panel; the app stays in PM2.';
+      const c = this.sel || {};
+      const stop = c.how && c.how.unit ? 'The service ' + c.how.unit + ' is stopped and disabled (kept, so you can switch it back on)'
+                                       : 'The running process is ended';
+      return stop + ', and the same command starts again as a VortexPanel service with the same folder, user and environment: a few seconds of downtime. If the new service does not start and listen, the original is started again.';
+    },
+    async open() { this.show = true; this.sel = null; this.result = ''; await this.scan(); },
+    close() { if (!this.busy) this.show = false; },
+    async scan() {
+      this.loading = true; this.error = ''; this.cands = [];
+      const r = await get('/api/projects/scan/' + kind).catch(() => ({ok: false, error: 'Scan failed'}));
+      this.loading = false;
+      if (!r.ok) { this.error = r.error || 'Scan failed'; return; }
+      this.cands = r.candidates || []; this.other = r.other_pm2 || [];
+    },
+    pick(c) {
+      this.sel = c; this.result = '';
+      this.form = {name: c.name || '', port: String(c.port || ((c.ports || [])[0] || '')), domain: '', user: c.user === 'root' ? '' : ''};
+    },
+    async doImport() {
+      const c = this.sel; if (!c) return;
+      this.busy = true; this.result = '';
+      const body = {name: this.form.name.trim(), domain: this.form.domain.trim(), port: this.form.port,
+                    user: this.form.user.trim(), pid: c.pid, start: c.start, pm2_name: c.pm2_name};
+      const r = await post('/api/projects/import/' + kind, body).catch(() => ({ok: false, error: 'Request failed'}));
+      this.busy = false;
+      this.result = [...(r.log || []), r.ok ? '' : 'Not imported: ' + (r.error || 'failed'), r.proxy_warning ? 'Reverse proxy: ' + r.proxy_warning : '']
+                      .filter(Boolean).join('\n');
+      if (r.ok) {
+        toast('Imported as project ' + r.id, 'success');
+        window.dispatchEvent(new CustomEvent('vp:page', {detail: PAGE}));
+        this.sel = null; await this.scan();
+      } else {
+        toast(r.error ? r.error.split('\n')[0] : 'Import failed', 'error');
+      }
+    },
+  };
+}
+
+// All Projects: every website and app project on this server in one list (PHP, static and
+// WordPress websites, Node.js, Go and Python projects, Docker containers), each linking to
+// the page that manages it.
+function allProjectsPage() {
+  return {
+    rows: [], counts: {}, errors: [], loading: false, q: '', type: '',
+    TYPES: {php: 'PHP site', static: 'Static site', wordpress: 'WordPress', node: 'Node.js', go: 'Go', python: 'Python', docker: 'Docker'},
+    async init() {
+      await this.load();
+      if (!vpOnce(this, 'init')) return;
+      window.addEventListener('vp:page', e => { if (e.detail === 'all-projects') this.load(); });
+    },
+    async load() {
+      this.loading = true;
+      const r = await get('/api/projects/all').catch(() => ({ok: false}));
+      this.loading = false;
+      if (r.ok) { this.rows = r.projects || []; this.counts = r.counts || {}; this.errors = r.errors || []; }
+    },
+    filtered() {
+      const q = this.q.trim().toLowerCase();
+      return this.rows.filter(r => (!this.type || r.type === this.type) &&
+        (!q || [r.name, r.domain, r.path, r.detail, r.port].join(' ').toLowerCase().includes(q)));
+    },
+    active() { return this.rows.filter(r => r.status === 'active').length; },
+    open(r) { window.dispatchEvent(new CustomEvent('nav', {detail: {page: r.page}})); },
+  };
+}
+
 function nodeProjectsPage() {
   return {
     projects:[], tab:'projects', loading:false, search:'', wsInfo:null,

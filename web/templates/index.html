@@ -222,6 +222,60 @@
     <!-- PAGE CONTENT -->
     <div class="page-content">
       <!-- DASHBOARD -->
+{#- Scan & import (Node.js / Go / Python projects): one dialog, used on three pages -#}
+{% macro project_import(kind, what) -%}
+<div x-data="projectImport('{{ kind }}')" style="display:contents" @keydown.escape.window="show && close()">
+  <button class="btn btn-ghost btn-sm" @click="open()" title="Find {{ what }} already running on this server and manage them here">Scan &amp; import</button>
+  <div class="modal-overlay" x-show="show" x-cloak @click.self="close()">
+    <div class="modal" style="max-width:760px">
+      <div class="modal-hd"><div class="modal-title">Scan &amp; import: {{ what }}</div><button class="modal-close" @click="close()">&times;</button></div>
+      <template x-if="!sel">
+        <div>
+          <div class="vp-hint-box" x-text="intro()"></div>
+          <div x-show="loading" style="padding:24px;text-align:center;color:var(--text-muted)">Scanning running processes...</div>
+          <div x-show="!loading && error" class="vp-hint-box" style="color:var(--tint-red-text)" x-text="error"></div>
+          <div x-show="!loading && !error && !cands.length" style="padding:24px;text-align:center;color:var(--text-muted)">Nothing to import: every app found is already managed, or none is running.</div>
+          <template x-for="c in cands" :key="(c.pid||c.pm2_name)+'-'+(c.start||'')">
+            <div class="vp-imp-row">
+              <div style="min-width:0;flex:1">
+                <div class="vp-imp-cmd" x-text="c.cmd || c.script || c.pm2_name" :title="c.cmd || c.script"></div>
+                <div class="vp-imp-meta">
+                  <span x-text="'Folder: '+(c.cwd||'-')"></span>
+                  <span x-text="'User: '+(c.user||'-')"></span>
+                  <span x-text="'Port: '+((c.ports&&c.ports.length)?c.ports.join(', '):(c.port||'none'))"></span>
+                  <span x-text="how(c)"></span>
+                  <span x-show="(c.env_keys||[]).length" :title="(c.env_keys||[]).join(', ')" x-text="(c.env_keys||[]).length+' environment variable'+((c.env_keys||[]).length>1?'s':'')"></span>
+                </div>
+              </div>
+              <button class="btn btn-primary btn-sm" @click="pick(c)">Import</button>
+            </div>
+          </template>
+          <div x-show="(other||[]).length" class="vp-hint-box" style="margin-top:10px" x-text="'PM2 of other users is not managed by the panel: '+other.map(o=>o.user+' ('+o.home+')').join(', ')"></div>
+          <div class="modal-ft"><button class="btn btn-ghost" @click="scan()" :disabled="loading">Scan again</button><button class="btn btn-ghost" @click="close()">Close</button></div>
+        </div>
+      </template>
+      <template x-if="sel">
+        <div>
+          <div class="vp-imp-cmd" style="margin-bottom:12px" x-text="sel.cmd || sel.script || sel.pm2_name"></div>
+          <div class="form-group"><label class="form-label">Project name</label><input class="form-input" x-model="form.name" maxlength="60"></div>
+          <div class="form-group" x-show="kind!=='pm2' && (sel.ports||[]).length>1"><label class="form-label">Port it serves on</label>
+            <select class="form-input" x-model="form.port"><template x-for="p in sel.ports" :key="p"><option :value="String(p)" x-text="p"></option></template></select></div>
+          <div class="form-group" x-show="kind==='pm2'"><label class="form-label">Port it listens on</label><input class="form-input" x-model="form.port" placeholder="3000"></div>
+          <div class="form-group" x-show="kind==='python'"><label class="form-label">Run as user</label>
+            <input class="form-input" x-model="form.user" :placeholder="sel.user"><div class="form-hint" x-show="sel.user==='root'">It runs as root now. Python projects never run as root: enter the user it should run as (its files must be readable by that user).</div></div>
+          <div class="form-group"><label class="form-label">Domain (optional)</label><input class="form-input" x-model="form.domain" placeholder="app.example.com"><div class="form-hint">Adds a reverse proxy in the web server for this port.</div></div>
+          <div class="vp-hint-box" x-text="note()"></div>
+          <div x-show="result" class="vp-imp-log" x-text="result"></div>
+          <div class="modal-ft">
+            <button class="btn btn-ghost" @click="sel=null;result=''" :disabled="busy">Back</button>
+            <button class="btn btn-primary" @click="doImport()" :disabled="busy || !form.name" x-text="busy?'Importing...':'Import'"></button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+{%- endmacro %}
       <div x-show="page==='dashboard'" x-data="vpLazy('dashboard', dashboardPage())">
         <div class="page-header">
           <div><div class="page-title">Dashboard</div><div class="page-sub">Server overview & real-time metrics</div></div>
@@ -305,6 +359,25 @@
           <button class="btn btn-sm" style="background:var(--tint-amber);color:var(--tint-amber-text);border-color:var(--tint-amber-border);flex-shrink:0" @click="go('websites')">Renew</button>
         </div>
 
+        <!-- PHP2Shell warning banner (CVE-2026-109618/109619): a PHP on this server is affected
+             or gets no fixed release. Opens App Store > PHP > PHP2Shell. -->
+        <div class="vp-d-flex" x-show="php2shell.rows.length>0"
+             style="display:flex;align-items:flex-start;gap:12px;background:var(--tint-red);border:1px solid var(--tint-red-border);border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
+          <span style="font-size:18px;flex-shrink:0"><svg class="vp-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:var(--tint-red-text);margin-bottom:3px"
+                 x-text="'PHP2Shell: '+php2shell.rows.length+' PHP version'+(php2shell.rows.length>1?'s are':' is')+' at risk of remote code execution'"></div>
+            <div style="font-size:12px;color:var(--tint-red-text);display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <template x-for="r in php2shell.rows" :key="r.name">
+                <span style="padding:2px 8px;border-radius:10px;font-weight:600;background:var(--tint-red);color:var(--tint-red-text)"
+                      x-text="r.name+' '+r.version+(r.status==='nofix'?' (no fixed release)':' (update available)')"></span>
+              </template>
+              <span x-show="!php2shell.enabled">Protection is turned off.</span>
+            </div>
+          </div>
+          <button class="btn btn-sm" style="background:var(--tint-red);color:var(--tint-red-text);border-color:var(--tint-red-border);flex-shrink:0" @click="openPhp2shell()">Fix</button>
+        </div>
+
         <!-- Security updates warning banner -->
         <div class="vp-d-flex" x-show="securityUpdates.checked && securityUpdates.total>0"
              style="display:flex;align-items:flex-start;gap:12px;background:var(--tint-red);border:1px solid var(--tint-red-border);border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:16px">
@@ -329,6 +402,33 @@
             </div>
           </div>
           <button class="btn btn-sm" style="background:var(--tint-red);color:var(--tint-red-text);border-color:var(--tint-red-border);flex-shrink:0" @click="go('services')">Fix Now</button>
+        </div>
+
+        <!-- Disk usage by category (measured in the background, at most every 6 hours) -->
+        <div class="card" style="margin-bottom:16px" x-show="diskCats.data || diskCats.measuring">
+          <div class="card-hd">
+            <div class="card-title">Disk usage by category</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="font-size:11.5px;color:var(--text-muted)" x-text="diskCats.measuring && !diskCats.data ? 'Measuring...' : (diskCats.data ? 'Measured '+vpAgo(diskCats.data.t)+(diskCats.measuring?' (updating)':'') : '')"></span>
+              <button class="btn btn-ghost btn-xs" @click="loadDiskCats(true)" :disabled="diskCats.measuring">Measure now</button>
+              <button class="btn btn-ghost btn-xs" @click="go('disk')">Analyze</button>
+            </div>
+          </div>
+          <template x-if="diskCats.data">
+            <div>
+              <div class="vp-dc-bar">
+                <template x-for="c in diskCats.data.cats" :key="c.key">
+                  <div x-show="c.bytes>0" :class="'vp-dc-seg vp-dc-'+c.key" :style="vpCss('width:'+(100*c.bytes/Math.max(1,diskCats.data.total))+'%')" :title="c.label+': '+fmtBytes(c.bytes)"></div>
+                </template>
+              </div>
+              <div class="vp-dc-legend">
+                <template x-for="c in diskCats.data.cats" :key="c.key">
+                  <div class="vp-dc-item"><span :class="'vp-dc-dot vp-dc-'+c.key"></span><span x-text="c.label"></span><strong x-text="fmtBytes(c.bytes)"></strong></div>
+                </template>
+                <div class="vp-dc-item"><span class="vp-dc-dot vp-dc-free"></span><span>Free</span><strong x-text="fmtBytes(Math.max(0,diskCats.data.total-diskCats.data.used))"></strong></div>
+              </div>
+            </div>
+          </template>
         </div>
 
         <!-- Services quick view -->
@@ -363,6 +463,16 @@
 
       <!-- WEBSITES -->
       <div x-show="page==='websites'" x-data="vpLazy('websites', websitesPage())">
+        <div class="modal-overlay" x-show="nameModal.show" x-cloak @click.self="nameModal.show=false">
+          <div class="modal" style="max-width:440px">
+            <div class="modal-hd"><div class="modal-title">Site name</div><button class="modal-close" @click="nameModal.show=false">&times;</button></div>
+            <div class="vp-hint-box" x-text="'A name for '+nameModal.domain+' in this list. Only the label changes: the domain, folder, certificate and configuration stay as they are. Leave it empty to show the domain.'"></div>
+            <div class="form-group" style="margin-top:12px"><label class="form-label">Name</label>
+              <input class="form-input" x-model="nameModal.name" maxlength="80" placeholder="e.g. Shop (production)" @keydown.enter="saveName()"></div>
+            <div class="modal-ft"><button class="btn btn-ghost" @click="nameModal.show=false">Cancel</button>
+              <button class="btn btn-primary" :disabled="nameModal.saving" @click="saveName()" x-text="nameModal.saving?'Saving...':'Save'"></button></div>
+          </div>
+        </div>
         <div class="page-header">
           <div><div class="page-title">Websites</div><div class="page-sub">Manage websites on nginx, Apache, OpenLiteSpeed and Caddy</div></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -401,7 +511,10 @@
               <template x-for="s in sites" :key="s.domain">
                 <tr>
                   <td>
+                    <div x-show="s.name" class="vp-site-name" x-text="s.name" :title="'Site name (only a label; the domain stays '+s.domain+')'"></div>
                     <a class="row-domain" :href="(s.ssl?'https://':'http://')+s.domain.replace(/^\*\./,'www.')" target="_blank" rel="noopener" @click.stop x-text="s.domain" style="text-decoration:none"></a>
+                    <button class="vp-icon-btn" @click.stop="openName(s)" :title="s.name?'Rename':'Give this site a name'" x-html="vpIcon('edit')"></button>
+                    <button class="vp-icon-btn" @click.stop="copyText(s.name||s.domain)" :title="'Copy '+(s.name?'name':'domain')" x-html="vpIcon('clipboard')"></button>
                     <span x-show="s.webserver && s.webserver!=='nginx'" class="badge badge-gray" style="font-size:10px;margin-left:6px" x-text="({apache:'Apache',openlitespeed:'OpenLiteSpeed',caddy:'Caddy'})[s.webserver]||s.webserver"></span>
                     <span x-show="bpBadges[s.domain]" class="bp-badge" style="margin-left:6px;cursor:pointer" @click.stop="openDrawer(s); drawer.tab='botprot'; loadDrawerTab()"
                           :class="({paused:'paused',auto_off:'warn',attack:'attack'})[bpBadges[s.domain]]||''"
@@ -1891,6 +2004,45 @@
       <!-- ================================================================== -->
       <!-- WP TOOLKIT PAGE                                                    -->
       <!-- ================================================================== -->
+      <!-- ALL PROJECTS: every website and app project in one list -->
+      <div x-show="page==='all-projects'" x-data="vpLazy('all-projects', allProjectsPage())">
+        <div class="page-header">
+          <div>
+            <div class="page-title">All Projects</div>
+            <div class="page-sub">Every website and app on this server in one place: PHP, static and WordPress sites, Node.js, Go and Python projects, Docker containers</div>
+          </div>
+          <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm" @click="load()" :disabled="loading" x-text="loading?'Loading...':'Refresh'"></button></div>
+        </div>
+        <div class="vp-ap-filters">
+          <input class="form-input" style="max-width:280px" x-model="q" placeholder="Search name, domain, folder, port">
+          <button :class="'btn btn-sm '+(type===''?'btn-primary':'btn-ghost')" @click="type=''" x-text="'All ('+rows.length+')'"></button>
+          <template x-for="(label, t) in TYPES" :key="t">
+            <button x-show="counts[t]" :class="'btn btn-sm '+(type===t?'btn-primary':'btn-ghost')" @click="type=t" x-text="label+' ('+(counts[t]||0)+')'"></button>
+          </template>
+          <span style="margin-left:auto;font-size:12px;color:var(--text-muted)" x-text="active()+' of '+rows.length+' running'"></span>
+        </div>
+        <div class="vp-hint-box" x-show="errors.length" x-text="'Some lists could not be read: '+errors.join('; ')"></div>
+        <div class="card" style="padding:0;overflow-x:auto">
+          <table class="data-table" style="min-width:760px">
+            <thead><tr><th>Name</th><th style="width:120px">Type</th><th>Domain</th><th class="vp-hide-sm">Folder</th><th style="width:80px">Port</th><th style="width:110px">Status</th><th style="width:90px"></th></tr></thead>
+            <tbody>
+              <template x-for="r in filtered()" :key="r.type+':'+(r.id||r.name)">
+                <tr>
+                  <td><div style="font-weight:600" x-text="r.name"></div><div style="font-size:11.5px;color:var(--text-muted)" x-text="r.detail"></div></td>
+                  <td><span class="vp-ap-type" :data-t="r.type" x-text="TYPES[r.type]||r.type"></span></td>
+                  <td><a x-show="r.domain" :href="(r.ssl?'https://':'http://')+r.domain" target="_blank" rel="noopener" x-text="r.domain"></a><span x-show="!r.domain" style="color:var(--text-muted)">-</span></td>
+                  <td class="vp-hide-sm mono" style="font-size:12px;word-break:break-all" x-text="r.path||'-'"></td>
+                  <td class="mono" x-text="r.port||'-'"></td>
+                  <td><span :class="'badge '+(r.status==='active'?'badge-green':(r.status==='failed'?'badge-red':'badge-gray'))" x-text="r.status==='active'?'Running':(r.status||'Stopped')"></span></td>
+                  <td><button class="btn btn-ghost btn-xs" @click="open(r)">Manage</button></td>
+                </tr>
+              </template>
+              <tr x-show="!loading && !filtered().length"><td colspan="7" style="text-align:center;padding:28px;color:var(--text-muted)" x-text="rows.length?'No project matches the filter.':'No websites or projects yet.'"></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div x-show="page==='wp'" x-data="vpLazy('wp', wpPage())">
 
         <!-- Page Header -->
@@ -2543,6 +2695,7 @@
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="tab='versions';loadVersions()">Node Version Manager</button>
             <button class="btn btn-ghost btn-sm" @click="tab='pm2';loadPM2Monitor()">PM2 Monitor</button>
+            {{ project_import('pm2', 'PM2 apps') }}
             <button class="btn btn-primary btn-sm" @click="openAddModal('pm2')">+ PM2 Project</button>
             <button class="btn btn-primary btn-sm" @click="openAddModal('default')">+ Add Project</button>
           </div>
@@ -2938,6 +3091,7 @@
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="tab=(tab==='runtimes'?'projects':'runtimes')" x-text="tab==='runtimes'?'Projects':'Python versions'"></button>
+            {{ project_import('python', 'Python apps') }}
             <button class="btn btn-primary btn-sm" @click="openForm()">Add project</button>
           </div>
         </div>
@@ -3068,6 +3222,7 @@
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost btn-sm" @click="tab='sdk';loadSDK()">Go SDK Manager</button>
+            {{ project_import('go', 'Go programs') }}
             <button class="btn btn-primary btn-sm" @click="openAdd()">+ Add Project</button>
           </div>
         </div>
@@ -4263,6 +4418,18 @@
         <div class="page-header">
           <div><div class="page-title">App Store</div><div class="page-sub">Install and manage server software and panel Apps<span x-show="tested && tested.in_use" x-text="' - versions tested by VortexPanel (list #'+(tested&&tested.serial)+', '+((tested&&tested.issued)||'').slice(0,10)+')'"></span></div></div>
           <div style="display:flex;gap:6px;align-items:center">
+            <!-- Running-jobs indicator: an install/remove/update keeps running on the
+                 server after its window is hidden; this reopens the live log. -->
+            <template x-if="runningJobs.length">
+              <button class="btn btn-sm vp-jobpill" :class="runningCount() ? 'btn-primary' : 'btn-ghost'"
+                      @click="reopenJob(runningJobs.find(j=>!j.done) || runningJobs[0])"
+                      :title="runningCount() ? 'An App Store operation is running - click to view its progress' : 'Last operation finished - click to view the result'">
+                <span class="vp-job-dot" x-show="runningCount()"></span>
+                <span class="vp-jobpill-txt" x-show="runningCount()===1" x-text="(runningJobs.find(j=>!j.done)||{}).title || 'Operation running'"></span>
+                <span x-show="runningCount()>1" x-text="runningCount()+' operations running'"></span>
+                <span x-show="!runningCount()">View last operation</span>
+              </button>
+            </template>
             <button class="btn btn-ghost btn-sm" @click="openVx()" x-show="vx.status && vx.status.configured">
               <span>Software updates</span>
               <span class="badge badge-orange" style="font-size:10px;margin-left:4px" x-show="(vx.updates||[]).length" x-text="(vx.updates||[]).length"></span>
@@ -4539,8 +4706,34 @@
                   <option value="all">All updates</option>
                   <option value="off">Off - I update from the App Store</option>
                 </select></label>
+              <label><span>Download source</span>
+                <select class="form-input" x-model="vx.form.source">
+                  <option value="r2">VortexPanel download server, GitHub as backup</option>
+                  <option value="github">GitHub, VortexPanel download server as backup</option>
+                </select></label>
+              <div class="vpx-src-note">Both hold the same builds. Every download is checked against the signed catalog, whichever source it comes from.<span x-show="vx.status?.source" x-text="' Last catalog from: '+(vx.status?.source||'')+'.'"></span></div>
               <label class="vpx-check"><input type="checkbox" x-model="vx.form.notify"><span>Send alerts for new versions and automatic updates (Settings > Alerts channels)</span></label>
             </div>
+            <details class="vpx-offline">
+              <summary>Mirrors &amp; offline installs</summary>
+              <div class="vpx-form" style="margin-top:10px">
+                <label><span>Software mirrors</span>
+                  <textarea class="form-input" rows="2" x-model="vx.form.mirrorsText" placeholder="https://mirror.example.com&#10;(one URL per line)"></textarea></label>
+                <label><span>App mirrors</span>
+                  <textarea class="form-input" rows="2" x-model="vx.form.appsMirrorsText" placeholder="https://mirror.example.com/apps&#10;(one URL per line)"></textarea></label>
+                <div class="vpx-src-note">A mirror only serves copies of the signed files; every download is still checked against the signed catalog, so a mirror can never change what gets installed. Mirrors are tried before the VortexPanel servers.</div>
+                <label class="vpx-check"><input type="checkbox" x-model="vx.form.offline"><span>Offline mode - use only mirrors and imported bundles, never the internet</span></label>
+              </div>
+              <div style="margin-top:12px">
+                <div class="vp-upd-k" style="margin-bottom:4px">Offline bundle</div>
+                <div class="vpx-src-note" x-show="(vx.status?.offline?.files||0)>0">Imported: <span x-text="(vx.status?.offline?.files||0)+' file(s)'"></span><span x-show="vx.status?.offline?.catalog_serial" x-text="', catalog #'+(vx.status?.offline?.catalog_serial)"></span><span x-show="vx.status?.offline?.apps_index_serial" x-text="', App index #'+(vx.status?.offline?.apps_index_serial)"></span></div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+                  <input type="file" accept=".tar,.tar.gz,.tgz,.zip" @change="vxImport($event)" :disabled="vx.busy">
+                  <button class="btn btn-ghost" @click="vxClearOffline()" x-show="(vx.status?.offline?.files||0)>0" :disabled="vx.busy">Clear imported</button>
+                </div>
+                <div class="vpx-src-note">Build a bundle on a machine with internet using <code>softs/pipeline/bundle.py</code>, upload it here, then install as usual with no internet.</div>
+              </div>
+            </details>
             <div x-show="(vx.updates||[]).length" style="margin-top:14px">
               <div class="vp-upd-k" style="margin-bottom:6px">Available now</div>
               <table class="vp-upd-tbl" style="border:1px solid var(--border);border-radius:8px"><thead><tr><th>Software</th><th>Installed</th><th>New</th><th></th></tr></thead>
@@ -4905,7 +5098,7 @@
                 <!-- PHP2SHELL tab (PHP): CVE-2026-109618/109619 status and protection -->
                 <div x-show="settingsModal.tab==='php2shell'" x-effect="if(settingsModal.show && settingsModal.tab==='php2shell' && !(settingsModal.p2s && (settingsModal.p2s.versions || settingsModal.p2s.loading))) p2sLoad()">
                   <div style="font-weight:600;font-size:13px;margin-bottom:6px">PHP2Shell (CVE-2026-109618, CVE-2026-109619)</div>
-                  <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:14px">Remote code execution in PHP itself, exploited since October 2026. Any website on an affected PHP can be taken over without a password, whatever the application. Fixed in PHP 8.5.12, 8.4.27, 8.3.36 and 8.2.35; PHP 8.1 and older have no official fix.</div>
+                  <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:14px">Remote code execution in PHP itself, exploited since October 2026. Any website on an affected PHP can be taken over without a password, whatever the application. Fixed in PHP 8.5.12, 8.4.27, 8.3.36 and 8.2.35, and in every PHP 8.6; PHP 8.1 and older get no fixed release, but the VortexPanel PHP 8.1.34.1 build carries PHP's official backport.</div>
                   <div x-show="settingsModal.p2s?.loading" class="vp-p2s-muted">Checking the PHP versions on this server...</div>
                   <div x-show="settingsModal.p2s?.error" class="vp-p2s-row bad" x-text="settingsModal.p2s?.error"></div>
                   <template x-for="v in (settingsModal.p2s?.versions || [])" :key="v.name">

@@ -2,7 +2,7 @@
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/mongo_common.sh"
 v="$("$VP_CURRENT/bin/mongod" --version | sed -n 's/^db version v\([0-9.]*\).*/\1/p')"
-[ "$v" = "$VP_VERSION" ] || fail "expected MongoDB $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected MongoDB $(vp_upstream), found '$v'"
 PORT="$(mport)"
 for i in $(seq 1 300); do
   # ping and buildInfo need no login, also on a server with authorization enabled

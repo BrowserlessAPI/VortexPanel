@@ -1,4 +1,4 @@
-"""Shared toolkit for VortexPanel Apps (panel/apps_bundle/<id>, installed to plugins/<id>).
+"""Shared toolkit for VortexPanel Apps (delivered from Cloudflare R2, installed to plugins/<id>).
 
 Every App uses these helpers instead of rolling its own, so they all follow the
 same isolation rules and cannot step on each other or on the core panel:
@@ -269,8 +269,9 @@ def _other_ids(app_id):
     """Other App ids that start with '<app_id>-' (e.g. 'site' vs 'site-stats'): their
     units and files share our prefix and must be left alone."""
     try:
-        from panel import apps
-        ids = set(apps.bundled()) | set(apps.installed())
+        from panel import apps, softs
+        cached = softs._read(os.path.join(softs.DATA, 'apps-index.json'), {}) or {}   # no network here
+        ids = set(apps.bundled()) | set(apps.installed()) | set(cached.get('apps') or {})
     except Exception:  # noqa: BLE001
         ids = set()
     return [i for i in ids if i != app_id and i.startswith(app_id + '-')]

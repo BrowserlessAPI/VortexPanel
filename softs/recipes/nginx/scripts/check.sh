@@ -1,7 +1,7 @@
 #!/bin/bash
 . "$(dirname "$0")/lib.sh"
 v="$("$VP_CURRENT/sbin/nginx" -v 2>&1 | sed -n 's|.*nginx/||p')"
-[ "$v" = "$VP_VERSION" ] || fail "expected nginx $VP_VERSION, found '$v'"
+[ "$v" = "$(vp_upstream)" ] || fail "expected nginx $(vp_upstream), found '$v'"
 for i in $(seq 1 15); do [ -s /run/nginx.pid ] && kill -0 "$(cat /run/nginx.pid)" 2>/dev/null && break; sleep 1; done
 kill -0 "$(cat /run/nginx.pid 2>/dev/null)" 2>/dev/null || fail "nginx is not running"
 # the WAF on: the ModSecurity module must load with the library this server has

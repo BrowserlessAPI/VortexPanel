@@ -173,13 +173,56 @@
 .vpx-form{display:grid;gap:10px;margin-top:14px}
 .vpx-form label{display:grid;grid-template-columns:150px 1fr;align-items:center;gap:10px;font-size:12.5px;color:var(--text-secondary)}
 .vpx-form label.vpx-check{grid-template-columns:auto 1fr}
+.vpx-src-note{font-size:11.5px;color:var(--text-muted);margin:-4px 0 0 160px;line-height:1.45}
 .vpx-events{border:1px solid var(--border);border-radius:8px;max-height:180px;overflow:auto;font-size:12px}
 .vpx-events>div{display:flex;gap:10px;padding:6px 10px;border-bottom:1px solid var(--border)}
 .vpx-events>div:last-child{border-bottom:0}
 .vpx-time{font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap}
-@media (max-width:640px){.vpx-grid{grid-template-columns:1fr}.vpx-form label{grid-template-columns:1fr}}
+@media (max-width:640px){.vpx-grid{grid-template-columns:1fr}.vpx-form label{grid-template-columns:1fr}.vpx-src-note{margin-left:0}}
 .vp-upd-badge.vp-upd-sec{color:var(--red);background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.35)}
 .vp-upd-badge.vp-upd-sec:hover{background:rgba(239,68,68,.18)}
 
 /* App Store: compact "not available" note (no empty dropdown beside it) */
 .vp-conflict{font-size:11px;color:var(--text-muted);background:var(--bg-raised);border:1px dashed var(--border);border-radius:6px;padding:2px 8px;max-width:260px;line-height:1.4}
+.vpx-offline{margin-top:10px;border-top:1px solid var(--border);padding-top:10px}
+.vpx-offline>summary{cursor:pointer;font-size:12.5px;color:var(--text-muted);user-select:none;list-style:revert}
+.vpx-offline>summary:hover{color:var(--text)}
+.vpx-offline textarea.form-input{font-family:ui-monospace,monospace;font-size:12px;resize:vertical}
+
+/* Running-jobs indicator in the App Store header: an operation keeps running
+   on the server after its window is hidden; the pill reopens its live log. */
+.vp-jobpill{display:inline-flex;align-items:center;gap:7px;max-width:260px}
+.vp-jobpill-txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:190px}
+.vp-job-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto;animation:vp-job-pulse 1.1s ease-in-out infinite}
+@keyframes vp-job-pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* Scan & import dialog (Node.js / Go / Python project pages) */
+.vp-imp-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);margin-top:8px}
+.vp-imp-cmd{font-family:var(--font-mono);font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vp-imp-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;color:var(--text-muted);margin-top:4px}
+.vp-imp-log{font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;background:var(--bg-raised);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-top:10px;max-height:220px;overflow:auto}
+
+/* All Projects page */
+.vp-ap-filters{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:14px}
+.vp-ap-type{font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--bg-raised);color:var(--text-secondary);white-space:nowrap}
+/* theme tints, so the badges read in light and dark mode */
+.vp-ap-type[data-t="wordpress"],.vp-ap-type[data-t="php"],.vp-ap-type[data-t="go"],.vp-ap-type[data-t="docker"]{background:var(--tint-blue);color:var(--accent)}
+.vp-ap-type[data-t="node"]{background:var(--tint-green);color:var(--tint-green-text)}
+.vp-ap-type[data-t="python"]{background:var(--tint-amber);color:var(--tint-amber-text)}
+
+/* Dashboard: disk usage by category */
+.vp-dc-bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--bg-hover);margin:4px 0 12px}
+.vp-dc-seg{height:100%;min-width:2px}
+.vp-dc-legend{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:12px;color:var(--text-secondary)}
+.vp-dc-item{display:flex;align-items:center;gap:6px}
+.vp-dc-item strong{color:var(--text-primary);font-weight:600}
+.vp-dc-dot{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+.vp-dc-websites{background:#2563eb}.vp-dc-databases{background:#d97706}.vp-dc-backups{background:#059669}
+.vp-dc-logs{background:#7c3aed}.vp-dc-docker{background:#0891b2}.vp-dc-mail{background:#db2777}
+.vp-dc-other{background:#94a3b8}.vp-dc-free{background:var(--bg-hover);border:1px solid var(--border)}
+
+/* Websites: site name (a label) above the domain, rename and copy buttons */
+.vp-site-name{font-weight:600;font-size:13px;color:var(--text-primary);line-height:1.3}
+.vp-icon-btn{background:none;border:none;padding:2px 3px;margin-left:2px;cursor:pointer;color:var(--text-muted);opacity:.55;vertical-align:middle;line-height:0}
+.vp-icon-btn:hover,.vp-icon-btn:focus-visible{opacity:1;color:var(--accent)}
+.vp-icon-btn .vp-ic{width:13px;height:13px}

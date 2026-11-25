@@ -75,6 +75,7 @@ from panel.routes.alerts_routes import alerts_bp
 from panel.routes.plugins_routes import plugins_bp
 from panel.routes.python_projects import python_bp
 from panel.routes.apps_routes import apps_bp
+from panel.routes.projects_all import projects_bp
 
 # -- Secret key: auto-generate and persist on first run -----------------------
 _SECRET_KEY_FILE = '/opt/vortexpanel/secret.key'
@@ -245,7 +246,7 @@ def create_app():
                settings_bp, modules_bp, main_bp, security_bp, bandwidth_bp,
                caddy_bp, cdn_bp, update_bp, ai_bp, ddns_bp, cloud_backup_bp,
                logs_bp, wp_bp, nodejs_bp, go_bp, import_bp, livepatch_bp,
-               onboarding_bp, disk_bp, users_bp, storage_bp, alerts_bp, plugins_bp, python_bp, acme_bp, ssl_business_bp, migration_bp, botprot_bp, licence_bp, apps_bp]:
+               onboarding_bp, disk_bp, users_bp, storage_bp, alerts_bp, plugins_bp, python_bp, acme_bp, ssl_business_bp, migration_bp, botprot_bp, licence_bp, apps_bp, projects_bp]:
         app.register_blueprint(bp)
     # Add-on modules from /opt/vortexpanel/plugins. Each is loaded inside its
     # own try/except: a broken or incompatible plugin is skipped and reported,

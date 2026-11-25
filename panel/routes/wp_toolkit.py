@@ -1,6 +1,6 @@
 """
 VortexPanel WP Toolkit
-Supports: PHP 7.4–8.5 | Nginx / Apache / OpenLiteSpeed / Caddy | MariaDB / MySQL
+Supports: PHP 7.4–8.6 | Nginx / Apache / OpenLiteSpeed / Caddy | MariaDB / MySQL
 """
 import os, re, json, uuid, shutil, subprocess, secrets, string, threading, shlex
 from panel.utils.authctx import authed as _vp_authed
@@ -248,15 +248,79 @@ def _wp(path, cmd, t=60):
 def _wp_installed():
     return os.path.exists(WP_CLI)
 
+WPCLI_URL = 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar'
+
+
 def _install_wpcli():
-    """Download and install wp-cli if missing."""
+    """Download and install wp-cli if missing, checked against the SHA-512 wp-cli publishes
+    next to it. The old download (curl -sL, no -f) saved an error page as /usr/local/bin/wp
+    when the download failed, and nothing checked what was installed."""
     if os.path.exists(WP_CLI):
         return True
-    out, err, rc = sh3(
-        'curl -sL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar'
-        f' -o {WP_CLI} && chmod +x {WP_CLI}', t=30
-    )
-    return rc == 0
+    import hashlib
+    tmp = WP_CLI + '.download'
+    try:
+        _o, err, rc = sh3(f'curl -fsSL --retry 2 --max-time 180 {Q(WPCLI_URL)} -o {Q(tmp)}', t=200)
+        if rc != 0:
+            print(f'[VortexPanel] wp-cli download failed: {err[-200:]}')
+            return False
+        want, err, rc = sh3(f'curl -fsSL --retry 2 --max-time 30 {Q(WPCLI_URL + ".sha512")}', t=40)
+        want = (want.split() or [''])[0].lower()
+        if rc != 0 or not re.fullmatch(r'[0-9a-f]{128}', want):
+            print('[VortexPanel] wp-cli checksum could not be downloaded; not installing it')
+            return False
+        h = hashlib.sha512()
+        with open(tmp, 'rb') as f:
+            for chunk in iter(lambda: f.read(1 << 20), b''):
+                h.update(chunk)
+            f.seek(0)
+            head = f.read(64)
+        if h.hexdigest() != want or not head.startswith(b'#!/usr/bin/env php'):
+            print('[VortexPanel] wp-cli download does not match its published SHA-512; not installing it')
+            return False
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, WP_CLI)
+        return True
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _verify_core(path):
+    """WordPress core files against wordpress.org's checksums for the installed version:
+    (ok, changed files, files that should not exist, error)."""
+    out, err, rc = sh3(f'{_wpx(path)} core verify-checksums 2>&1', t=120)
+    text = out + '\n' + err
+    changed = re.findall(r"File doesn't verify against checksum: (\S+)", text)
+    extra = re.findall(r'File should not exist: (\S+)', text)
+    if rc != 0 and not changed and not extra:
+        return None, [], [], (text.strip().splitlines() or ['wp core verify-checksums failed'])[-1][:200]
+    return rc == 0 and not changed and not extra, changed, extra, ''
+
+
+def _verify_plugins(path):
+    """wordpress.org plugins against their published checksums: ({plugin: [files]}, skipped, error).
+    Plugins that are not on wordpress.org (premium, custom) cannot be checked and are skipped."""
+    out, err, rc = sh3(f'{_wpx(path)} plugin verify-checksums --all --format=json 2>&1', t=300)
+    bad = {}
+    dec = json.JSONDecoder()
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith('['):
+            # wp-cli prints the JSON with no newline before its "Error: Only verified ..." line
+            try:
+                rows, _end = dec.raw_decode(line)
+            except ValueError:
+                continue
+            for row in rows if isinstance(rows, list) else []:
+                if isinstance(row, dict):
+                    bad.setdefault(str(row.get('plugin_name', '?')), []).append(str(row.get('file', '?')))
+    skipped = re.findall(r'Could not retrieve the checksums for version \S+ of plugin (\S+?),', out + err)
+    if rc != 0 and not bad and not skipped and 'Verified' not in (out + err):
+        return None, [], (out + err).strip().splitlines()[-1][:200] if (out + err).strip() else 'check failed'
+    return bad, skipped, ''
 
 def _detect_webserver():
     """Return the web server new sites are written for: nginx | apache |
@@ -330,7 +394,7 @@ def _available_php(webserver=None):
     """
     versions = []
     if webserver == 'openlitespeed':
-        for v in ['8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4']:
+        for v in ['8.6', '8.5', '8.4', '8.3', '8.2', '8.1', '8.0', '7.4']:
             lsphp_bin = f'/usr/local/lsws/lsphp{v.replace(".", "")}/bin/lsphp'
             if os.path.exists(lsphp_bin):
                 versions.append({'version': v, 'sock': lsphp_bin, 'active': True})
@@ -1727,7 +1791,9 @@ def security_scan(domain):
 
     # 5. Debug mode
     cfg = open(f'{path}/wp-config.php').read() if os.path.exists(f'{path}/wp-config.php') else ''
-    debug_on = 'WP_DEBUG' in cfg and ('true' in cfg.lower().split('WP_DEBUG')[1][:30] if 'WP_DEBUG' in cfg else False)
+    # (the old test lower-cased the file and then split it on 'WP_DEBUG', which raised
+    #  IndexError on every wp-config.php that defines WP_DEBUG: the whole scan failed)
+    debug_on = bool(re.search(r"""define\s*\(\s*['"]WP_DEBUG['"]\s*,\s*(true|1|'true')\s*\)""", cfg, re.I))
     chk('Debug mode disabled', not debug_on, 'WP_DEBUG is off' if not debug_on else 'WP_DEBUG is enabled in production — disable it', 'disable_debug')
 
     # 6. XML-RPC
@@ -1764,6 +1830,33 @@ def security_scan(domain):
         login_hidden = 'installed' not in (sh(f'{_wpx(path)} plugin status wps-hide-login 2>/dev/null') or '').lower()
     chk('Login URL protected', login_hidden,
         'Login URL is changed/hidden' if login_hidden else '/wp-admin is accessible at default URL', 'hide_login')
+
+    # 10-11. Files changed since install: WordPress core and wordpress.org plugins against the
+    # checksums wordpress.org publishes (a changed or extra .php file in core is how a web shell
+    # usually hides after an attack such as PHP2Shell)
+    if _wp_installed():
+        ok_c, changed, extra, err_c = _verify_core(path)
+        if ok_c is None:
+            chk('Core files match wordpress.org', False, f'Could not check: {err_c}', '')
+        else:
+            parts = []
+            if changed:
+                parts.append(f'{len(changed)} changed: ' + ', '.join(changed[:6]) + (' ...' if len(changed) > 6 else ''))
+            if extra:
+                parts.append(f'{len(extra)} not part of WordPress (review, may be a web shell): '
+                             + ', '.join(extra[:6]) + (' ...' if len(extra) > 6 else ''))
+            chk('Core files match wordpress.org', ok_c,
+                'Every core file matches the official checksums' if ok_c else '; '.join(parts),
+                'restore_core' if changed else '')
+        bad, skipped, err_p = _verify_plugins(path)
+        if bad is None:
+            chk('Plugin files match wordpress.org', False, f'Could not check: {err_p}', '')
+        else:
+            note = f' ({len(skipped)} not on wordpress.org, not checked)' if skipped else ''
+            chk('Plugin files match wordpress.org', not bad,
+                ('Every wordpress.org plugin matches its official checksums' + note) if not bad else
+                '; '.join(f'{p}: ' + ', '.join(f[:4]) + (' ...' if len(f) > 4 else '') for p, f in list(bad.items())[:5]) + note,
+                'restore_plugins' if bad else '')
 
     passed = sum(1 for c in checks if c['passed'])
     score  = round(passed / len(checks) * 100) if checks else 0
@@ -1839,6 +1932,36 @@ def security_fix(domain):
     elif fix == 'update_plugins':
         out_p, err_p, _ = sh3(f'{_wpx(path)} plugin update --all 2>&1', t=300)
         out = out_p or err_p
+
+    elif fix == 'restore_core':
+        # same version, fresh official files; wp-content and wp-config.php are not touched.
+        # Files that are not part of WordPress are listed, never deleted automatically.
+        ver = sh(f'{_wpx(path)} core version 2>/dev/null')
+        if not re.fullmatch(r'\d+\.\d+(\.\d+)?', ver or ''):
+            return jsonify({'ok': False, 'error': 'Could not read the WordPress version of this site'})
+        out_c, err_c, rc = sh3(f'{_wpx(path)} core download --version={Q(ver)} --skip-content --force 2>&1', t=300)
+        if rc != 0:
+            return jsonify({'ok': False, 'error': (out_c or err_c)[-300:]})
+        _ok, _ch, extra, _e = _verify_core(path)
+        out = f'WordPress {ver} core files restored from wordpress.org'
+        if extra:
+            out += '. Not part of WordPress, review and delete if unknown: ' + ', '.join(extra[:10])
+
+    elif fix == 'restore_plugins':
+        bad, _sk, err_p = _verify_plugins(path)
+        if bad is None:
+            return jsonify({'ok': False, 'error': err_p})
+        done, failed = [], []
+        for slug in list(bad)[:30]:
+            if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,99}', slug):
+                continue
+            ver = sh(f'{_wpx(path)} plugin get {Q(slug)} --field=version 2>/dev/null')
+            vflag = f' --version={Q(ver)}' if re.fullmatch(r'[0-9][0-9A-Za-z.+-]{0,30}', ver or '') else ''
+            _o, err_i, rc = sh3(f'{_wpx(path)} plugin install {Q(slug)}{vflag} --force 2>&1', t=300)
+            (done if rc == 0 else failed).append(slug)
+        out = ('Reinstalled from wordpress.org: ' + ', '.join(done)) if done else 'Nothing reinstalled'
+        if failed:
+            out += '; failed: ' + ', '.join(failed)
 
     panel_cache.invalidate('wp_sites')
     return jsonify({'ok': True, 'output': out})
