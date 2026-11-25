@@ -57,7 +57,7 @@ if [ "$INIT" = systemd ]; then
   done
   sleep 5
   [ -n "$SMOKE" ] && bash /softs/recipes/$APP/$SMOKE
-  failed="$(systemctl --failed --no-legend --plain | awk '{print $1}' | grep -vE '^(systemd-|ssh)' || true)"
+  failed="$(systemctl --failed --no-legend --plain | awk '{print $1}' | grep -vE '^(systemd-|ssh|getty@|serial-getty@|console-getty)' || true)"
   [ -z "$failed" ] || { echo "failed units: $failed"; for u in $failed; do journalctl -u "$u" --no-pager | tail -20; done; exit 1; }
 fi
 echo "=== state"
@@ -72,8 +72,10 @@ echo "=== passed"
 SYSTEMD_IMAGE = {
     'deb': ('FROM {image}\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq '
             'systemd systemd-sysv dbus python3 curl procps ca-certificates >/dev/null && apt-get clean\n'
+            'RUN systemctl mask getty.target console-getty.service >/dev/null 2>&1 || true\n'
             'STOPSIGNAL SIGRTMIN+3\nCMD ["/sbin/init"]\n'),
     'rpm': ('FROM {image}\nRUN dnf -y -q install systemd procps-ng {py} >/dev/null && dnf clean all >/dev/null\n'
+            'RUN systemctl mask getty.target console-getty.service >/dev/null 2>&1 || true\n'
             'STOPSIGNAL SIGRTMIN+3\nCMD ["/usr/sbin/init"]\n'),
 }
 
@@ -96,13 +98,20 @@ def systemd_image(image):
     fam = 'rpm' if image.startswith(('almalinux', 'rockylinux', 'centos')) else 'deb'
     py = 'python3.11' if image.endswith(':8') else 'python3'
     df = SYSTEMD_IMAGE[fam].format(image=image, py=py)
-    for _ in range(3):           # package mirrors fail now and then
+    err = ''
+    for _ in range(3):           # package mirrors fail or stall now and then
         net, px = _net()
-        r = subprocess.run(['docker', 'build', '-q', '-t', tag] + net + [a for p in px for a in ('--build-arg', p)] + ['-'],
-                           input=df, text=True, capture_output=True, timeout=900)
+        try:
+            r = subprocess.run(['docker', 'build', '-q', '-t', tag] + net + [a for p in px for a in ('--build-arg', p)] + ['-'],
+                               input=df, text=True, capture_output=True, timeout=900)
+        except subprocess.TimeoutExpired:
+            err = 'timed out after 15 minutes'
+            C.log(f'building the systemd image of {image} {err}; trying again')
+            continue
         if r.returncode == 0:
             return tag
-    C.log(f'could not build a systemd image of {image}: {r.stderr.strip()[-300:]}')
+        err = r.stderr.strip()[-300:]
+    C.log(f'could not build a systemd image of {image}: {err}')
     return ''
 
 

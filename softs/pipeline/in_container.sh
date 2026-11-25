@@ -100,6 +100,7 @@ done | sed 's/:.*//' | grep -v '^libc6$\|^glibc$\|not owned' | sort -u >> "$OUT/
 say "runtime packages: $(tr '\n' ' ' < "$OUT/run-deps.txt")"
 
 # record what the binaries link against (shown in the panel's build details)
-( find "$DEST$PREFIX" -type f -perm -u+x -exec file {} + 2>/dev/null | grep -q ELF ) && \
-  ldd --version 2>&1 | head -1 > "$OUT/glibc.txt" || true
+# (always: the old "find | file | grep -q ELF" test died of SIGPIPE on large builds and wrote
+# nothing; build.py also caps the glibc requirement at this version, see needs_glibc)
+{ getconf GNU_LIBC_VERSION 2>/dev/null || ldd --version 2>&1 | head -1; } > "$OUT/glibc.txt" || true
 say "done"

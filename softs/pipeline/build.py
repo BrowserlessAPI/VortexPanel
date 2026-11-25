@@ -140,6 +140,15 @@ def pack(recipe, item, target, arch, out, prefix, dist):
         glibc = open(os.path.join(out, 'glibc.txt')).read().strip()
     except OSError:
         pass
+    # a program cannot need a newer glibc than the system it was built on: a higher symbol
+    # version there is that distribution's own backport (RHEL 9's glibc 2.34 provides
+    # epoll_pwait2@GLIBC_2.35, used by PHP 8.6), so the requirement is the build system's glibc
+    m = re.search(r'(\d+\.\d+)\s*$', glibc)
+    if m and needs:
+        built = tuple(int(x) for x in m.group(1).split('.'))
+        if tuple(int(x) for x in needs.split('.')) > built:
+            C.log(f'glibc symbols up to {needs} are backports of the build system (glibc {m.group(1)}): needs {m.group(1)}')
+            needs = m.group(1)
     man = {
         'format': 1, 'app': recipe['id'], 'panel_id': recipe.get('panel_id', recipe['id']), 'name': recipe.get('name', recipe['id']),
         'version': item['version'], 'track': item.get('track') or C.track_of(item['version']),
